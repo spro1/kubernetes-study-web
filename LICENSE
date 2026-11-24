@@ -19,11 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
----
-
-The lesson content (everything under docs/ and i18n/, and the images under
-static/img/) is licensed under the Creative Commons Attribution 4.0
-International License (CC BY 4.0): https://creativecommons.org/licenses/by/4.0/
-You may share and adapt it, including commercially, as long as you credit
-"K8s Flow" and link to https://github.com/spro1/kubernetes-study-web.

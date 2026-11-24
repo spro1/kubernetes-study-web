@@ -41,4 +41,4 @@ npm run build             # full build, also checks for broken links
 
 Want K8s Flow in another language? Open an issue first so we can set up the locale. UI strings live in `src/components/StepDiagram.jsx`, `src/components/LessonCard.jsx`, `src/theme/DocItem/Content/index.js` and `src/pages/index.js`. Lessons are translated file by file.
 
-By contributing you agree that code is licensed under MIT and lesson content under CC BY 4.0 (see [LICENSE](LICENSE)).
+By contributing you agree that code is licensed under MIT and lesson content under CC BY 4.0 (see [LICENSE](LICENSE) and [LICENSE-CONTENT.md](LICENSE-CONTENT.md)).

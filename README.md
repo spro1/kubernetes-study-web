@@ -63,7 +63,7 @@ Every push to `main` is built and deployed to GitHub Pages by GitHub Actions.
 
 ## License
 
-Code: [MIT](LICENSE). Lesson content: [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Share and adapt freely with credit to K8s Flow.
+Code: [MIT](LICENSE). Lesson content: [CC BY 4.0](LICENSE-CONTENT.md). Share and adapt freely with credit to K8s Flow.
 
 ---
 
