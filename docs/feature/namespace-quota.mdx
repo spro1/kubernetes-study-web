@@ -1,0 +1,181 @@
+---
+id: namespace-quota
+title: Namespaces and Resource Quotas
+sidebar_label: 07 · Namespaces and Quotas
+description: Step-by-step animation of how Kubernetes divides a cluster with namespaces and rejects pods that would exceed a quota
+hide_table_of_contents: true
+---
+
+# Namespaces and Resource Quotas
+
+When several teams share one cluster, Kubernetes **namespaces (partitions within a cluster)** and **resource quotas (per-namespace resource caps)** do the work. Follow along as you create partitions, set caps, and see a pod over the cap get rejected.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~8 min', level: 'Beginner'}}
+  groups={[
+    {label: 'NS · team-a', x: 515, y: 18, w: 210, h: 412, tone: 'biz'},
+    {label: 'NS · team-b', x: 760, y: 18, w: 225, h: 412, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'user', label: 'User', sub: 'Deploy · kubectl', icon: 'user', tone: 'ext', x: 80, y: 225, w: 130, show: true},
+    {id: 'api', label: 'API server', sub: 'Entry · quota check', icon: 'gate', tone: 'cp', x: 340, y: 225, show: true},
+    {id: 'rbac', label: 'RBAC', sub: 'Role·RoleBinding', icon: 'shield', tone: 'cp', x: 340, y: 390},
+    {id: 'quota', label: 'ResourceQuota', sub: 'Namespace cap', icon: 'scale', tone: 'store', x: 620, y: 95},
+    {id: 'podsA', label: 'Existing pods', sub: 'team-a', icon: 'pod', tone: 'app', x: 620, y: 225},
+    {id: 'newpod', label: 'New pod', sub: 'Requests CPU 2', icon: 'pod', tone: 'app', x: 620, y: 355},
+    {id: 'podsB', label: 'Existing pods', sub: 'team-b', icon: 'pod', tone: 'app', x: 872, y: 225},
+  ]}
+  metrics={[
+    {id: 'used', label: 'team-a CPU requests total'},
+    {id: 'limit', label: 'team-a cap'},
+    {id: 'result', label: 'New pod result'},
+  ]}
+  learn={[
+    {text: 'A namespace is a boundary for names and permissions', at: 0},
+    {text: 'Why partitions alone do not divide resources', at: 1},
+    {text: 'Quotas are checked when a pod is created', at: 3},
+    {text: 'Why pods without requests get rejected', at: 5},
+    {text: 'Permissions (RBAC) are also scoped by namespace', at: 6},
+  ]}
+  steps={[
+    {
+      short: 'Partition',
+      kind: '시작',
+      title: 'Split one cluster into team partitions',
+      text: [
+        'When several teams share one cluster, resource names clash and it is easy to touch someone else\'s service. So you split it into named partitions, namespaces, such as team-a and team-b.',
+        'A namespace does not physically separate servers. It only divides names and permissions. Workload, network, and storage resources are each created inside a specific namespace.',
+      ],
+      flows: [{from: 'user', to: 'api', label: 'Create NS', type: 'request'}],
+      focus: ['podsA', 'podsB'],
+      values: {limit: 'None'},
+    },
+    {
+      short: 'Hogging',
+      kind: '문제',
+      title: 'Separate namespaces still share CPU and memory',
+      text: [
+        'Even in different namespaces, CPU and memory come from the same cluster. If team-a scales up a lot of pods, team-b gets less.',
+        'Then team-b\'s new pods may find no node to run on and stay Pending. One team\'s mistake spills over into another team\'s service.',
+      ],
+      keyIdea: 'Namespaces only divide names and permissions. Resource usage is divided only once you set a quota.',
+      flows: [{from: 'api', to: 'podsA', label: 'Add pods', type: 'request'}],
+      focus: ['podsA', 'podsB'],
+      status: {podsA: 'warn', podsB: 'warn'},
+      badges: {podsB: 'No room'},
+    },
+    {
+      short: 'Quota',
+      kind: '원리',
+      title: 'A resource quota caps each namespace',
+      text: [
+        'Set a resource quota on team-a. It lists caps on totals and counts, for example "CPU requests up to 4 cores, memory requests up to 8Gi, up to 20 pods".',
+        'A quota is a Kubernetes object called ResourceQuota. Write it in YAML and create it with kubectl apply, or create it directly with kubectl create quota.',
+      ],
+      changes: ['+ team-a quota: CPU 4 · memory 8Gi · 20 pods'],
+      flows: [
+        {from: 'user', to: 'api', label: 'Create quota', type: 'request'},
+        {from: 'api', to: 'quota', label: 'Store cap', type: 'request'},
+      ],
+      focus: ['quota'],
+      status: {podsA: null, podsB: null},
+      badges: {podsB: null, quota: 'CPU 4 · 8Gi'},
+      values: {limit: '4 CPU cores', used: '0'},
+    },
+    {
+      short: 'Check',
+      kind: '원리',
+      title: 'The API server checks headroom for every new pod',
+      text: [
+        'When a request to create a pod arrives, the API server first checks whether "current requests total + the new pod\'s requests" exceeds the cap.',
+        'If not, the pod is created and added to usage. team-a currently requests 3 CPU cores.',
+      ],
+      flows: [
+        {from: 'user', to: 'api', label: 'Create pod', type: 'request'},
+        {from: 'api', to: 'quota', label: 'Check room', type: 'request'},
+        {from: 'api', to: 'podsA', label: 'Allowed', type: 'request'},
+      ],
+      focus: ['api', 'quota'],
+      values: {used: 'CPU 3 / 4', result: 'Created'},
+    },
+    {
+      short: 'Rejected',
+      kind: '장애',
+      title: 'A pod over the cap is rejected at creation',
+      text: [
+        'If a pod requesting 2 CPU cores arrives now, the total becomes 5 cores, over the 4-core cap. The API server rejects the pod and does not create it. Pods already running keep running.',
+        'If you deployed with a Deployment, you only see the pod count not going up. The reason appears as exceeded quota in the ReplicaSet events. Run kubectl describe quota to see the cap (Hard) and usage (Used) side by side.',
+      ],
+      keyIdea: 'Quotas are checked only at creation. If you lower a cap below current usage, existing resources are not cleaned up right away; only new ones are blocked.',
+      flows: [
+        {from: 'api', to: 'quota', label: '3+2 > 4', type: 'request'},
+        {from: 'api', to: 'user', label: 'Rejected', type: 'response'},
+      ],
+      focus: ['newpod'],
+      status: {newpod: 'error'},
+      badges: {newpod: 'Over quota'},
+      values: {used: {text: '3 + 2 > 4', tone: 'bad'}, result: {text: 'Rejected', tone: 'bad'}},
+    },
+    {
+      short: 'requests',
+      kind: '주의',
+      title: 'Pods without requests are rejected too',
+      text: [
+        'In a namespace whose quota covers CPU and memory, pods must set requests (a reservation: "I need at least this much") and limits. Pods without them are rejected.',
+        'A quota adds up totals and compares them to the cap, so it cannot count empty values. If you set defaults with a LimitRange (per-container defaults and min/max), pods that omit values get the defaults filled in, and this problem shrinks.',
+      ],
+      keyIdea: 'When deploying to a namespace with a quota, first check that you set requests. Also run kubectl get limitrange to see whether defaults exist.',
+      flows: [
+        {from: 'user', to: 'api', label: 'No requests', type: 'request'},
+        {from: 'api', to: 'user', label: 'Rejected', type: 'response'},
+      ],
+      focus: ['newpod', 'api'],
+      badges: {newpod: 'No requests'},
+      values: {used: 'CPU 3 / 4', result: {text: 'Rejected', tone: 'bad'}},
+    },
+    {
+      short: 'Permissions',
+      kind: '원리',
+      title: 'Permissions are also split by namespace',
+      text: [
+        'Kubernetes permissions (RBAC) have two scopes. ClusterRole and ClusterRoleBinding apply to the whole cluster. Role and RoleBinding apply within one namespace only.',
+        'A user granted permissions only through a RoleBinding in team-a can view and change only resources in team-a. The namespace becomes the permission boundary.',
+      ],
+      keyIdea: 'Give teams permissions only within their own namespace, and not permission to edit ResourceQuotas. Quotas mean something only when cluster admins set the namespaces and caps.',
+      flows: [
+        {from: 'user', to: 'rbac', label: 'kubectl request', type: 'request'},
+        {from: 'rbac', to: 'api', label: 'team-a only', type: 'request'},
+      ],
+      focus: ['rbac', 'podsA'],
+      status: {newpod: 'gone'},
+      badges: {newpod: null},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Namespaces divide names and permissions; quotas divide amounts',
+      text: [
+        'A namespace draws the boundary for names and permissions, and a resource quota caps how much that namespace can use. The API server rejects pods that exceed the cap or lack requests at creation time.',
+        'RBAC uses the same namespaces as its unit of permission. So "which namespace" decides both what you can see and how much you can use.',
+      ],
+      keyIdea: 'Namespaces divide names and permissions; resource quotas divide how much you can use. If pods do not scale up, check events for exceeded quota and Used and Hard in kubectl describe quota first.',
+      focus: ['quota', 'rbac'],
+    },
+  ]}
+/>
+
+## Try it yourself
+
+```bash
+kubectl get namespaces
+kubectl describe quota -n team-a          # Hard (cap) and Used (usage)
+kubectl get limitrange -n team-a          # Default requests and limits
+kubectl get events -n team-a | grep -i quota
+kubectl auth can-i create resourcequotas -n team-a
+```
+
+Further reading: [Namespaces](https://kubernetes.io/docs/concepts/overview/working-with-objects/namespaces/) · [Resource quotas](https://kubernetes.io/docs/concepts/policy/resource-quotas/) · [Limit ranges](https://kubernetes.io/docs/concepts/policy/limit-range/) · [Using RBAC authorization](https://kubernetes.io/docs/reference/access-authn-authz/rbac/)
+
+Next lesson: [Sharing GPUs](./gpu-sharing.mdx)

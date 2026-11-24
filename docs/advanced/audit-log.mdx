@@ -1,0 +1,174 @@
+---
+id: audit-log
+title: Audit Logs
+sidebar_label: 11 · Audit Logs
+description: Follow the audit log in which the API server records who did what and when for every request, through audit policy levels, tracing a Secret read, and shipping logs to external storage, step by step with animation
+hide_table_of_contents: true
+---
+
+# Audit Logs
+
+"Who read the production database password yesterday?" To answer that, a record must be left as the request passes through. Let's follow what the Kubernetes API server's audit log records, at what level, and where it is sent for keeping. The gates a request passes inside the API server are covered first in [How an API Request Gets Stored](./api-request-path.mdx).
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~10 min', level: 'Advanced'}}
+  nodes={[
+    {id: 'user', label: 'Developer A', sub: 'kubectl', icon: 'user', tone: 'ext', x: 85, y: 110, show: true},
+    {id: 'api', label: 'API server', sub: 'entry for all requests', icon: 'gate', tone: 'cp', x: 355, y: 110, show: true},
+    {id: 'log', label: 'Audit log', sub: 'per-request records', icon: 'archive', tone: 'store', x: 625, y: 110},
+    {id: 'store', label: 'Log storage', sub: 'long-term', icon: 'cloud', tone: 'ext', x: 895, y: 110},
+    {id: 'policy', label: 'Audit policy', sub: 'rules file', icon: 'book', tone: 'store', x: 355, y: 300},
+    {id: 'secret', label: 'db-pass', sub: 'Secret', icon: 'ticket', tone: 'store', x: 625, y: 300},
+    {id: 'sec', label: 'Security team', sub: 'investigation', icon: 'user', tone: 'ext', x: 895, y: 300},
+  ]}
+  metrics={[
+    {id: 'level', label: 'Applied level'},
+    {id: 'record', label: 'What was recorded'},
+  ]}
+  learn={[
+    {text: 'What one audit log entry contains', at: 1},
+    {text: 'None vs Metadata vs Request vs RequestResponse', at: 2},
+    {text: 'Why Secret requests must not be logged in detail', at: 4},
+    {text: 'Why logs must be kept outside the cluster', at: 6},
+  ]}
+  steps={[
+    {
+      short: 'Request',
+      kind: '시작',
+      title: 'Every action is a request to the API server',
+      text: [
+        'Whether you click a dashboard button or type a command, every Kubernetes action is a request to the API server.',
+        'So recording at the API server alone captures who did what, without gaps. But recording starts only when you provide an audit policy.',
+      ],
+      flows: [{from: 'user', to: 'api', label: 'Request', type: 'request'}],
+      focus: ['api'],
+      values: {level: 'No policy', record: 'None'},
+    },
+    {
+      short: 'One entry',
+      kind: '원리',
+      title: 'Each request leaves one entry: who, when, what',
+      text: [
+        'An audit entry holds the requester (a person or ServiceAccount), the time, the target resource and namespace, the verb (get, create, delete, etc.) and the result code.',
+        'Requests that failed authentication or were denied for lack of permission are recorded too. What someone tried and was blocked from is also part of the audit.',
+      ],
+      changes: ['+ who: user A', '+ when: request time', '+ on what: secrets/db-pass', '+ verb: get', '+ result: 200'],
+      flows: [{from: 'api', to: 'log', label: 'Record', type: 'request'}],
+      focus: ['log'],
+      values: {record: '1 request'},
+    },
+    {
+      short: 'Policy',
+      kind: '원리',
+      title: 'The audit policy decides what to record and at what level',
+      text: [
+        'There are four levels. None records nothing. Metadata records who, when, on what, which verb and the result. Request adds the request body. RequestResponse adds the response body too.',
+        'A policy is a list of rules, matched from the top, and the first matching rule\'s level applies. So rule order changes the outcome.',
+      ],
+      keyIdea: 'Recording more is not better. An audit policy is a design decision about what to record and at what level.',
+      changes: ['+ Secrets: Metadata', '+ other changes: Request', '+ frequent, low-value requests: None'],
+      flows: [{from: 'policy', to: 'api', label: 'Rules', type: 'watch'}],
+      focus: ['policy'],
+      values: {level: 'Varies by rule'},
+    },
+    {
+      short: 'Read Secret',
+      kind: '원리',
+      title: 'Developer A reads a Secret',
+      text: [
+        'Developer A reads the db-pass Secret with get. A has permission, so the request succeeds.',
+        'The policy\'s first rule says to log Secrets at Metadata, so only who read which Secret and when is recorded. The secret value is not.',
+      ],
+      flows: [
+        {from: 'user', to: 'api', label: 'get secret', type: 'request'},
+        {from: 'api', to: 'secret', label: 'Read', type: 'request'},
+        {from: 'api', to: 'log', label: 'Metadata', type: 'request'},
+      ],
+      focus: ['secret', 'log'],
+      badges: {log: 'Metadata'},
+      values: {level: 'Metadata', record: 'Who · what only'},
+    },
+    {
+      short: 'Body risk',
+      kind: '주의',
+      title: 'Logging Secrets at RequestResponse leaves secrets in the log',
+      text: [
+        'If Secret requests are logged at RequestResponse, the response body, that is, the secret value, is written to the audit log as is.',
+        'The audit log itself then becomes a new leak path. Storage use also jumps.',
+      ],
+      keyIdea: 'Audit logs are data that can hold secrets too. Log Secrets at Metadata, and control access to the logs separately.',
+      flows: [{from: 'api', to: 'log', label: 'With body', type: 'request'}],
+      focus: ['log'],
+      status: {log: 'error'},
+      badges: {log: 'RequestResponse'},
+      values: {level: {text: 'RequestResponse', tone: 'bad'}, record: {text: 'Contains secret', tone: 'bad'}},
+    },
+    {
+      short: 'Trace',
+      kind: '원리',
+      title: 'Security finds out "who read it"',
+      text: [
+        'With the policy back at Metadata, the security team searches for get records on db-pass. The requester and time show up at once.',
+        'Next they check whether that read permission was really needed, and whether there were other odd requests at that time. Even a read-only role needs this kind of tracing if it includes reading Secrets.',
+      ],
+      flows: [{from: 'sec', to: 'log', label: 'Search', type: 'request'}],
+      focus: ['sec', 'log'],
+      status: {log: null},
+      badges: {log: 'Metadata'},
+      values: {level: {text: 'Metadata', tone: 'good'}, record: {text: 'Who · when found', tone: 'good'}},
+    },
+    {
+      short: 'Storage',
+      kind: '원리',
+      title: 'Ship logs to storage outside the cluster',
+      text: [
+        'The API server can write audit records to a file on the control plane node, or send them to an external collector via webhook.',
+        'If they stay only in a file on the node, they vanish when the node is lost or an attacker deletes them. So move them to log storage and search there.',
+      ],
+      flows: [
+        {from: 'log', to: 'store', label: 'Ship', type: 'request'},
+        {from: 'sec', to: 'store', label: 'Query', type: 'request'},
+      ],
+      focus: ['store'],
+      status: {store: 'ok'},
+    },
+    {
+      short: 'Retention',
+      kind: '주의',
+      title: 'Set retention and export procedures to make logs usable for audits',
+      text: [
+        'Decide how long to keep records, and who hands them over by what procedure when an audit request comes. Only then are they usable in a real audit.',
+        'Set retention to match security rules or audit requirements. API server log files rotate with --audit-log-maxage and --audit-log-maxbackup, so move records you need to keep longer to separate storage.',
+      ],
+      flows: [{from: 'log', to: 'store', label: 'Retention', type: 'request'}],
+      focus: ['store', 'policy'],
+      status: {store: 'warn'},
+    },
+    {
+      short: 'Recap',
+      kind: '정리',
+      title: 'What, at what level, where, and for how long',
+      text: [
+        'The API server recorded each request according to the audit policy and shipped the records to storage, where we later found who did what.',
+        'Sensitive resources like Secrets must be logged only at Metadata, so the audit log does not become a leak path.',
+      ],
+      keyIdea: 'Audit logs record who did what and how. Always record permission changes, Secret reads and deletions, and log sensitive resources at Metadata so the log does not become a leak.',
+      focus: ['policy', 'log', 'store'],
+    },
+  ]}
+/>
+
+## Levels at a glance
+
+| Level | What is recorded | When to use |
+| --- | --- | --- |
+| None | Nothing | Frequent requests with no audit value |
+| Metadata | Who, when, on what, which verb, result | Resources with secrets in the body, like Secrets |
+| Request | Above + request body | Changes where what they tried to change matters |
+| RequestResponse | Above + response body | Only where truly needed. Large storage, and secrets may be kept |
+
+Further reading: [Auditing](https://kubernetes.io/docs/tasks/debug/debug-cluster/audit/) · [Using RBAC authorization](https://kubernetes.io/docs/reference/access-authn-authz/rbac/)
+
+Next lesson: [SLOs and Alert Design](./slo-alert.mdx)

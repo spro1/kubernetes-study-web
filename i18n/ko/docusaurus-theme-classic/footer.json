@@ -1,0 +1,46 @@
+{
+  "link.title.Lessons": {
+    "message": "레슨",
+    "description": "The title of the footer links column with title=Lessons in the footer"
+  },
+  "link.title.Project": {
+    "message": "프로젝트",
+    "description": "The title of the footer links column with title=Project in the footer"
+  },
+  "link.title.Official docs": {
+    "message": "공식 문서",
+    "description": "The title of the footer links column with title=Official docs in the footer"
+  },
+  "link.item.label.All lessons": {
+    "message": "전체 레슨",
+    "description": "The label of footer link with label=All lessons linking to /lessons"
+  },
+  "link.item.label.How a Pod starts": {
+    "message": "파드가 뜨기까지",
+    "description": "The label of footer link with label=How a Pod starts linking to /k8s/pod-startup"
+  },
+  "link.item.label.Cloud service models": {
+    "message": "클라우드 서비스 모델",
+    "description": "The label of footer link with label=Cloud service models linking to /cloud/service-models"
+  },
+  "link.item.label.GitHub": {
+    "message": "GitHub",
+    "description": "The label of footer link with label=GitHub linking to https://github.com/spro1/kubernetes-study-web"
+  },
+  "link.item.label.Issues & ideas": {
+    "message": "이슈·제안",
+    "description": "The label of footer link with label=Issues & ideas linking to https://github.com/spro1/kubernetes-study-web/issues"
+  },
+  "link.item.label.Kubernetes docs": {
+    "message": "Kubernetes 문서",
+    "description": "The label of footer link with label=Kubernetes docs linking to https://kubernetes.io/docs/home/"
+  },
+  "link.item.label.CNCF Landscape": {
+    "message": "CNCF Landscape",
+    "description": "The label of footer link with label=CNCF Landscape linking to https://landscape.cncf.io/"
+  },
+  "copyright": {
+    "message": "If this helped, a ⭐ on GitHub keeps it going. Built with Docusaurus.",
+    "description": "The footer copyright"
+  }
+}

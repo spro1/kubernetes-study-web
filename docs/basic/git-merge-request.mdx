@@ -1,0 +1,189 @@
+---
+id: git-merge-request
+title: From Branch to Merge Request
+sidebar_label: 07 · Merge Request
+description: Follow in animation how one code change goes from repository, commit and branch through a merge request, code review, conflict and tag into the main line
+hide_table_of_contents: true
+---
+
+# From Branch to Merge Request
+
+Every CI/CD flow starts from one change (a commit) recorded in a Git repository. Follow how changes from two developers working at the same time go through review, get merged into the main line, and get a release version label.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~10 min', level: 'Beginner'}}
+  groups={[
+    {label: 'Remote repo (GitLab, etc.)', x: 240, y: 20, w: 200, h: 400, tone: 'mgmt'},
+  ]}
+  nodes={[
+    {id: 'devA', label: 'Developer A', sub: 'Login page', icon: 'user', tone: 'ext', x: 90, y: 95, w: 140, show: true},
+    {id: 'devB', label: 'Developer B', sub: 'Edits same page', icon: 'user', tone: 'ext', x: 90, y: 345, w: 140, show: true},
+    {id: 'feat', label: 'feat-login', sub: 'A\'s branch', icon: 'split', tone: 'node', x: 340, y: 95},
+    {id: 'main', label: 'main', sub: 'Main line', icon: 'git', tone: 'store', x: 340, y: 220, show: true},
+    {id: 'featB', label: 'feat-copy', sub: 'B\'s branch', icon: 'split', tone: 'node', x: 340, y: 345},
+    {id: 'mr', label: 'MR', sub: 'Merge request', icon: 'ticket', tone: 'cp', x: 600, y: 95, w: 160},
+    {id: 'ci', label: 'Auto checks', sub: 'Build · test', icon: 'hammer', tone: 'cp', x: 850, y: 95},
+    {id: 'rev', label: 'Reviewer', sub: 'Fellow developer', icon: 'user', tone: 'ext', x: 850, y: 250},
+    {id: 'tag', label: 'v1.4.2', sub: 'Tag', icon: 'book', tone: 'store', x: 600, y: 345},
+  ]}
+  metrics={[
+    {id: 'branch', label: 'Where A works'},
+    {id: 'mr', label: 'Merge request'},
+    {id: 'main', label: 'main status'},
+  ]}
+  learn={[
+    {text: 'Local vs remote repository', at: 0},
+    {text: 'What one commit contains', at: 2},
+    {text: 'What merge requests and code review do', at: 4},
+    {text: 'Why conflicts happen and who resolves them', at: 6},
+    {text: 'Git tags vs image tags', at: 7},
+  ]}
+  steps={[
+    {
+      short: 'Clone',
+      kind: '시작',
+      title: 'Clone the remote repository to your PC',
+      text: [
+        'A repository holds files and their full change history. The team\'s shared source of truth is the remote repository on a server, and each person has a local repository on their PC.',
+        'Developer A runs clone once to download the whole remote repository. After that, new history comes in with pull.',
+      ],
+      keyIdea: 'Instead of file names like "plan_final_really_final", the history records who changed what, when, and why.',
+      flows: [{from: 'main', to: 'devA', label: 'clone', type: 'response'}],
+      focus: ['main', 'devA'],
+      values: {branch: 'main', mr: 'None', main: 'Healthy'},
+    },
+    {
+      short: 'Branch',
+      kind: '원리',
+      title: 'Split a work line off the main line',
+      text: [
+        'A branch is a line of work that splits off within the same repository. A fixes the login page on the feat-login branch without touching main.',
+        'Meanwhile B works on something else in the feat-copy branch. Unfinished work from each person does not mix.',
+      ],
+      flows: [{from: 'main', to: 'feat', label: 'Branch off', type: 'request'}],
+      focus: ['feat'],
+      values: {branch: 'feat-login'},
+    },
+    {
+      short: 'Commit',
+      kind: '원리',
+      title: 'Record changes as a commit and push',
+      text: [
+        'A commit is one record saying "at this point, these files changed like this". It holds the commit hash, author and time, the commit message, the changes, and the previous commit.',
+        'A commits on the PC, then pushes to feat-login in the remote repository. Each commit points to the one before it, forming an unbroken chain.',
+      ],
+      keyIdea: 'A good commit message says what changed and why in one line. A message like "fix" is useless later.',
+      changes: ['+ Commit 1a5f75f "Add login error message"'],
+      flows: [{from: 'devA', to: 'feat', label: 'push', type: 'request'}],
+      focus: ['feat'],
+      badges: {feat: '1a5f75f'},
+    },
+    {
+      short: 'Open MR',
+      kind: '원리',
+      title: 'Ask to merge instead of merging directly',
+      text: [
+        'A does not merge feat-login into main directly. A opens a merge request (MR). GitHub calls the same thing a pull request (PR).',
+        'A merge request gathers the changed lines, review comments, automated check results and approval status in one place.',
+      ],
+      flows: [{from: 'feat', to: 'mr', label: 'Please merge', type: 'request'}],
+      focus: ['mr'],
+      values: {mr: 'Open'},
+    },
+    {
+      short: 'Check · review',
+      kind: '원리',
+      title: 'Automated checks and peer review',
+      text: [
+        'When a merge request opens, automated checks (CI) run to see if build and tests pass, and peers comment on each changed line.',
+        'If changes are needed, A pushes more commits to the branch and gets them checked again in the same merge request.',
+      ],
+      keyIdea: 'Code review does more than find bugs. It shares "who changed what and why" with the team and leaves a record of the reasoning.',
+      flows: [
+        {from: 'mr', to: 'ci', label: 'Build · test', type: 'request'},
+        {from: 'mr', to: 'rev', label: 'Request review', type: 'request'},
+        {from: 'rev', to: 'mr', label: 'Approve', type: 'response', bend: 0.15},
+      ],
+      focus: ['ci', 'rev'],
+      status: {ci: 'ok', rev: 'ok'},
+      badges: {ci: 'Passed'},
+      values: {mr: {text: 'Checks pass · approved', tone: 'good'}},
+    },
+    {
+      short: 'Merge',
+      kind: '원리',
+      title: 'Once approved, merge into the main line',
+      text: [
+        'A merge combines the changes of one branch into another. The feat-login commits go into main.',
+        'Review comments and check results stay recorded in the merge request. Look here later when you need the reasoning behind a decision.',
+      ],
+      flows: [{from: 'mr', to: 'main', label: 'Merge', type: 'request'}],
+      focus: ['main'],
+      status: {ci: null, rev: null},
+      badges: {ci: null, main: 'A\'s change in'},
+      values: {branch: 'Merged into main', mr: 'Merged'},
+    },
+    {
+      short: 'Conflict',
+      kind: '문제',
+      title: 'Different edits to the same line cause a conflict',
+      text: [
+        'B pushes feat-copy and tries to merge too. But B changed the same line A changed, in a different way. Git cannot decide which one is right.',
+        'This is a conflict. It is not an error but a sign that a human must decide. B looks at both versions and decides how to combine them.',
+      ],
+      keyIdea: 'The longer people edit the same area separately, the more conflicts you get. Keep branches short and merge often.',
+      flows: [
+        {from: 'devB', to: 'featB', label: 'push', type: 'request'},
+        {from: 'featB', to: 'main', label: 'Try merge', type: 'request'},
+      ],
+      focus: ['featB'],
+      status: {featB: 'error'},
+      badges: {featB: 'Conflict', main: null},
+      values: {main: {text: 'B\'s change on hold', tone: 'bad'}},
+    },
+    {
+      short: 'Tag',
+      kind: '원리',
+      title: 'Label the commit at release time',
+      text: [
+        'After resolving the conflict and merging B\'s change, put the tag v1.4.2 on the commit to release. Commit hashes are hard to remember.',
+        'A Git tag is a label on a commit. A container image tag is a label on an image version. They label different things.',
+      ],
+      changes: ['~ feat-copy conflict resolved, merged into main', '+ Tag v1.4.2'],
+      flows: [{from: 'main', to: 'tag', label: 'Label', type: 'request'}],
+      focus: ['tag'],
+      status: {featB: 'ok', tag: 'ok'},
+      badges: {featB: null, tag: 'Release'},
+      values: {main: {text: 'v1.4.2 released', tone: 'good'}},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'One change leaves a trail of records',
+      text: [
+        'Commit on a branch, pass checks and review in a merge request, merge into the main line, and tag it at release.',
+        'Each step leaves a record, so you can later trace "what went into this deploy".',
+      ],
+      keyIdea: 'A commit is a change record, a branch is a split line of work, a merge request is the review before merging, and a tag is a release label. You should always be able to trace which commit a deployed image came from.',
+      focus: ['main', 'mr'],
+    },
+  ]}
+/>
+
+## Terms and hands-on
+
+| Term | Meaning in one line | How to check |
+| --- | --- | --- |
+| Commit hash | A unique string for each commit | `git log --oneline` shows the 7-character short hash and message |
+| Branch | A split-off line of work | Create with `git switch -c feature/login`, list with `git branch` |
+| Merge request | A request to merge, plus the review record | GitLab calls it a merge request, GitHub a pull request. Preview the diff with `git diff main` |
+| Conflict | The same line changed in different ways | Not an error. Find conflicted files with `git status`, fix them by hand, then commit |
+| Tag | A label on a commit | Add with `git tag v1.2.0`. Not the same as an image tag |
+
+If you put the commit hash or Git tag in the image tag, you can trace which code an image running in the cluster came from. See the running image in the Image field of `kubectl describe deployment <name>`.
+
+Further reading: [Pro Git](https://git-scm.com/book/en/v2) · [GitLab merge requests](https://docs.gitlab.com/ee/user/project/merge_requests/) · [GitHub pull requests](https://docs.github.com/en/pull-requests)
+
+Next lesson: [How a Pipeline Runs](./cicd-pipeline.mdx)

@@ -1,0 +1,196 @@
+---
+id: volume-binding
+title: 볼륨이 붙는 시점과 장애
+sidebar_label: 07 · 볼륨이 붙는 시점과 장애
+description: 볼륨을 언제 만들지 정하는 바인딩 모드, 노드가 고장 났을 때 로컬 볼륨과 네트워크 스토리지의 차이, RWO의 여러 노드 문제, 볼륨 확장과 스냅샷을 애니메이션으로 따라간다
+hide_table_of_contents: true
+---
+
+# 볼륨이 붙는 시점과 장애
+
+PVC로 신청하고 PV로 받는 기본 순서는 [저장 공간이 붙기까지](../k8s/storage-volume.mdx)에서 보았다. 이 레슨은 그 다음, **볼륨을 언제 어디에 만드느냐**와 **노드가 고장 났을 때 데이터가 어떻게 되느냐**를 따라간다.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '약 10분', level: '고급'}}
+  groups={[
+    {label: 'node-1', x: 470, y: 30, w: 220, h: 280, tone: 'biz'},
+    {label: 'node-2', x: 760, y: 30, w: 220, h: 280, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'pvc', label: 'PVC', sub: 'data · 10Gi', icon: 'ticket', tone: 'store', x: 95, y: 100, show: true},
+    {id: 'sc', label: 'StorageClass', sub: '바인딩 모드', icon: 'layers', tone: 'cp', x: 95, y: 330, show: true},
+    {id: 'sched', label: '스케줄러', sub: '파드 둘 노드', icon: 'target', tone: 'cp', x: 340, y: 100, show: true},
+    {id: 'pod1', label: 'db', sub: 'node-1', icon: 'pod', tone: 'app', size: 'sm', x: 580, y: 235},
+    {id: 'local1', label: '로컬 디스크', sub: 'node-1', icon: 'disk', tone: 'store', x: 580, y: 105, show: true},
+    {id: 'pod2', label: 'db', sub: 'node-2', icon: 'pod', tone: 'app', size: 'sm', x: 870, y: 235},
+    {id: 'local2', label: '로컬 디스크', sub: 'node-2', icon: 'disk', tone: 'store', x: 870, y: 105, show: true},
+    {id: 'snap', label: '스냅샷', sub: '특정 시점 사본', icon: 'archive', tone: 'store', x: 880, y: 390},
+    {id: 'net', label: '스토리지', sub: 'NFS·SAN 등', icon: 'db', tone: 'store', x: 640, y: 390},
+  ]}
+  metrics={[
+    {id: 'pvc', label: 'PVC 상태'},
+    {id: 'pod', label: '파드 상태'},
+    {id: 'where', label: '데이터 위치'},
+  ]}
+  learn={[
+    {text: 'Immediate와 WaitForFirstConsumer의 차이', at: 1},
+    {text: '파드를 기다리는 Pending은 정상이라는 것', at: 2},
+    {text: '노드 고장 때 로컬 볼륨과 네트워크 스토리지의 차이', at: 3},
+    {text: 'RWO가 "한 노드"라는 뜻인 이유', at: 5},
+    {text: '확장은 늘리기만, 스냅샷은 백업이 아니라는 것', at: 7},
+  ]}
+  steps={[
+    {
+      short: '언제?',
+      kind: '시작',
+      title: '스토리지 클래스가 볼륨을 만들 시점을 정한다',
+      text: [
+        'db 앱이 10Gi짜리 PVC를 신청했다. 실제 볼륨을 언제 만들지는 스토리지 클래스의 바인딩 모드(volumeBindingMode)가 정한다.',
+        '선택지는 PVC가 생기자마자 만드는 Immediate와, 그 PVC를 쓰는 파드가 노드에 배치될 때 만드는 WaitForFirstConsumer 두 가지다.',
+      ],
+      flows: [{from: 'pvc', to: 'sc', label: '언제 만들까', type: 'request'}],
+      focus: ['sc'],
+      values: {pvc: 'Pending', pod: '없음', where: '-'},
+    },
+    {
+      short: '너무 이름',
+      kind: '문제',
+      title: 'Immediate는 파드가 갈 노드를 모른 채 만든다',
+      text: [
+        'Immediate는 파드가 어디에 놓일지 정해지기 전에 볼륨부터 만든다. 로컬 디스크처럼 특정 노드에 묶이는 스토리지라면 아무 노드에나 먼저 만들어질 수 있다.',
+        '파드가 배치될 노드와 다른 곳에 볼륨이 먼저 만들어지면, 파드는 그 볼륨을 붙이지 못해 영영 뜨지 못한다.',
+      ],
+      keyIdea: 'Immediate는 어느 노드에서든 접근할 수 있는 네트워크 스토리지에 알맞다.',
+      flows: [
+        {from: 'sc', to: 'local2', label: '바로 생성', type: 'request', bend: 0.16},
+        {from: 'sched', to: 'pod1', label: 'node-1 배치', type: 'request'},
+      ],
+      focus: ['local2', 'pod1'],
+      status: {local2: 'warn', pod1: 'error'},
+      badges: {local2: '볼륨 여기'},
+      values: {pvc: 'Bound', pod: {text: '뜨지 못함', tone: 'bad'}, where: 'node-2 디스크'},
+    },
+    {
+      short: '기다림',
+      kind: '원리',
+      title: 'WaitForFirstConsumer는 파드 자리가 정해진 뒤 만든다',
+      text: [
+        '이 모드에서는 PVC를 만들어도 파드가 생길 때까지 Pending이다. 이벤트에는 "첫 소비자를 기다리는 중"이라는 뜻의 메시지가 찍힌다. 정상 동작이다.',
+        '파드가 생기고 스케줄러가 node-1을 고르면, 그제야 node-1의 디스크에 볼륨을 만든다. 파드와 볼륨이 같은 노드에 놓인다.',
+      ],
+      keyIdea: '로컬 디스크처럼 위치가 중요한 스토리지에는 WaitForFirstConsumer를 쓴다. Local Path Provisioner(예: Rancher local-path)가 이런 로컬 디스크 방식이다.',
+      flows: [
+        {from: 'sched', to: 'pod1', label: 'node-1 배치', type: 'request'},
+        {from: 'sc', to: 'local1', label: '여기에 생성', type: 'request'},
+      ],
+      focus: ['pod1', 'local1'],
+      status: {local2: null, pod1: 'ok', local1: 'ok'},
+      badges: {local2: null, local1: '볼륨 여기'},
+      values: {pvc: 'Bound', pod: {text: 'Running', tone: 'good'}, where: 'node-1 디스크'},
+    },
+    {
+      short: '노드 고장',
+      kind: '장애',
+      title: '로컬 볼륨은 노드와 운명을 같이한다',
+      text: [
+        'node-1이 고장 났다. 데이터는 node-1 디스크에만 있으므로 db 파드를 node-2로 옮겨도 붙일 볼륨이 없다.',
+        '파드는 node-1이 돌아올 때까지 뜨지 못한다. 디스크까지 망가졌다면 데이터도 잃는다.',
+      ],
+      keyIdea: '로컬 볼륨을 쓰는 데이터베이스라면 데이터베이스 자체 복제와 복제본의 노드 분산이 꼭 필요하다.',
+      flows: [{from: 'pod1', to: 'pod2', label: '옮길 수 없음', type: 'request'}],
+      focus: ['local1', 'pod2'],
+      status: {pod1: 'error', local1: 'error', pod2: 'off'},
+      values: {pod: {text: '뜨지 못함', tone: 'bad'}},
+    },
+    {
+      short: '다시 연결',
+      kind: '원리',
+      title: '네트워크 스토리지는 다른 노드에 다시 붙인다',
+      text: [
+        '같은 db가 네트워크 스토리지를 썼다면, 볼륨을 node-1에서 분리해 node-2에 다시 붙이면 된다. 데이터는 스토리지 장비에 그대로 있다.',
+        '다만 RWO 볼륨은 node-1에서 분리됐다는 확인이 올 때까지 새 노드에 붙이지 않는다. 그래서 파드가 몇 분씩 ContainerCreating에 머물 수 있다.',
+      ],
+      keyIdea: '쿠버네티스는 노드가 정말 죽었는지 네트워크만 끊겼는지 알 수 없다. 이 기다림은 버그가 아니라 데이터 손상을 막는 동작이다.',
+      changes: ['~ 볼륨 연결 node-1 → node-2'],
+      flows: [{from: 'net', to: 'pod2', label: '다시 연결', type: 'request'}],
+      focus: ['net', 'pod2'],
+      status: {local1: null, pod2: 'warn'},
+      badges: {local1: null, net: '볼륨 여기'},
+      values: {pod: 'ContainerCreating', where: '스토리지 장비'},
+    },
+    {
+      short: 'RWO',
+      kind: '주의',
+      title: 'RWO는 "한 파드"가 아니라 "한 노드"다',
+      text: [
+        '복구 뒤 db 레플리카를 1에서 2로 늘렸더니, node-2에 놓인 파드만 ContainerCreating에 머문다. RWO(ReadWriteOnce) 볼륨이 이미 node-1에 붙어 있기 때문이다.',
+        '같은 노드의 파드끼리는 RWO 볼륨을 함께 쓸 수 있다. 여러 노드에서 쓰려면 RWX(ReadWriteMany)를 지원하는 스토리지가 필요하다.',
+      ],
+      keyIdea: '파드 하나로만 제한하려면 RWOP(ReadWriteOncePod)를 쓴다. 스토리지 클래스가 지원하지 않는 접근 모드를 요청하면 PVC가 Pending으로 남는다.',
+      flows: [
+        {from: 'net', to: 'pod1', label: '붙어 있음', type: 'request'},
+        {from: 'net', to: 'pod2', label: '연결 대기', type: 'request'},
+      ],
+      focus: ['pod2'],
+      status: {pod1: 'ok', pod2: 'warn'},
+      values: {pod: '1개 Running · 1개 대기'},
+    },
+    {
+      short: '확장',
+      kind: '원리',
+      title: '용량은 늘릴 수만 있다',
+      text: [
+        '스토리지 클래스에 allowVolumeExpansion: true가 있으면 PVC의 용량 값을 10Gi에서 20Gi로 고쳐 볼륨을 키울 수 있다.',
+        '줄이는 것은 지원되지 않는다. 드라이버에 따라 파드를 다시 시작해야 파일 시스템까지 늘어나는 경우도 있다.',
+      ],
+      changes: ['~ PVC 용량 10Gi → 20Gi'],
+      flows: [{from: 'pvc', to: 'net', label: '10Gi → 20Gi', type: 'request'}],
+      focus: ['pvc', 'net'],
+      status: {pod2: null},
+      badges: {net: '20Gi'},
+      values: {pod: 'Running'},
+    },
+    {
+      short: '스냅샷',
+      kind: '주의',
+      title: '스냅샷은 빠르지만 백업을 대신하지 못한다',
+      text: [
+        '스냅샷은 볼륨의 특정 시점 상태를 저장 장비 안에 떠 두는 것이다. VolumeSnapshot·VolumeSnapshotClass 자원과 스냅샷 컨트롤러가 함께 있어야 동작한다.',
+        '대개 같은 장비 안에 있으므로 장비가 고장 나면 스냅샷도 함께 잃을 수 있다. 잃지 않으려면 다른 장소에 백업을 따로 둔다.',
+      ],
+      keyIdea: 'CSI 드라이버를 설치해도 스냅샷 컨트롤러와 VolumeSnapshotClass가 없으면 스냅샷이 동작하지 않는다. kubectl get volumesnapshotclass로 먼저 확인한다.',
+      flows: [{from: 'net', to: 'snap', label: '시점 복사', type: 'request'}],
+      focus: ['snap'],
+      status: {snap: 'ok'},
+      badges: {snap: '같은 장비 안'},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '평소엔 같아 보여도 장애 때 달라진다',
+      text: [
+        '바인딩 모드는 볼륨을 만들 시점을, 스토리지 종류는 노드 고장 때 파드가 옮겨 갈 수 있는지를, 접근 모드는 몇 노드에서 붙일 수 있는지를 정한다.',
+        'Pending과 ContainerCreating 가운데 일부는 정상적인 기다림이다. 이벤트 메시지를 보면 기다림과 실패를 구분할 수 있다.',
+      ],
+      keyIdea: '바인딩 모드·스토리지 종류·접근 모드가 장애 때의 동작을 가른다. PVC가 Pending이면 kubectl describe pvc의 이벤트로 정상 대기인지 실패인지 먼저 구분한다.',
+      focus: ['sc', 'net'],
+    },
+  ]}
+/>
+
+## 오해와 사실
+
+| 오해 | 사실 |
+| --- | --- |
+| PVC가 Pending이면 고장이다 | WaitForFirstConsumer에서는 파드가 생길 때까지 정상이다 |
+| 로컬 볼륨은 빠르니 늘 좋다 | 노드 고장 때 파드가 다른 노드로 옮겨 가지 못한다 |
+| 노드가 죽으면 볼륨이 바로 다른 노드에 붙는다 | RWO는 이전 노드에서 분리됐다는 확인을 기다린다 |
+| RWO는 파드 하나만 쓸 수 있다는 뜻이다 | 노드 하나다. 같은 노드의 여러 파드는 함께 쓴다 |
+| 볼륨 용량은 나중에 줄이면 된다 | 늘리기만 된다 |
+| 스냅샷이 있으니 백업은 필요 없다 | 스냅샷은 같은 장비 안에 있어 장비 고장 때 함께 잃을 수 있다 |
+
+더 읽을거리: [퍼시스턴트 볼륨](https://kubernetes.io/ko/docs/concepts/storage/persistent-volumes/) · [스토리지 클래스](https://kubernetes.io/docs/concepts/storage/storage-classes/) · [볼륨 스냅샷](https://kubernetes.io/docs/concepts/storage/volume-snapshots/)
+
+다음 레슨: [우선순위와 선점](./priority-preemption.mdx)

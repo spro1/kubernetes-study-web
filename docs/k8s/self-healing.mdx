@@ -1,0 +1,184 @@
+---
+id: self-healing
+title: When a Pod Dies (Self-Healing)
+sidebar_label: 05 · When a Pod Dies
+description: Follow, step by step, how the kubelet restarts a dead container and what CrashLoopBackOff means, and how controllers create a replacement pod when a node stops
+hide_table_of_contents: true
+---
+
+# When a Pod Dies (Self-Healing)
+
+When the desired state and the actual state drift apart, Kubernetes brings them back in line on its own. Let's see who revives what, and how, when one container dies and when a whole node stops.
+
+<StepDiagram
+  width={700}
+  height={450}
+  meta={{duration: '~10 min', level: 'Intermediate'}}
+  groups={[
+    {label: 'Control plane', x: 20, y: 30, w: 250, h: 400, tone: 'mgmt'},
+    {label: 'node-1', x: 320, y: 30, w: 360, h: 180, tone: 'biz'},
+    {label: 'node-2', x: 320, y: 250, w: 360, h: 180, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'api', label: 'API server', sub: 'Records state', icon: 'gate', tone: 'cp', x: 145, y: 100, show: true},
+    {id: 'cm', label: 'Controllers', sub: 'Watch nodes·RS', icon: 'gear', tone: 'cp', x: 145, y: 230, show: true},
+    {id: 'sched', label: 'Scheduler', sub: 'Picks a node', icon: 'target', tone: 'cp', x: 145, y: 360, show: true},
+    {id: 'k1', label: 'kubelet', sub: 'node-1', icon: 'agent', tone: 'node', x: 420, y: 120, show: true},
+    {id: 'pa', label: 'app-a', sub: 'Pod', icon: 'pod', tone: 'app', size: 'sm', x: 595, y: 120, show: true},
+    {id: 'k2', label: 'kubelet', sub: 'node-2', icon: 'agent', tone: 'node', x: 420, y: 340, show: true},
+    {id: 'pb', label: 'app-b', sub: 'Pod', icon: 'pod', tone: 'app', size: 'sm', x: 595, y: 300, show: true},
+    {id: 'pc', label: 'app-c', sub: 'Replacement', icon: 'pod', tone: 'app', size: 'sm', x: 595, y: 385},
+  ]}
+  metrics={[
+    {id: 'node1', label: 'node-1 status'},
+    {id: 'restart', label: 'app-a restarts'},
+    {id: 'ready', label: 'Ready / desired'},
+  ]}
+  learn={[
+    {text: 'A dead container is restarted by the kubelet on the same node', at: 2},
+    {text: 'CrashLoopBackOff means "waiting to retry"', at: 3},
+    {text: 'When a node stops, controllers recreate pods on another node', at: 6},
+    {text: 'Each kind of self-healing takes a different amount of time', at: 8},
+  ]}
+  steps={[
+    {
+      short: 'Healthy',
+      kind: '시작',
+      title: 'All healthy, kubelets keep reporting',
+      text: [
+        'Two app pods run on node-1 and node-2. The desired count is 2.',
+        'The kubelet on each node regularly sends an "I am alive" signal (heartbeat) to the API server.',
+      ],
+      flows: [
+        {from: 'k1', to: 'api', label: 'heartbeat', type: 'response'},
+        {from: 'k2', to: 'api', label: 'heartbeat', type: 'response', bend: 0.15},
+      ],
+      status: {pa: 'ok', pb: 'ok'},
+      values: {node1: 'Ready', restart: '0', ready: '2 / 2'},
+    },
+    {
+      short: 'Container dies',
+      kind: '장애',
+      title: 'The app-a container died',
+      text: [
+        'The application exited from running out of memory or an unhandled error. The node itself is fine.',
+        'The pod still exists, but the container inside it has stopped.',
+      ],
+      focus: ['pa'],
+      status: {pa: 'error'},
+      badges: {pa: 'Error'},
+      values: {ready: {text: '1 / 2', tone: 'bad'}},
+    },
+    {
+      short: 'Restart',
+      kind: '원리',
+      title: 'The kubelet on the same node restarts it right away',
+      text: [
+        'The kubelet watches the containers on its node, notices the exit, and restarts the container per the pod restart policy (default Always).',
+        'When a liveness probe keeps failing, the kubelet restarts the container the same way.',
+      ],
+      keyIdea: 'Container restarts are handled by that node\'s kubelet alone. No control plane is involved, so it takes seconds. The pod and the node stay the same.',
+      flows: [{from: 'k1', to: 'pa', label: 'restart', type: 'request'}],
+      focus: ['k1', 'pa'],
+      status: {pa: 'ok'},
+      badges: {pa: 'Restarts 1'},
+      values: {restart: '1', ready: {text: '2 / 2', tone: 'good'}},
+    },
+    {
+      short: 'Keeps dying',
+      kind: '주의',
+      title: 'If it keeps dying, the wait grows longer',
+      text: [
+        'If the problem kills it again right after restart, such as a config error, the kubelet stretches the restart delay: 10s, 20s, 40s… up to 5 minutes.',
+        'This state of waiting for the next restart is CrashLoopBackOff. It signals a problem that restarting will not fix.',
+      ],
+      keyIdea: 'CrashLoopBackOff is a symptom, not a cause. Find the cause in the previous container\'s logs (from the last run).',
+      flows: [{from: 'k1', to: 'pa', label: 'wait, restart', type: 'request'}],
+      focus: ['pa'],
+      status: {pa: 'warn'},
+      badges: {pa: 'CrashLoop'},
+      values: {restart: {text: '5', tone: 'bad'}, ready: {text: '1 / 2', tone: 'bad'}},
+    },
+    {
+      short: 'Node down',
+      kind: '장애',
+      title: 'This time the whole node-1 stopped',
+      text: [
+        'After the earlier problem is fixed and app-a is healthy again, node-1 loses power. The kubelet stopped too, so nothing is left to restart anything.',
+        'Heartbeats from node-1 stop. node-2 keeps reporting.',
+      ],
+      flows: [{from: 'k2', to: 'api', label: 'heartbeat', type: 'response', bend: 0.15}],
+      focus: ['k1'],
+      status: {k1: 'off', pa: 'off'},
+      badges: {pa: null},
+      values: {node1: {text: 'No response', tone: 'bad'}, restart: '0', ready: {text: '1 / 2', tone: 'bad'}},
+    },
+    {
+      short: 'Detect',
+      kind: '원리',
+      title: 'Controllers mark the node NotReady',
+      text: [
+        'Controllers watch node heartbeats. After a period with no signal (tens of seconds), node-1 is marked NotReady.',
+        'Its pods are not moved immediately. It could be a brief network blip, so by default it waits 5 minutes before treating them as needing replacement.',
+      ],
+      flows: [{from: 'api', to: 'cm', label: 'no heartbeat', type: 'watch'}],
+      focus: ['cm'],
+      status: {k1: 'error'},
+      badges: {k1: 'NotReady'},
+      values: {node1: {text: 'NotReady', tone: 'bad'}},
+    },
+    {
+      short: 'Replace',
+      kind: '원리',
+      title: 'A new pod is created to meet the desired count',
+      text: [
+        'When the wait ends, app-a on node-1 becomes a target for eviction. The ReplicaSet controller sees "1 of the desired 2 is missing" and creates a new pod, app-c.',
+        'app-c has no node assigned yet.',
+      ],
+      flows: [{from: 'cm', to: 'api', label: 'create pod', type: 'request'}],
+      focus: ['pc', 'cm'],
+      status: {pc: 'warn', pa: 'off'},
+      badges: {pc: 'Pending', pa: 'Unknown'},
+    },
+    {
+      short: 'Run again',
+      kind: '원리',
+      title: 'It is placed on another node and runs',
+      text: [
+        'The scheduler places app-c on the remaining node-2, and the kubelet on node-2 runs the container.',
+        'Once Ready, the desired count of 2 is met again. app-c is a new pod, so its name and IP differ from app-a.',
+      ],
+      flows: [
+        {from: 'sched', to: 'api', type: 'request', bend: -0.55},
+        {from: 'k2', to: 'pc', label: 'run', type: 'request'},
+      ],
+      focus: ['pc', 'k2'],
+      status: {pc: 'ok', pa: 'gone'},
+      badges: {pc: 'node-2'},
+      values: {ready: {text: '2 / 2', tone: 'good'}},
+    },
+    {
+      short: 'Recap',
+      kind: '정리',
+      title: 'Recovery time depends on who does the healing',
+      text: [
+        'When a container dies, the kubelet on the same node restarts it in seconds. When a node stops, controllers wait and then create a new pod on another node. That takes minutes.',
+        'A service with only one pod goes down during a node failure. That is why you run two or more pods on different nodes.',
+      ],
+      keyIdea: 'RESTARTS in kubectl get pods points to container-level problems. NotReady in kubectl get nodes points to node-level problems. Telling them apart speeds up your response.',
+      focus: ['cm', 'k2'],
+    },
+  ]}
+/>
+
+## Self-healing by failure level
+
+| What stopped | Who revives it | Result | Time taken |
+| --- | --- | --- | --- |
+| Container | That node's kubelet | Container restarts inside the same pod | Seconds (up to 5 min apart if repeated) |
+| Node | Controllers + scheduler | New pod created on another node | Minutes (includes the default 5 min wait) |
+| Pod deleted manually | ReplicaSet controller | New pod created | Seconds |
+
+Further reading: [Pod Lifecycle](https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/) · [Configure Liveness, Readiness and Startup Probes](https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/)
+
+Next lesson: [Config and Secrets (ConfigMap · Secret)](./config-secret.mdx)

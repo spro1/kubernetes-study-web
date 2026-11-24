@@ -1,0 +1,204 @@
+---
+id: cluster-cert
+title: 클러스터 인증서 만료
+sidebar_label: 05 · 클러스터 인증서 만료
+description: 컨트롤 플레인 구성요소가 인증서로 서로를 확인하는 방식과, 만료가 조용히 다가와 어느 순간 통신이 끊기는 과정, 갱신과 재시작, 만료일 감시를 애니메이션으로 따라간다
+hide_table_of_contents: true
+---
+
+# 클러스터 인증서 만료
+
+1년 넘게 잘 돌던 클러스터가 어느 날 아침 갑자기 `kubectl`에 응답하지 않는다. 대표적인 원인이 인증서 만료다. 만료가 어떻게 조용히 다가오고, 어떻게 되살리는지 따라가 본다.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '약 10분', level: '고급'}}
+  groups={[
+    {label: '컨트롤 플레인', x: 210, y: 40, w: 470, h: 385, tone: 'mgmt'},
+    {label: '워커 노드', x: 730, y: 120, w: 240, h: 160, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'user', label: '관리자', sub: 'kubectl', icon: 'user', tone: 'ext', x: 90, y: 200, show: true},
+    {id: 'api', label: 'API 서버', sub: '모든 요청의 입구', icon: 'gate', tone: 'cp', x: 330, y: 200, show: true},
+    {id: 'cm', label: '컨트롤러', sub: '스케줄러 포함', icon: 'gear', tone: 'cp', x: 570, y: 115, show: true},
+    {id: 'etcd', label: 'etcd', sub: '상태 저장소', icon: 'db', tone: 'store', x: 330, y: 360, show: true},
+    {id: 'pki', label: '인증서 파일', sub: '인증서·키 보관', icon: 'shield', tone: 'store', x: 570, y: 300},
+    {id: 'kubelet', label: 'kubelet', sub: '노드 관리자', icon: 'agent', tone: 'node', x: 850, y: 200, show: true},
+    {id: 'alarm', label: '만료 알림', sub: '지표·알림', icon: 'bell', tone: 'ext', x: 850, y: 60},
+  ]}
+  metrics={[
+    {id: 'left', label: '남은 유효기간(예시)'},
+    {id: 'access', label: 'kubectl 접속'},
+    {id: 'node', label: '노드 상태'},
+  ]}
+  learn={[
+    {text: '구성요소들이 인증서로 서로를 확인한다는 것', at: 0},
+    {text: '만료가 경고 없이 정확히 그 시각에 일어나는 이유', at: 2},
+    {text: '어느 인증서가 만료되면 어떤 증상이 나는지', at: 4},
+    {text: '갱신한 뒤 재시작까지 해야 하는 이유', at: 6},
+  ]}
+  steps={[
+    {
+      short: '서로 확인',
+      kind: '시작',
+      title: '구성요소들은 인증서로 서로를 확인한다',
+      text: [
+        '인증서는 "나는 누구다"를 증명하는 전자 신분증이다. API 서버, etcd, kubelet, 관리자용 접속 파일(kubeconfig)이 모두 인증서를 쓴다.',
+        '관리자가 kubectl을 쓸 때도, kubelet이 상태를 보고할 때도, API 서버가 etcd에 기록할 때도 양쪽이 먼저 신분증을 확인한다.',
+      ],
+      flows: [
+        {from: 'user', to: 'api', label: '인증서 제시', type: 'request'},
+        {from: 'kubelet', to: 'api', label: '상태 보고', type: 'request'},
+        {from: 'api', to: 'etcd', label: '기록', type: 'request'},
+      ],
+      focus: ['api'],
+      status: {api: 'ok', etcd: 'ok', kubelet: 'ok'},
+      values: {left: '365일', access: '정상', node: 'Ready'},
+    },
+    {
+      short: '발급',
+      kind: '원리',
+      title: '설치할 때 인증서를 만들어 둔다',
+      text: [
+        '클러스터를 설치할 때 컨트롤 플레인 단계에서 구성요소별 인증서를 만들어 파일로 둔다. 구성요소는 시작할 때 이 파일을 읽는다.',
+        'kubeadm으로 만든 클러스터의 구성요소 인증서는 기본 유효기간이 1년이다. 인증서마다 만료일이 정해져 있다.',
+      ],
+      keyIdea: 'Kubespray 같은 설치 도구도 내부에서 kubeadm을 쓰는 경우가 많다. 다만 실제 유효기간은 설치 구성에 따라 다를 수 있으니 클러스터에서 직접 확인한다.',
+      changes: ['API 서버·etcd·kubelet·kubeconfig 인증서 발급'],
+      flows: [
+        {from: 'pki', to: 'api', label: '시작 때 읽음', type: 'request'},
+        {from: 'pki', to: 'cm', label: '시작 때 읽음', type: 'request'},
+      ],
+      focus: ['pki'],
+      badges: {pki: '유효 1년'},
+    },
+    {
+      short: '조용함',
+      kind: '주의',
+      title: '만료가 다가와도 아무 일도 없다',
+      text: [
+        '만료 한 달 전에도, 하루 전에도 클러스터는 완전히 정상이다. 로그에 경고가 쌓이거나 응답이 느려지는 일도 없다.',
+        '인증서 만료는 사전 경고 없이 정확히 그 시각에 일어난다. 그래서 오래 잘 운영되던 시스템에서 어느 날 갑자기 터진다.',
+      ],
+      keyIdea: '쿠버네티스를 업그레이드하면 컨트롤 플레인 인증서도 함께 갱신된다. 반대로 1년 넘게 업그레이드하지 않은 클러스터가 가장 위험하다.',
+      flows: [
+        {from: 'user', to: 'api', type: 'request'},
+        {from: 'kubelet', to: 'api', type: 'request'},
+      ],
+      focus: ['pki'],
+      status: {pki: 'warn'},
+      badges: {pki: '만료 1일 전'},
+      values: {left: '1일'},
+    },
+    {
+      short: '만료',
+      kind: '장애',
+      title: '만료 시각이 지나면 접속이 거부된다',
+      text: [
+        'API 서버 인증서와 관리자 kubeconfig가 만료되면, kubectl은 "인증서가 만료되었다(x509)"는 오류를 내며 접속하지 못한다.',
+        '같은 인증서로 접속하던 관리 도구와 대시보드도 클러스터에 닿지 못한다. 서버는 켜져 있는데 아무도 들어가지 못하는 상태다.',
+      ],
+      flows: [
+        {from: 'user', to: 'api', label: 'x509 만료', type: 'request'},
+        {from: 'api', to: 'user', label: '거부', type: 'response'},
+      ],
+      focus: ['api', 'user'],
+      status: {api: 'error', pki: 'error'},
+      badges: {pki: '만료'},
+      values: {left: {text: '0일', tone: 'bad'}, access: {text: '실패', tone: 'bad'}},
+    },
+    {
+      short: '번짐',
+      kind: '장애',
+      title: '만료는 다른 연결로 번진다',
+      text: [
+        'etcd 인증서가 만료되면 API 서버가 저장소에 접근하지 못해 클러스터 관리가 멈춘다. kubelet 인증서가 만료되면 그 노드는 NotReady가 된다.',
+        '이미 떠 있는 컨테이너가 곧바로 꺼지지는 않지만, 새 파드를 만들거나 고장 난 파드를 되살리지는 못한다.',
+      ],
+      keyIdea: '증상은 제각각이어도 원인은 하나다. 여러 곳이 같은 시각에 동시에 멈췄다면 인증서 만료를 먼저 의심한다.',
+      flows: [
+        {from: 'api', to: 'etcd', label: '접근 실패', type: 'request'},
+        {from: 'kubelet', to: 'api', label: '보고 실패', type: 'request'},
+      ],
+      focus: ['etcd', 'kubelet'],
+      status: {etcd: 'error', kubelet: 'error'},
+      values: {node: {text: 'NotReady', tone: 'bad'}},
+    },
+    {
+      short: '갱신',
+      kind: '원리',
+      title: '새 인증서를 발급한다',
+      text: [
+        '먼저 어느 인증서가 언제 만료되는지 확인한다. kubeadm 구성이라면 kubeadm certs check-expiration 으로 목록을 본다.',
+        '그다음 kubeadm certs renew 로 만료된 인증서를 새로 발급한다. 인증서 파일만 새것으로 바뀌었고, 구성요소는 아직 옛 인증서를 들고 있다.',
+      ],
+      changes: ['~ 인증서 파일 새로 발급 (유효기간 다시 시작)'],
+      flows: [{from: 'user', to: 'pki', label: '갱신', type: 'request'}],
+      focus: ['pki'],
+      status: {pki: 'ok'},
+      badges: {pki: '새 인증서'},
+      values: {left: '365일'},
+    },
+    {
+      short: '재시작',
+      kind: '주의',
+      title: '구성요소를 재시작해야 새 인증서를 읽는다',
+      text: [
+        '구성요소는 시작할 때 인증서를 읽어 두기 때문에, 파일을 바꿔도 다시 시작하기 전까지는 옛 인증서를 쓴다.',
+        'API 서버, 컨트롤러 매니저, 스케줄러, etcd를 재시작하고 관리자 kubeconfig도 새 인증서가 담긴 파일로 바꿔 나눠 준다.',
+      ],
+      keyIdea: '"갱신했는데 그대로다"의 대부분은 재시작을 빠뜨린 경우다. 갱신과 재시작은 한 묶음의 작업이다.',
+      changes: ['~ 컨트롤 플레인 구성요소 재시작', '~ 관리자 kubeconfig 교체'],
+      flows: [
+        {from: 'pki', to: 'api', label: '다시 읽음', type: 'request'},
+        {from: 'pki', to: 'etcd', label: '다시 읽음', type: 'request'},
+        {from: 'user', to: 'api', label: '접속', type: 'request'},
+      ],
+      focus: ['api', 'etcd'],
+      status: {api: 'ok', etcd: 'ok', kubelet: 'ok'},
+      values: {access: {text: '정상', tone: 'good'}, node: {text: 'Ready', tone: 'good'}},
+    },
+    {
+      short: '감시',
+      kind: '원리',
+      title: '만료일을 지표와 알림으로 관리한다',
+      text: [
+        '만료는 예고 없이 오므로, 사람이 기억하는 대신 만료일을 지표로 모으고 임박하면 알림을 보낸다.',
+        '갱신 자체를 자동화하기도 한다. 애플리케이션이 쓰는 인증서는 cert-manager 같은 인증서 관리 도구가 만료 전에 바꿔 준다.',
+      ],
+      flows: [
+        {from: 'pki', to: 'alarm', label: '만료일', type: 'watch'},
+        {from: 'alarm', to: 'user', label: '30일 전 알림', type: 'response', bend: 0.12},
+      ],
+      focus: ['alarm'],
+      badges: {alarm: '임박 0건'},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '시간이 지나면 문제가 되는 값은 미리 챙긴다',
+      text: [
+        '인증서는 클러스터 안의 모든 연결을 받치고 있고, 만료일이 지나면 그 연결들이 한꺼번에 끊긴다.',
+        '정기 업그레이드, 만료일 감시, 갱신 후 재시작까지 갖춰야 "어느 날 갑자기"를 막을 수 있다.',
+      ],
+      keyIdea: '인증서는 모든 연결의 바탕이고 만료되면 한꺼번에 끊긴다. 만료일을 kubeadm certs check-expiration과 지표로 늘 확인하고, 갱신 뒤에는 구성요소를 재시작한다.',
+      focus: ['pki', 'alarm'],
+    },
+  ]}
+/>
+
+## 증상으로 거꾸로 찾기
+
+| 보이는 증상 | 의심할 인증서 | 확인할 것 |
+| --- | --- | --- |
+| kubectl이 x509·만료 오류로 접속하지 못한다 | API 서버 인증서, 관리자 kubeconfig | 만료일 목록(kubeadm 구성이면 `kubeadm certs check-expiration`) |
+| API 서버는 떠 있는데 조회·변경이 모두 실패한다 | etcd 인증서 | API 서버 로그의 etcd 접속 오류 |
+| 특정 노드만 NotReady가 된다 | 그 노드의 kubelet 인증서 | 노드의 kubelet 로그 |
+| 갱신했는데 증상이 그대로다 | 구성요소가 옛 인증서를 들고 있음 | 컨트롤 플레인 구성요소를 재시작했는지 |
+
+업그레이드 순서와 노드 교체는 [노드 비우기와 클러스터 업그레이드](../k8s/node-drain.mdx)에서 이어 본다.
+
+더 읽을거리: [kubeadm을 사용한 인증서 관리](https://kubernetes.io/docs/tasks/administer-cluster/kubeadm/kubeadm-certs/) · [PKI 인증서와 요구 사항](https://kubernetes.io/docs/setup/best-practices/certificates/) · [cert-manager](https://cert-manager.io/docs/)
+
+다음 레슨: [파드에서 파드로 가는 패킷](./packet-path.mdx)

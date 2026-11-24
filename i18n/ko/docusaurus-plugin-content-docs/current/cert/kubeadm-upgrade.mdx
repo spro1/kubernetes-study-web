@@ -1,0 +1,196 @@
+---
+id: kubeadm-upgrade
+title: kubeadm으로 클러스터 업그레이드 (CKA)
+sidebar_label: 01 · kubeadm 업그레이드
+description: kubeadm으로 만든 클러스터를 한 마이너 버전 올릴 때 컨트롤 플레인(kubeadm → plan → apply → kubelet)과 워커(kubeadm → upgrade node → drain → kubelet → uncordon)를 어떤 순서로 다루는지 애니메이션으로 따라간다
+hide_table_of_contents: true
+---
+
+# kubeadm으로 클러스터 업그레이드 (CKA)
+
+CKA의 Cluster Architecture, Installation and Configuration(25%) 영역 중 "클러스터 생명주기 관리(업그레이드)"와 관련 있다. kubeadm(쿠버네티스 공식 설치 도구)으로 만든 1.36 클러스터를 1.37로 올리며, 노드마다 어떤 명령을 어떤 순서로 치는지 따라가 본다.
+
+왜 컨트롤 플레인을 먼저 올리는지, drain이 PDB를 어떻게 지키는지는 [노드 비우기와 클러스터 업그레이드](../k8s/node-drain.mdx)에서 다룬다. 여기서는 kubeadm 명령의 순서에 집중한다.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '약 10분', level: '중급'}}
+  groups={[
+    {label: '컨트롤 플레인 노드', x: 270, y: 35, w: 430, h: 285, tone: 'mgmt'},
+    {label: '워커 노드 · worker-1', x: 770, y: 35, w: 200, h: 285, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'admin', label: '운영자', sub: 'ssh · kubectl', icon: 'user', tone: 'ext', x: 95, y: 185, show: true},
+    {id: 'repo', label: 'pkgs.k8s.io', sub: '패키지 저장소', icon: 'archive', tone: 'store', x: 95, y: 360, w: 160},
+    {id: 'cpKubeadm', label: 'kubeadm', sub: '업그레이드 도구', icon: 'hammer', tone: 'cp', x: 370, y: 110, show: true},
+    {id: 'cpKubelet', label: 'kubelet', sub: '노드 관리자', icon: 'agent', tone: 'node', x: 370, y: 260, show: true},
+    {id: 'cpParts', label: '구성요소', sub: 'API·etcd 등', icon: 'wheel', tone: 'cp', x: 600, y: 185, show: true},
+    {id: 'wKubeadm', label: 'kubeadm', sub: '업그레이드 도구', icon: 'hammer', tone: 'node', x: 870, y: 110, show: true},
+    {id: 'wKubelet', label: 'kubelet', sub: '노드 관리자', icon: 'agent', tone: 'node', x: 870, y: 260, show: true},
+    {id: 'apps', label: '앱 파드', sub: 'worker-1', icon: 'pod', tone: 'app', size: 'sm', x: 870, y: 395},
+  ]}
+  metrics={[
+    {id: 'cp', label: '컨트롤 플레인'},
+    {id: 'worker', label: 'worker-1 kubelet'},
+    {id: 'cmd', label: '지금 친 명령'},
+  ]}
+  learn={[
+    {text: '마이너 버전은 한 번에 하나씩만 올린다는 규칙', at: 0},
+    {text: 'upgrade plan과 upgrade apply가 하는 일', at: 2},
+    {text: 'apply 뒤에도 kubelet은 따로 올려야 하는 이유', at: 4},
+    {text: '워커 노드에서는 apply 대신 upgrade node를 쓴다는 것', at: 5},
+  ]}
+  steps={[
+    {
+      short: '시작',
+      kind: '시작',
+      title: '1.36 클러스터를 1.37로 올린다',
+      text: [
+        '쿠버네티스는 마이너 버전(1.36 → 1.37처럼 가운데 숫자)을 한 번에 하나씩만 올린다. 1.35에서 1.37로 가려면 1.36을 거쳐야 하고, 건너뛰기는 지원하지 않는다.',
+        '순서는 늘 같다. 컨트롤 플레인 노드를 먼저 올리고, 워커 노드는 그다음에 한 대씩 올린다.',
+      ],
+      keyIdea: '시험 문제가 "1.37로 올려라"라면 지금 버전부터 확인한다. kubectl get nodes의 VERSION 열이 출발점이다.',
+      flows: [{from: 'admin', to: 'cpKubeadm', label: '1.37로', type: 'request'}],
+      focus: ['cpKubeadm'],
+      badges: {cpParts: '1.36', wKubelet: '1.36'},
+      values: {cp: '1.36', worker: '1.36', cmd: 'kubectl get nodes'},
+    },
+    {
+      short: '도구 먼저',
+      kind: '원리',
+      title: '컨트롤 플레인 노드에서 kubeadm부터 올린다',
+      text: [
+        '공식 패키지 저장소(pkgs.k8s.io)는 마이너 버전마다 주소가 따로 있다. 그래서 먼저 저장소 주소를 1.37용으로 바꿔야 새 패키지가 보인다.',
+        '그다음 kubeadm 패키지만 1.37로 설치하고 kubeadm version으로 확인한다. kubelet과 kubectl은 아직 건드리지 않는다.',
+      ],
+      changes: ['~ 저장소 주소 1.36 → 1.37', '~ kubeadm 1.36 → 1.37', 'kubeadm version 으로 확인'],
+      flows: [{from: 'repo', to: 'cpKubeadm', label: 'kubeadm만', type: 'response'}],
+      focus: ['repo', 'cpKubeadm'],
+      badges: {cpKubeadm: '1.37'},
+      values: {cmd: 'kubeadm version'},
+    },
+    {
+      short: 'plan',
+      kind: '원리',
+      title: 'kubeadm upgrade plan으로 올릴 수 있는지 본다',
+      text: [
+        'sudo kubeadm upgrade plan은 클러스터가 업그레이드할 수 있는 상태인지 점검하고, 올릴 수 있는 버전과 구성요소별 현재·목표 버전을 표로 보여 준다.',
+        '이 명령은 아무것도 바꾸지 않는다. 출력 끝에 실제로 칠 kubeadm upgrade apply 명령이 안내된다.',
+      ],
+      flows: [
+        {from: 'cpKubeadm', to: 'cpParts', label: '상태 점검', type: 'request'},
+        {from: 'cpParts', to: 'cpKubeadm', label: '가능 버전', type: 'response'},
+      ],
+      focus: ['cpKubeadm', 'cpParts'],
+      values: {cmd: 'kubeadm upgrade plan'},
+    },
+    {
+      short: 'apply',
+      kind: '원리',
+      title: 'kubeadm upgrade apply로 구성요소를 바꾼다',
+      text: [
+        'sudo kubeadm upgrade apply v1.37.x를 치면 API 서버·컨트롤러 매니저·스케줄러 같은 구성요소가 새 버전 이미지로 차례로 바뀐다. kubeadm이 관리하는 이 노드의 인증서도 기본으로 함께 갱신된다.',
+        '컨트롤 플레인 노드가 여러 대라면 apply는 첫 노드에서 한 번만 친다. 나머지 컨트롤 플레인 노드에서는 sudo kubeadm upgrade node를 친다.',
+      ],
+      keyIdea: 'apply는 클러스터 전체에 한 번, upgrade node는 나머지 노드마다 한 번씩이다.',
+      flows: [{from: 'cpKubeadm', to: 'cpParts', label: '새 버전 적용', type: 'request'}],
+      focus: ['cpParts'],
+      status: {cpParts: 'ok'},
+      badges: {cpParts: '1.37'},
+      values: {cp: '구성요소 1.37', cmd: 'kubeadm upgrade apply'},
+    },
+    {
+      short: 'kubelet',
+      kind: '주의',
+      title: 'apply가 끝나도 이 노드의 kubelet은 아직 1.36이다',
+      text: [
+        'kubeadm은 kubelet 패키지를 바꾸지 않는다. 그래서 이 노드를 drain한 뒤 kubelet·kubectl 패키지를 1.37로 설치하고 systemctl daemon-reload, systemctl restart kubelet으로 다시 띄운다.',
+        '끝나면 kubectl uncordon으로 배치 금지를 푼다. kubectl get nodes의 VERSION 열은 kubelet 버전이라, 이 단계를 빼먹으면 컨트롤 플레인 노드가 계속 1.36으로 보인다.',
+      ],
+      changes: ['kubectl drain (컨트롤 플레인 노드)', '~ kubelet·kubectl 1.36 → 1.37', 'systemctl daemon-reload', 'systemctl restart kubelet', 'kubectl uncordon'],
+      flows: [{from: 'admin', to: 'cpKubelet', label: '패키지 올림', type: 'request'}],
+      focus: ['cpKubelet'],
+      status: {cpKubelet: 'ok'},
+      badges: {cpKubelet: '1.37'},
+      values: {cp: {text: '1.37', tone: 'good'}, cmd: 'systemctl restart kubelet'},
+    },
+    {
+      short: '워커 도구',
+      kind: '원리',
+      title: '워커에서는 kubeadm upgrade node를 친다',
+      text: [
+        'worker-1에 접속해 같은 방법으로 저장소 주소를 바꾸고 kubeadm 패키지만 1.37로 올린다.',
+        '워커에서는 apply가 아니라 sudo kubeadm upgrade node를 친다. 워커에서 이 명령은 이 노드의 kubelet 설정을 새 버전에 맞게 갱신한다.',
+      ],
+      flows: [
+        {from: 'admin', to: 'wKubeadm', label: 'ssh worker-1', type: 'request'},
+        {from: 'wKubeadm', to: 'wKubelet', label: '설정 갱신', type: 'request'},
+      ],
+      focus: ['wKubeadm'],
+      badges: {wKubeadm: '1.37'},
+      values: {cmd: 'kubeadm upgrade node'},
+    },
+    {
+      short: 'drain',
+      kind: '원리',
+      title: 'kubelet을 바꾸기 전에 노드를 비운다',
+      text: [
+        'kubectl을 쓸 수 있는 곳에서 kubectl drain worker-1 --ignore-daemonsets를 친다. 노드에 배치 금지가 걸리고, 그 위 앱 파드는 지워진 뒤 다른 노드에서 새로 만들어진다.',
+        '데몬셋 파드는 노드마다 하나씩 있어야 하므로 남긴다. PDB 때문에 drain이 멈추는 경우는 노드 비우기 레슨에서 본다.',
+      ],
+      flows: [
+        {from: 'admin', to: 'cpParts', label: 'drain', type: 'request'},
+        {from: 'cpParts', to: 'apps', label: '파드 내보냄', type: 'request'},
+      ],
+      focus: ['apps'],
+      status: {apps: 'gone', wKubelet: 'warn'},
+      badges: {wKubelet: '배치 금지'},
+      values: {cmd: 'kubectl drain'},
+    },
+    {
+      short: 'uncordon',
+      kind: '원리',
+      title: 'kubelet을 올리고 다시 배치를 허용한다',
+      text: [
+        'worker-1에서 kubelet·kubectl 패키지를 1.37로 설치하고 systemctl daemon-reload, systemctl restart kubelet을 친다.',
+        '마지막으로 kubectl uncordon worker-1로 배치 금지를 푼다. 다른 워커도 이 순서를 한 대씩 반복한다.',
+      ],
+      changes: ['~ kubelet·kubectl 1.36 → 1.37', 'systemctl restart kubelet', 'kubectl uncordon worker-1'],
+      flows: [
+        {from: 'admin', to: 'wKubelet', label: '패키지 올림', type: 'request'},
+        {from: 'admin', to: 'cpParts', label: 'uncordon', type: 'request'},
+      ],
+      focus: ['wKubelet'],
+      status: {wKubelet: 'ok', apps: null},
+      badges: {wKubelet: '1.37'},
+      values: {worker: {text: '1.37', tone: 'good'}, cmd: 'kubectl uncordon'},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '도구 → 계획 → 적용 → kubelet, 노드마다 반복',
+      text: [
+        '컨트롤 플레인은 kubeadm → upgrade plan → upgrade apply → kubelet 순서이고, 워커는 kubeadm → upgrade node → drain → kubelet → uncordon 순서다.',
+        'kubeadm은 구성요소와 설정만 바꾸고 kubelet 패키지는 사람이 따로 올린다. 그래서 끝난 뒤 kubectl get nodes로 모든 노드의 VERSION을 꼭 확인한다.',
+      ],
+      keyIdea: '컨트롤 플레인 먼저, 워커는 한 대씩 drain → 업그레이드 → uncordon 한다. 끝나면 kubeadm upgrade plan의 구성요소 버전과 kubectl get nodes의 노드별 kubelet 버전을 따로 확인해 반쯤 끝난 노드가 없는지 본다.',
+      focus: ['cpParts', 'cpKubelet', 'wKubelet'],
+      values: {cmd: 'kubectl get nodes'},
+    },
+  ]}
+/>
+
+## 시험에서 자주 묻는 것
+
+| 상황 | 해야 할 일·명령 | 함정 |
+| --- | --- | --- |
+| 컨트롤 플레인을 한 버전 올려라 | 저장소 주소 변경 → kubeadm 설치 → `kubeadm upgrade plan` → `kubeadm upgrade apply v1.37.x` | 마이너 버전을 건너뛸 수 없다. 저장소 주소가 옛 버전이면 새 패키지가 안 보인다 |
+| 두 번째 컨트롤 플레인 노드 | `kubeadm upgrade node` | `upgrade apply`는 첫 노드에서 한 번만 친다 |
+| apply가 끝났는데 노드 버전이 그대로다 | kubelet·kubectl 설치 → `systemctl daemon-reload` → `systemctl restart kubelet` | `kubectl get nodes`의 VERSION은 kubelet 버전이다 |
+| 워커 노드를 올려라 | kubeadm 설치 → `kubeadm upgrade node` → `kubectl drain <노드> --ignore-daemonsets` → kubelet 설치·재시작 → `kubectl uncordon <노드>` | 워커에서 `upgrade apply`를 치지 않는다. drain은 kubectl이 있는 곳에서, 패키지 설치는 그 노드에서 한다 |
+| 작업이 끝났다 | `kubectl uncordon`, `kubectl get nodes`로 Ready·VERSION 확인 | uncordon을 빼먹으면 노드가 SchedulingDisabled로 남는다 |
+
+더 읽을거리: [CNCF 자격증 출제 범위](https://github.com/cncf/curriculum) · [kubeadm 클러스터 업그레이드](https://kubernetes.io/docs/tasks/administer-cluster/kubeadm/kubeadm-upgrade/) · [버전 차이(skew) 정책](https://kubernetes.io/docs/setup/release/version-skew-policy/) · [노드 비우기와 클러스터 업그레이드](../k8s/node-drain.mdx)
+
+다음 레슨: [노드 NotReady와 구성요소 장애 (CKA)](./node-troubleshoot.mdx)

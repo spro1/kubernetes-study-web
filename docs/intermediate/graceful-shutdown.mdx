@@ -1,0 +1,176 @@
+---
+id: graceful-shutdown
+title: Graceful shutdown — going down without losing requests
+sidebar_label: 04 · Graceful shutdown
+description: Follow an animation of why removal from the request targets and the stop signal happen at the same time when a pod is deleted, and how preStop and the grace period protect in-flight requests
+hide_table_of_contents: true
+---
+
+# Graceful shutdown — going down without losing requests
+
+Rollouts, scale-downs and node drains all end with "delete one pod". Here we follow the order in which that pod goes down without losing the requests it was handling. The full rollout flow is in [Zero-Downtime Deploys (Rolling Update)](../k8s/rolling-update.mdx), and node maintenance is in [Draining Nodes and Upgrading the Cluster](../k8s/node-drain.mdx).
+
+<StepDiagram
+  width={1000}
+  meta={{duration: '~8 min', level: 'Intermediate'}}
+  nodes={[
+    {id: 'client', label: 'User requests', sub: 'must not break', icon: 'browser', tone: 'ext', x: 100, y: 90, show: true},
+    {id: 'actor', label: 'Delete request', sub: 'rollout·scale·drain', icon: 'user', tone: 'ext', x: 100, y: 215},
+    {id: 'api', label: 'API server', sub: 'marks deletion', icon: 'wheel', tone: 'cp', x: 100, y: 340, show: true},
+    {id: 'svc', label: 'Service', sub: 'spreads requests', icon: 'target', tone: 'cp', x: 400, y: 90, show: true},
+    {id: 'kubelet', label: 'kubelet', sub: 'node manager', icon: 'gear', tone: 'node', x: 400, y: 340, show: true},
+    {id: 'web1', label: 'web-1', sub: 'stopping', icon: 'pod', tone: 'app', size: 'sm', x: 760, y: 90, show: true},
+    {id: 'web2', label: 'web-2', sub: 'keeps running', icon: 'pod', tone: 'app', size: 'sm', x: 760, y: 230, show: true},
+  ]}
+  metrics={[
+    {id: 'ready', label: 'Pods taking requests'},
+    {id: 'inflight', label: 'web-1 in-flight requests'},
+    {id: 'grace', label: 'Grace time left'},
+    {id: 'fail', label: 'Failed requests'},
+  ]}
+  learn={[
+    {text: 'Removal from the request targets and the stop signal happen at the same time', at: 2},
+    {text: 'Why preStop waits a few seconds', at: 4},
+    {text: 'What an app must do on SIGTERM', at: 5},
+    {text: 'After the grace period, SIGKILL forces a stop', at: 6},
+  ]}
+  steps={[
+    {
+      short: 'Start',
+      kind: '시작',
+      title: 'web-1 and web-2 share the requests',
+      text: [
+        'The Service spreads requests across two Ready pods. web-1 is handling three requests right now.',
+        'Now we delete web-1. A new rollout, a scale-down or a node drain all end with this step.',
+      ],
+      flows: [
+        {from: 'client', to: 'svc', type: 'request'},
+        {from: 'svc', to: 'web1', type: 'request'},
+        {from: 'svc', to: 'web2', type: 'request'},
+      ],
+      status: {web1: 'ok', web2: 'ok'},
+      values: {ready: '2', inflight: '3', grace: '—', fail: '0'},
+    },
+    {
+      short: 'Mark deleted',
+      kind: '원리',
+      title: 'The pod is not removed at once; it is marked "terminating"',
+      text: [
+        'When a delete request reaches the API server, the pod does not vanish right away. It gets a deletion mark and its status becomes Terminating.',
+        'From this moment the grace period (terminationGracePeriodSeconds) clock runs. The default is 30 seconds.',
+      ],
+      flows: [{from: 'actor', to: 'api', label: 'delete pod', type: 'request'}],
+      focus: ['api', 'web1'],
+      status: {web1: 'warn'},
+      badges: {web1: 'Terminating'},
+      values: {grace: '30s'},
+    },
+    {
+      short: 'In parallel',
+      kind: '원리',
+      title: 'Two things start at the same time',
+      text: [
+        'On one side, web-1 is removed from the Service request targets (endpoints). On the other, the kubelet on web-1\'s node starts stopping the container.',
+        'Neither waits for the other. The news that web-1 left the targets takes a moment to spread across the cluster.',
+      ],
+      keyIdea: 'The order "leave the targets first, then stop" is not guaranteed. If stopping starts first, requests already on their way can break.',
+      flows: [
+        {from: 'api', to: 'svc', label: 'remove target', type: 'watch'},
+        {from: 'api', to: 'kubelet', label: 'start stop', type: 'watch'},
+      ],
+      focus: ['svc', 'kubelet'],
+    },
+    {
+      short: 'Race',
+      kind: '문제',
+      title: 'Without preStop, requests hit a closing pod',
+      text: [
+        'If the stop signal is sent right away, the app starts closing connections. But the news that it left the targets has not fully spread yet.',
+        'Requests that arrive in that gap go to the closing web-1 and fail. Users see intermittent errors.',
+      ],
+      flows: [
+        {from: 'client', to: 'svc', type: 'request'},
+        {from: 'svc', to: 'web1', label: 'still sent', type: 'request'},
+      ],
+      focus: ['web1'],
+      status: {web1: 'error'},
+      values: {fail: {text: 'a few', tone: 'bad'}},
+    },
+    {
+      short: 'preStop',
+      kind: '원리',
+      title: 'preStop waits a few seconds before stopping',
+      text: [
+        'A preStop hook is a command that runs before the stop signal. If it waits a few seconds, the news that the pod left the targets has time to spread.',
+        'New requests now go only to web-2. web-1 keeps handling only the requests it already has.',
+      ],
+      keyIdea: 'A preStop that waits a few seconds is not an app feature. It buys "time for the news to spread".',
+      flows: [
+        {from: 'kubelet', to: 'web1', label: 'preStop', type: 'request'},
+        {from: 'svc', to: 'web2', label: 'new requests', type: 'request'},
+      ],
+      focus: ['web1', 'web2'],
+      status: {web1: 'warn'},
+      badges: {web1: 'preStop'},
+      values: {ready: '1', fail: {text: '0', tone: 'good'}, grace: '25s'},
+    },
+    {
+      short: 'SIGTERM',
+      kind: '원리',
+      title: 'On SIGTERM, the app finishes its work',
+      text: [
+        'When preStop ends, the kubelet sends SIGTERM. It means "clean up and exit". The app stops accepting new requests, finishes in-flight ones, then closes connections.',
+        'Once done, the app exits on its own. The grace period includes the time spent in preStop.',
+      ],
+      flows: [{from: 'kubelet', to: 'web1', label: 'SIGTERM', type: 'request'}],
+      focus: ['web1'],
+      badges: {web1: 'SIGTERM'},
+      values: {inflight: {text: '3 → 0', tone: 'good'}, grace: '20s'},
+    },
+    {
+      short: 'SIGKILL',
+      kind: '장애',
+      title: 'When the grace period runs out, it is force-stopped',
+      text: [
+        'If the app ignores SIGTERM or cleanup does not finish within the grace period, the kubelet kills the container with SIGKILL. In-flight requests fail.',
+        'An app that ignores SIGTERM does nothing for the whole grace period, then dies. Every update gets 30 seconds slower per pod.',
+      ],
+      keyIdea: 'Raise the grace period for apps with long tasks, or databases that must flush data to disk.',
+      flows: [{from: 'kubelet', to: 'web1', label: 'SIGKILL', type: 'request'}],
+      focus: ['web1'],
+      status: {web1: 'error'},
+      badges: {web1: 'killed'},
+      values: {grace: {text: '0s', tone: 'bad'}, inflight: {text: 'rest failed', tone: 'bad'}},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Leave, wait, finish up, go down',
+      text: [
+        'Graceful shutdown has four beats: leave the request targets, wait with preStop, finish up after SIGTERM, and exit on its own within the grace period.',
+        'Only apps that keep this promise make rollouts and node maintenance invisible to users. Check the effective value with terminationGracePeriodSeconds in kubectl get pod <name> -o yaml.',
+      ],
+      keyIdea: 'Graceful shutdown has four beats: leave, wait, finish, exit. If a pod stays Terminating for a long time and then vanishes, suspect it used up the grace period and got SIGKILL.',
+      focus: ['web1', 'web2'],
+      status: {web1: 'gone'},
+      badges: {web1: null},
+      values: {ready: '1', inflight: '0', grace: '—', fail: {text: '0', tone: 'good'}},
+    },
+  ]}
+/>
+
+## Shutdown order at a glance
+
+| Step | What happens | What the app or config must do |
+| --- | --- | --- |
+| 1 | The pod becomes Terminating and the grace period starts | Raise `terminationGracePeriodSeconds` for long tasks (default 30s) |
+| 2 | Removal from the request targets and stopping start at the same time | Design assuming the order is not guaranteed |
+| 3 | The `preStop` hook runs | Wait a few seconds so the target removal can spread |
+| 4 | SIGTERM arrives | Stop accepting new requests, finish in-flight ones, exit on its own |
+| 5 | After the grace period, SIGKILL forces a stop | At this point, in-flight requests fail |
+
+Set `terminationGracePeriodSeconds` and `preStop` in the pod template `spec`. Check the applied values with `kubectl get pod <name> -o yaml`.
+
+Further reading: [Pod lifecycle — termination of Pods](https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/#pod-termination) · [Container lifecycle hooks](https://kubernetes.io/docs/concepts/containers/container-lifecycle-hooks/)
+
+Next lesson: [StatefulSets and databases](./statefulset.mdx)

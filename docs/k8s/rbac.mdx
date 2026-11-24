@@ -1,0 +1,196 @@
+---
+id: rbac
+title: Who Can Do What (RBAC)
+sidebar_label: 10 · Who Can Do What
+description: Follow, step by step, how requests from people and pods pass authentication and RBAC authorization at the API server, or get rejected with 403
+hide_table_of_contents: true
+---
+
+# Who Can Do What (RBAC)
+
+Developer kim and a pod run by a deploy tool both work with pods in the shop-dev namespace. They call the same API server, yet some requests pass and some are rejected with 403. Let's follow where the paths split.
+
+<StepDiagram
+  width={1000}
+  meta={{duration: '~10 min', level: 'Beginner'}}
+  groups={[
+    {label: 'Namespace · shop-dev', x: 735, y: 35, w: 210, h: 265, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'user', label: 'Developer kim', sub: 'Human · kubectl', icon: 'user', tone: 'ext', x: 95, y: 110, show: true},
+    {id: 'app', label: 'Deploy tool', sub: 'SA · ci-bot', icon: 'pod', tone: 'app', x: 95, y: 330, show: true},
+    {id: 'api', label: 'API server', sub: 'Entry for all requests', icon: 'gate', tone: 'cp', x: 300, y: 220, show: true},
+    {id: 'authn', label: 'Authentication', sub: 'Who are you?', icon: 'ticket', tone: 'cp', x: 580, y: 90},
+    {id: 'authz', label: 'RBAC authz', sub: 'Is this allowed?', icon: 'shield', tone: 'cp', x: 580, y: 220},
+    {id: 'etcd', label: 'etcd', sub: 'Stored resources', icon: 'db', tone: 'store', x: 580, y: 360},
+    {id: 'binding', label: 'RoleBinding', sub: 'To whom', icon: 'route', tone: 'store', x: 840, y: 110, w: 160},
+    {id: 'role', label: 'Role', sub: 'What', icon: 'book', tone: 'store', x: 840, y: 240, w: 160},
+    {id: 'crole', label: 'ClusterRole', sub: 'Whole cluster', icon: 'layers', tone: 'store', x: 840, y: 370, w: 160},
+  ]}
+  metrics={[
+    {id: 'who', label: 'Requester'},
+    {id: 'verb', label: 'Action'},
+    {id: 'result', label: 'Result'},
+  ]}
+  learn={[
+    {text: 'Authentication (who) vs. authorization (allowed?)', at: 1},
+    {text: 'A Role sets "what", a RoleBinding sets "to whom"', at: 2},
+    {text: 'Why login works but delete returns 403', at: 4},
+    {text: 'Namespace scope vs. cluster scope', at: 6},
+  ]}
+  steps={[
+    {
+      short: 'Request',
+      kind: '시작',
+      title: 'People and pods both send requests to the API server',
+      text: [
+        'Developer kim uses kubectl to list pods in shop-dev. The deploy tool pod asks for the same list.',
+        'Every operation in Kubernetes is a request to the API server. Clicking a dashboard button and typing kubectl are the same.',
+      ],
+      flows: [
+        {from: 'user', to: 'api', label: 'get pods', type: 'request'},
+        {from: 'app', to: 'api', label: 'list pods', type: 'request'},
+      ],
+      focus: ['api'],
+    },
+    {
+      short: 'AuthN',
+      kind: '원리',
+      title: 'First it checks "who are you"',
+      text: [
+        'The API server checks who sent the request using the attached certificate or token. This is authentication.',
+        'Kubernetes has no "user account" resource. It simply trusts the name that a certificate or the company login system provides.',
+      ],
+      keyIdea: 'If authentication fails, you get 401. You cannot log in at all.',
+      flows: [
+        {from: 'api', to: 'authn', label: 'who?', type: 'request'},
+        {from: 'authn', to: 'api', label: 'kim', type: 'response'},
+      ],
+      focus: ['authn'],
+      values: {who: 'kim (human)', verb: 'get pods'},
+    },
+    {
+      short: 'AuthZ',
+      kind: '원리',
+      title: 'Next, RBAC decides "may you do this"',
+      text: [
+        'Authorization is usually done with RBAC (Role-Based Access Control). First it looks for RoleBindings linked to kim.',
+        'A RoleBinding says "to whom". The Role it points to is a set of permissions that says "which actions on which resources".',
+      ],
+      keyIdea: 'A Role alone does nothing. It takes effect only when a RoleBinding links it to someone.',
+      flows: [
+        {from: 'api', to: 'authz', label: 'get pods?', type: 'request'},
+        {from: 'authz', to: 'binding', label: 'kim bound?', type: 'request'},
+        {from: 'binding', to: 'role', label: 'permissions', type: 'request'},
+      ],
+      focus: ['authz', 'binding', 'role'],
+      badges: {binding: 'kim · ci-bot', role: 'get·list·watch'},
+    },
+    {
+      short: 'Allowed',
+      kind: '원리',
+      title: 'The rule matches, so it passes',
+      text: [
+        'The Role says "may get·list·watch pods", so authorization passes.',
+        'The API server reads the shop-dev pods from etcd and returns the list to kim.',
+      ],
+      flows: [
+        {from: 'api', to: 'etcd', label: 'read', type: 'request'},
+        {from: 'api', to: 'user', label: 'pod list', type: 'response'},
+      ],
+      focus: ['etcd'],
+      status: {user: 'ok'},
+      values: {result: {text: 'Allowed', tone: 'good'}},
+    },
+    {
+      short: '403',
+      kind: '문제',
+      title: 'Delete is rejected with 403 Forbidden',
+      text: [
+        'Now kim tries to delete a pod. Authentication still passes, but the Role has no delete.',
+        'RBAC only lists what is allowed. Anything not allowed is denied, and 403 Forbidden comes back.',
+      ],
+      keyIdea: 'If you can log in but one action is blocked, it is an authorization problem, not authentication. The error message names the user, verb, and resource.',
+      flows: [
+        {from: 'user', to: 'api', label: 'delete pod', type: 'request'},
+        {from: 'authz', to: 'api', label: 'denied', type: 'response'},
+        {from: 'api', to: 'user', label: '403', type: 'response'},
+      ],
+      focus: ['authz'],
+      status: {user: 'error'},
+      values: {verb: 'delete pod', result: {text: '403 denied', tone: 'bad'}},
+    },
+    {
+      short: 'SA',
+      kind: '원리',
+      title: 'Pods get the same check through a ServiceAccount',
+      text: [
+        'A program inside a pod authenticates with a ServiceAccount token (an account for programs). Kubernetes mounts this token into the pod.',
+        'A ServiceAccount is a namespaced Kubernetes resource. It gets permissions through a RoleBinding, just like a person. Here ci-bot is in the same RoleBinding, so listing pods is allowed.',
+      ],
+      keyIdea: 'A pod with no ServiceAccount set uses the namespace\'s default account. Grant permissions to default and every pod gets them.',
+      flows: [
+        {from: 'app', to: 'api', label: 'SA token', type: 'request'},
+        {from: 'api', to: 'authz', label: 'list pods?', type: 'request'},
+      ],
+      focus: ['app', 'authz'],
+      status: {user: null, app: 'ok'},
+      values: {who: 'ci-bot (SA)', verb: 'list pods', result: {text: 'Allowed', tone: 'good'}},
+    },
+    {
+      short: 'Scope',
+      kind: '주의',
+      title: 'Cluster-wide resources like nodes are bound differently',
+      text: [
+        'kim wants to list nodes. Nodes belong to no namespace. They are cluster-scoped, so a Role inside shop-dev cannot grant them.',
+        'You write the permissions in a ClusterRole and bind it with a ClusterRoleBinding. Permissions bound this way apply to every namespace.',
+      ],
+      keyIdea: 'A RoleBinding can also point to a ClusterRole. Then the permissions apply only inside that RoleBinding\'s namespace. This is how you hand out a shared permission set per namespace.',
+      flows: [
+        {from: 'user', to: 'api', label: 'get nodes', type: 'request'},
+        {from: 'authz', to: 'crole', label: 'cluster scope', type: 'request'},
+      ],
+      focus: ['crole'],
+      status: {app: null, user: 'warn'},
+      badges: {crole: 'All namespaces'},
+      values: {who: 'kim (human)', verb: 'get nodes', result: {text: 'Needs ClusterRole', tone: 'bad'}},
+    },
+    {
+      short: 'Least priv.',
+      kind: '주의',
+      title: 'Grant only what is needed',
+      text: [
+        'Narrow it down in order: scope (cluster or one namespace) → resource (which kind) → verb (read only, or write too). One namespace is usually enough.',
+        'Allowing everything (*) for convenience opens up reading secrets, editing roles, even deleting nodes. Resource kinds added later are included automatically too.',
+      ],
+      keyIdea: 'Even weak-looking permissions can be dangerous. With permission to create pods, you can start a pod as another ServiceAccount in that namespace and use its permissions.',
+      focus: ['role', 'crole'],
+      status: {user: null},
+      badges: {role: 'Only needed verbs'},
+    },
+    {
+      short: 'Recap',
+      kind: '정리',
+      title: 'Authentication is "who", RBAC is "what, to whom"',
+      text: [
+        'A request is processed only after authentication confirms the subject and RBAC authorization checks the permissions bound to that subject.',
+        'User permissions kept by a management console or dashboard are a different layer from Roles and RoleBindings in the cluster. What actually applies to the Kubernetes API is RBAC.',
+      ],
+      keyIdea: '403 Forbidden means you are authenticated but that action is not allowed. Use kubectl auth can-i <verb> <resource> --as <subject> to see what is blocked.',
+      focus: ['api', 'authz'],
+    },
+  ]}
+/>
+
+## The four parts of RBAC
+
+| Name | What it does | Scope |
+| --- | --- | --- |
+| `Role` | A set of permissions: which actions (get·list·delete, etc.) are allowed on which resources | One namespace |
+| `ClusterRole` | The same kind of permission set, but can also cover cluster-scoped resources such as nodes | Cluster |
+| `RoleBinding` | Binds a permission set to users, groups, or ServiceAccounts | One namespace |
+| `ClusterRoleBinding` | Binds a ClusterRole across the whole cluster | Cluster |
+
+Further reading: [Using RBAC Authorization](https://kubernetes.io/docs/reference/access-authn-authz/rbac/) · [Namespaces](https://kubernetes.io/docs/concepts/overview/working-with-objects/namespaces/)
+
+Next lesson: [Run Once and Finish (Job · CronJob)](./job-cronjob.mdx)

@@ -1,0 +1,191 @@
+---
+id: network-policy
+title: 통신 막고 열기 (네트워크 정책)
+sidebar_label: 09 · 통신 막고 열기
+description: 모두 허용된 파드 통신을 기본 차단 정책으로 막고, 레이블로 frontend→backend, backend→db만 여는 과정과 차단된 요청이 시간 초과로 보이는 이유를 애니메이션으로 따라간다
+hide_table_of_contents: true
+---
+
+# 통신 막고 열기 (네트워크 정책)
+
+`shop` 네임스페이스에 frontend·backend·db 파드가 있다. 처음에는 누구나 db에 접속할 수 있다. 이것을 "frontend는 backend만, db는 backend만 부를 수 있게" 바꿔 본다.
+
+<StepDiagram
+  width={1000}
+  meta={{duration: '약 10분', level: '중급'}}
+  groups={[
+    {label: '네임스페이스 shop', x: 370, y: 39, w: 470, h: 337, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'admin', label: '관리자', sub: 'YAML 작성', icon: 'user', tone: 'ext', x: 90, y: 80, show: true},
+    {id: 'pol', label: '정책', sub: 'NetworkPolicy', icon: 'book', tone: 'store', x: 90, y: 230},
+    {id: 'cilium', label: 'Cilium', sub: '규칙 집행', icon: 'shield', tone: 'node', x: 90, y: 380},
+    {id: 'fe', label: 'frontend', sub: 'app=frontend', icon: 'pod', tone: 'app', x: 470, y: 110, show: true},
+    {id: 'be', label: 'backend', sub: 'app=backend', icon: 'pod', tone: 'app', x: 470, y: 320, show: true},
+    {id: 'db', label: 'db', sub: 'app=db', icon: 'db', tone: 'app', x: 740, y: 320, show: true},
+    {id: 'other', label: 'debug', sub: 'ops의 파드', icon: 'pod', tone: 'ext', x: 925, y: 110, w: 120, show: true},
+  ]}
+  metrics={[
+    {id: 'febe', label: 'frontend → backend'},
+    {id: 'bedb', label: 'backend → db'},
+    {id: 'xdb', label: '그 밖 → db'},
+  ]}
+  learn={[
+    {text: '정책이 없으면 모든 파드가 서로 통신하는 이유', at: 0},
+    {text: '정책을 실제로 집행하는 것은 네트워크 플러그인', at: 2},
+    {text: '레이블로 허용 대상을 고르는 방식', at: 4},
+    {text: '차단된 요청이 시간 초과로 보이는 이유', at: 6},
+  ]}
+  steps={[
+    {
+      short: '모두 허용',
+      kind: '시작',
+      title: '정책이 없으면 모든 파드가 서로 통신한다',
+      text: [
+        '쿠버네티스는 기본으로 모든 파드끼리 통신을 허용한다. 다른 네임스페이스(ops)의 debug 파드도 db에 바로 접속할 수 있다.',
+        '네임스페이스는 이름과 권한의 경계일 뿐, 통신까지 나누지는 않는다. 통신을 막으려면 네트워크 정책(NetworkPolicy)이 필요하다.',
+      ],
+      flows: [
+        {from: 'fe', to: 'be', type: 'request'},
+        {from: 'be', to: 'db', type: 'request'},
+        {from: 'other', to: 'db', type: 'request'},
+      ],
+      status: {fe: 'ok', be: 'ok', db: 'ok', other: 'ok'},
+      values: {febe: '허용', bedb: '허용', xdb: '허용'},
+    },
+    {
+      short: '기본 차단',
+      kind: '원리',
+      title: '네임스페이스 전체에 기본 차단 정책을 건다',
+      text: [
+        '관리자가 default-deny 정책을 만든다. 빈 파드 셀렉터는 "shop의 모든 파드"라는 뜻이고, 들어오는(Ingress)·나가는(Egress) 통신을 모두 막는다.',
+        '정책에는 "거부" 규칙이 없다. 정책에 걸린 파드는 허용 목록에 적힌 통신만 통과하는 방식으로 바뀌고, 처음 목록은 비어 있다.',
+      ],
+      keyIdea: '기본 차단 정책을 먼저 걸고, 필요한 통신만 허용 정책으로 하나씩 여는 것이 안전한 순서다.',
+      flows: [{from: 'admin', to: 'pol', label: 'default-deny', type: 'request'}],
+      focus: ['pol'],
+      badges: {pol: 'default-deny'},
+    },
+    {
+      short: '집행',
+      kind: '원리',
+      title: '정책을 실제로 집행하는 것은 Cilium이다',
+      text: [
+        '정책은 규칙 문서일 뿐이다. 네트워크 플러그인(CNI)이 정책을 지켜보다가 각 노드에서 패킷을 걸러야 실제로 막힌다. 이 레슨에서는 Cilium이 이 일을 한다고 가정한다.',
+        'Cilium은 리눅스 커널 안에 넣은 작은 프로그램(eBPF)으로 파드를 오가는 통신을 검사한다.',
+      ],
+      keyIdea: '정책을 지원하지 않는 네트워크 플러그인이라면 정책을 만들어도 아무 효과가 없고 오류도 나지 않는다.',
+      flows: [
+        {from: 'pol', to: 'cilium', label: '정책 감시', type: 'watch'},
+        {from: 'cilium', to: 'fe', label: '규칙 적용', type: 'request'},
+        {from: 'cilium', to: 'be', label: '규칙 적용', type: 'request'},
+      ],
+      focus: ['cilium'],
+    },
+    {
+      short: '모두 막힘',
+      kind: '문제',
+      title: '되던 통신이 모두 시간 초과로 끊긴다',
+      text: [
+        'frontend가 backend를 부르면 응답이 오지 않는다. Cilium이 패킷을 조용히 버리므로, 부르는 쪽은 "거부" 대신 정해 둔 시간까지 기다리다 실패한다.',
+        '나가는 통신까지 막았기 때문에 DNS 조회(53번 포트)도 막혀 "이름을 찾을 수 없음"이 함께 보인다. 그래서 보통 DNS를 여는 allow-dns 정책을 같이 둔다.',
+      ],
+      keyIdea: '정책을 처음 거는 순간 그전까지 되던 통신이 끊길 수 있다. 저장 전에 "이 규칙에 없는 통신은 막힌다"는 결과를 알려야 한다.',
+      flows: [{from: 'fe', to: 'be', label: '시간 초과', type: 'request'}],
+      focus: ['fe', 'be'],
+      status: {fe: 'warn', be: 'error', db: 'error'},
+      badges: {be: '차단'},
+      values: {febe: {text: '차단', tone: 'bad'}, bedb: {text: '차단', tone: 'bad'}, xdb: {text: '차단', tone: 'bad'}},
+    },
+    {
+      short: '첫 허용',
+      kind: '원리',
+      title: '레이블로 frontend → backend만 연다',
+      text: [
+        'backend로 들어오는 통신에 "app=frontend 레이블을 가진 파드"를 허용한다. 기본 차단이 나가는 쪽도 막고 있으므로 frontend가 backend로 내보내는 쪽도 함께 연다.',
+        '파드 이름이 아니라 레이블로 고르므로, frontend 파드가 새로 떠도 같은 레이블이면 그대로 허용된다.',
+      ],
+      changes: ['+ allow-frontend (backend Ingress)', '+ frontend Egress → backend'],
+      flows: [
+        {from: 'admin', to: 'pol', label: '허용 규칙', type: 'request'},
+        {from: 'fe', to: 'be', label: '허용', type: 'request'},
+      ],
+      focus: ['fe', 'be'],
+      status: {fe: 'ok', be: 'ok'},
+      badges: {pol: '+ allow-frontend', be: null},
+      values: {febe: {text: '허용', tone: 'good'}},
+    },
+    {
+      short: 'db 보호',
+      kind: '원리',
+      title: 'db는 backend에서 오는 5432 포트만 받는다',
+      text: [
+        'db 파드에 "app=backend에서 오는 5432 포트 통신만 허용"하는 정책을 더한다. backend가 db로 내보내는 쪽도 같이 연다.',
+        '한 파드에 정책이 여러 개 걸리면 각 정책이 허용한 것을 모두 더한 범위가 허용된다.',
+      ],
+      changes: ['+ db-allow-backend (db Ingress :5432)', '+ backend Egress → db'],
+      flows: [
+        {from: 'admin', to: 'pol', label: '허용 규칙', type: 'request'},
+        {from: 'be', to: 'db', label: ':5432 허용', type: 'request'},
+      ],
+      focus: ['db'],
+      status: {db: 'ok'},
+      badges: {pol: '+ db-allow-backend'},
+      values: {bedb: {text: '허용', tone: 'good'}},
+    },
+    {
+      short: '차단 확인',
+      kind: '문제',
+      title: '허용 목록 밖의 요청은 응답 없이 끊긴다',
+      text: [
+        'debug 파드와 frontend가 db에 접속해 보면 둘 다 응답 없이 기다리다 시간 초과로 실패한다. db의 허용 목록에는 backend만 있기 때문이다.',
+        '앱 쪽에서는 "서버가 느리다"나 "죽었다"처럼 보이기 쉽다. db 파드는 Running이고 서비스도 정상이라 원인을 찾기 어렵다.',
+      ],
+      keyIdea: '네트워크 정책은 IP·포트 수준(L4)에서 걸러 낸다. 특정 URL 경로만 막는 일은 서비스 메시나 게이트웨이의 몫이다.',
+      flows: [
+        {from: 'other', to: 'db', label: '시간 초과', type: 'request'},
+        {from: 'fe', to: 'db', label: '시간 초과', type: 'request'},
+      ],
+      focus: ['db', 'other'],
+      status: {other: 'error'},
+      badges: {other: '응답 없음'},
+      values: {xdb: {text: '차단 (시간 초과)', tone: 'bad'}},
+    },
+    {
+      short: '규칙 확인',
+      kind: '주의',
+      title: '막힌 기록은 정책 객체에 남지 않는다',
+      text: [
+        'NetworkPolicy 객체에는 규칙만 있고, 어떤 통신이 실제로 막혔는지는 남지 않는다. 막힌 기록은 CNI 도구(예: Cilium의 Hubble)로 따로 봐야 한다.',
+        '통신이 끊기면 kubectl describe networkpolicy로 허용 범위를 Ingress·Egress로 나눠 보고, 정책의 파드 셀렉터와 대상 파드의 레이블이 맞는지 나란히 비교한다.',
+      ],
+      flows: [{from: 'pol', to: 'admin', label: '세부 정책', type: 'response'}],
+      focus: ['pol', 'admin'],
+      badges: {other: null},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '막고 나서, 필요한 길만 레이블로 연다',
+      text: [
+        '정책이 없으면 모두 허용, 정책에 걸리면 허용 목록 방식이다. 기본 차단을 건 뒤 frontend → backend → db 길만 레이블로 열었다.',
+        '정책은 문서이고 집행은 Cilium이 한다. 막힌 요청은 오류 대신 시간 초과로 나타난다.',
+      ],
+      keyIdea: '네트워크 정책은 기본 차단 위에 레이블로 허용할 길만 여는 방식이다. 정책을 적용하기 전에 어떤 파드가 셀렉터에 걸리는지 kubectl get pods -l로 먼저 확인한다.',
+      focus: ['pol', 'cilium'],
+      status: {other: 'warn'},
+    },
+  ]}
+/>
+
+## 증상과 확인할 곳
+
+| 증상 | 의심할 것 | 확인할 곳 |
+| --- | --- | --- |
+| 되던 통신이 갑자기 시간 초과로 끊긴다 | 대상 파드를 고르는 정책이 새로 생겼다 | `kubectl get networkpolicy`의 `POD-SELECTOR`와 대상 파드의 `레이블` |
+| 모든 외부 호출이 "이름을 찾을 수 없음" | Egress를 막고 DNS(53번 포트)를 열지 않았다 | `kubectl describe networkpolicy`의 Egress 규칙 |
+| 정책을 만들었는데 아무 효과가 없다 | 셀렉터와 맞는 파드가 없다, 네트워크 플러그인이 정책을 지원하지 않는다 | 정책의 `파드 셀렉터`와 파드 레이블 비교 |
+
+더 읽을거리: [네트워크 정책](https://kubernetes.io/ko/docs/concepts/services-networking/network-policies/) · [Cilium 문서](https://docs.cilium.io/)
+
+다음 레슨: [누가 무엇을 할 수 있나 (RBAC)](./rbac.mdx)

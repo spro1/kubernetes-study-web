@@ -1,0 +1,186 @@
+---
+id: vpa
+title: Automatic Pod Sizing (VPA)
+sidebar_label: 09 · Automatic Pod Sizing
+description: Animated walkthrough of how the VPA (Vertical Pod Autoscaler) computes recommendations from usage history and, depending on its update mode, recreates pods to change their CPU and memory values
+hide_table_of_contents: true
+---
+
+# Automatic Pod Sizing (VPA)
+
+HPA changes the **number** of pods; VPA changes the **size** of each pod. Follow what happens behind the scenes when you attach a VPA to a workload.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~9 min', level: 'Intermediate'}}
+  nodes={[
+    {id: 'ms', label: 'Metrics', sub: 'Collects usage', icon: 'chart', tone: 'cp', x: 110, y: 70},
+    {id: 'rec', label: 'Recommender', sub: 'Computes targets', icon: 'bulb', tone: 'cp', x: 380, y: 70, w: 165},
+    {id: 'vpa', label: 'VPA', sub: 'Update mode', icon: 'scale', tone: 'cp', x: 650, y: 70},
+    {id: 'hpa', label: 'HPA', sub: 'Pod count', icon: 'scale', tone: 'cp', x: 110, y: 215, show: true},
+    {id: 'upd', label: 'Updater', sub: 'Replaces pods', icon: 'gear', tone: 'cp', x: 650, y: 215},
+    {id: 'screen', label: 'kubectl', sub: 'Reads actual values', icon: 'browser', tone: 'ext', x: 890, y: 215},
+    {id: 'deploy', label: 'Deployment', sub: 'YAML spec', icon: 'layers', tone: 'store', x: 110, y: 360, show: true},
+    {id: 'pod1', label: 'api-1', sub: 'Original size', icon: 'pod', tone: 'app', size: 'sm', x: 380, y: 360, show: true},
+    {id: 'pod2', label: 'api-2', sub: 'New size', icon: 'pod', tone: 'app', size: 'sm', x: 650, y: 360},
+  ]}
+  metrics={[
+    {id: 'yaml', label: 'Requests in YAML'},
+    {id: 'pod', label: 'Actual pod requests'},
+    {id: 'mode', label: 'Update mode'},
+  ]}
+  learn={[
+    {text: 'The difference between HPA (count) and VPA (size)', at: 0},
+    {text: 'How the Recommender derives targets from usage history', at: 3},
+    {text: 'The difference between recommend-only and apply modes', at: 5},
+    {text: 'Why the YAML and the actual pod values look different', at: 6},
+  ]}
+  steps={[
+    {
+      short: 'Start',
+      kind: '시작',
+      title: 'HPA changes the count; VPA changes the size',
+      text: [
+        'Pod api-1 of the api Service runs with the CPU and memory requests (the amount of resources a pod reserves as its minimum need) set at the start.',
+        'HPA (Horizontal Pod Autoscaler) adds and removes pods. VPA (Vertical Pod Autoscaler) instead adjusts the CPU and memory given to each pod.',
+      ],
+      keyIdea: 'This is different from cluster autoscaling, which adds nodes. That handles the number of servers; HPA and VPA handle the number and size of pods running on them.',
+      flows: [
+        {from: 'deploy', to: 'pod1', label: 'Create pod', type: 'request'},
+        {from: 'hpa', to: 'deploy', type: 'watch'},
+      ],
+      status: {pod1: 'ok'},
+      values: {yaml: 'Original', pod: 'Original', mode: '—'},
+    },
+    {
+      short: 'Create VPA',
+      kind: '원리',
+      title: 'Create a VPA rule and attach it to a workload',
+      text: [
+        'VPA is not part of the default install, so you install it separately. Create a VerticalPodAutoscaler object and pick the target workload, such as a Deployment, StatefulSet, or DaemonSet, with targetRef.',
+        'Also set the update mode (updateMode) and the min and max CPU and memory range (minAllowed, maxAllowed). Start in recommend-only mode (Off).',
+      ],
+      keyIdea: 'Set maxAllowed at or below the target workload\'s limits. If you set it higher, automatic adjustment can fail.',
+      changes: ['+ Create VPA (target: Deployment)'],
+      flows: [{from: 'vpa', to: 'deploy', label: 'Set target', type: 'request'}],
+      focus: ['vpa'],
+      values: {mode: 'Recommend only'},
+    },
+    {
+      short: 'Usage',
+      kind: '원리',
+      title: 'Collect what the pods actually used',
+      text: [
+        'Metrics Server collects CPU and memory usage for pods and nodes. HPA gets its CPU and memory metrics from the same place.',
+        'The VPA Recommender (the part that computes recommendations) watches this usage over time. It looks at accumulated history, not a single moment.',
+      ],
+      flows: [
+        {from: 'pod1', to: 'ms', label: 'Usage', type: 'watch'},
+        {from: 'ms', to: 'rec', label: 'History', type: 'request'},
+      ],
+      focus: ['ms', 'rec'],
+    },
+    {
+      short: 'Recommend',
+      kind: '원리',
+      title: 'The Recommender computes the right size',
+      text: [
+        'From the collected history, the Recommender computes suitable CPU and memory requests for this pod. The result is attached to the VPA rule as a recommendation.',
+        'Recommendations stay within the min and max range set on the VPA.',
+      ],
+      flows: [{from: 'rec', to: 'vpa', label: 'Recommendation', type: 'request'}],
+      focus: ['vpa'],
+      badges: {vpa: 'Has target'},
+    },
+    {
+      short: 'Recommend only',
+      kind: '원리',
+      title: 'In recommend-only mode, pods stay as they are',
+      text: [
+        'In recommend-only mode, VPA just computes recommendations and leaves pods alone. Use it to check whether the current values are reasonable first.',
+        'To apply them to real pods, switch the update mode to an applying mode (Recreate, Auto). Check the current mode in updatePolicy.updateMode in the VPA YAML.',
+      ],
+      flows: [{from: 'rec', to: 'vpa', type: 'watch'}],
+      focus: ['vpa', 'pod1'],
+      values: {pod: 'Unchanged'},
+    },
+    {
+      short: 'Apply',
+      kind: '원리',
+      title: 'In apply mode, pods are recreated with new values',
+      text: [
+        'Switch the update mode to apply, and the VPA Updater (the part that applies changes) evicts pods whose values are far from the recommendation. It usually does not resize running pods in place; it changes them by recreating the pods.',
+        'The workload creates a new pod, api-2, to fill the gap, and the new pod gets the recommendation as its requests.',
+      ],
+      keyIdea: 'Recreating pods causes a brief restart. If a Service has only one pod, no pod is there to take requests in the meantime.',
+      changes: ['~ Update mode: Recommend only → Apply', '- api-1 terminated', '+ api-2 created (recommendation applied)'],
+      flows: [
+        {from: 'vpa', to: 'upd', type: 'request'},
+        {from: 'upd', to: 'pod1', label: 'Evict', type: 'request'},
+        {from: 'deploy', to: 'pod2', label: 'Recreate', type: 'request', bend: -0.25},
+      ],
+      focus: ['upd', 'pod2'],
+      status: {pod1: 'gone', pod2: 'ok'},
+      badges: {vpa: null},
+      values: {mode: 'Apply', pod: {text: 'Recommended', tone: 'good'}},
+    },
+    {
+      short: 'YAML unchanged',
+      kind: '주의',
+      title: 'The workload YAML values stay the same',
+      text: [
+        'VPA does not edit the resource values in the workload spec (YAML). Only the values on running pods change.',
+        'So the Deployment YAML alone does not tell you what the pods have right now. Use kubectl get pod -o yaml for the pod\'s actual requests and kubectl describe vpa for the recommendation.',
+      ],
+      keyIdea: '"I never changed the YAML, but the pod values are different" usually means a VPA is attached.',
+      flows: [{from: 'pod2', to: 'screen', label: 'Actual values', type: 'response'}],
+      focus: ['deploy', 'screen'],
+      badges: {deploy: 'YAML: original'},
+      values: {yaml: 'Unchanged'},
+    },
+    {
+      short: 'Same metric',
+      kind: '문제',
+      title: 'HPA and VPA can clash if they watch the same metric',
+      text: [
+        'If HPA changes the pod count based on CPU while VPA changes pod size based on the same CPU, the two adjustments affect each other. One adds pods while the other shrinks them, for example.',
+        'Kubernetes does not stop you from using both. But avoid having both adjust the same CPU or memory. Drive HPA with a different metric, or keep VPA in recommend-only mode.',
+      ],
+      flows: [
+        {from: 'ms', to: 'hpa', type: 'watch'},
+        {from: 'ms', to: 'rec', label: 'CPU', type: 'watch'},
+        {from: 'hpa', to: 'deploy', type: 'request'},
+      ],
+      focus: ['hpa', 'vpa'],
+      status: {hpa: 'warn', vpa: 'warn'},
+      badges: {deploy: null},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'VPA changes the size; check it on the pod',
+      text: [
+        'VPA computes recommendations from usage history, and in apply mode it recreates pods with those values. The workload YAML stays the same.',
+        'So check actual values on the running pods, not the spec. When using it with HPA, make sure they do not watch the same metric.',
+      ],
+      keyIdea: 'VPA changes pod size, not pod count. It derives recommendations from usage history and, in apply mode, recreates pods with them. If the spec and actual pod values differ, suspect VPA first.',
+      flows: [{from: 'pod2', to: 'screen', type: 'response'}],
+      focus: ['vpa', 'pod2'],
+      status: {hpa: null, vpa: null},
+    },
+  ]}
+/>
+
+## Try it yourself
+
+```bash
+kubectl get vpa -A                                   # Attached VPAs and their update modes
+kubectl describe vpa <name>                          # Recommendation
+kubectl get pod <pod> -o jsonpath='{.spec.containers[*].resources}'   # Actual pod values
+kubectl get hpa -A                                   # Is an HPA attached to the same target?
+```
+
+Further reading: [Workload autoscaling](https://kubernetes.io/docs/concepts/workloads/autoscaling/) · [Vertical Pod Autoscaler (GitHub)](https://github.com/kubernetes/autoscaler/tree/master/vertical-pod-autoscaler) · [Resource management for containers](https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/) · [Scaling with Load (HPA)](../k8s/autoscaling.mdx)
+
+Next lesson: [Back to lesson list](../index.mdx)

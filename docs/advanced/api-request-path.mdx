@@ -1,0 +1,200 @@
+---
+id: api-request-path
+title: How an API Request Gets Stored
+sidebar_label: 01 · How an API Request Gets Stored
+description: Follow one request through authentication, authorization, admission webhooks and schema validation into etcd, out to controllers via watch, and see why a 409 conflict happens, step by step with animation
+hide_table_of_contents: true
+---
+
+# How an API Request Gets Stored
+
+A request sent by a dashboard `[Create]` button or by `kubectl apply` passes several gates inside the API server before it is stored. **Which gate rejects it decides the error the user sees.** Authentication and authorization are covered in [Who Can Do What (RBAC)](../k8s/rbac.mdx), and what happens after storage is covered in [How a Pod Starts](../k8s/pod-startup.mdx). This lesson focuses on what lies between: admission, storage and conflicts.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~10 min', level: 'Advanced'}}
+  nodes={[
+    {id: 'user', label: 'User A', sub: 'kubectl / dashboard', icon: 'user', tone: 'ext', x: 80, y: 110, show: true},
+    {id: 'userB', label: 'User B', sub: 'edits same object', icon: 'user', tone: 'ext', x: 80, y: 340},
+    {id: 'api', label: 'API server', sub: 'entry for all requests', icon: 'gate', tone: 'cp', x: 330, y: 225, show: true},
+    {id: 'authz', label: 'AuthN / AuthZ', sub: 'who · allowed?', icon: 'shield', tone: 'cp', x: 590, y: 70},
+    {id: 'mutate', label: 'Mutating hook', sub: 'modifies values', icon: 'hammer', tone: 'ext', x: 590, y: 225},
+    {id: 'schema', label: 'Schema check', sub: 'checks format', icon: 'book', tone: 'cp', x: 590, y: 380},
+    {id: 'validate', label: 'Validating hook', sub: 'policy decision', icon: 'gate', tone: 'ext', x: 850, y: 70},
+    {id: 'etcd', label: 'etcd', sub: 'state store', icon: 'db', tone: 'store', x: 850, y: 225},
+    {id: 'ctrl', label: 'Controller', sub: 'watch subscriber', icon: 'gear', tone: 'cp', x: 850, y: 380},
+  ]}
+  metrics={[
+    {id: 'gate', label: 'Current gate'},
+    {id: 'code', label: 'Response'},
+    {id: 'rv', label: 'resourceVersion'},
+  ]}
+  learn={[
+    {text: 'Order: authN → authZ → admission → storage', at: 1},
+    {text: 'Why the stored YAML differs from what you sent', at: 2},
+    {text: 'Why one webhook can block all creation', at: 4},
+    {text: 'The difference between "stored" and "applied"', at: 6},
+    {text: 'Why 409 Conflict happens and how to handle it', at: 7},
+  ]}
+  steps={[
+    {
+      short: 'Request',
+      kind: '시작',
+      title: 'A request to create a Deployment arrives',
+      text: [
+        'User A creates Deployment web in namespace shop. Whether from a dashboard button or kubectl, it is one HTTP request to the API server.',
+        'The API server does not store it right away. It writes to etcd only after the request passes each gate in order.',
+      ],
+      keyIdea: 'Only the API server talks to etcd directly. That keeps permission checks and records in one place.',
+      flows: [{from: 'user', to: 'api', label: 'POST web', type: 'request'}],
+      focus: ['api'],
+      values: {gate: '—', code: '—', rv: '—'},
+    },
+    {
+      short: 'AuthN/Z',
+      kind: '원리',
+      title: 'First: who is it, and is it allowed?',
+      text: [
+        'Authentication checks who sent the request, using a token or certificate. If it fails, 401 Unauthorized comes back.',
+        'Authorization checks RBAC rules to see whether that subject may perform this action on this resource. If it fails, the answer is 403 Forbidden.',
+      ],
+      flows: [
+        {from: 'api', to: 'authz', label: 'Who? Allowed?', type: 'request'},
+        {from: 'authz', to: 'api', label: 'Pass', type: 'response'},
+      ],
+      focus: ['authz'],
+      status: {authz: 'ok'},
+      values: {gate: 'AuthN / AuthZ'},
+    },
+    {
+      short: 'Mutate',
+      kind: '원리',
+      title: 'Mutating admission edits the request',
+      text: [
+        'Admission is the gate that checks whether the request fits cluster rules. The Mutating phase runs first: it fills defaults and changes values.',
+        'A mutating webhook plugs an external program into this phase. In a namespace with a service mesh enabled, a proxy container is added here.',
+      ],
+      keyIdea: 'You wrote one container but the stored Pod shows two. That is normal. The stored copy carries many fields you never typed.',
+      changes: ['+ default fields', '+ sidecar container (with mesh)'],
+      flows: [
+        {from: 'api', to: 'mutate', label: 'Any edits?', type: 'request'},
+        {from: 'mutate', to: 'api', label: 'Patched', type: 'response'},
+      ],
+      focus: ['mutate'],
+      status: {mutate: 'ok'},
+      values: {gate: 'Mutating admission'},
+    },
+    {
+      short: 'Schema',
+      kind: '원리',
+      title: 'Field names and formats are checked against the spec',
+      text: [
+        'Schema validation checks that the field names and formats of the modified object match the API spec.',
+        'If not, 422 Unprocessable Entity comes back. Naming rule violations are caught here too.',
+      ],
+      flows: [
+        {from: 'api', to: 'schema', label: 'Valid format?', type: 'request'},
+        {from: 'schema', to: 'api', label: 'Pass', type: 'response'},
+      ],
+      focus: ['schema'],
+      status: {schema: 'ok'},
+      values: {gate: 'Schema validation'},
+    },
+    {
+      short: 'Validate',
+      kind: '주의',
+      title: 'Validating admission checks policy',
+      text: [
+        'The Validating phase changes nothing. It only allows or rejects. Policies like "no latest tag" and resource quota overruns are caught here.',
+        'If the validating webhook server does not answer and failurePolicy is Fail, the request is rejected. Every create and update covered by that webhook can be blocked.',
+      ],
+      keyIdea: 'If the webhook server runs as a Pod and checks every Pod creation, then once the webhook Pod dies it cannot start itself again.',
+      flows: [
+        {from: 'api', to: 'validate', label: 'Allow?', type: 'request'},
+        {from: 'validate', to: 'api', label: 'Allowed', type: 'response'},
+      ],
+      focus: ['validate'],
+      status: {validate: 'ok'},
+      values: {gate: 'Validating admission'},
+    },
+    {
+      short: 'Store',
+      kind: '원리',
+      title: 'Stored in etcd with a resourceVersion',
+      text: [
+        'An object that passes every gate is stored in etcd and gets a value called resourceVersion. It changes on every write and tells you "which point in time this copy is from".',
+        'Once stored, 201 Created goes back to the user. If the same name already exists, the request is rejected here with 409 Conflict.',
+      ],
+      changes: ['+ Deployment web stored', '+ resourceVersion 100'],
+      flows: [
+        {from: 'api', to: 'etcd', label: 'Store', type: 'request', bend: 0.2},
+        {from: 'api', to: 'user', label: '201', type: 'response'},
+      ],
+      focus: ['etcd'],
+      badges: {etcd: 'web · rv 100'},
+      values: {gate: 'Store', code: {text: '201 Created', tone: 'good'}, rv: '100'},
+    },
+    {
+      short: 'watch',
+      kind: '원리',
+      title: 'The change reaches the watching controller',
+      text: [
+        'A controller keeps a connection (watch) open to the API server that says "tell me when this kind changes". It receives only changes, not the full list each time.',
+        'The Deployment controller receives the new web and starts creating a ReplicaSet. From there it is the flow from the How a Pod Starts lesson.',
+      ],
+      keyIdea: '201 Created means the write succeeded, not that the application is running. Applying it happens later, asynchronously.',
+      flows: [{from: 'api', to: 'ctrl', label: 'New web', type: 'watch'}],
+      focus: ['ctrl'],
+      status: {authz: null, mutate: null, schema: null, validate: null},
+      values: {gate: 'watch fan-out'},
+    },
+    {
+      short: '409',
+      kind: '문제',
+      title: 'Two people edit the same copy: the later one gets 409',
+      text: [
+        'A and B both read web at resourceVersion 100 and open an editor (`kubectl edit`). B saves first, making it 101. A still sends a request that says "edit based on 100".',
+        'Kubernetes does not lock. If someone changed the object in the meantime, it rejects the write. This is optimistic concurrency, and A gets 409 Conflict.',
+      ],
+      keyIdea: 'The other party may not be a person. If you leave the editor open while HPA changes replicas or a controller updates status, you also get a conflict.',
+      flows: [
+        {from: 'userB', to: 'api', label: 'Saves first', type: 'request'},
+        {from: 'api', to: 'etcd', label: 'rv 101', type: 'request', bend: 0.2},
+        {from: 'api', to: 'user', label: '409', type: 'response'},
+      ],
+      focus: ['userB', 'user'],
+      status: {userB: 'ok', user: 'error'},
+      badges: {etcd: 'web · rv 101'},
+      values: {gate: 'Store', code: {text: '409 Conflict', tone: 'bad'}, rv: '101'},
+    },
+    {
+      short: 'Recap',
+      kind: '정리',
+      title: 'Where it was rejected tells you what to do next',
+      text: [
+        'A request goes through authentication → authorization → mutating admission → schema validation → validating admission → storage, and stored changes spread to controllers via watch.',
+        '409 is not a server failure. It is a normal signal that someone else changed the object first. Read the latest copy and edit again.',
+      ],
+      keyIdea: 'The response code names the gate that stopped you. 401: credentials. 403: permission, quota or policy. 422: the spec. 409: re-read the latest copy and retry.',
+      focus: ['api'],
+      status: {user: null, userB: null},
+    },
+  ]}
+/>
+
+## Errors by gate
+
+| Gate | If rejected | What the user sees |
+| --- | --- | --- |
+| Authentication | `401 Unauthorized` | Logged out, or credentials expired |
+| Authorization (RBAC) | `403 Forbidden` | No permission. The message names the user, verb and resource |
+| Mutating admission | Rarely rejects | The stored YAML looks different from what you sent |
+| Schema validation | `422 Unprocessable Entity` | A "field is invalid" error |
+| Validating admission | `403` or a policy-specific message | "exceeded quota", `admission webhook "..." denied the request` |
+| Webhook server not answering | `failed calling webhook` | Timeout. Every create in that webhook's scope can fail |
+| Storage | `409 Conflict` | The name already exists, or someone else changed it first |
+
+Further reading: [Controlling Access to the Kubernetes API](https://kubernetes.io/docs/concepts/security/controlling-access/) · [Admission controllers](https://kubernetes.io/docs/reference/access-authn-authz/admission-controllers/) · [API concepts — resourceVersion](https://kubernetes.io/docs/reference/using-api/api-concepts/)
+
+Next lesson: [Deletion Is More Complex Than You Think](./deletion-finalizer.mdx)

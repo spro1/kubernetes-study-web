@@ -1,0 +1,181 @@
+---
+id: web-request
+title: When You Type an Address
+sidebar_label: 01 · When You Type an Address
+description: Follow the browser step by step as it looks up the address via DNS, connects, passes a load balancer, and gets the server's response and status code
+hide_table_of_contents: true
+---
+
+# When You Type an Address
+
+Type `https://portal.example.com` into the address bar and wait for the page. Follow, one step at a time, where the request goes and what comes back. How a request reaches a Pod through a Service inside Kubernetes continues in [How a Request Reaches a Pod](../k8s/traffic.mdx).
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~8 min', level: 'Beginner'}}
+  groups={[
+    {label: 'Data center · internal network', x: 440, y: 70, w: 545, h: 370, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'browser', label: 'Browser', sub: 'User PC', icon: 'browser', tone: 'ext', x: 90, y: 300, show: true},
+    {id: 'outside', label: 'Internet', sub: 'External network', icon: 'cloud', tone: 'ext', x: 90, y: 90},
+    {id: 'dns', label: 'DNS server', sub: 'Name to address', icon: 'book', tone: 'store', x: 340, y: 90},
+    {id: 'lb', label: 'Load balancer', sub: 'One front address', icon: 'split', tone: 'cp', x: 560, y: 300},
+    {id: 'web1', label: 'Web server 1', sub: 'Pages · API', icon: 'server', tone: 'app', x: 860, y: 160},
+    {id: 'web2', label: 'Web server 2', sub: 'Pages · API', icon: 'server', tone: 'app', x: 860, y: 380},
+  ]}
+  metrics={[
+    {id: 'dest', label: 'Destination'},
+    {id: 'conn', label: 'Connection'},
+    {id: 'code', label: 'Status code'},
+  ]}
+  learn={[
+    {text: 'DNS turns a name into an IP address', at: 1},
+    {text: 'What the IP address and the port each select', at: 2},
+    {text: 'How the first digit of a status code tells whose problem it is', at: 5},
+    {text: 'A load balancer keeps one address working', at: 6},
+    {text: 'The limits of internal and air-gapped networks', at: 7},
+  ]}
+  steps={[
+    {
+      short: 'Enter URL',
+      kind: '시작',
+      title: 'The user types a domain into the address bar',
+      text: [
+        'The user types https://portal.example.com into the address bar. A domain is just a name that is easy for people to read. A computer cannot find the other side by that name alone.',
+        'So the browser first asks a DNS server: "What is the IP address for this name?"',
+      ],
+      flows: [{from: 'browser', to: 'dns', label: 'IP address?', type: 'request'}],
+      focus: ['dns'],
+      values: {dest: 'portal.example.com', conn: 'None'},
+    },
+    {
+      short: 'DNS',
+      kind: '원리',
+      title: 'DNS turns the name into an IP address',
+      text: [
+        'The DNS server answers "10.0.0.10". An IP address is the number that locates one computer on a network.',
+        'Addresses starting with 10. are private IPs, used only inside company or organization networks. Most internal systems use addresses like this.',
+      ],
+      flows: [{from: 'dns', to: 'browser', label: '10.0.0.10', type: 'response'}],
+      focus: ['browser'],
+      values: {dest: '10.0.0.10'},
+    },
+    {
+      short: 'Connect',
+      kind: '원리',
+      title: 'Connect using the IP address and port',
+      text: [
+        'The browser connects to port 443 on 10.0.0.10. If the IP address is a building address, the port is the room number. It picks which program on that server to talk to.',
+        'The address did not include a port, so the https default, 443, is used. For http it would be 80.',
+      ],
+      flows: [{from: 'browser', to: 'lb', label: '10.0.0.10:443', type: 'request'}],
+      focus: ['lb'],
+      values: {dest: '10.0.0.10:443', conn: 'Connecting'},
+    },
+    {
+      short: 'Encrypt',
+      kind: '원리',
+      title: 'With HTTPS, check the certificate first',
+      text: [
+        'HTTPS is HTTP plus encryption. When connecting, the server shows a certificate proving "I own this domain". The browser checks it before the conversation starts.',
+        'Where encryption ends (the load balancer or the server behind it) depends on the setup. The next lesson covers certificate checks in detail.',
+      ],
+      flows: [{from: 'lb', to: 'browser', label: 'Certificate', type: 'response'}],
+      focus: ['lb'],
+      badges: {lb: 'HTTPS'},
+      values: {conn: {text: 'Encrypted', tone: 'good'}},
+    },
+    {
+      short: 'HTTP request',
+      kind: '원리',
+      title: 'The request goes through the load balancer to a server',
+      text: [
+        'The browser sends an HTTP request. It says what it wants to do (the method). Opening a page is a read, so it is GET.',
+        'A load balancer is one front address for several servers doing the same job. It takes the request and hands it to a server with spare capacity.',
+      ],
+      flows: [
+        {from: 'browser', to: 'lb', label: 'GET /', type: 'request'},
+        {from: 'lb', to: 'web1', label: 'Forward', type: 'request'},
+      ],
+      focus: ['web1'],
+      badges: {lb: null},
+    },
+    {
+      short: 'Response',
+      kind: '원리',
+      title: 'The response and status code come back',
+      text: [
+        'The server returns the page files (HTML, JavaScript, CSS) with status code 200 (success). Once the page runs, it requests data such as lists and numbers through an API.',
+        'The first digit sorts status codes. 2 means success, 4 means a problem on the requesting side (401 login required, 403 forbidden, 404 not found), and 5 means a server-side problem.',
+      ],
+      keyIdea: 'If the page loads but the list is empty, the page files arrived and the data request (API) failed.',
+      flows: [
+        {from: 'web1', to: 'lb', type: 'response'},
+        {from: 'lb', to: 'browser', label: '200 OK', type: 'response'},
+      ],
+      focus: ['browser'],
+      status: {web1: 'ok'},
+      values: {code: {text: '200 OK', tone: 'good'}},
+    },
+    {
+      short: 'Server down',
+      kind: '주의',
+      title: 'One server stops, the address stays the same',
+      text: [
+        'Web server 1 stops. The load balancer drops it and sends requests to the rest. Users keep using the same address without knowing how many servers there are or which one stopped.',
+        'If no server behind it can answer, users get a 5xx code such as 502, 503 or 504. 504 means the wait timed out, so the work may still be running on the server.',
+      ],
+      flows: [
+        {from: 'browser', to: 'lb', label: 'GET /', type: 'request'},
+        {from: 'lb', to: 'web2', label: 'To the other', type: 'request'},
+      ],
+      focus: ['lb', 'web2'],
+      status: {web1: 'error', web2: 'ok'},
+      badges: {web1: 'Down'},
+      values: {code: '200 OK (server 2)'},
+    },
+    {
+      short: 'Internal net',
+      kind: '주의',
+      title: 'The way in from outside is blocked',
+      text: [
+        'The servers sit on an internal network, and a firewall decides which addresses and ports may talk. Traffic from the internet (external network) is blocked by default. That is why a new system needs a list of "which ports to open on which segment".',
+        'An internal network fully cut off from the internet is called air-gapped. In an air-gapped network, servers cannot download anything from the internet either, so everything they need must be brought into an internal repository in advance.',
+      ],
+      flows: [{from: 'outside', to: 'lb', label: 'Firewall blocks', type: 'request'}],
+      focus: ['outside'],
+      status: {outside: 'error', web1: null},
+      badges: {web1: null},
+      values: {conn: {text: 'External blocked', tone: 'bad'}},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Name → address → connect → request → response',
+      text: [
+        'Typing one address triggers, in order: a DNS lookup, a connection (with a certificate check for HTTPS), an HTTP request, the load balancer forwarding it, and the server response with a status code.',
+        'A service running on Kubernetes follows the same path. External requests pass through a load balancer or Ingress to a Service and then a Pod. In an air-gapped network, images and packages must be brought into an internal repository in advance.',
+      ],
+      keyIdea: 'Behind one address are DNS → connect → request → forward → response. The status code hints at the failing step: 401 is authentication, 403 is permission, 504 is a backend timeout.',
+      focus: ['browser', 'lb'],
+      status: {outside: null},
+    },
+  ]}
+/>
+
+## Find the failing step from the symptom
+
+| Symptom | Failing step | What to check |
+| --- | --- | --- |
+| Site cannot be found | DNS · connection | Check name resolution with `nslookup`, check access to the internal network |
+| "Not secure" warning | Encryption (certificate) | Check for an expired certificate, a domain mismatch, or a private certificate |
+| Page loads but the list is empty | Data request (API) | Check the API response status code in the browser developer tools |
+| 401 / 403 | Response | 401: check credentials (login, token). 403: check permission settings |
+| 504 | Response (timeout) | Check backend response time and health. The request may actually have been processed |
+| Broken fonts or slow page rendering | Air-gapped network | Check for external CDN resources and host them internally |
+
+Further reading: [An overview of HTTP (MDN)](https://developer.mozilla.org/en-US/docs/Web/HTTP/Overview) · [HTTP response status codes (MDN)](https://developer.mozilla.org/en-US/docs/Web/HTTP/Status) · [Service (Kubernetes docs)](https://kubernetes.io/docs/concepts/services-networking/service/) · [DNS for Services and Pods](https://kubernetes.io/docs/concepts/services-networking/dns-pod-service/)
+
+Next lesson: [HTTPS and Certificates](./https-cert.mdx)

@@ -1,0 +1,187 @@
+---
+id: vpc-request
+title: VPC 안에서 요청이 가는 길
+sidebar_label: 02 · VPC 안에서 요청이 가는 길
+description: 인터넷 사용자의 요청이 인터넷 게이트웨이, 퍼블릭 서브넷의 로드밸런서, 프라이빗 서브넷의 서버와 DB를 거쳐 돌아오는 길과, 보안 그룹·NAT 게이트웨이의 역할을 애니메이션으로 따라간다
+hide_table_of_contents: true
+---
+
+# VPC 안에서 요청이 가는 길
+
+클라우드에 올린 쇼핑몰에 사용자가 접속한다. 요청은 클라우드 안의 내 전용 네트워크(VPC)로 들어와 여러 관문을 지난다. 무엇이 인터넷에 드러나 있고 무엇이 숨어 있는지, 각 관문이 무엇을 통과시키고 막는지 따라가 본다. 데이터센터 안에서 요청이 가는 기본 흐름은 [주소창에 주소를 입력하면](../basic/web-request.mdx)에서 먼저 볼 수 있다.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '약 9분', level: '기초'}}
+  groups={[
+    {label: 'VPC · 내 전용 네트워크', x: 180, y: 15, w: 810, h: 425, tone: 'plain'},
+    {label: '퍼블릭 서브넷', x: 390, y: 45, w: 240, h: 365, tone: 'mgmt'},
+    {label: '프라이빗 서브넷', x: 660, y: 45, w: 320, h: 365, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'user', label: '사용자', sub: '인터넷 브라우저', icon: 'browser', tone: 'ext', x: 85, y: 110, show: true},
+    {id: 'repo', label: '외부 저장소', sub: '패키지·패치', icon: 'archive', tone: 'ext', x: 85, y: 360},
+    {id: 'igw', label: '인터넷 GW', sub: '출입문', icon: 'gate', tone: 'cp', size: 'sm', x: 302, y: 230, show: true},
+    {id: 'lb', label: '로드밸런서', sub: '공개 주소', icon: 'split', tone: 'cp', x: 520, y: 120, show: true},
+    {id: 'nat', label: 'NAT GW', sub: '나가는 길 전용', icon: 'route', tone: 'cp', x: 520, y: 350},
+    {id: 'app', label: '웹 서버', sub: '공인 IP 없음', icon: 'server', tone: 'app', x: 820, y: 120, show: true},
+    {id: 'db', label: 'DB', sub: '주문·회원', icon: 'db', tone: 'store', x: 820, y: 350, show: true},
+  ]}
+  metrics={[
+    {id: 'path', label: '지금 지나는 곳'},
+    {id: 'sg', label: '보안 그룹 판정'},
+    {id: 'exposed', label: '인터넷에 드러난 것'},
+  ]}
+  learn={[
+    {text: 'VPC·서브넷·인터넷 게이트웨이가 각각 무엇인지', at: 1},
+    {text: '퍼블릭과 프라이빗 서브넷을 가르는 기준', at: 2},
+    {text: '보안 그룹이 허용 규칙만으로 문을 여닫는 방식', at: 3},
+    {text: '허용한 요청의 응답은 자동으로 나간다는 것(상태 유지)', at: 5},
+    {text: '프라이빗 서버가 NAT 게이트웨이로 업데이트를 받는 법', at: 7},
+  ]}
+  steps={[
+    {
+      short: '요청 출발',
+      kind: '시작',
+      title: '사용자가 쇼핑몰 주소로 접속한다',
+      text: [
+        '사용자의 브라우저가 쇼핑몰 주소로 요청을 보낸다. 쇼핑몰은 클라우드 안의 VPC(Virtual Private Cloud, 가상 사설 네트워크)에 들어 있다.',
+        'VPC는 클라우드 안에 나만 쓰도록 떼어 낸 네트워크다. 안쪽을 다시 서브넷(subnet)이라는 작은 구역으로 나눠 쓴다.',
+      ],
+      flows: [{from: 'user', to: 'igw', label: 'HTTPS 요청', type: 'request'}],
+      focus: ['igw'],
+      values: {path: '인터넷', sg: '-', exposed: '로드밸런서 주소'},
+    },
+    {
+      short: '출입문',
+      kind: '원리',
+      title: '인터넷 게이트웨이가 VPC의 출입문이다',
+      text: [
+        '인터넷 게이트웨이(internet gateway)는 VPC와 인터넷을 잇는 출입문이다. 이 문이 없으면 VPC 안의 무엇도 인터넷과 주고받지 못한다.',
+        '요청은 출입문을 지나 공개 주소를 가진 로드밸런서로 간다.',
+      ],
+      flows: [{from: 'igw', to: 'lb', label: '공개 주소로', type: 'request'}],
+      focus: ['lb'],
+      values: {path: '인터넷 게이트웨이'},
+    },
+    {
+      short: '두 구역',
+      kind: '원리',
+      title: '퍼블릭 서브넷과 프라이빗 서브넷',
+      text: [
+        '서브넷의 길 안내표(라우팅 테이블)에 "인터넷으로 가는 길 = 인터넷 게이트웨이"가 있으면 퍼블릭 서브넷, 없으면 프라이빗 서브넷이다. 로드밸런서는 퍼블릭에, 웹 서버와 DB는 프라이빗에 둔다.',
+        '로드밸런서가 요청을 받아 뒤의 웹 서버로 넘긴다. 웹 서버에는 공인 IP가 없어 인터넷에서 직접 찾아올 수 없다.',
+      ],
+      flows: [{from: 'lb', to: 'app', label: '서버로 전달', type: 'request'}],
+      focus: ['lb', 'app'],
+      values: {path: '퍼블릭 → 프라이빗'},
+    },
+    {
+      short: '보안 그룹',
+      kind: '원리',
+      title: '보안 그룹이 허용한 것만 들어온다',
+      text: [
+        '보안 그룹(security group)은 서버마다 붙는 가상 방화벽이다. 허용 규칙만 적고, 적지 않은 것은 모두 막힌다.',
+        '웹 서버의 보안 그룹에는 "로드밸런서에서 오는 443번 포트만 허용"이 적혀 있다. 이 요청은 규칙에 맞아 통과한다.',
+      ],
+      keyIdea: '보안 그룹 규칙의 출처를 IP 대신 "로드밸런서의 보안 그룹"으로 적으면, 로드밸런서 주소가 바뀌어도 규칙을 고칠 필요가 없다.',
+      flows: [{from: 'lb', to: 'app', label: '443 허용', type: 'request'}],
+      focus: ['app'],
+      status: {app: 'ok'},
+      badges: {app: '443만 허용'},
+      values: {path: '웹 서버', sg: {text: '허용', tone: 'good'}},
+    },
+    {
+      short: 'DB 조회',
+      kind: '원리',
+      title: '웹 서버가 DB에서 주문 정보를 읽는다',
+      text: [
+        '웹 서버가 DB에 주문 정보를 묻는다. DB의 보안 그룹은 "웹 서버 보안 그룹에서 오는 DB 포트만 허용"으로 좁혀 둔다.',
+        'DB는 로드밸런서도 사용자도 직접 만나지 않는다. 오직 웹 서버만 말을 걸 수 있다.',
+      ],
+      flows: [
+        {from: 'app', to: 'db', label: '주문 조회', type: 'request'},
+        {from: 'db', to: 'app', type: 'response'},
+      ],
+      focus: ['db'],
+      status: {db: 'ok'},
+      values: {path: 'DB'},
+    },
+    {
+      short: '응답',
+      kind: '원리',
+      title: '응답은 들어온 길로 자동으로 나간다',
+      text: [
+        '보안 그룹은 상태를 기억한다(stateful). 들어오는 요청을 허용했으면, 그 연결의 응답은 나가는 규칙을 따로 적지 않아도 자동으로 나간다.',
+        '서브넷 단위로 거는 네트워크 ACL은 상태를 기억하지 않아, 들어오는 방향과 나가는 방향을 각각 열어 줘야 한다.',
+      ],
+      flows: [
+        {from: 'app', to: 'lb', type: 'response'},
+        {from: 'lb', to: 'igw', type: 'response'},
+        {from: 'igw', to: 'user', label: '200 OK', type: 'response'},
+      ],
+      focus: ['user'],
+      badges: {app: null},
+      values: {path: '응답 귀환', sg: {text: '응답 자동 허용', tone: 'good'}},
+    },
+    {
+      short: '차단',
+      kind: '주의',
+      title: '서버에 직접 들어오려는 시도는 막힌다',
+      text: [
+        '누군가 인터넷에서 웹 서버의 22번 포트(원격 접속 SSH)로 바로 들어오려 한다. 웹 서버는 프라이빗 서브넷에 있어 인터넷에서 오는 길부터 없다.',
+        '설령 길이 열려 있었더라도 보안 그룹에 22번 허용 규칙이 없으니 막힌다. 길과 문 양쪽에서 지키는 셈이다.',
+      ],
+      flows: [{from: 'igw', to: 'app', label: '22번 차단', type: 'request'}],
+      focus: ['app'],
+      status: {app: 'warn'},
+      badges: {app: '22 거부'},
+      values: {sg: {text: '거부', tone: 'bad'}},
+    },
+    {
+      short: 'NAT',
+      kind: '원리',
+      title: '서버는 NAT 게이트웨이로 업데이트를 받는다',
+      text: [
+        '웹 서버가 운영체제 보안 패치를 내려받아야 한다. 프라이빗 서브넷은 인터넷 게이트웨이로 바로 나갈 수 없으니, 퍼블릭 서브넷의 NAT 게이트웨이가 대신 나가서 받아 온다.',
+        'NAT 게이트웨이는 안에서 시작한 연결만 내보낸다. 바깥에서 먼저 걸어오는 연결은 받지 않으므로, 서버는 계속 숨어 있다.',
+      ],
+      flows: [
+        {from: 'app', to: 'nat', label: '패치 요청', type: 'request'},
+        {from: 'nat', to: 'igw', type: 'request'},
+        {from: 'igw', to: 'repo', type: 'request'},
+      ],
+      focus: ['nat'],
+      status: {app: 'ok'},
+      badges: {app: null},
+      values: {path: 'NAT → 인터넷', sg: '나가는 연결 허용'},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '드러난 것은 로드밸런서 하나뿐이다',
+      text: [
+        '인터넷에서 보이는 것은 로드밸런서의 공개 주소뿐이다. 웹 서버와 DB는 프라이빗 서브넷에 숨고, 보안 그룹이 필요한 포트만 연다.',
+        '서버가 바깥으로 나갈 일은 NAT 게이트웨이가 맡는다. 들어오는 길과 나가는 길을 따로 두는 것이 클라우드 네트워크 설계의 기본 틀이다.',
+      ],
+      keyIdea: '들어오는 길은 인터넷 게이트웨이 → 퍼블릭 서브넷의 로드밸런서 → 프라이빗 서브넷의 서버이고, 나가는 길은 NAT 게이트웨이다. 인터넷에 드러난 것과 열린 포트는 최소로 둔다.',
+      focus: ['lb', 'app', 'db'],
+      values: {path: '-', sg: '-'},
+    },
+  ]}
+/>
+
+## 관문별 이름 (AWS · Azure · GCP)
+
+| 개념 | AWS | Azure | GCP |
+| --- | --- | --- | --- |
+| 내 전용 네트워크 | VPC | Virtual Network (VNet) | VPC network |
+| 인터넷 출입문 | Internet Gateway | 별도 자원 없이 기본 인터넷 경로 | 기본 인터넷 게이트웨이 경로 |
+| 나가는 길 전용 주소 변환 | NAT Gateway | NAT Gateway | Cloud NAT |
+| 서버 앞 상태 유지 방화벽 | Security Group | Network Security Group (NSG) | VPC 방화벽 규칙 |
+| 로드밸런서 | Elastic Load Balancing | Load Balancer · Application Gateway | Cloud Load Balancing |
+
+더 읽을거리: [Amazon VPC란 무엇인가 (AWS)](https://docs.aws.amazon.com/vpc/latest/userguide/what-is-amazon-vpc.html) · [보안 그룹 (AWS)](https://docs.aws.amazon.com/vpc/latest/userguide/vpc-security-groups.html) · [서비스 (쿠버네티스 문서)](https://kubernetes.io/ko/docs/concepts/services-networking/service/) · [주소창에 주소를 입력하면](../basic/web-request.mdx)
+
+다음 레슨: [가용 영역 하나가 멈추면](./az-failover.mdx)

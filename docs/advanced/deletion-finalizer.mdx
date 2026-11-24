@@ -1,0 +1,191 @@
+---
+id: deletion-finalizer
+title: Deletion Is More Complex Than You Think
+sidebar_label: 02 · Deletion Is More Complex Than You Think
+description: See how deletionTimestamp, finalizers, owner references and garbage collection shape deletion, and why a namespace can stay stuck in Terminating, step by step with animation
+hide_table_of_contents: true
+---
+
+# Deletion Is More Complex Than You Think
+
+In Kubernetes, a "delete" request does not make an object vanish at once. If cleanup work remains, it waits, and dependent objects are removed afterward by another worker. Let's follow why `Terminating` lingers in `kubectl get`.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~10 min', level: 'Advanced'}}
+  groups={[
+    {label: 'Namespace · shop', x: 310, y: 25, w: 440, h: 400, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'user', label: 'User', sub: 'kubectl', icon: 'user', tone: 'ext', x: 90, y: 80, show: true},
+    {id: 'api', label: 'API server', sub: 'handles deletes', icon: 'gate', tone: 'cp', x: 90, y: 225, show: true},
+    {id: 'gc', label: 'GC', sub: 'garbage collector', icon: 'gear', tone: 'cp', x: 90, y: 370, show: true},
+    {id: 'deploy', label: 'Deployment', sub: 'web', icon: 'layers', tone: 'cp', x: 410, y: 100, show: true},
+    {id: 'rs', label: 'ReplicaSet', sub: 'web-7d9f8c6b5', icon: 'layers', tone: 'store', x: 410, y: 225, show: true},
+    {id: 'pod', label: 'web Pod', sub: 'owner: RS', icon: 'pod', tone: 'app', size: 'sm', x: 410, y: 350, show: true},
+    {id: 'cr', label: 'Backup', sub: 'CR from a tool', icon: 'archive', tone: 'store', x: 650, y: 100, show: true},
+    {id: 'pvc', label: 'PVC', sub: 'data', icon: 'disk', tone: 'store', x: 650, y: 350, show: true},
+    {id: 'op', label: 'Operator', sub: 'backup tool', icon: 'agent', tone: 'node', x: 890, y: 100, show: true},
+  ]}
+  metrics={[
+    {id: 'target', label: 'Deleting'},
+    {id: 'state', label: 'State'},
+    {id: 'fin', label: 'Finalizers left'},
+  ]}
+  learn={[
+    {text: 'How deletionTimestamp and finalizers relate', at: 1},
+    {text: 'Terminating means "waiting"', at: 2},
+    {text: 'Owner references and garbage collection', at: 4},
+    {text: 'Why namespace deletion never finishes', at: 6},
+  ]}
+  steps={[
+    {
+      short: 'Delete',
+      kind: '시작',
+      title: 'Delete a PVC that a Pod is using',
+      text: [
+        'The user deletes PVC data in namespace shop. The web Pod currently mounts and uses this PVC.',
+        'When the API server gets a delete request, it first checks whether the object has finalizers.',
+      ],
+      flows: [{from: 'user', to: 'api', label: 'delete pvc', type: 'request'}],
+      focus: ['api'],
+      status: {pod: 'ok', cr: 'ok', op: 'ok'},
+      values: {target: 'PVC data', state: 'Delete requested', fin: '—'},
+    },
+    {
+      short: 'Mark',
+      kind: '원리',
+      title: 'Not deleted, only stamped with a deletion time',
+      text: [
+        'A finalizer is a marker that says "there is cleanup to do first, so wait". A PVC carries kubernetes.io/pvc-protection.',
+        'If the list holds even one name, the API server does not delete the object. It only records deletionTimestamp (when deletion was requested). kubectl get shows it as Terminating.',
+      ],
+      changes: ['+ deletionTimestamp', '~ state Terminating'],
+      flows: [{from: 'api', to: 'pvc', label: 'Mark deleted', type: 'request', bend: 0.25}],
+      focus: ['pvc'],
+      status: {pvc: 'warn'},
+      badges: {pvc: 'Terminating'},
+      values: {state: {text: 'Terminating', tone: 'bad'}, fin: 'pvc-protection'},
+    },
+    {
+      short: 'Wait',
+      kind: '원리',
+      title: 'It waits until no Pod uses it',
+      text: [
+        'pvc-protection waits until "no Pod uses this PVC". It is a safety net that stops an in-use volume from disappearing suddenly.',
+        'So while the web Pod is alive, the PVC stays in Terminating.',
+      ],
+      keyIdea: 'A long Terminating does not mean deletion is in progress. Usually a finalizer is waiting for cleanup.',
+      flows: [{from: 'pod', to: 'pvc', label: 'In use', type: 'request'}],
+      focus: ['pod', 'pvc'],
+    },
+    {
+      short: 'Owners',
+      kind: '원리',
+      title: 'Delete the Deployment: owners and dependents',
+      text: [
+        'Now delete Deployment web. Each Pod has an owner reference (ownerReferences) saying "my owner is this ReplicaSet", and the ReplicaSet has one saying "my owner is this Deployment".',
+        'Run kubectl get pod -o yaml and look at metadata.ownerReferences to see this relation.',
+      ],
+      flows: [
+        {from: 'user', to: 'api', label: 'delete web', type: 'request'},
+        {from: 'pod', to: 'rs', label: 'Owner', type: 'response'},
+        {from: 'rs', to: 'deploy', label: 'Owner', type: 'response'},
+      ],
+      focus: ['deploy', 'rs', 'pod'],
+      values: {target: 'Deployment web', state: 'Delete requested', fin: '—'},
+    },
+    {
+      short: 'GC',
+      kind: '원리',
+      title: 'The owner goes first; the garbage collector removes dependents',
+      text: [
+        'With the default (background) policy, the Deployment is deleted at once. The garbage collector (GC) then cleans up the orphaned ReplicaSet and Pods behind the scenes.',
+        'You can also choose foreground, which deletes dependents first, or orphan, which deletes only the owner and keeps dependents.',
+      ],
+      keyIdea: 'With foreground deletion, the owner stays Terminating until all dependents are gone.',
+      flows: [
+        {from: 'gc', to: 'rs', label: 'Clean up', type: 'request'},
+        {from: 'gc', to: 'pod', label: 'Clean up', type: 'request'},
+      ],
+      focus: ['gc'],
+      status: {deploy: 'gone', rs: 'gone', pod: 'gone'},
+      values: {state: {text: 'Deleted', tone: 'good'}},
+    },
+    {
+      short: 'Release',
+      kind: '원리',
+      title: 'Once the condition clears, the finalizer is removed',
+      text: [
+        'The web Pod is gone, so no Pod uses the PVC anymore. The responsible controller finishes cleanup and removes pvc-protection from the list.',
+        'The moment the finalizer list is empty, the API server actually deletes the PVC.',
+      ],
+      changes: ['- pvc-protection', '- PVC data'],
+      flows: [{from: 'api', to: 'pvc', label: 'Final delete', type: 'request', bend: 0.25}],
+      focus: ['pvc'],
+      status: {pvc: 'gone'},
+      badges: {pvc: null},
+      values: {target: 'PVC data', state: {text: 'Deleted', tone: 'good'}, fin: 'None'},
+    },
+    {
+      short: 'Stuck',
+      kind: '장애',
+      title: 'Delete the tool first and the namespace never finishes',
+      text: [
+        'The backup tool (operator) was deleted first, then namespace shop. The namespace waits until every object inside is deleted.',
+        'But the Backup object carries a finalizer added by that tool, and the controller that would clear it is already gone. Backup and the namespace stay in Terminating forever.',
+      ],
+      keyIdea: 'This is the most common reason a namespace deletion never finishes. Check the finalizers of objects left inside to see what they are waiting for.',
+      flows: [
+        {from: 'user', to: 'api', label: 'delete ns', type: 'request'},
+        {from: 'api', to: 'cr', label: 'Mark deleted', type: 'request'},
+      ],
+      focus: ['cr', 'op'],
+      status: {op: 'gone', cr: 'error'},
+      badges: {cr: 'Terminating'},
+      values: {target: 'Namespace shop', state: {text: 'Terminating', tone: 'bad'}, fin: 'backup tool name'},
+    },
+    {
+      short: 'Force',
+      kind: '주의',
+      title: 'Force-removing a finalizer skips cleanup',
+      text: [
+        'Remove the finalizer by hand and Backup and the namespace disappear. But the cleanup the tool meant to do, such as cleaning external storage, is skipped.',
+        'So resources may be left outside the cluster. The right order is to delete CRs first and the tool last.',
+      ],
+      flows: [
+        {from: 'user', to: 'api', label: 'Force remove', type: 'request'},
+        {from: 'api', to: 'cr', label: 'Final delete', type: 'request'},
+      ],
+      focus: ['cr'],
+      status: {cr: 'gone'},
+      badges: {cr: 'External cleanup missed?'},
+      values: {state: 'Deleted (no cleanup)', fin: 'None'},
+    },
+    {
+      short: 'Recap',
+      kind: '정리',
+      title: 'Deletion is mark → clean up → delete',
+      text: [
+        'With finalizers, only deletionTimestamp is set. The object is deleted after the responsible controller finishes cleanup. Dependents are removed by the garbage collector, following owner references.',
+        'If the responsible controller is gone, the wait never ends. That is why deletion order matters.',
+      ],
+      keyIdea: 'Deletion goes mark → clean up → delete. If Terminating drags on, check metadata.finalizers and deletionTimestamp, then confirm the responsible controller is alive. Forcing finalizers off is the last resort.',
+      focus: ['api', 'gc'],
+    },
+  ]}
+/>
+
+## Common finalizers and when they get stuck
+
+| Finalizer | What it waits for | When it stays stuck |
+| --- | --- | --- |
+| `kubernetes.io/pvc-protection` | No Pod using this PVC | A Pod that mounts the PVC is still alive |
+| `kubernetes.io/pv-protection` | No PVC bound to this PV | The PVC still exists |
+| `kubernetes` on a namespace | Every object in the namespace deleted | One object inside is stuck on a finalizer |
+| Names added by each tool | The tool cleaning up its external resources | The tool's controller was removed or stopped |
+
+Further reading: [Finalizers](https://kubernetes.io/docs/concepts/overview/working-with-objects/finalizers/) · [Garbage collection](https://kubernetes.io/docs/concepts/architecture/garbage-collection/) · [Owners and dependents](https://kubernetes.io/docs/concepts/overview/working-with-objects/owners-dependents/)
+
+Next lesson: [CRDs and Operators](./crd-operator.mdx)

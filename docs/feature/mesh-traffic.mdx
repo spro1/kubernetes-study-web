@@ -1,0 +1,197 @@
+---
+id: mesh-traffic
+title: Service Mesh ② Splitting Traffic
+sidebar_label: 04 · Splitting Traffic
+description: Animated walkthrough of canary releases with Istio DestinationRule subsets and VirtualService weight and header rules, plus connection limits, retries and timeouts, and rolling back the weights
+hide_table_of_contents: true
+---
+
+# Service Mesh ② Splitting Traffic
+
+Instead of releasing the new api version (v2) to everyone at once, send it to **only 10% first**. Follow how Istio's `DestinationRule` and `VirtualService` split traffic without changing app code.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~10 min', level: 'Intermediate'}}
+  nodes={[
+    {id: 'web', label: 'web app', sub: 'Caller', icon: 'pod', tone: 'app', x: 100, y: 230, show: true},
+    {id: 'webpx', label: 'Proxy', sub: 'Splits here', icon: 'split', tone: 'node', size: 'sm', x: 317, y: 230, show: true},
+    {id: 'istiod', label: 'istiod', sub: 'Pushes rules', icon: 'gear', tone: 'cp', x: 560, y: 70, show: true},
+    {id: 'vs', label: 'VirtualService', sub: 'Where · what %', icon: 'route', tone: 'store', x: 330, y: 395},
+    {id: 'dr', label: 'DestinationRule', sub: 'Subsets · conns', icon: 'book', tone: 'store', x: 610, y: 395},
+    {id: 'v1', label: 'api v1', sub: 'Current version', icon: 'pod', tone: 'app', x: 870, y: 190, show: true},
+    {id: 'v2', label: 'api v2', sub: 'New version', icon: 'pod', tone: 'app', x: 870, y: 350},
+  ]}
+  metrics={[
+    {id: 'p1', label: 'Share to v1'},
+    {id: 'p2', label: 'Share to v2'},
+    {id: 'scope', label: 'Who sees v2'},
+  ]}
+  learn={[
+    {text: 'Without rules, traffic splits by pod count', at: 1},
+    {text: 'DestinationRule subsets name each version', at: 2},
+    {text: 'How to do a canary release with VirtualService weight and header rules', at: 3},
+    {text: 'Where connection limits, retries, and timeouts go', at: 5},
+    {text: 'Rolling back just means changing the weights', at: 7},
+  ]}
+  steps={[
+    {
+      short: 'Now',
+      kind: '시작',
+      title: 'Right now, every request goes to v1',
+      text: [
+        'The web app calls the api Service. As in the previous lesson, both pods have sidecars, and requests pass the web-side proxy to reach api v1.',
+        'In a service mesh, the proxy on the sending side picks the destination. So split rules apply at this proxy.',
+      ],
+      flows: [
+        {from: 'web', to: 'webpx', type: 'request'},
+        {from: 'webpx', to: 'v1', label: '100%', type: 'request'},
+      ],
+      values: {p1: '100%', p2: '-', scope: 'Nobody'},
+    },
+    {
+      short: 'Deploy v2',
+      kind: '주의',
+      title: 'Deploy v2 with no rules and traffic splits by pod count',
+      text: [
+        'Start new pods labeled version: v2 behind the same api Service. The Service groups pods by label, so it does not tell v1 from v2.',
+        'Without split rules, the proxy spreads requests evenly across the pods behind the Service. With one pod each, about half the requests go to the untested v2.',
+      ],
+      flows: [
+        {from: 'webpx', to: 'v1', label: 'About half', type: 'request'},
+        {from: 'webpx', to: 'v2', label: 'About half', type: 'request'},
+      ],
+      focus: ['v2'],
+      status: {v2: 'warn'},
+      values: {p1: '~50%', p2: {text: '~50%', tone: 'bad'}, scope: {text: 'About half', tone: 'bad'}},
+    },
+    {
+      short: 'Subsets',
+      kind: '원리',
+      title: 'A DestinationRule names each version',
+      text: [
+        'In a DestinationRule (rules for the destination side), write "pods with version: v1 are subset v1, pods with version: v2 are subset v2". Write it in YAML and create it with kubectl apply.',
+        'This only names them, so traffic flow does not change yet. Run kubectl get destinationrule -o yaml to check that subsets contains v1 and v2.',
+      ],
+      keyIdea: 'Without subsets, a VirtualService has no way to point at v1 and v2 separately.',
+      flows: [{from: 'dr', to: 'istiod', label: 'Define subsets', type: 'request'}],
+      focus: ['dr'],
+      status: {v2: null},
+      badges: {dr: 'v1 · v2'},
+    },
+    {
+      short: '90 : 10',
+      kind: '원리',
+      title: 'A VirtualService sets v1 to 90% and v2 to 10%',
+      text: [
+        'In a VirtualService (rules for where requests go and in what share), write "90% of requests to api go to subset v1, 10% to subset v2". istiod pushes this rule to the web-side proxy.',
+        'The proxy picks a destination for each request by these weights. Sending a small share to the new version first is called a canary release.',
+      ],
+      keyIdea: 'Weights do not depend on pod count. Even with a single v2 pod, it gets exactly the 10% you set.',
+      flows: [
+        {from: 'vs', to: 'istiod', label: '90 : 10', type: 'request'},
+        {from: 'webpx', to: 'v1', label: '90%', type: 'request'},
+        {from: 'webpx', to: 'v2', label: '10%', type: 'request'},
+      ],
+      focus: ['vs', 'webpx'],
+      badges: {vs: '90 : 10'},
+      values: {p1: {text: '90%', tone: 'good'}, p2: {text: '10%', tone: 'good'}, scope: {text: '10% of requests', tone: 'good'}},
+    },
+    {
+      short: 'Header match',
+      kind: '원리',
+      title: 'Send only requests with a given header to v2',
+      text: [
+        'You can add a condition checked before the weights. For example, requests with a tester header (a value like end-user: qa) always go to v2, and the rest follow 90 : 10.',
+        'VirtualService rules are matched top to bottom, and the first match wins. So put narrow conditions (headers) on top and broad ones (weights) below.',
+      ],
+      keyIdea: 'The app must pass the header along on its next calls. If a service in the middle drops the header, the condition stops matching after that point.',
+      flows: [
+        {from: 'web', to: 'webpx', label: 'With header', type: 'request'},
+        {from: 'webpx', to: 'v2', label: 'Header match', type: 'request'},
+      ],
+      focus: ['webpx', 'v2'],
+      badges: {vs: 'Header → v2'},
+      values: {scope: 'Testers + 10%'},
+    },
+    {
+      short: 'Conn rules',
+      kind: '원리',
+      title: 'The DestinationRule sets rules for after arrival',
+      text: [
+        'Besides subsets, the DestinationRule handles destination-side rules. The load balancing method for picking pods within a subset and TLS settings go here.',
+        'Caps on connections and pending requests (connection limits), and a rule that temporarily removes pods that keep failing (circuit breaker), also go in the DestinationRule. They keep a surge of requests from knocking over one version.',
+      ],
+      keyIdea: 'If circuit breaker thresholds are too sensitive, healthy pods get removed too.',
+      flows: [
+        {from: 'dr', to: 'istiod', label: 'Conn rules', type: 'request'},
+        {from: 'webpx', to: 'v1', type: 'request'},
+        {from: 'webpx', to: 'v2', type: 'request'},
+      ],
+      focus: ['dr'],
+      badges: {dr: 'LB · limits', vs: null},
+    },
+    {
+      short: 'Retries',
+      kind: '주의',
+      title: 'Retries and timeouts go in the VirtualService',
+      text: [
+        'v2 has slowed down. Put "how many times to resend on failure (retries)" and "how long to wait before giving up (timeout)" in the VirtualService, and the proxy handles them for you.',
+        'Retries are not free. On requests that must not run twice, such as payments, they cause duplicate processing. Retrying at several points in a call chain multiplies the load on a slow service.',
+      ],
+      keyIdea: 'As a rule, retry at only one point in the chain, with growing intervals. If an upstream timeout is shorter than the downstream one, the upstream gives up before the downstream finishes.',
+      flows: [
+        {from: 'vs', to: 'istiod', label: 'Retry rules', type: 'request'},
+        {from: 'webpx', to: 'v2', label: 'Retry', type: 'request'},
+      ],
+      focus: ['v2', 'vs'],
+      status: {v2: 'warn'},
+      badges: {dr: null},
+    },
+    {
+      short: 'Roll back',
+      kind: '문제',
+      title: 'If v2 has problems, roll back the weights',
+      text: [
+        'Errors are rising on v2. Open the VirtualService with kubectl edit virtualservice and change the weights to 100 : 0.',
+        'You do not delete or redeploy pods. Once the new rule reaches the proxy, all new requests go to v1, and you keep the v2 pods to investigate.',
+      ],
+      keyIdea: 'A rolling update rollback swaps pods again, but a mesh rollback only changes the weight numbers.',
+      flows: [
+        {from: 'vs', to: 'istiod', label: '100 : 0', type: 'request'},
+        {from: 'webpx', to: 'v1', label: '100%', type: 'request'},
+      ],
+      focus: ['vs', 'v1'],
+      status: {v2: 'error'},
+      badges: {vs: '100 : 0'},
+      values: {p1: {text: '100%', tone: 'good'}, p2: {text: '0% (kept)', tone: 'good'}, scope: {text: 'Nobody', tone: 'good'}},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'DestinationRule is "what"; VirtualService is "where and how much"',
+      text: [
+        'The DestinationRule defines version groups (subsets) and connection rules after arrival. The VirtualService defines weights, header conditions, retries, and timeouts. The sending-side proxy does the actual splitting.',
+        'Tools such as Argo Rollouts and Flagger raise these weights step by step based on metrics, and roll back when they see problems.',
+      ],
+      keyIdea: 'The DestinationRule sets version groups and post-arrival connection rules. The VirtualService sets where and what %, retries, and timeouts. Weight changes affect traffic immediately, so manage them in Git and check metrics after each change.',
+      focus: ['vs', 'dr'],
+      status: {v2: null},
+      badges: {vs: null},
+    },
+  ]}
+/>
+
+## Try it yourself
+
+```bash
+kubectl get destinationrule api -o yaml      # subsets, trafficPolicy (load balancing, connection limits)
+kubectl get virtualservice api -o yaml       # match (headers), route weight, retries, timeout
+kubectl edit virtualservice api              # Roll the weights back to 100 : 0
+istioctl proxy-config routes deploy/web      # Actual rules the web-side proxy received
+```
+
+Further reading: [Istio traffic management](https://istio.io/latest/docs/concepts/traffic-management/) · [VirtualService reference](https://istio.io/latest/docs/reference/config/networking/virtual-service/) · [DestinationRule reference](https://istio.io/latest/docs/reference/config/networking/destination-rule/) · [Zero-Downtime Deploys (Rolling Update)](../k8s/rolling-update.mdx)
+
+Next lesson: [Service Mesh ③ Mesh Gateway](./mesh-gateway.mdx)

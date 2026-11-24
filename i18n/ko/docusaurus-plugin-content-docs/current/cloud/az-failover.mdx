@@ -1,0 +1,185 @@
+---
+id: az-failover
+title: 가용 영역 하나가 멈추면
+sidebar_label: 03 · 가용 영역 하나가 멈추면
+description: 두 가용 영역에 나눠 둔 서버와 주·대기 DB에서 한 영역이 멈췄을 때 로드밸런서 헬스 체크, 대기 복제본 승격, RPO·RTO가 어떻게 움직이는지 애니메이션으로 따라간다
+hide_table_of_contents: true
+---
+
+# 가용 영역 하나가 멈추면
+
+쇼핑몰의 서버와 DB를 한 리전(region, 사업자가 데이터센터를 모아 둔 지역) 안의 두 가용 영역에 나눠 두었다. 그중 한 영역이 통째로 멈추는 날, 무엇이 자동으로 일어나고 무엇을 잃는지 따라가 본다.
+
+<StepDiagram
+  width={1000}
+  meta={{duration: '약 9분', level: '기초'}}
+  groups={[
+    {label: '가용 영역 A', x: 480, y: 15, w: 505, h: 200, tone: 'biz'},
+    {label: '가용 영역 B', x: 480, y: 235, w: 505, h: 200, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'user', label: '사용자', sub: '주문 요청', icon: 'browser', tone: 'ext', x: 90, y: 225, show: true},
+    {id: 'lb', label: '로드밸런서', sub: '두 영역에 분배', icon: 'split', tone: 'cp', x: 330, y: 225, show: true},
+    {id: 'webA', label: '웹 서버 A', sub: '영역 A', icon: 'server', tone: 'app', x: 600, y: 120, show: true},
+    {id: 'webB', label: '웹 서버 B', sub: '영역 B', icon: 'server', tone: 'app', x: 600, y: 340, show: true},
+    {id: 'dbA', label: 'DB 주', sub: '읽기·쓰기', icon: 'db', tone: 'store', x: 860, y: 120, show: true},
+    {id: 'dbB', label: 'DB 대기', sub: '복제본', icon: 'db', tone: 'store', x: 860, y: 340, show: true},
+  ]}
+  metrics={[
+    {id: 'servers', label: '요청 받는 서버'},
+    {id: 'rpo', label: '잃은 데이터 (RPO)'},
+    {id: 'rto', label: '멈춘 시간 (RTO)'},
+  ]}
+  learn={[
+    {text: '가용 영역이 무엇이고 왜 두 곳 이상에 나눠 두는지', at: 0},
+    {text: '주 DB가 대기 복제본에 데이터를 복제하는 방식', at: 1},
+    {text: '로드밸런서가 헬스 체크로 멈춘 서버를 빼는 과정', at: 3},
+    {text: '대기 복제본 승격과 RPO·RTO의 뜻', at: 6},
+    {text: '한 영역에만 두었다면 무엇이 달라지는지', at: 7},
+  ]}
+  steps={[
+    {
+      short: '두 영역',
+      kind: '시작',
+      title: '서버와 DB를 두 가용 영역에 나눠 둔다',
+      text: [
+        '가용 영역(Availability Zone, AZ)은 한 리전 안에서 전원·냉각·네트워크를 따로 쓰는 데이터센터 묶음이다. 서로 떨어져 있어 한 곳의 정전이나 화재가 다른 곳에 번지지 않는다.',
+        '웹 서버는 영역마다 한 대씩, DB는 영역 A에 주(primary), 영역 B에 대기(standby)를 둔다. 로드밸런서가 두 웹 서버에 요청을 나눠 준다.',
+      ],
+      flows: [
+        {from: 'user', to: 'lb', type: 'request'},
+        {from: 'lb', to: 'webA', type: 'request'},
+        {from: 'lb', to: 'webB', type: 'request'},
+      ],
+      status: {webA: 'ok', webB: 'ok', dbA: 'ok', dbB: 'ok'},
+      values: {servers: '2 / 2', rpo: '-', rto: '-'},
+    },
+    {
+      short: '복제',
+      kind: '원리',
+      title: '주 DB에 쓴 내용이 대기 DB로 복제된다',
+      text: [
+        '두 웹 서버 모두 주 DB에 주문을 쓴다. 주 DB는 쓴 내용을 대기 DB에 그대로 복제한다. 대기 DB는 평소에 요청을 받지 않고 따라 쓰기만 한다.',
+        '관리형 DB의 다중 AZ 구성은 보통 동기 복제를 쓴다. 대기 쪽에도 기록된 것을 확인한 뒤에 "저장 완료"라고 답하므로, 주가 멈춰도 확정된 주문은 대기에 남아 있다.',
+      ],
+      flows: [
+        {from: 'webA', to: 'dbA', label: '주문 쓰기', type: 'request'},
+        {from: 'webB', to: 'dbA', type: 'request'},
+        {from: 'dbA', to: 'dbB', label: '동기 복제', type: 'watch'},
+      ],
+      focus: ['dbA', 'dbB'],
+    },
+    {
+      short: '영역 장애',
+      kind: '장애',
+      title: '영역 A가 통째로 멈춘다',
+      text: [
+        '영역 A에 전원 장애가 났다. 웹 서버 A와 주 DB가 한꺼번에 응답하지 않는다.',
+        '로드밸런서는 아직 이 사실을 모른다. 웹 서버 A로 보낸 요청은 실패하고, 웹 서버 B도 주 DB에 쓰지 못해 주문이 실패한다.',
+      ],
+      flows: [
+        {from: 'lb', to: 'webA', label: '응답 없음', type: 'request'},
+        {from: 'webB', to: 'dbA', label: '쓰기 실패', type: 'request'},
+      ],
+      focus: ['webA', 'dbA'],
+      status: {webA: 'error', dbA: 'error'},
+      badges: {webA: '멈춤', dbA: '멈춤'},
+      values: {servers: {text: '2 / 2 (1대는 응답 없음)', tone: 'bad'}, rto: {text: '멈춤 시작', tone: 'bad'}},
+    },
+    {
+      short: '헬스 체크',
+      kind: '원리',
+      title: '로드밸런서가 헬스 체크로 서버 A를 뺀다',
+      text: [
+        '로드밸런서는 정해진 간격마다 각 서버에 "살아 있나" 하고 묻는다. 이것이 헬스 체크(health check)다. 정해진 횟수만큼 연속 실패하면 그 서버를 비정상으로 판정하고 분배 대상에서 뺀다.',
+        '간격 × 횟수만큼은 판정에 시간이 걸린다. 그동안 들어온 일부 요청은 실패할 수 있다.',
+      ],
+      flows: [
+        {from: 'lb', to: 'webA', label: '헬스 체크', type: 'watch'},
+        {from: 'lb', to: 'webB', label: '정상', type: 'watch'},
+      ],
+      focus: ['lb'],
+      badges: {webA: '제외'},
+      values: {servers: '1 / 2'},
+    },
+    {
+      short: '승격',
+      kind: '원리',
+      title: '대기 DB가 새 주 DB로 승격된다',
+      text: [
+        '관리형 DB 서비스가 주 DB의 응답이 없는 것을 감지하고, 대기 DB를 새 주로 올린다. 이것을 승격(promotion), 이 전환 전체를 장애 조치(failover)라고 한다.',
+        '앱은 같은 접속 주소를 그대로 쓰고, 그 주소가 새 주를 가리키도록 바뀐다. 다만 끊긴 연결은 앱이 다시 맺어야 하므로 재시도 처리가 필요하다.',
+      ],
+      flows: [{from: 'webB', to: 'dbB', label: '새 주에 쓰기', type: 'request'}],
+      focus: ['dbB'],
+      status: {dbB: 'ok'},
+      badges: {dbB: '주로 승격'},
+    },
+    {
+      short: 'RPO',
+      kind: '원리',
+      title: 'RPO — 얼마만큼의 데이터를 잃어도 되나',
+      text: [
+        'RPO(Recovery Point Objective, 복구 시점 목표)는 장애가 났을 때 잃어도 되는 데이터의 최대 시간 폭이다. "최근 5분 치까지는 잃어도 된다"면 RPO는 5분이다.',
+        '이번에는 동기 복제였으므로 확정된 주문은 대기 DB에 이미 있다. 비동기 복제였다면 마지막 복제 이후의 짧은 분량을 잃을 수 있다.',
+      ],
+      flows: [{from: 'dbA', to: 'dbB', label: '복제된 주문', type: 'watch'}],
+      focus: ['dbB'],
+      values: {rpo: {text: '거의 0 (동기 복제)', tone: 'good'}},
+    },
+    {
+      short: 'RTO',
+      kind: '원리',
+      title: 'RTO — 얼마 만에 다시 서비스해야 하나',
+      text: [
+        'RTO(Recovery Time Objective, 복구 시간 목표)는 서비스가 멈춘 뒤 다시 돌아오기까지 허용하는 최대 시간이다.',
+        '이번에 멈춘 시간은 헬스 체크 판정과 DB 승격에 걸린 시간을 더한 만큼이다. 사람이 손대지 않아도 자동으로 돌아왔다.',
+      ],
+      keyIdea: 'RPO는 "얼마나 잃는가", RTO는 "얼마나 멈추는가"다. 둘을 짧게 할수록 대기 자원이 늘어 비용이 오른다.',
+      flows: [
+        {from: 'user', to: 'lb', type: 'request'},
+        {from: 'lb', to: 'webB', label: '주문 성공', type: 'request'},
+      ],
+      focus: ['webB', 'dbB'],
+      values: {rto: {text: '자동 전환 시간만큼', tone: 'good'}},
+    },
+    {
+      short: '한 영역만',
+      kind: '주의',
+      title: '영역 하나에만 두었다면',
+      text: [
+        '서버와 DB를 모두 영역 A에만 두었다면, 영역 A가 멈추는 순간 서비스 전체가 멈춘다. 넘겨받을 대기 자원이 없다.',
+        '다른 곳에 남은 백업으로 새로 만들어야 하므로 RTO는 몇 시간 단위로 길어지고, 마지막 백업 이후 데이터는 모두 잃는다.',
+      ],
+      flows: [{from: 'user', to: 'lb', label: '모두 실패', type: 'request'}],
+      focus: ['lb'],
+      values: {servers: {text: '0 (가정)', tone: 'bad'}, rpo: {text: '마지막 백업 이후 전부 (가정)', tone: 'bad'}, rto: {text: '몇 시간 (가정)', tone: 'bad'}},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '두 영역에 나누면 한 영역의 장애를 견딘다',
+      text: [
+        '여러 가용 영역에 나눠 두면, 한 영역이 멈춰도 헬스 체크와 DB 승격이 자동으로 일을 넘긴다. 영역 A가 돌아오면 그쪽 DB가 새 대기가 된다.',
+        '대신 대기 자원만큼 비용이 더 든다. 리전 전체 장애까지 견디려면 다른 리전에 복제를 두는 재해 복구(DR) 설계가 따로 필요하다.',
+      ],
+      keyIdea: '여러 가용 영역에 나눠 두면 한 영역이 멈춰도 헬스 체크와 대기 복제본 승격으로 서비스가 이어진다. 쿠버네티스에서는 topology.kubernetes.io/zone 레이블로 노드의 영역을 확인하고 파드를 영역에 고르게 나눈다.',
+      focus: ['webB', 'dbB'],
+      status: {webA: 'off', dbA: 'off'},
+      badges: {webA: null, dbA: null, dbB: '주'},
+      values: {servers: '1 / 2 (A 복구 대기)', rpo: '거의 0', rto: '자동 전환 시간'},
+    },
+  ]}
+/>
+
+## 장애에 대비하는 이름 (AWS · Azure · GCP)
+
+| 개념 | AWS | Azure | GCP |
+| --- | --- | --- | --- |
+| 가용 영역 | Availability Zone | Availability Zone | Zone |
+| 로드밸런서의 상태 확인 | 대상 그룹 헬스 체크 | 상태 프로브 (health probe) | 헬스 체크 |
+| 영역을 나눈 주·대기 DB | RDS 다중 AZ 배포 | 영역 중복 고가용성 (Flexible Server) | Cloud SQL 고가용성 (리전 인스턴스) |
+
+더 읽을거리: [여러 영역에서 실행하기 (쿠버네티스 문서)](https://kubernetes.io/docs/setup/best-practices/multiple-zones/) · [파드 토폴로지 분배 제약 조건](https://kubernetes.io/ko/docs/concepts/scheduling-eviction/topology-spread-constraints/) · [리전과 가용 영역 (AWS)](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/using-regions-availability-zones.html)
+
+다음 레슨: [가상 머신 자동 증감 (오토스케일링 그룹)](./auto-scaling-group.mdx)

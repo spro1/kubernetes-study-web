@@ -1,0 +1,188 @@
+---
+id: https-cert
+title: HTTPS와 인증서
+sidebar_label: 02 · HTTPS와 인증서
+description: 브라우저와 서버가 인증서로 상대를 확인하는 과정, 사설 인증서와 신뢰 목록, 인증서가 만료되면 생기는 일을 단계별 애니메이션으로 따라간다
+hide_table_of_contents: true
+---
+
+# HTTPS와 인증서
+
+HTTPS 연결은 "상대가 정말 그 서버가 맞는가"를 인증서로 확인하는 데서 시작한다. 브라우저가 인증서를 어떻게 믿는지, 내부망에서 경고가 자주 뜨는 이유, 만료되면 어떤 일이 생기는지 따라가 본다.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '약 8분', level: '기초'}}
+  nodes={[
+    {id: 'browser', label: '브라우저', sub: '사용자 PC', icon: 'browser', tone: 'ext', x: 90, y: 230, show: true},
+    {id: 'trust', label: '신뢰 목록', sub: '믿는 기관 목록', icon: 'book', tone: 'store', x: 90, y: 390},
+    {id: 'ca', label: '인증 기관', sub: 'CA', icon: 'shield', tone: 'ext', x: 330, y: 80},
+    {id: 'cert', label: '인증서', sub: '도메인·만료일', icon: 'ticket', tone: 'store', x: 620, y: 80},
+    {id: 'server', label: '포털 서버', sub: '인증서 보유', icon: 'server', tone: 'app', x: 620, y: 230, show: true},
+    {id: 'privca', label: '사설 CA', sub: '회사가 직접 발급', icon: 'shield', tone: 'cp', x: 330, y: 390},
+    {id: 'knode', label: '업무 노드', sub: '이미지 받는 쪽', icon: 'agent', tone: 'node', x: 880, y: 230},
+    {id: 'harbor', label: 'Harbor', sub: '이미지 저장소', icon: 'registry', tone: 'store', x: 880, y: 390},
+  ]}
+  metrics={[
+    {id: 'issuer', label: '발급 기관'},
+    {id: 'name', label: '도메인 일치'},
+    {id: 'expire', label: '유효 기간'},
+    {id: 'result', label: '연결 결과'},
+  ]}
+  learn={[
+    {text: '인증서가 "이 도메인의 주인"을 증명하는 문서라는 것', at: 1},
+    {text: '브라우저가 신뢰 목록으로 발급 기관을 확인한다는 것', at: 2},
+    {text: '사설 인증서에서 경고가 뜨는 이유', at: 4},
+    {text: '서버끼리 통신할 때도 신뢰 등록이 필요하다는 것', at: 6},
+    {text: '만료가 "어느 날 갑자기" 장애가 되는 이유', at: 7},
+  ]}
+  steps={[
+    {
+      short: '접속',
+      kind: '시작',
+      title: 'HTTPS 주소로 접속한다',
+      text: [
+        '브라우저가 https://portal.example.com에 연결을 요청한다. HTTPS는 HTTP에 암호화를 더해, 중간에서 누가 엿보거나 바꿔치기하지 못하게 한다.',
+        '그런데 암호화보다 먼저 확인할 것이 있다. 지금 대화하는 상대가 정말 그 서버가 맞는가이다.',
+      ],
+      flows: [{from: 'browser', to: 'server', label: 'HTTPS 연결', type: 'request'}],
+      focus: ['server'],
+      values: {result: '확인 전'},
+    },
+    {
+      short: '인증서',
+      kind: '원리',
+      title: '서버가 인증서를 보여 준다',
+      text: [
+        '서버는 인증서(TLS 인증서)를 내민다. 인증서는 "나는 이 도메인의 주인이다"를 증명하는 전자 문서로, 도메인 이름과 유효 기간이 적혀 있다.',
+        '인증서에는 누가 발급하고 보증했는지도 적혀 있다. 이 발급자를 인증 기관(CA)이라고 한다.',
+      ],
+      flows: [{from: 'server', to: 'browser', label: '인증서', type: 'response'}],
+      focus: ['cert', 'server'],
+      badges: {cert: '포털 도메인'},
+    },
+    {
+      short: '발급자',
+      kind: '원리',
+      title: '믿을 수 있는 기관이 보증했는지 본다',
+      text: [
+        '브라우저(와 운영체제)는 믿을 수 있는 인증 기관 목록을 미리 갖고 있다. 인증서를 보증한 기관을 따라 올라가 이 목록의 기관에 닿으면 믿는다. 중간 기관을 한두 단계 거치기도 하는데, 이 연결을 신뢰 체인이라고 부른다.',
+        '목록에 없는 기관이 발급했다면 내용이 맞아도 믿지 않는다.',
+      ],
+      keyIdea: '브라우저는 인증서 자체가 아니라, 그 인증서를 보증한 기관을 믿는 것이다.',
+      flows: [
+        {from: 'ca', to: 'cert', label: '보증(서명)', type: 'request'},
+        {from: 'browser', to: 'trust', label: '발급자 확인', type: 'request'},
+      ],
+      focus: ['ca', 'trust'],
+      values: {issuer: {text: '신뢰 목록에 있음', tone: 'good'}},
+    },
+    {
+      short: '이름·기간',
+      kind: '원리',
+      title: '도메인과 유효 기간이 맞으면 암호화를 시작한다',
+      text: [
+        '인증서에 적힌 도메인이 접속한 주소와 같은지, 오늘이 유효 기간 안인지도 확인한다. 모두 통과하면 그때부터 주고받는 내용이 암호화된다.',
+        'IP 주소로 직접 접속하면 인증서의 도메인과 달라 경고가 뜬다. 도메인 불일치는 현장에서 흔한 경고다.',
+      ],
+      flows: [
+        {from: 'browser', to: 'server', label: '암호화 대화', type: 'request'},
+        {from: 'server', to: 'browser', type: 'response'},
+      ],
+      focus: ['browser', 'server'],
+      status: {server: 'ok'},
+      badges: {server: '자물쇠'},
+      values: {name: {text: '일치', tone: 'good'}, expire: {text: '유효', tone: 'good'}, result: {text: '연결됨', tone: 'good'}},
+    },
+    {
+      short: '사설 인증서',
+      kind: '주의',
+      title: '사설 인증서는 기본으로 믿지 않는다',
+      text: [
+        '내부망 시스템은 회사가 내부용으로 직접 발급한 사설 인증서를 쓰는 경우가 많다. 이 사설 CA는 브라우저의 신뢰 목록에 기본으로 들어 있지 않다.',
+        '그래서 내부망 시스템에 처음 접속하면 "안전하지 않음" 경고가 뜨는 일이 많다. 암호화는 되어 있다. 발급자를 확인하지 못했을 뿐이다.',
+      ],
+      flows: [
+        {from: 'privca', to: 'cert', label: '발급', type: 'request'},
+        {from: 'browser', to: 'trust', label: '목록에 없음', type: 'request'},
+      ],
+      focus: ['privca', 'trust'],
+      status: {server: 'warn'},
+      badges: {server: '안전하지 않음'},
+      values: {issuer: {text: '목록에 없음', tone: 'bad'}, result: {text: '경고', tone: 'bad'}},
+    },
+    {
+      short: '서버 간',
+      kind: '주의',
+      title: '서버끼리 통신할 때도 같은 확인을 한다',
+      text: [
+        '서버도 인증서를 확인한다. 쿠버네티스 노드가 이미지 저장소(예: Harbor)에서 이미지를 받을 때도 HTTPS 인증서를 확인한다.',
+        'Harbor가 사설 인증서를 쓰는데 노드가 그 발급 기관을 믿지 않으면 연결이 거부되고, 이미지를 받지 못한다. 서버에는 경고 창이 없어서 그냥 실패로 끝난다.',
+      ],
+      flows: [{from: 'knode', to: 'harbor', label: 'HTTPS 연결', type: 'request'}],
+      focus: ['knode', 'harbor'],
+      status: {server: null, knode: 'error'},
+      badges: {server: null, knode: '연결 거부'},
+      values: {issuer: '사설 CA', name: '-', expire: '-', result: {text: '거부', tone: 'bad'}},
+    },
+    {
+      short: '신뢰 등록',
+      kind: '원리',
+      title: '사설 CA를 신뢰 목록에 넣는다',
+      text: [
+        '해결하려면 상대 서버의 사설 인증서(또는 그 발급 기관)를 노드의 신뢰 목록에 넣는다. 그러면 노드가 Harbor를 믿고 연결한다.',
+        '사람이 쓰는 PC도 같은 방법으로 회사 사설 CA를 신뢰 목록에 넣으면 경고가 사라진다.',
+      ],
+      changes: ['+ 노드 신뢰 목록에 사설 CA 등록'],
+      flows: [
+        {from: 'privca', to: 'knode', label: '사설 CA 등록', type: 'request'},
+        {from: 'knode', to: 'harbor', label: '이미지 받기', type: 'request'},
+      ],
+      focus: ['knode'],
+      status: {knode: 'ok', harbor: 'ok'},
+      badges: {knode: null},
+      values: {issuer: {text: '신뢰 등록됨', tone: 'good'}, result: {text: '연결됨', tone: 'good'}},
+    },
+    {
+      short: '만료',
+      kind: '장애',
+      title: '유효 기간이 지나면 어느 날 갑자기 멈춘다',
+      text: [
+        '인증서에는 만료일이 있다. 만료되면 통신이 거부되어 서비스가 갑자기 멈춘 것처럼 보인다. 클러스터 구성요소끼리의 통신도 인증서를 쓰므로 같은 일이 생긴다.',
+        '오래 잘 운영되던 시스템에서 어느 날 갑자기 생기는 대표적인 장애다. 그래서 만료 전에 갱신을 자동화하거나(쿠버네티스에서는 cert-manager 같은 도구) 만료 예정일을 알리는 장치를 둔다.',
+      ],
+      flows: [{from: 'server', to: 'browser', label: '만료된 인증서', type: 'response'}],
+      focus: ['cert', 'server'],
+      status: {cert: 'error', server: 'error', knode: null, harbor: null},
+      badges: {cert: '만료', server: '접속 불가'},
+      values: {issuer: '신뢰 목록에 있음', name: '일치', expire: {text: '만료', tone: 'bad'}, result: {text: '거부', tone: 'bad'}},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '발급자, 도메인, 유효 기간 세 가지를 본다',
+      text: [
+        '인증서 확인은 믿을 만한 기관이 보증했는가, 접속한 도메인과 같은가, 유효 기간 안인가를 보는 일이다. 하나라도 어긋나면 사람에게는 경고가, 서버끼리는 연결 거부가 생긴다.',
+        '쿠버네티스에서도 같다. 인그레스에 붙인 TLS 인증서, 노드가 사설 레지스트리에서 이미지를 받을 때의 인증서, 컨트롤 플레인 구성 요소끼리 쓰는 인증서가 모두 이 세 가지로 확인된다.',
+      ],
+      keyIdea: '인증서는 발급자·도메인·유효 기간 세 가지로 확인된다. 만료는 예고 없이 장애가 되므로 만료일을 미리 감시하고 자동 갱신을 둔다(예: cert-manager).',
+      focus: ['cert'],
+      status: {cert: null, server: null},
+      badges: {cert: null, server: null},
+    },
+  ]}
+/>
+
+## 경고·오류 원인별 할 일
+
+| 보이는 증상 | 원인 | 할 일 |
+| --- | --- | --- |
+| "안전하지 않음" 경고 (내부망 첫 접속) | 사설 인증서라 발급 기관을 믿지 않음 | 회사 사설 CA를 PC 신뢰 목록에 등록 |
+| 주소 불일치 경고 | 인증서의 도메인과 접속한 주소가 다름 (IP로 직접 접속 등) | 인증서에 적힌 도메인으로 접속 |
+| 어느 날 갑자기 접속·통신 실패 | 인증서 만료 | 인증서 갱신. 갱신 자동화·만료 알림 마련 |
+| 노드가 Harbor에서 이미지를 못 받음 | 노드가 Harbor의 사설 인증서를 믿지 않음 | 노드 신뢰 목록에 사설 인증서 등록 |
+
+더 읽을거리: [인그레스 TLS (쿠버네티스 문서)](https://kubernetes.io/ko/docs/concepts/services-networking/ingress/#tls) · [kubeadm 인증서 관리](https://kubernetes.io/docs/tasks/administer-cluster/kubeadm/kubeadm-certs/) · [cert-manager](https://cert-manager.io/docs/)
+
+다음 레슨: [서버 한 대에서 컨테이너까지](./server-to-container.mdx)

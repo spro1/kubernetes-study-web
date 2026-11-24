@@ -1,0 +1,182 @@
+---
+id: slo-alert
+title: SLO와 알람 설계
+sidebar_label: 12 · SLO와 알람 설계
+description: SLI·SLO·오류 예산으로 목표를 숫자로 만들고, 소진 속도 기반 증상 알람을 거는 법과 알람이 울린 뒤 지표·추적·로그로 원인을 좁히는 과정을 애니메이션으로 따라간다
+hide_table_of_contents: true
+---
+
+# SLO와 알람 설계
+
+"CPU 80% 초과" 알람이 하루 30번 울리는데 사용자 불만은 없다. 반대로 사용자가 오류를 겪는 동안에는 아무 알람도 없을 수 있다. 사람을 깨우는 알람을 사용자 경험 기준으로 다시 설계하고, 알람이 울린 뒤 원인까지 좁혀 가는 과정을 따라가 본다.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '약 10분', level: '고급'}}
+  nodes={[
+    {id: 'users', label: '사용자', sub: '주문 요청', icon: 'browser', tone: 'ext', x: 85, y: 110, show: true},
+    {id: 'svc', label: '주문 서비스', sub: '요청 처리', icon: 'pod', tone: 'app', x: 355, y: 110, show: true},
+    {id: 'prom', label: '지표 저장소', sub: 'Prometheus', icon: 'chart', tone: 'store', x: 625, y: 110, show: true},
+    {id: 'slo', label: 'SLO', sub: '30일 99.9%', icon: 'target', tone: 'cp', x: 895, y: 110},
+    {id: 'alert', label: 'Alertmanager', sub: '묶기·라우팅', icon: 'bell', tone: 'cp', x: 895, y: 300, w: 160},
+    {id: 'oncall', label: '당직자', sub: '대응', icon: 'user', tone: 'ext', x: 625, y: 300},
+    {id: 'trace', label: '추적', sub: '요청 경로', icon: 'route', tone: 'store', x: 355, y: 300},
+    {id: 'logs', label: '로그', sub: '상세 기록', icon: 'book', tone: 'store', x: 85, y: 300},
+  ]}
+  metrics={[
+    {id: 'sli', label: 'SLI (성공 요청 비율)'},
+    {id: 'budget', label: '오류 예산'},
+    {id: 'burn', label: '소진 속도'},
+  ]}
+  learn={[
+    {text: 'SLI·SLO·오류 예산의 관계', at: 1},
+    {text: '원인 기반 알람이 알람 피로를 부르는 이유', at: 2},
+    {text: '소진 속도와 두 창을 함께 보는 이유', at: 5},
+    {text: '지표 → 추적 → 로그로 원인을 좁히는 순서', at: 7},
+  ]}
+  steps={[
+    {
+      short: 'SLI',
+      kind: '시작',
+      title: '사용자 경험을 숫자 하나로 잰다',
+      text: [
+        'SLI(서비스 수준 지표)는 사용자 경험을 나타내는 측정값이다. 주문 서비스라면 "성공한 요청의 비율"이나 "0.5초 안에 끝난 요청의 비율"이 된다.',
+        '서비스가 요청 수와 오류 수를 지표로 내보내면, 지표 저장소가 이를 모아 비율을 계산한다.',
+      ],
+      flows: [
+        {from: 'users', to: 'svc', label: '주문', type: 'request'},
+        {from: 'svc', to: 'prom', label: '요청·오류 수', type: 'request'},
+      ],
+      focus: ['svc', 'prom'],
+      values: {sli: '99.95%'},
+    },
+    {
+      short: 'SLO·예산',
+      kind: '원리',
+      title: '목표를 정하면 허용되는 실패의 양이 나온다',
+      text: [
+        'SLO(서비스 수준 목표)는 SLI가 지켜야 할 목표치와 기간이다. 예를 들어 "30일 동안 성공률 99.9%"다.',
+        '오류 예산(error budget)은 목표가 허용하는 실패의 양이다. 30일 × 0.1%는 약 43분 동안의 전면 장애에 해당한다.',
+      ],
+      keyIdea: '예산이 남아 있으면 새 기능을 과감히 배포하고, 다 썼으면 안정화에 집중한다. 개발 속도와 안정성 사이의 판단 기준이 된다.',
+      flows: [{from: 'prom', to: 'slo', label: 'SLI', type: 'request'}],
+      focus: ['slo'],
+      badges: {slo: '예산 약 43분'},
+      values: {budget: '30일에 약 43분'},
+    },
+    {
+      short: '원인 알람',
+      kind: '문제',
+      title: 'CPU 알람은 사용자와 상관없이 울린다',
+      text: [
+        '"CPU 80% 초과", "파드 재시작 1회" 같은 원인 기반 알람은 사용자에게 영향이 없어도 울린다. 하루 수십 번 울리면 담당자는 알람을 무시하게 된다.',
+        '이렇게 알람이 너무 자주 울려 무시하게 되는 상태를 알람 피로(alert fatigue)라고 한다. 진짜 알람이 이 속에 묻히는 것이 가장 큰 위험이다.',
+      ],
+      flows: [
+        {from: 'prom', to: 'alert', label: 'CPU 80%', type: 'request'},
+        {from: 'alert', to: 'oncall', label: '호출', type: 'request'},
+      ],
+      focus: ['alert', 'oncall'],
+      status: {oncall: 'warn'},
+      badges: {svc: 'CPU 80%↑'},
+      values: {sli: {text: '99.95% (문제없음)', tone: 'good'}},
+    },
+    {
+      short: '증상 알람',
+      kind: '원리',
+      title: '사람을 깨우는 알람은 증상 기준으로 건다',
+      text: [
+        '증상 기반 알람은 "오류율이 SLO를 위협하는 속도로 증가", "p99 응답시간 2초 초과 10분 지속"처럼 사용자가 실제로 겪는 문제일 때만 울린다.',
+        'CPU 같은 원인 지표는 버리지 않는다. 알람에서 빼서 대시보드와 분석용으로 옮긴다.',
+      ],
+      changes: ['- 알람: CPU 80% 초과', '+ 대시보드: CPU 사용률', '+ 알람: 오류 예산 소진 속도'],
+      flows: [{from: 'prom', to: 'slo', label: '오류율', type: 'request'}],
+      focus: ['slo'],
+      status: {oncall: null},
+      badges: {svc: null},
+    },
+    {
+      short: '소진 속도',
+      kind: '원리',
+      title: '예산을 얼마나 빨리 태우는지를 본다',
+      text: [
+        '소진 속도(burn rate)는 오류 예산을 쓰는 속도다. 1이면 기간이 끝날 때 예산을 정확히 다 쓰고, 14.4면 30일 예산을 약 이틀 만에 다 쓴다.',
+        '알람은 오류율 자체가 아니라 이 속도에 건다. 잠깐의 오류는 넘기고, 예산을 위협하는 속도일 때만 알린다.',
+      ],
+      flows: [{from: 'slo', to: 'alert', label: '소진 속도', type: 'request'}],
+      focus: ['slo', 'alert'],
+      values: {burn: '1 (정상 속도)'},
+    },
+    {
+      short: '두 창',
+      kind: '원리',
+      title: '긴 창과 짧은 창이 함께 넘을 때만 울린다',
+      text: [
+        '긴급 알람은 1시간 창과 5분 창이 모두 소진 속도 14.4 이상일 때, 경고 알람은 6시간 창과 30분 창이 모두 6 이상일 때 울린다.',
+        '긴 창만 보면 장애가 끝난 뒤에도 알람이 한동안 남고, 짧은 창만 보면 잠깐의 흔들림에도 울린다. 둘을 함께 보면 빠르게 감지하면서 오탐이 줄어든다.',
+      ],
+      keyIdea: '긴 창은 "지금 크게 타고 있다", 짧은 창은 "방금도 계속 타고 있다"를 확인한다.',
+      changes: ['+ 긴급: 1시간·5분 창 모두 14.4 이상 → 즉시 호출', '+ 경고: 6시간·30분 창 모두 6 이상 → 업무 시간에 확인'],
+      flows: [{from: 'slo', to: 'alert', label: '두 창 확인', type: 'watch'}],
+      focus: ['alert'],
+    },
+    {
+      short: '긴급 호출',
+      kind: '장애',
+      title: '오류가 급증하자 긴급 알람이 한 통 간다',
+      text: [
+        '주문 오류가 급증해 두 창 모두 소진 속도 14.4를 넘었다. Alertmanager는 파드 20개에서 같은 오류가 나도 알림을 한 통으로 묶어 당직자에게 보낸다.',
+        '심각도에 따라 긴급은 당직 호출, 경고는 팀 메신저 채널로 나눠 보낸다. 메일·메신저로 내보내는 설정은 외부 알람 레슨에서 다룬다.',
+      ],
+      flows: [
+        {from: 'svc', to: 'users', label: '오류 응답', type: 'response'},
+        {from: 'alert', to: 'oncall', label: '긴급 1통', type: 'request'},
+      ],
+      focus: ['oncall', 'svc'],
+      status: {svc: 'error', alert: 'error', oncall: 'warn'},
+      badges: {slo: '예산 소진 중'},
+      values: {sli: {text: '떨어지는 중', tone: 'bad'}, burn: {text: '14.4 이상', tone: 'bad'}},
+    },
+    {
+      short: '원인 좁히기',
+      kind: '원리',
+      title: '지표에서 추적으로, 추적에서 로그로 내려간다',
+      text: [
+        '당직자는 오류율 그래프에서 튀는 점을 고른다. 지표의 한 점에 그 시점 대표 요청의 추적 ID(exemplar)가 붙어 있으면 바로 그 요청의 경로로 이동한다.',
+        '추적에서 느리거나 실패한 구간을 찾고, 같은 trace_id를 가진 로그로 원인을 확인한다. 이 고리가 있으면 몇 번의 클릭으로 원인에 닿는다.',
+      ],
+      flows: [
+        {from: 'oncall', to: 'prom', label: '그래프', type: 'request'},
+        {from: 'prom', to: 'trace', label: 'exemplar', type: 'request'},
+        {from: 'trace', to: 'logs', label: 'trace_id', type: 'request'},
+      ],
+      focus: ['prom', 'trace', 'logs'],
+      status: {oncall: 'ok'},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '알람은 증상에, 분석은 원인에',
+      text: [
+        'SLO로 목표와 오류 예산을 숫자로 정하고, 예산을 태우는 속도에 긴 창·짧은 창 두 조건을 걸어 사용자가 겪는 문제일 때만 사람을 깨웠다.',
+        '원인 지표는 대시보드에 두고, 알람이 울리면 지표 → 추적 → 로그로 원인을 좁혔다.',
+      ],
+      keyIdea: '사람을 깨우는 알람은 사용자가 겪는 증상(오류 예산 소진 속도)에 걸고, CPU 같은 원인 지표는 대시보드에 둔다. 알람이 울리면 지표 → 추적 → 로그 순서로 좁힌다.',
+      focus: ['slo', 'alert', 'trace'],
+    },
+  ]}
+/>
+
+## 원인 기반 알람과 증상 기반 알람
+
+| 구분 | 예 | 결과 | 두는 곳 |
+| --- | --- | --- | --- |
+| 원인 기반 | CPU 80% 초과, 파드 재시작 1회 | 사용자 영향이 없어도 울려 알람 피로를 부른다 | 대시보드·분석 |
+| 증상 기반 | 오류 예산 소진 속도, p99 응답시간 2초 초과 10분 지속 | 사용자가 실제로 겪는 문제일 때만 울린다 | 사람을 깨우는 알람 |
+
+Prometheus를 쓴다면 알람 조건은 알림 규칙(alerting rule)으로 쓰고, 묶기·반복 주기·수신처는 Alertmanager에서 정한다.
+
+더 읽을거리: [Google SRE Workbook — Alerting on SLOs](https://sre.google/workbook/alerting-on-slos/) · [Prometheus 알림 개요](https://prometheus.io/docs/alerting/latest/overview/) · [쿠버네티스 시스템 지표](https://kubernetes.io/docs/concepts/cluster-administration/system-metrics/)
+
+다음 레슨: [kubeadm으로 클러스터 업그레이드 (CKA)](../cert/kubeadm-upgrade.mdx)

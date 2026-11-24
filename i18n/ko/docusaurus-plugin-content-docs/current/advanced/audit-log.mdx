@@ -1,0 +1,174 @@
+---
+id: audit-log
+title: 감사 로그
+sidebar_label: 11 · 감사 로그
+description: API 서버가 요청마다 누가·언제·무엇을 했는지 남기는 감사 로그를, 감사 정책의 기록 수준과 시크릿 조회 추적 사례, 보관처 전송까지 애니메이션으로 따라간다
+hide_table_of_contents: true
+---
+
+# 감사 로그
+
+"어제 누가 운영 데이터베이스 비밀번호를 조회했나?" 이 질문에 답하려면 요청이 지나갈 때 기록이 남아 있어야 한다. 쿠버네티스 API 서버가 남기는 감사 로그(audit log)가 무엇을 어느 수준으로 기록하고, 어디로 보내 보관하는지 따라가 본다. 요청이 API 서버 안에서 거치는 관문은 [API 요청 경로](./api-request-path.mdx)에서 먼저 본다.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '약 10분', level: '고급'}}
+  nodes={[
+    {id: 'user', label: '개발자 A', sub: 'kubectl', icon: 'user', tone: 'ext', x: 85, y: 110, show: true},
+    {id: 'api', label: 'API 서버', sub: '모든 요청의 입구', icon: 'gate', tone: 'cp', x: 355, y: 110, show: true},
+    {id: 'log', label: '감사 로그', sub: '요청별 기록', icon: 'archive', tone: 'store', x: 625, y: 110},
+    {id: 'store', label: '로그 보관처', sub: '장기 보관', icon: 'cloud', tone: 'ext', x: 895, y: 110},
+    {id: 'policy', label: '감사 정책', sub: '규칙 파일', icon: 'book', tone: 'store', x: 355, y: 300},
+    {id: 'secret', label: 'db-pass', sub: '시크릿', icon: 'ticket', tone: 'store', x: 625, y: 300},
+    {id: 'sec', label: '보안 담당', sub: '사후 추적', icon: 'user', tone: 'ext', x: 895, y: 300},
+  ]}
+  metrics={[
+    {id: 'level', label: '적용된 기록 수준'},
+    {id: 'record', label: '남은 기록'},
+  ]}
+  learn={[
+    {text: '감사 로그 한 줄에 남는 항목', at: 1},
+    {text: 'None·Metadata·Request·RequestResponse의 차이', at: 2},
+    {text: '시크릿 요청을 자세히 남기면 안 되는 이유', at: 4},
+    {text: '로그를 클러스터 밖에 보관해야 하는 이유', at: 6},
+  ]}
+  steps={[
+    {
+      short: '요청',
+      kind: '시작',
+      title: '모든 조작은 API 서버로 가는 요청이다',
+      text: [
+        '대시보드에서 버튼을 누르든 명령어를 치든, 쿠버네티스의 모든 조작은 API 서버로 가는 요청이다.',
+        '그래서 API 서버 한곳에서 기록하면 누가 무엇을 했는지 빠짐없이 남길 수 있다. 다만 기록은 감사 정책을 주어야 시작된다.',
+      ],
+      flows: [{from: 'user', to: 'api', label: '요청', type: 'request'}],
+      focus: ['api'],
+      values: {level: '정책 없음', record: '없음'},
+    },
+    {
+      short: '한 줄',
+      kind: '원리',
+      title: '요청마다 누가·언제·무엇을 했는지 한 줄씩 남는다',
+      text: [
+        '감사 로그 한 건에는 요청한 주체(사람 또는 서비스 어카운트), 시각, 대상 자원과 네임스페이스, 동작(get·create·delete 등), 결과 코드가 들어간다.',
+        '인증에 실패했거나 권한이 없어 거절된 요청도 기록된다. 무엇을 시도했다가 막혔는지도 감사의 대상이다.',
+      ],
+      changes: ['+ 누가: user A', '+ 언제: 요청 시각', '+ 무엇에: secrets/db-pass', '+ 어떤 동작: get', '+ 결과: 200'],
+      flows: [{from: 'api', to: 'log', label: '기록', type: 'request'}],
+      focus: ['log'],
+      values: {record: '요청 1건'},
+    },
+    {
+      short: '정책',
+      kind: '원리',
+      title: '감사 정책이 무엇을 어느 수준으로 남길지 정한다',
+      text: [
+        '기록 수준은 넷이다. None은 남기지 않음, Metadata는 누가·언제·무엇에·어떤 동작·결과, Request는 여기에 요청 본문, RequestResponse는 응답 본문까지 남긴다.',
+        '정책은 규칙 목록이고 위에서부터 차례로 맞춰 보아 처음 맞는 규칙의 수준을 쓴다. 그래서 규칙의 순서가 결과를 바꾼다.',
+      ],
+      keyIdea: '많이 남긴다고 좋지는 않다. 감사 정책은 무엇을 어느 수준으로 남길지 정하는 설계다.',
+      changes: ['+ 시크릿: Metadata', '+ 그 밖의 변경 요청: Request', '+ 잦고 의미 없는 요청: None'],
+      flows: [{from: 'policy', to: 'api', label: '규칙', type: 'watch'}],
+      focus: ['policy'],
+      values: {level: '규칙별로 다름'},
+    },
+    {
+      short: '시크릿 조회',
+      kind: '원리',
+      title: '개발자 A가 시크릿을 조회한다',
+      text: [
+        '개발자 A가 db-pass 시크릿을 get으로 읽는다. 권한이 있으므로 요청은 성공한다.',
+        '정책의 첫 규칙이 시크릿을 Metadata로 남기라고 하므로, 누가 언제 어떤 시크릿을 읽었는지만 기록되고 비밀 값은 남지 않는다.',
+      ],
+      flows: [
+        {from: 'user', to: 'api', label: 'get secret', type: 'request'},
+        {from: 'api', to: 'secret', label: '조회', type: 'request'},
+        {from: 'api', to: 'log', label: 'Metadata', type: 'request'},
+      ],
+      focus: ['secret', 'log'],
+      badges: {log: 'Metadata'},
+      values: {level: 'Metadata', record: '누가·무엇만'},
+    },
+    {
+      short: '본문 위험',
+      kind: '주의',
+      title: '시크릿을 RequestResponse로 남기면 로그에 비밀이 남는다',
+      text: [
+        '시크릿 요청을 RequestResponse 수준으로 기록하면 응답 본문, 곧 비밀 값이 감사 로그에 그대로 쓰인다.',
+        '그러면 감사 로그 자체가 새로운 유출 경로가 된다. 저장량도 급격히 늘어난다.',
+      ],
+      keyIdea: '감사 로그도 비밀을 담을 수 있는 데이터다. 시크릿은 Metadata 수준으로 남기고, 로그 접근 권한도 따로 통제한다.',
+      flows: [{from: 'api', to: 'log', label: '본문 포함', type: 'request'}],
+      focus: ['log'],
+      status: {log: 'error'},
+      badges: {log: 'RequestResponse'},
+      values: {level: {text: 'RequestResponse', tone: 'bad'}, record: {text: '비밀 값 포함', tone: 'bad'}},
+    },
+    {
+      short: '추적',
+      kind: '원리',
+      title: '보안 담당이 "누가 읽었나"를 찾는다',
+      text: [
+        '정책을 Metadata로 되돌린 상태에서, 보안 담당이 db-pass를 대상으로 한 get 기록을 찾는다. 요청한 주체와 시각이 바로 나온다.',
+        '조회 권한이 정말 필요했는지, 그 시각에 다른 이상 요청은 없었는지 이어서 확인한다. 조회 전용 롤이라도 시크릿 조회가 포함되면 이런 추적이 필요하다.',
+      ],
+      flows: [{from: 'sec', to: 'log', label: '검색', type: 'request'}],
+      focus: ['sec', 'log'],
+      status: {log: null},
+      badges: {log: 'Metadata'},
+      values: {level: {text: 'Metadata', tone: 'good'}, record: {text: '누가·언제 확인', tone: 'good'}},
+    },
+    {
+      short: '보관처',
+      kind: '원리',
+      title: '로그는 클러스터 밖 보관처로 보낸다',
+      text: [
+        'API 서버는 감사 기록을 컨트롤 플레인 노드의 파일로 쓰거나, 웹훅으로 바깥 수집 서비스에 보낼 수 있다.',
+        '노드 안 파일에만 두면 노드가 사라지거나 공격자가 지울 때 기록도 함께 사라진다. 그래서 로그 보관처로 옮겨 두고 거기서 찾는다.',
+      ],
+      flows: [
+        {from: 'log', to: 'store', label: '전송', type: 'request'},
+        {from: 'sec', to: 'store', label: '조회', type: 'request'},
+      ],
+      focus: ['store'],
+      status: {store: 'ok'},
+    },
+    {
+      short: '보존',
+      kind: '주의',
+      title: '보존 기간과 반출 절차까지 정해야 감사에 쓸 수 있다',
+      text: [
+        '기록을 얼마나 오래 두고, 감사 요청이 오면 누가 어떤 절차로 꺼내 주는지를 함께 정해야 실제 감사에 쓸 수 있다.',
+        '보존 기간은 보안 규정이나 감사 요구에 맞춰 정한다. API 서버 로그 파일은 --audit-log-maxage·--audit-log-maxbackup으로 돌려 쓰므로, 오래 둘 기록은 따로 보관처로 옮긴다.',
+      ],
+      flows: [{from: 'log', to: 'store', label: '보존 기간', type: 'request'}],
+      focus: ['store', 'policy'],
+      status: {store: 'warn'},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '무엇을, 어느 수준으로, 어디에, 얼마나',
+      text: [
+        'API 서버가 감사 정책에 따라 요청마다 기록을 남기고, 그 기록을 보관처로 보내 나중에 누가 무엇을 했는지 찾았다.',
+        '시크릿처럼 민감한 자원은 Metadata로만 남겨야 감사 로그가 유출 경로가 되지 않는다.',
+      ],
+      keyIdea: '감사 로그는 누가·무엇을·어떻게 했는지 남기는 기록이다. 권한 변경·시크릿 조회·삭제를 반드시 남기고, 민감한 자원은 Metadata 수준으로 기록해 로그가 새는 길이 되지 않게 한다.',
+      focus: ['policy', 'log', 'store'],
+    },
+  ]}
+/>
+
+## 기록 수준 한눈에
+
+| 수준 | 남는 것 | 언제 쓰나 |
+| --- | --- | --- |
+| None | 남기지 않음 | 잦고 감사 가치가 없는 요청 |
+| Metadata | 누가·언제·무엇에·어떤 동작을·결과 | 시크릿처럼 본문에 비밀이 있는 자원 |
+| Request | 위 + 요청 본문 | 무엇을 바꾸려 했는지가 중요한 변경 요청 |
+| RequestResponse | 위 + 응답 본문 | 꼭 필요한 대상만. 저장량이 크고 비밀이 남을 수 있다 |
+
+더 읽을거리: [감사(Auditing)](https://kubernetes.io/docs/tasks/debug/debug-cluster/audit/) · [RBAC 인가 사용](https://kubernetes.io/ko/docs/reference/access-authn-authz/rbac/)
+
+다음 레슨: [SLO와 알람 설계](./slo-alert.mdx)

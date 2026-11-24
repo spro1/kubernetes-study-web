@@ -1,0 +1,172 @@
+---
+id: mesh-gateway
+title: Service Mesh ③ Mesh Gateway
+sidebar_label: 05 · Mesh Gateway
+description: Animated walkthrough of how an external request enters an Istio service mesh through a Gateway and VirtualService rules to a pod with a sidecar, what a broken link looks like, and how it differs from Ingress
+hide_table_of_contents: true
+---
+
+# Service Mesh ③ Mesh Gateway
+
+Follow an external user's request into a Service inside the mesh. Here Istio's `Gateway` and `VirtualService` work as **a pair**.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~8 min', level: 'Intermediate'}}
+  nodes={[
+    {id: 'user', label: 'User', sub: 'External access', icon: 'user', tone: 'ext', x: 80, y: 240, show: true},
+    {id: 'gwpod', label: 'Ingress proxy', sub: 'istio-gateway', icon: 'gate', tone: 'node', x: 330, y: 240, show: true},
+    {id: 'podpx', label: 'Proxy', sub: 'Sidecar', icon: 'shield', tone: 'node', size: 'sm', x: 650, y: 240, show: true},
+    {id: 'app', label: 'shop app', sub: 'Pod', icon: 'pod', tone: 'app', size: 'sm', x: 850, y: 240, show: true},
+    {id: 'gwres', label: 'Gateway', sub: 'Host · port', icon: 'book', tone: 'store', x: 130, y: 70},
+    {id: 'istiod', label: 'istiod', sub: 'Pushes config', icon: 'gear', tone: 'cp', x: 430, y: 70, show: true},
+    {id: 'vs', label: 'VirtualService', sub: 'Route rules', icon: 'route', tone: 'store', x: 730, y: 70},
+    {id: 'svc', label: 'Service', sub: 'shop', icon: 'target', tone: 'cp', x: 780, y: 395},
+  ]}
+  metrics={[
+    {id: 'door', label: 'Entry (Gateway)'},
+    {id: 'route', label: 'Route (VirtualService)'},
+    {id: 'inner', label: 'Inner hop'},
+  ]}
+  learn={[
+    {text: 'The difference between the Gateway resource (config) and the ingress proxy (runtime)', at: 1},
+    {text: 'How a VirtualService attaches route rules to a Gateway', at: 2},
+    {text: 'The ingress proxy sends straight to the sidecar', at: 4},
+    {text: 'Where to look when the chain breaks', at: 5},
+    {text: 'How it differs from Ingress', at: 6},
+  ]}
+  steps={[
+    {
+      short: 'External',
+      kind: '시작',
+      title: 'External requests enter through the mesh entry',
+      text: [
+        'A user visits shop.example.com. Services in the mesh usually have cluster-internal addresses only, so you need a separate entry to accept external requests.',
+        'In Istio, a dedicated ingress proxy pod does this job. The istio-ingressgateway deployed with Istio is that entry.',
+      ],
+      flows: [{from: 'user', to: 'gwpod', type: 'request'}],
+      focus: ['gwpod'],
+      values: {door: {text: 'Not configured', tone: 'bad'}, route: {text: 'None', tone: 'bad'}, inner: '-'},
+    },
+    {
+      short: 'Gateway',
+      kind: '원리',
+      title: 'The Gateway resource opens the door',
+      text: [
+        'A Gateway (the resource that accepts traffic from outside the mesh) lists the host names and ports to accept, plus a selector that picks which ingress pods it applies to.',
+        'The Gateway resource is only a config document. The ingress proxy starts accepting that host and port only after istiod pushes the config to the proxies matching the selector.',
+      ],
+      flows: [
+        {from: 'gwres', to: 'istiod', label: 'Host · port', type: 'request'},
+        {from: 'istiod', to: 'gwpod', label: 'Config', type: 'request'},
+      ],
+      focus: ['gwres', 'gwpod'],
+      values: {door: {text: 'Open', tone: 'good'}},
+    },
+    {
+      short: 'VirtualSvc',
+      kind: '원리',
+      title: 'A VirtualService attaches route rules to that entry',
+      text: [
+        'Opening the door does not tell the Gateway where to send requests. A VirtualService names the Gateway and holds route rules such as "requests for shop.example.com go to the shop Service".',
+        'To check they are linked, see that the VirtualService lists the Gateway name under gateways and the same host under hosts.',
+      ],
+      keyIdea: 'The Gateway is the door, the VirtualService is the signpost. With only one of them, requests never reach their destination.',
+      flows: [
+        {from: 'vs', to: 'istiod', label: 'Route rules', type: 'request'},
+        {from: 'istiod', to: 'gwpod', type: 'request'},
+      ],
+      focus: ['vs'],
+      values: {route: {text: 'Linked', tone: 'good'}},
+    },
+    {
+      short: 'Destination',
+      kind: '원리',
+      title: 'The destination is a Service name',
+      text: [
+        'The VirtualService destination names a Service (shop), not a pod. The pods the Service selects by label are what actually receive traffic.',
+        'istiod watches which pods the Service selects and tells the ingress proxy about that pod list.',
+      ],
+      flows: [
+        {from: 'vs', to: 'svc', label: 'Destination', type: 'watch'},
+        {from: 'svc', to: 'podpx', label: 'Pod set', type: 'watch'},
+      ],
+      focus: ['svc'],
+    },
+    {
+      short: 'To sidecar',
+      kind: '원리',
+      title: 'The ingress proxy sends straight to the pod\'s sidecar',
+      text: [
+        'The ingress proxy picks one of the pods it knows and sends the request to that pod\'s sidecar. The entry is part of the mesh too, so this hop is encrypted with mTLS.',
+        'The sidecar receives the request and hands it to the shop app. Weighted routing and retry rules from the previous lesson work on this path as well.',
+      ],
+      keyIdea: 'For the receiving pod to have a sidecar, its namespace needs the istio-injection label.',
+      flows: [
+        {from: 'user', to: 'gwpod', type: 'request'},
+        {from: 'gwpod', to: 'podpx', label: 'mTLS', type: 'request'},
+        {from: 'podpx', to: 'app', type: 'request'},
+      ],
+      focus: ['gwpod', 'podpx'],
+      status: {podpx: 'ok', app: 'ok'},
+      values: {inner: {text: 'mTLS', tone: 'good'}},
+    },
+    {
+      short: 'Broken link',
+      kind: '문제',
+      title: 'Without a linked VirtualService, the entry turns requests away',
+      text: [
+        'If you create only the Gateway and no VirtualService, or the Gateway name or host does not match, the ingress proxy does not know where to send requests. It usually returns 404.',
+        'Run istioctl analyze to find broken links, such as a VirtualService that points to a missing Gateway.',
+      ],
+      flows: [{from: 'gwpod', to: 'user', label: '404', type: 'response'}],
+      focus: ['gwpod', 'vs'],
+      status: {gwpod: 'warn', podpx: null, app: null},
+      badges: {vs: 'Not linked'},
+      values: {route: {text: 'Broken', tone: 'bad'}, inner: '-'},
+    },
+    {
+      short: 'vs Ingress',
+      kind: '원리',
+      title: 'Unlike Ingress, entry and routes are separate',
+      text: [
+        'An Ingress puts host, path, and target Service in one resource. A mesh gateway splits the entry (Gateway) from the routes (VirtualService), and once inside, sidecars, mTLS, and weighted routing take over.',
+        'Istio can also act as an Ingress controller, but Ingress resources and mesh Gateway resources are separate. The Gateway in the standard Kubernetes Gateway API is also a different resource from the mesh Gateway.',
+      ],
+      flows: [
+        {from: 'user', to: 'gwpod', type: 'request'},
+        {from: 'gwpod', to: 'podpx', type: 'request'},
+      ],
+      focus: ['gwres', 'vs'],
+      status: {gwpod: null},
+      badges: {vs: null},
+      values: {route: {text: 'Linked', tone: 'good'}, inner: {text: 'mTLS', tone: 'good'}},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'You need both the door (Gateway) and the signpost (VirtualService)',
+      text: [
+        'An external request passes the door the Gateway opened at the ingress proxy and the VirtualService route rules, then reaches the app through the sidecar of a pod the Service selects. Both resources are config that istiod pushes to the proxies.',
+        'When something breaks, trace in this order: the VirtualService linked to the Gateway, then its destination Service, then the injection label on the target namespace.',
+      ],
+      keyIdea: 'The Gateway is the door, the VirtualService is the signpost, and the Service is the destination. Entry config is spread across several resources, so when blocked, check each link in order: Gateway → VirtualService → Service → sidecar.',
+      focus: ['gwres', 'vs', 'svc'],
+    },
+  ]}
+/>
+
+## Try it yourself
+
+```bash
+kubectl get pods -n istio-system -l istio=ingressgateway       # Is the ingress proxy running?
+kubectl get gateways.networking.istio.io -n shop -o yaml       # hosts, port, selector, tls
+kubectl get virtualservice -n shop -o yaml                     # gateways, hosts, route destination
+kubectl get namespace shop --show-labels                       # Is istio-injection=enabled set?
+istioctl analyze -n shop                                       # Find broken links
+```
+
+Further reading: [Istio ingress gateways](https://istio.io/latest/docs/tasks/traffic-management/ingress/ingress-control/) · [Gateway reference](https://istio.io/latest/docs/reference/config/networking/gateway/) · [Ingress](https://kubernetes.io/docs/concepts/services-networking/ingress/) · [Gateway API](https://kubernetes.io/docs/concepts/services-networking/gateway/)
+
+Next lesson: [Three Entry Points Compared (Ingress · Mesh Gateway · Gateway API)](./entry-compare.mdx)

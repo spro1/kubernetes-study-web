@@ -1,0 +1,167 @@
+---
+id: statefulset
+title: StatefulSets and databases
+sidebar_label: 05 · StatefulSets and databases
+description: Follow an animation of how a StatefulSet creates pods with ordinal names one by one, gives each pod its own PVC and a stable DNS name, and reattaches the same data when a pod comes back
+hide_table_of_contents: true
+---
+
+# StatefulSets and databases
+
+Apps like databases, where each pod has its own identity and data, are hard to run with a Deployment. Here we follow how a StatefulSet pins down names, order and storage. How a PVC becomes real storage is covered in [How Storage Gets Attached (PVC·PV)](../k8s/storage-volume.mdx).
+
+<StepDiagram
+  width={1000}
+  meta={{duration: '~9 min', level: 'Intermediate'}}
+  nodes={[
+    {id: 'sts', label: 'StatefulSet', sub: 'db · 3 replicas', icon: 'layers', tone: 'cp', x: 110, y: 90, show: true},
+    {id: 'hsvc', label: 'Service', sub: 'headless · db', icon: 'target', tone: 'cp', x: 110, y: 250},
+    {id: 'app', label: 'Order app', sub: 'connects to DB', icon: 'browser', tone: 'ext', x: 110, y: 385},
+    {id: 'db0', label: 'db-0', sub: 'ordinal 0', icon: 'pod', tone: 'app', size: 'sm', x: 480, y: 90},
+    {id: 'db1', label: 'db-1', sub: 'ordinal 1', icon: 'pod', tone: 'app', size: 'sm', x: 480, y: 200},
+    {id: 'db2', label: 'db-2', sub: 'ordinal 2', icon: 'pod', tone: 'app', size: 'sm', x: 480, y: 310},
+    {id: 'pvc0', label: 'data-db-0', sub: '20Gi', icon: 'disk', tone: 'store', size: 'sm', w: 120, x: 790, y: 90},
+    {id: 'pvc1', label: 'data-db-1', sub: '20Gi', icon: 'disk', tone: 'store', size: 'sm', w: 120, x: 790, y: 200},
+    {id: 'pvc2', label: 'data-db-2', sub: '20Gi', icon: 'disk', tone: 'store', size: 'sm', w: 120, x: 790, y: 310},
+  ]}
+  metrics={[
+    {id: 'pods', label: 'Pods'},
+    {id: 'pvcs', label: 'PVCs'},
+    {id: 'used', label: 'Claimed capacity'},
+  ]}
+  learn={[
+    {text: 'Pod names are fixed ordinals, started one by one from 0', at: 3},
+    {text: 'A headless Service gives each pod a stable DNS name', at: 4},
+    {text: 'A pod that comes back reattaches to the same PVC', at: 5},
+    {text: 'PVCs remain after scaling down or deleting', at: 7},
+  ]}
+  steps={[
+    {
+      short: 'Start',
+      kind: '시작',
+      title: 'Create three database pods',
+      text: [
+        'Submit a StatefulSet db with "3 pods, named db". A Deployment would create three pods at once with random names like web-7d9f8c6b5-x2kqp.',
+        'A StatefulSet is different. Names get ordinals, db-0, db-1, db-2, and pods are created one at a time starting from 0.',
+      ],
+      flows: [{from: 'sts', to: 'db0', label: 'create db-0', type: 'request'}],
+      focus: ['sts', 'db0'],
+      status: {db0: 'warn'},
+      values: {pods: '0 / 3', pvcs: '0', used: '0Gi'},
+    },
+    {
+      short: 'Own PVC',
+      kind: '원리',
+      title: 'Each pod gets its own PVC',
+      text: [
+        'A StatefulSet holds a PVC template (volumeClaimTemplates). From it, a PVC data-db-0 used only by db-0 is created automatically.',
+        'Once the PVC is ready and db-0 is Ready, slot 0 is filled. Pods do not share one storage volume.',
+      ],
+      keyIdea: 'The PVC name is "template name-pod name". So the name alone tells you which pod owns which data.',
+      flows: [{from: 'db0', to: 'pvc0', label: 'own PVC', type: 'request'}],
+      focus: ['db0', 'pvc0'],
+      status: {db0: 'ok'},
+      values: {pods: '1 / 3', pvcs: '1', used: '20Gi'},
+    },
+    {
+      short: 'In order',
+      kind: '원리',
+      title: 'The next ordinal waits for the previous one to be ready',
+      text: [
+        'db-1 is created after db-0 is Ready, and db-2 after db-1 is Ready. Each gets data-db-1 and data-db-2.',
+        'Deletion goes in reverse, highest ordinal first. This lets a database that relies on earlier pods trust the order.',
+      ],
+      flows: [
+        {from: 'sts', to: 'db1', label: 'ordinal 1', type: 'request'},
+        {from: 'sts', to: 'db2', label: 'ordinal 2', type: 'request'},
+      ],
+      focus: ['db1', 'db2', 'pvc1', 'pvc2'],
+      status: {db1: 'ok', db2: 'ok'},
+      values: {pods: '3 / 3', pvcs: '3', used: '60Gi'},
+    },
+    {
+      short: 'Stable DNS',
+      kind: '원리',
+      title: 'Each pod has a fixed address name',
+      text: [
+        'A headless Service returns the pod addresses directly instead of one shared address. Thanks to it, each pod gets a stable DNS name like db-0.db.shop.svc...',
+        'So the app can target "db-0" specifically, not "any pod". Databases that split primary and replica servers need this.',
+      ],
+      flows: [
+        {from: 'app', to: 'hsvc', label: 'db-0.db', type: 'request'},
+        {from: 'hsvc', to: 'db0', label: 'db-0 address', type: 'response'},
+      ],
+      focus: ['hsvc', 'db0'],
+    },
+    {
+      short: 'Comes back',
+      kind: '원리',
+      title: 'Delete db-1 and it returns with the same name and data',
+      text: [
+        'When the db-1 pod is deleted, the StatefulSet recreates it with the same name, db-1. The new db-1 reattaches to the same PVC, data-db-1.',
+        'The pod IP may change, but the name and data stay. A Deployment would have created a new pod with a different name.',
+      ],
+      flows: [
+        {from: 'sts', to: 'db1', label: 'same name', type: 'request'},
+        {from: 'db1', to: 'pvc1', label: 'reattach', type: 'request'},
+      ],
+      focus: ['db1', 'pvc1'],
+      status: {db1: 'ok'},
+      badges: {db1: 'recreated'},
+    },
+    {
+      short: 'Scale down',
+      kind: '주의',
+      title: 'Scaling from 3 to 2 keeps the PVC',
+      text: [
+        'Scaling replicas from 3 to 2 deletes the highest ordinal pod, db-2. But data-db-2 is not deleted.',
+        'Scale back to 3 and the new db-2 attaches to the remaining data-db-2 and comes back with that data.',
+      ],
+      flows: [{from: 'sts', to: 'db2', label: '3 → 2', type: 'request'}],
+      focus: ['db2', 'pvc2'],
+      status: {db2: 'gone'},
+      badges: {db1: null, pvc2: 'kept'},
+      values: {pods: '2 / 2', pvcs: '3', used: '60Gi'},
+    },
+    {
+      short: 'After delete',
+      kind: '문제',
+      title: 'Deleting the StatefulSet leaves PVCs holding space',
+      text: [
+        'Deleting the StatefulSet itself removes the pods, but the three PVCs remain by default. This is intended, to protect data.',
+        'The catch: PVCs nobody uses keep holding storage. Uncleaned PVCs pile up into a capacity problem.',
+      ],
+      flows: [{from: 'sts', to: 'db0', label: 'deleted too', type: 'request'}],
+      focus: ['pvc0', 'pvc1', 'pvc2'],
+      status: {sts: 'gone', db0: 'gone', db1: 'gone', pvc0: 'warn', pvc1: 'warn', pvc2: 'warn'},
+      badges: {pvc0: 'kept', pvc1: 'kept'},
+      values: {pods: '0', pvcs: {text: '3 (orphaned)', tone: 'bad'}, used: {text: '60Gi', tone: 'bad'}},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Name, order and storage follow the pod',
+      text: [
+        'A StatefulSet gives ordinal names, ordering from 0, a dedicated PVC per pod, and a stable DNS name. A pod that comes back returns to the same slot and the same data.',
+        'Replication and failover promotion are still up to the database or an operator. Also give a generous termination grace period so the pod is not killed before it finishes writing data.',
+      ],
+      keyIdea: 'PVCs remain by default after scaling down or deleting a StatefulSet. Afterwards, check orphaned PVCs and their size with kubectl get pvc, and clean them up yourself if not needed.',
+      focus: ['sts', 'pvc0', 'pvc1', 'pvc2'],
+    },
+  ]}
+/>
+
+## Results by action
+
+| Action | Pods | PVCs | What to check |
+| --- | --- | --- | --- |
+| Create | Created in order from `db-0` | A `data-db-N` per pod | If an earlier pod never becomes Ready, the next one is not created |
+| Delete `db-1` | Recreated with the same name | Reattached to the same `data-db-1` | The data is intact |
+| Scale 3 → 2 | `db-2` is deleted | `data-db-2` remains | Scaling back up returns that data |
+| Delete the StatefulSet | All deleted | All remain by default | Leftover PVCs take up space |
+
+Check the pods with `kubectl get pods -l <selector>` and PVCs with `kubectl get pvc`. Whether PVCs are deleted on scale-down or delete can be set with `persistentVolumeClaimRetentionPolicy`.
+
+Further reading: [StatefulSets](https://kubernetes.io/docs/concepts/workloads/controllers/statefulset/) · [Persistent volumes](https://kubernetes.io/docs/concepts/storage/persistent-volumes/) · [Finding Services by Name (Service·DNS)](../k8s/service-dns.mdx)
+
+Next lesson: [Helm and GitOps](./gitops-sync.mdx)

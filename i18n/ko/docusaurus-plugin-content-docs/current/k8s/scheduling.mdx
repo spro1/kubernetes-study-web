@@ -1,0 +1,172 @@
+---
+id: scheduling
+title: 파드를 어느 노드에 둘까 (스케줄링)
+sidebar_label: 12 · 파드를 어느 노드에 둘까
+description: 스케줄러가 요청량으로 노드를 거르고 점수를 매기는 과정, 테인트·톨러레이션·노드 셀렉터·안티 어피니티가 배치를 바꾸는 방식, 맞는 노드가 없을 때의 Pending을 애니메이션으로 따라간다
+hide_table_of_contents: true
+---
+
+# 파드를 어느 노드에 둘까 (스케줄링)
+
+노드 세 대가 있는 클러스터에 web 파드와 GPU 작업 파드가 들어온다. 스케줄러가 어떤 노드를 빼고 어떤 노드를 고르는지, 그리고 갈 곳이 없으면 무슨 일이 생기는지 따라가 본다.
+
+<StepDiagram
+  meta={{duration: '약 10분', level: '중급'}}
+  groups={[
+    {label: '워커 노드 3대', x: 635, y: 30, w: 210, h: 377, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'pod', label: 'web 파드', sub: 'CPU 1 요청', icon: 'pod', tone: 'app', x: 150, y: 120, show: true},
+    {id: 'gjob', label: 'GPU 작업', sub: '톨러레이션 있음', icon: 'pod', tone: 'app', x: 150, y: 330},
+    {id: 'sched', label: '스케줄러', sub: '둘 노드 고르기', icon: 'target', tone: 'cp', x: 410, y: 225, show: true},
+    {id: 'n1', label: 'node-1', sub: 'CPU 여유 0.5', icon: 'server', tone: 'node', x: 740, y: 105, w: 160, show: true},
+    {id: 'n2', label: 'node-2', sub: 'CPU 여유 3', icon: 'server', tone: 'node', x: 740, y: 228, w: 160, show: true},
+    {id: 'n3', label: 'gpu-node', sub: '테인트: gpu', icon: 'server', tone: 'node', x: 740, y: 351, w: 160, show: true},
+  ]}
+  metrics={[
+    {id: 'target', label: '배치할 파드'},
+    {id: 'left', label: '남은 후보'},
+    {id: 'result', label: '결과'},
+  ]}
+  learn={[
+    {text: '여유를 실제 사용량이 아니라 요청량 합계로 계산한다는 것', at: 1},
+    {text: '테인트는 "아무나 오지 마라", 노드 셀렉터는 "이리로 와라"', at: 4},
+    {text: '안티 어피니티로 같은 앱을 다른 노드에 흩는 이유', at: 5},
+    {text: 'Pending 메시지를 원인별로 읽는 법', at: 6},
+  ]}
+  steps={[
+    {
+      short: '새 파드',
+      kind: '시작',
+      title: '노드가 정해지지 않은 파드가 생겼다',
+      text: [
+        'web 파드가 새로 만들어졌다. "CPU 1코어가 필요하다"는 요청량(requests)이 적혀 있고, 아직 둘 노드는 비어 있다.',
+        '스케줄러는 노드가 비어 있는 파드를 지켜보다가 이 파드를 집어 든다. 과정은 걸러내기와 점수 매기기 두 단계다.',
+      ],
+      flows: [{from: 'pod', to: 'sched', label: '미배정 파드', type: 'watch'}],
+      focus: ['sched'],
+      values: {target: 'web-1', left: '3대'},
+    },
+    {
+      short: '걸러내기',
+      kind: '원리',
+      title: '요청량만큼 여유가 없는 노드를 뺀다',
+      text: [
+        'node-1에 남은 여유는 CPU 0.5코어라 1코어를 요청한 파드가 들어갈 수 없다. 걸러내기에서 빠진다.',
+        '여기서 여유는 실제 사용량이 아니라 이미 배치된 파드들의 요청량 합계로 계산한다. 사용률 그래프가 20%여도 요청량 합계가 차 있으면 자리가 없다.',
+      ],
+      keyIdea: '"자리가 넉넉해 보이는데 왜 안 뜨나"의 답은 대개 사용률 그래프에 없고 요청량 합계(할당률)에 있다.',
+      flows: [{from: 'sched', to: 'n1', label: 'CPU 부족', type: 'request'}],
+      focus: ['n1'],
+      status: {n1: 'warn'},
+      badges: {n1: '탈락 · CPU'},
+      values: {left: '2대'},
+    },
+    {
+      short: '테인트',
+      kind: '원리',
+      title: '테인트가 붙은 노드는 견딜 수 있는 파드만 받는다',
+      text: [
+        'gpu-node에는 "아무나 오지 마라"는 표시인 테인트(taint)가 붙어 있다. web 파드에는 이를 견디는 허가인 톨러레이션(toleration)이 없다.',
+        '그래서 gpu-node도 걸러내기에서 빠진다. 비싼 GPU 서버를 일반 파드가 차지하지 못하게 하는 방법이다.',
+      ],
+      flows: [{from: 'sched', to: 'n3', label: '테인트', type: 'request'}],
+      focus: ['n3'],
+      status: {n3: 'warn'},
+      badges: {n3: '탈락 · 테인트'},
+      values: {left: '1대'},
+    },
+    {
+      short: '점수',
+      kind: '원리',
+      title: '남은 노드에 점수를 매겨 하나를 고른다',
+      text: [
+        '걸러내기를 통과한 노드에 점수를 매겨 가장 알맞은 곳을 고른다. 여기서는 node-2 하나만 남았으니 node-2다.',
+        '스케줄러는 고른 결과를 API 서버에 적을 뿐이다. 실제 실행은 node-2의 kubelet이 맡는다.',
+      ],
+      keyIdea: '"가능하면 SSD 노드에"처럼 선호(preferred) 조건은 걸러내기에 쓰이지 않고 점수에만 반영된다. 못 지켜도 배치는 된다.',
+      flows: [{from: 'sched', to: 'n2', label: 'bind', type: 'request'}],
+      focus: ['n2'],
+      status: {n1: null, n3: null, n2: 'ok'},
+      badges: {n1: null, n3: null, n2: 'web-1'},
+      values: {result: {text: 'node-2', tone: 'good'}},
+    },
+    {
+      short: 'GPU 작업',
+      kind: '원리',
+      title: 'GPU 작업은 톨러레이션과 노드 셀렉터로 끌어온다',
+      text: [
+        'GPU 작업 파드에는 gpu 테인트를 견디는 톨러레이션과, gpu 레이블이 붙은 노드에만 가라는 노드 셀렉터(nodeSelector)가 함께 적혀 있다.',
+        '노드 셀렉터가 다른 노드를 거르고, 톨러레이션 덕분에 gpu-node가 남는다. 파드는 gpu-node에 배치된다.',
+      ],
+      keyIdea: '톨러레이션은 허가일 뿐 유도가 아니다. 전용 노드를 만들려면 "테인트로 남을 막고, 노드 셀렉터나 어피니티로 자기를 끌어오는" 두 가지를 함께 쓴다.',
+      flows: [
+        {from: 'gjob', to: 'sched', label: '미배정 파드', type: 'watch'},
+        {from: 'sched', to: 'n3', label: 'GPU 노드로', type: 'request'},
+      ],
+      focus: ['gjob', 'n3'],
+      status: {n3: 'ok'},
+      badges: {n3: 'GPU 작업'},
+      values: {target: 'GPU 작업', left: '1대', result: {text: 'gpu-node', tone: 'good'}},
+    },
+    {
+      short: '흩기',
+      kind: '주의',
+      title: '같은 앱 복제본은 다른 노드로 흩는다',
+      text: [
+        'web을 2개로 늘린다. web 파드에는 "web 파드끼리 같은 노드에 두지 마라"는 안티 어피니티(anti-affinity)가 걸려 있다.',
+        'node-2에는 이미 web-1이 있으니 web-2는 node-2에 갈 수 없다. 노드 한 대가 멈춰도 복제본이 함께 사라지지 않게 하려는 규칙이다.',
+      ],
+      flows: [
+        {from: 'pod', to: 'sched', label: 'web-2', type: 'watch'},
+        {from: 'sched', to: 'n2', label: '같은 앱 있음', type: 'request'},
+      ],
+      focus: ['n2'],
+      status: {n2: 'warn'},
+      badges: {pod: 'web-2'},
+      values: {target: 'web-2', left: '계산 중', result: null},
+    },
+    {
+      short: '대기',
+      kind: '문제',
+      title: '남는 노드가 없으면 Pending으로 기다린다',
+      text: [
+        'node-1은 CPU가 모자라고, gpu-node는 테인트가 있고, node-2는 안티 어피니티에 걸린다. 세 대가 모두 빠졌다.',
+        'web-2는 Pending 상태로 계속 기다린다. 이벤트에는 "0/3 nodes are available: 1 Insufficient cpu, 1 node(s) had untolerated taint, 1 node(s) didn\'t match pod anti-affinity rules"처럼 노드별 탈락 사유가 합산되어 남는다.',
+      ],
+      keyIdea: '해결책은 원인마다 다르다. 노드를 늘리면 CPU 부족은 풀리지만, 필수 안티 어피니티는 복제본 수가 노드 수보다 많으면 계속 걸린다. 그래서 선호(preferred) 조건으로 쓰기도 한다.',
+      flows: [
+        {from: 'sched', to: 'n1', label: 'CPU 부족', type: 'request'},
+        {from: 'sched', to: 'n3', label: '테인트', type: 'request'},
+      ],
+      focus: ['pod'],
+      status: {pod: 'error', n1: 'warn', n3: 'warn'},
+      badges: {pod: 'web-2 · Pending'},
+      values: {left: {text: '0대', tone: 'bad'}, result: {text: 'Pending', tone: 'bad'}},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '걸러내고, 점수를 매기고, 없으면 기다린다',
+      text: [
+        '스케줄러는 요청량·테인트·노드 셀렉터·어피니티로 노드를 걸러 내고, 남은 노드에 점수를 매겨 하나를 고른다.',
+        '남는 노드가 없으면 파드는 Pending으로 남는다. 노드를 늘릴지, 규칙을 고칠지는 탈락 사유를 봐야 판단할 수 있다.',
+      ],
+      keyIdea: '스케줄러는 실제 사용률을 보지 않고 요청량으로 판단한다. Pending이면 kubectl describe pod의 Events에서 "자원 부족·테인트·어피니티" 중 어떤 이유로 노드가 탈락했는지 본다.',
+      focus: ['sched'],
+    },
+  ]}
+/>
+
+## 배치 규칙 한눈에
+
+| 규칙 | 방향 | 하는 일 | 예 |
+| --- | --- | --- | --- |
+| 요청량(`requests`) | 스케줄러가 노드를 거른다 | 요청량 합계만큼 여유가 없는 노드를 뺀다 | CPU 1코어 요청 → 여유 0.5코어 노드 제외 |
+| 테인트·톨러레이션 | 노드가 파드를 거른다 | 표시를 견디는 파드만 받는다 | GPU 노드에 일반 파드가 못 오게 |
+| 노드 셀렉터·노드 어피니티 | 파드가 노드를 고른다 | 레이블이 맞는 노드로만 간다 | `gpu: "true"` 노드에만 |
+| 파드 안티 어피니티 | 파드가 다른 파드를 피한다 | 같은 앱 복제본을 서로 다른 노드에 둔다 | web 복제본을 노드마다 하나씩 |
+
+더 읽을거리: [쿠버네티스 스케줄러](https://kubernetes.io/ko/docs/concepts/scheduling-eviction/kube-scheduler/) · [노드에 파드 할당하기](https://kubernetes.io/ko/docs/concepts/scheduling-eviction/assign-pod-node/) · [테인트와 톨러레이션](https://kubernetes.io/ko/docs/concepts/scheduling-eviction/taint-and-toleration/)
+
+다음 레슨: [노드 비우기와 클러스터 업그레이드](./node-drain.mdx)

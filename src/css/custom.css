@@ -1,0 +1,144 @@
+/**
+ * 사이트 테마 — 쿠버네티스 블루 계열.
+ * 외부 폰트 CDN 없이 시스템 폰트를 쓴다.
+ */
+
+:root {
+  --ifm-color-primary: #2456c4;
+  --ifm-color-primary-dark: #204db0;
+  --ifm-color-primary-darker: #1e49a7;
+  --ifm-color-primary-darkest: #193c89;
+  --ifm-color-primary-light: #2c63d9;
+  --ifm-color-primary-lighter: #326ce5;
+  --ifm-color-primary-lightest: #5a8bec;
+
+  --site-accent-2: #0ea5a4;
+  --site-grad: linear-gradient(120deg, #326ce5 0%, #0ea5a4 55%, #8b5cf6 100%);
+
+  --ifm-container-width-xl: 1560px;
+  --ifm-font-family-base: -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', 'Pretendard',
+    'Malgun Gothic', 'Noto Sans KR', 'Segoe UI', sans-serif;
+  --ifm-code-font-size: 92%;
+  --ifm-heading-font-weight: 800;
+  --ifm-line-height-base: 1.75;
+  --ifm-table-head-background: rgba(50, 108, 229, 0.08);
+  --ifm-table-stripe-background: rgba(50, 108, 229, 0.03);
+  --ifm-navbar-shadow: 0 1px 0 var(--ifm-color-emphasis-200);
+  --docusaurus-highlighted-code-line-bg: rgba(50, 108, 229, 0.14);
+}
+
+[data-theme='dark'] {
+  --ifm-color-primary: #7aa2ff;
+  --ifm-color-primary-dark: #5c8cff;
+  --ifm-color-primary-darker: #4d81ff;
+  --ifm-color-primary-darkest: #1f5fff;
+  --ifm-color-primary-light: #98b8ff;
+  --ifm-color-primary-lighter: #a7c2ff;
+  --ifm-color-primary-lightest: #d4e1ff;
+  --site-accent-2: #4fd1c5;
+  --ifm-background-color: #0f1115;
+  --ifm-background-surface-color: #15181e;
+  --ifm-navbar-background-color: rgba(15, 17, 21, 0.85);
+  --ifm-table-head-background: rgba(122, 162, 255, 0.1);
+  --ifm-table-stripe-background: rgba(122, 162, 255, 0.03);
+  --docusaurus-highlighted-code-line-bg: rgba(122, 162, 255, 0.16);
+}
+
+.navbar {
+  backdrop-filter: saturate(180%) blur(10px);
+}
+
+.navbar__title {
+  font-weight: 800;
+}
+
+/* 한국어 본문 가독성 */
+.markdown p,
+.markdown li {
+  word-break: keep-all;
+  overflow-wrap: break-word;
+}
+
+.markdown h1 {
+  letter-spacing: -0.02em;
+}
+
+/* 표: 본문 너비를 채우고, 넘치면 감싼 상자가 가로로 스크롤된다 (src/theme/MDXComponents.js). */
+.tableWrap {
+  width: 100%;
+  overflow-x: auto;
+  margin-bottom: var(--ifm-spacing-vertical);
+}
+
+.markdown table,
+.tableWrap > table {
+  display: table;
+  width: 100%;
+  margin-bottom: 0;
+}
+
+.markdown table th {
+  background: var(--ifm-table-head-background);
+  vertical-align: middle;
+}
+
+.markdown table td {
+  vertical-align: top;
+}
+
+.markdown table td:first-child,
+.markdown table th:first-child {
+  min-width: 8rem;
+}
+
+/* 레슨 페이지는 다이어그램 폭이 가독성을 좌우하므로 좌측 목차를 좁힌다. */
+html.plugin-docs {
+  --doc-sidebar-width: 260px !important;
+}
+
+.footer--dark {
+  --ifm-footer-background-color: #0b0d11;
+}
+
+/* ── 학습 진도 ─────────────────────── */
+.menu__link.lesson-done::after {
+  content: '✓';
+  margin-left: auto;
+  padding-left: 8px;
+  color: #16a34a;
+  font-weight: 800;
+}
+
+/* 레슨 아래 이전/다음 — 코스 이동 버튼처럼 크게 */
+.pagination-nav {
+  gap: 14px;
+}
+
+.pagination-nav__link {
+  padding: 1rem 1.2rem;
+  border-radius: 14px;
+  transition: transform 0.15s, border-color 0.15s, box-shadow 0.15s;
+}
+
+.pagination-nav__link:hover {
+  transform: translateY(-2px);
+  border-color: var(--ifm-color-primary);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.06);
+}
+
+.pagination-nav__link--next {
+  background: color-mix(in srgb, var(--ifm-color-primary) 7%, var(--ifm-background-color));
+}
+
+.pagination-nav__label {
+  font-size: 1.05rem;
+}
+
+/* 레슨 본문 폭 넓게: 다이어그램이 주인공이다 */
+.theme-doc-markdown h1 {
+  font-size: clamp(1.8rem, 3vw, 2.4rem);
+}
+
+.theme-doc-sidebar-menu .menu__list-item-collapsible > .menu__link {
+  font-weight: 700;
+}

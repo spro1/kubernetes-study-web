@@ -1,0 +1,185 @@
+---
+id: rolling-update
+title: 무중단 배포 (롤링 업데이트)
+sidebar_label: 03 · 무중단 배포
+description: Deployment가 새 ReplicaSet을 만들고 파드를 하나씩 바꾸는 동안 서비스가 끊기지 않는 원리와 되돌리기를 애니메이션으로 따라간다
+hide_table_of_contents: true
+---
+
+# 무중단 배포 (롤링 업데이트)
+
+nginx 1.26으로 돌던 파드 세 개를 1.27로 바꾼다. 그동안 사용자 요청은 한 번도 끊기지 않는다. 어떻게 가능한지 따라가 본다.
+
+<StepDiagram
+  width={1000}
+  meta={{duration: '약 10분', level: '중급'}}
+  groups={[
+    {label: 'v1 파드 · nginx:1.26', x: 450, y: 30, w: 200, h: 190, tone: 'plain'},
+    {label: 'v2 파드 · nginx:1.27', x: 450, y: 245, w: 200, h: 180, tone: 'biz', from: 2},
+  ]}
+  nodes={[
+    {id: 'user', label: '사용자', sub: '이미지 변경', icon: 'user', tone: 'ext', x: 95, y: 95},
+    {id: 'deploy', label: 'Deployment', sub: '원하는 상태', icon: 'gear', tone: 'cp', x: 95, y: 265, w: 150, show: true},
+    {id: 'rs1', label: 'RS v1', sub: 'nginx:1.26', icon: 'layers', tone: 'store', x: 310, y: 125, show: true},
+    {id: 'rs2', label: 'RS v2', sub: 'nginx:1.27', icon: 'layers', tone: 'store', x: 310, y: 335},
+    {id: 'v1a', label: 'v1-a', sub: 'nginx:1.26', icon: 'pod', tone: 'app', size: 'sm', x: 550, y: 75, show: true},
+    {id: 'v1b', label: 'v1-b', sub: 'nginx:1.26', icon: 'pod', tone: 'app', size: 'sm', x: 550, y: 128, show: true},
+    {id: 'v1c', label: 'v1-c', sub: 'nginx:1.26', icon: 'pod', tone: 'app', size: 'sm', x: 550, y: 181, show: true},
+    {id: 'v2a', label: 'v2-a', sub: 'nginx:1.27', icon: 'pod', tone: 'app', size: 'sm', x: 550, y: 290},
+    {id: 'v2b', label: 'v2-b', sub: 'nginx:1.27', icon: 'pod', tone: 'app', size: 'sm', x: 550, y: 343},
+    {id: 'v2c', label: 'v2-c', sub: 'nginx:1.27', icon: 'pod', tone: 'app', size: 'sm', x: 550, y: 396},
+    {id: 'svc', label: 'Service', sub: 'Ready 파드로 분배', icon: 'target', tone: 'cp', x: 820, y: 240, w: 150, show: true},
+    {id: 'client', label: '사용자 트래픽', sub: '끊기면 안 됨', icon: 'browser', tone: 'ext', x: 820, y: 70, w: 150, show: true},
+  ]}
+  metrics={[
+    {id: 'v1', label: 'v1 파드'},
+    {id: 'v2', label: 'v2 파드'},
+    {id: 'ready', label: '요청 받는 파드'},
+  ]}
+  learn={[
+    {text: 'Deployment·ReplicaSet·파드의 관계', at: 2},
+    {text: '새 파드가 Ready가 된 뒤에야 옛 파드를 줄이는 이유', at: 4},
+    {text: 'maxSurge·maxUnavailable이 정하는 속도', at: 5},
+    {text: '되돌리기(rollout undo)가 빠른 이유', at: 6},
+  ]}
+  steps={[
+    {
+      short: '시작',
+      kind: '시작',
+      title: '지금은 v1 파드 세 개가 요청을 받는다',
+      text: [
+        'Deployment는 "nginx:1.26 파드 3개"라는 원하는 상태를 갖고 있다. 실제 파드 3개는 ReplicaSet v1이 관리한다.',
+        'Service는 Ready 상태인 파드 세 개에 요청을 나눠 보낸다.',
+      ],
+      flows: [
+        {from: 'client', to: 'svc', type: 'request'},
+        {from: 'svc', to: 'v1a', type: 'request'},
+        {from: 'svc', to: 'v1b', type: 'request'},
+        {from: 'svc', to: 'v1c', type: 'request'},
+      ],
+      status: {v1a: 'ok', v1b: 'ok', v1c: 'ok'},
+      badges: {rs1: '3개'},
+      values: {v1: '3', v2: '0', ready: '3'},
+    },
+    {
+      short: '변경 제출',
+      kind: '원리',
+      title: '이미지를 1.27로 바꾼다',
+      text: [
+        '사용자가 Deployment의 이미지를 nginx:1.27로 바꾼다. kubectl set image로 바꾸든 YAML을 고쳐 kubectl apply로 바꾸든 하는 일이 같다.',
+        'Deployment는 "파드 설계가 바뀌었다"는 것을 알아채고 롤링 업데이트를 시작한다.',
+      ],
+      keyIdea: '파드 3개 기준으로 기본값(maxSurge 25%, maxUnavailable 25%)을 계산하면 "1개 더 만들 수 있고, 0개까지만 빠질 수 있다"가 된다. 그래서 하나 만들고, 하나 빼는 식으로 진행한다.',
+      flows: [{from: 'user', to: 'deploy', label: 'image: 1.27', type: 'request'}],
+      focus: ['deploy'],
+    },
+    {
+      short: 'v2 생성',
+      kind: '원리',
+      title: '새 ReplicaSet이 파드 하나를 만든다',
+      text: [
+        'Deployment는 새 설계로 ReplicaSet v2를 만들고, 개수를 1로 정한다. ReplicaSet v2가 v2-a 파드를 만든다.',
+        'v2-a는 이미지를 받고 시작하는 중이다. 아직 Ready가 아니므로 요청을 받지 않는다.',
+      ],
+      changes: ['ReplicaSet v2 생성 (1개)', 'v2-a 시작 중'],
+      flows: [
+        {from: 'deploy', to: 'rs2', label: 'v2 ×1', type: 'request'},
+        {from: 'rs2', to: 'v2a', label: '생성', type: 'request'},
+      ],
+      focus: ['rs2', 'v2a'],
+      status: {v2a: 'warn'},
+      badges: {rs2: '1개'},
+      values: {v2: '1 (시작 중)'},
+    },
+    {
+      short: 'v2 준비',
+      kind: '원리',
+      title: 'v2-a가 Ready가 되면 요청을 받기 시작한다',
+      text: [
+        '준비 상태 검사를 통과한 v2-a가 Service 대상에 들어간다. 이제 v1 세 개와 v2 하나, 모두 네 개가 요청을 받는다.',
+        '잠깐 동안 두 버전이 함께 응답하므로, 새 버전은 옛 버전과 같이 돌아도 문제없게 만들어야 한다.',
+      ],
+      flows: [
+        {from: 'client', to: 'svc', type: 'request'},
+        {from: 'svc', to: 'v2a', label: '요청', type: 'request'},
+      ],
+      focus: ['v2a'],
+      status: {v2a: 'ok'},
+      values: {v2: '1', ready: '4'},
+    },
+    {
+      short: 'v1 줄임',
+      kind: '원리',
+      title: '그다음에야 v1 하나를 줄인다',
+      text: [
+        'Ready 파드가 하나 늘었으니 Deployment는 ReplicaSet v1의 개수를 3에서 2로 줄인다. v1-a가 종료된다.',
+        '종료되는 파드는 먼저 Service 대상에서 빠진 뒤 처리 중인 요청을 마무리하고 내려간다.',
+      ],
+      keyIdea: '순서가 핵심이다. 새 파드가 준비되기 전에는 옛 파드를 줄이지 않는다. 그래서 요청을 받는 파드가 3개 아래로 떨어지지 않는다.',
+      flows: [{from: 'deploy', to: 'rs1', label: 'v1 3→2', type: 'request'}],
+      focus: ['rs1'],
+      status: {v1a: 'gone'},
+      badges: {rs1: '2개'},
+      values: {v1: '2', ready: '3'},
+    },
+    {
+      short: '반복',
+      kind: '원리',
+      title: '하나 만들고 하나 빼기를 반복한다',
+      text: [
+        '같은 과정을 두 번 더 반복한다. v2-b가 Ready가 되면 v1-b를 빼고, v2-c가 Ready가 되면 v1-c를 뺀다.',
+        '끝나면 ReplicaSet v2에 파드 3개, v1에는 0개가 남는다. 이 동안 요청을 받는 파드는 늘 3개 이상이었다.',
+      ],
+      keyIdea: 'maxSurge를 키우면 한 번에 더 많이 만들어 빨리 끝나고, maxUnavailable을 키우면 한 번에 더 많이 빼서 빨리 끝난다. 대신 여유 자원이 더 들거나 처리 용량이 잠시 줄어든다.',
+      changes: ['v2 파드 3개 Ready', 'v1 파드 모두 종료'],
+      flows: [
+        {from: 'client', to: 'svc', type: 'request'},
+        {from: 'svc', to: 'v2a', type: 'request'},
+        {from: 'svc', to: 'v2b', type: 'request'},
+        {from: 'svc', to: 'v2c', type: 'request'},
+      ],
+      status: {v2b: 'ok', v2c: 'ok', v1b: 'gone', v1c: 'gone'},
+      badges: {rs1: '0개', rs2: '3개'},
+      values: {v1: '0', v2: '3', ready: '3'},
+    },
+    {
+      short: '되돌리기',
+      kind: '주의',
+      title: '문제가 생기면 이전 ReplicaSet으로 돌아간다',
+      text: [
+        'ReplicaSet v1은 지워지지 않고 개수 0으로 남아 있다. 새 버전에 문제가 있으면 kubectl rollout undo로 v1을 다시 키운다.',
+        '되돌리기도 같은 롤링 방식으로 하나씩 바뀐다. 만약 v2 파드가 처음부터 Ready가 되지 못하면 롤링은 거기서 멈추고, v1 파드가 계속 요청을 받는다.',
+      ],
+      keyIdea: '이전 설계가 그대로 남아 있으니 되돌리기는 이미지를 다시 빌드하지 않고 바로 할 수 있다.',
+      flows: [
+        {from: 'user', to: 'deploy', label: 'rollout undo', type: 'request'},
+        {from: 'deploy', to: 'rs1', label: 'v1 다시 키우기', type: 'request'},
+      ],
+      focus: ['rs1', 'deploy'],
+      badges: {rs1: '0개 · 보관'},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '바뀌는 동안에도 늘 Ready 파드가 있다',
+      text: [
+        'Deployment는 새 ReplicaSet을 하나 키우고, Ready를 확인하고, 옛 ReplicaSet을 하나 줄이는 일을 반복했다.',
+        '준비 상태 검사가 정확해야 이 방식이 의미가 있다. 검사가 너무 느슨하면 준비 안 된 파드가 요청을 받고, 너무 엄격하면 배포가 멈춘다.',
+      ],
+      keyIdea: '롤링 업데이트는 새 파드가 Ready가 된 만큼만 옛 파드를 줄인다. 진행은 kubectl rollout status로 보고, 멈추면 준비되지 못한 새 파드의 이벤트를 본다.',
+      focus: ['deploy', 'svc'],
+    },
+  ]}
+/>
+
+## 롤링 업데이트 설정 한눈에
+
+| 설정 | 뜻 | 키우면 |
+| --- | --- | --- |
+| `maxSurge` | 원하는 개수보다 잠시 더 만들 수 있는 파드 수 | 빨리 끝나지만 여유 자원이 더 필요하다 |
+| `maxUnavailable` | 원하는 개수보다 잠시 모자라도 되는 파드 수 | 빨리 끝나지만 처리 용량이 잠시 줄어든다 |
+| `readinessProbe` | 새 파드가 요청을 받아도 되는지 확인하는 검사 | 없으면 시작만 해도 요청을 받아 오류가 날 수 있다 |
+
+더 읽을거리: [디플로이먼트](https://kubernetes.io/ko/docs/concepts/workloads/controllers/deployment/) · [롤링 업데이트 수행하기](https://kubernetes.io/ko/docs/tutorials/kubernetes-basics/update/update-intro/)
+
+다음 레슨: [부하에 맞춰 늘어나기 (HPA)](./autoscaling.mdx)

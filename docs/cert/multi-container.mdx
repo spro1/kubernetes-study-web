@@ -1,0 +1,203 @@
+---
+id: multi-container
+title: Multi-container pods — init and sidecar (CKAD)
+sidebar_label: 05 · Multi-container pods
+description: Follow an animation of init containers finishing in order before the sidecar and app containers start, and of containers in the same pod sharing localhost and an emptyDir
+hide_table_of_contents: true
+---
+
+# Multi-container pods — init and sidecar (CKAD)
+
+This covers "multi-container pod design patterns (e.g. sidecar, init and others)" and "persistent and ephemeral volumes" in the CKAD Application Design and Build (20%) domain. We follow in what order the containers in one pod start, and what they share. Sidecars injected automatically, like a service mesh proxy, are covered separately in [Service Mesh ① Sidecars and Mutual Authentication](../feature/mesh-sidecar.mdx).
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~10 min', level: 'Intermediate'}}
+  groups={[
+    {label: 'Pod web', x: 225, y: 30, w: 470, h: 410, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'kubelet', label: 'kubelet', sub: 'node manager', icon: 'agent', tone: 'node', x: 85, y: 110, show: true},
+    {id: 'init1', label: 'init 1', sub: 'wait for DB', icon: 'box', tone: 'app', x: 325, y: 110, show: true},
+    {id: 'init2', label: 'init 2', sub: 'fetch config', icon: 'box', tone: 'app', x: 595, y: 110, show: true},
+    {id: 'side', label: 'log-agent', sub: 'sidecar', icon: 'layers', tone: 'app', x: 325, y: 250, show: true},
+    {id: 'app', label: 'web', sub: 'app container', icon: 'pod', tone: 'app', x: 595, y: 250, show: true},
+    {id: 'vol', label: 'emptyDir', sub: 'shared volume', icon: 'disk', tone: 'store', x: 460, y: 380, show: true},
+    {id: 'db', label: 'DB', sub: 'service', icon: 'db', tone: 'ext', x: 870, y: 110},
+    {id: 'cfg', label: 'Config server', sub: 'config files', icon: 'server', tone: 'ext', x: 870, y: 250},
+    {id: 'logs', label: 'Log store', sub: 'log collection', icon: 'archive', tone: 'ext', x: 870, y: 385},
+  ]}
+  metrics={[
+    {id: 'phase', label: 'Pod phase'},
+    {id: 'init', label: 'Init done'},
+    {id: 'running', label: 'Running containers'},
+  ]}
+  learn={[
+    {text: 'Why init containers must finish one by one', at: 1},
+    {text: 'Where Init:CrashLoopBackOff comes from', at: 2},
+    {text: 'Start order of native sidecars (restartPolicy: Always)', at: 4},
+    {text: 'What containers in one pod share: network and volumes', at: 6},
+  ]}
+  steps={[
+    {
+      short: 'Spec',
+      kind: '시작',
+      title: 'One pod with four containers',
+      text: [
+        'The web pod lists, in order, init 1 (wait for DB), init 2 (fetch config) and log-agent (log-collecting sidecar) under initContainers, and the app container web under containers.',
+        'The node\'s kubelet starts containers in list order. First it starts init 1.',
+      ],
+      keyIdea: 'Put several containers in one pod only when they make sense only together. If they can deploy and scale separately, split the pods.',
+      flows: [{from: 'kubelet', to: 'init1', label: 'start #1', type: 'request'}],
+      focus: ['kubelet', 'init1'],
+      values: {phase: 'Pending', init: '0/2', running: 'init 1'},
+    },
+    {
+      short: 'In order',
+      kind: '원리',
+      title: 'Init containers run one at a time; each must finish first',
+      text: [
+        'init 1 waits until it can connect to the DB service, then exits successfully (exit code 0).',
+        'Init containers do not start together. The kubelet starts the next one only after the previous one succeeds.',
+      ],
+      keyIdea: 'While init containers run, the pod stays in the Pending phase. No app container has started yet.',
+      flows: [
+        {from: 'init1', to: 'db', label: 'check conn', type: 'request', bend: -0.15},
+        {from: 'kubelet', to: 'init2', label: 'start #2', type: 'request', bend: -0.15},
+      ],
+      focus: ['init1', 'init2'],
+      status: {init1: 'off'},
+      badges: {init1: 'done'},
+      values: {init: '1/2', running: 'init 2'},
+    },
+    {
+      short: 'Failure',
+      kind: '문제',
+      title: 'If init 2 fails, the app never starts',
+      text: [
+        'A wrong config server address makes init 2 exit with an error. If the pod restart policy is Always or OnFailure, the kubelet reruns init 2 at growing intervals.',
+        'As failures repeat, the pod status shows Init:CrashLoopBackOff. The app container web never started, so its logs are empty.',
+      ],
+      keyIdea: 'The cause is in the failed init container\'s logs. Name the container, as in kubectl logs web -c init-2.',
+      flows: [
+        {from: 'init2', to: 'cfg', label: 'bad address', type: 'request'},
+        {from: 'kubelet', to: 'init2', label: 'restart', type: 'request', bend: -0.15},
+      ],
+      focus: ['init2'],
+      status: {init2: 'error'},
+      badges: {init2: 'Init:CrashLoopBackOff'},
+      values: {phase: {text: 'Pending', tone: 'bad'}, init: {text: '1/2', tone: 'bad'}},
+    },
+    {
+      short: 'Write config',
+      kind: '원리',
+      title: 'The fixed init 2 writes config to the shared volume',
+      text: [
+        'With the address fixed, init 2 fetches the file from the config server, writes it to the emptyDir volume, and exits.',
+        'An emptyDir is a temporary volume created as an empty folder when the pod is assigned to a node. Containers that mount it can pass files to each other.',
+      ],
+      changes: ['~ fix init 2 config server address', '+ write app.yaml to emptyDir'],
+      flows: [
+        {from: 'cfg', to: 'init2', label: 'config file', type: 'response'},
+        {from: 'init2', to: 'vol', label: 'app.yaml', type: 'request', bend: 0.2},
+      ],
+      focus: ['init2', 'vol'],
+      status: {init2: 'off'},
+      badges: {init2: 'done'},
+      values: {phase: 'Pending', init: {text: '2/2', tone: 'good'}, running: 'none'},
+    },
+    {
+      short: 'Sidecar',
+      kind: '원리',
+      title: 'A native sidecar starts and does not exit',
+      text: [
+        'log-agent sits in initContainers but has restartPolicy: Always. That makes it a native sidecar. Unlike a regular init container, the kubelet does not wait for it to exit; once it starts, the next one begins.',
+        'The sidecar runs as long as the app does, and the kubelet restarts it if it dies. It has been on by default since Kubernetes 1.29 and became GA in 1.33.',
+      ],
+      keyIdea: 'Putting a sidecar in initContainers guarantees it starts before the app. Putting it in containers alongside the app guarantees no start order.',
+      changes: ['+ initContainers: log-agent', '+ restartPolicy: Always'],
+      flows: [{from: 'kubelet', to: 'side', label: 'start #3', type: 'request'}],
+      focus: ['side'],
+      status: {side: 'ok'},
+      badges: {side: 'keeps running'},
+      values: {running: 'log-agent'},
+    },
+    {
+      short: 'App starts',
+      kind: '원리',
+      title: 'Only now does the app container start',
+      text: [
+        'Once every entry in initContainers has finished (regular init) or started (sidecar), the kubelet starts web from containers. The pod phase becomes Running.',
+        'web starts by reading the config file that init 2 wrote to the same emptyDir.',
+      ],
+      flows: [
+        {from: 'kubelet', to: 'app', label: 'start app', type: 'request'},
+        {from: 'vol', to: 'app', label: 'read config', type: 'response'},
+      ],
+      focus: ['app'],
+      status: {app: 'ok'},
+      badges: {app: 'Running'},
+      values: {phase: {text: 'Running', tone: 'good'}, running: 'log-agent · web'},
+    },
+    {
+      short: 'Sharing',
+      kind: '원리',
+      title: 'Containers in a pod share network and volumes',
+      text: [
+        'Containers in the same pod share one IP address. So they can reach each other on localhost, and two containers cannot open the same port.',
+        'When web writes log files to the emptyDir, log-agent reads them from the same volume and ships them to the log store. Both containers must mount that volume.',
+      ],
+      keyIdea: 'Volumes are declared per pod and attached per container with volumeMounts. Mount it on only one side and the files are not visible.',
+      flows: [
+        {from: 'side', to: 'app', label: 'localhost', type: 'request'},
+        {from: 'app', to: 'vol', label: 'write logs', type: 'request', bend: 0.15},
+        {from: 'side', to: 'logs', label: 'ship logs', type: 'request'},
+      ],
+      focus: ['side', 'app', 'vol'],
+    },
+    {
+      short: 'Stop order',
+      kind: '주의',
+      title: 'On shutdown, the app stops first and the sidecar later',
+      text: [
+        'When the pod is deleted, the app container stops first, then sidecars stop in reverse start order. So log-agent can ship web\'s last logs.',
+        'In a Job pod, a still-running sidecar does not block completion once the app container finishes. An emptyDir disappears, with its files, when the pod is deleted.',
+      ],
+      keyIdea: 'An emptyDir survives container restarts but is gone when the pod is deleted. Keep long-lived data on a persistent volume.',
+      flows: [
+        {from: 'kubelet', to: 'app', label: 'stop first', type: 'request'},
+        {from: 'kubelet', to: 'side', label: 'stop later', type: 'request'},
+      ],
+      focus: ['app', 'side'],
+      status: {app: 'gone', side: 'off', vol: 'gone'},
+      badges: {app: null, side: null},
+      values: {phase: 'Terminating', running: 'none'},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'init prepares, sidecars assist, localhost and volumes share',
+      text: [
+        'Init containers must finish one by one in list order, and if any fails, the app does not start. A native sidecar goes in initContainers with restartPolicy: Always, so it starts before the app and stops after it.',
+        'Containers in the same pod share an IP and reach each other on localhost, and pass files through volumes such as emptyDir.',
+      ],
+      keyIdea: 'Init containers must finish in order; the sidecar and app share localhost and an emptyDir. If startup stalls, read a STATUS like Init:0/2 and check per-container logs with kubectl logs <pod> -c <container>.',
+      focus: ['init1', 'init2', 'side', 'app'],
+    },
+  ]}
+/>
+
+## Common exam questions
+
+| Situation | What to do / command | Trap |
+| --- | --- | --- |
+| Pod shows `Init:CrashLoopBackOff` | Find which init failed with `kubectl describe pod web`, then `kubectl logs web -c <init name>` | The app container has not started, so it has no logs |
+| Wait for the DB before the app | Put a waiting container in `initContainers` | In `containers`, it starts at the same time as the app |
+| Add a log-collecting sidecar | Declare an `emptyDir` volume and mount it in both containers with `volumeMounts` | Mount it on only one side and the files are not visible |
+| The sidecar must start before the app | Put it in `initContainers` with `restartPolicy: Always` | In `containers`, start order is not guaranteed |
+| Two containers open the same port | Change one port | A pod shares one IP, so the ports collide |
+
+Further reading: [CNCF certification curriculum](https://github.com/cncf/curriculum) · [Init containers](https://kubernetes.io/docs/concepts/workloads/pods/init-containers/) · [Sidecar containers](https://kubernetes.io/docs/concepts/workloads/pods/sidecar-containers/) · [Volumes](https://kubernetes.io/docs/concepts/storage/volumes/) · [Service Mesh ① Sidecars and Mutual Authentication](../feature/mesh-sidecar.mdx)
+
+Next lesson: [Runtime security — catching abnormal behavior (CKS)](./runtime-security.mdx)

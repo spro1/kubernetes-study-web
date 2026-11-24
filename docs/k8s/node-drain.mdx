@@ -1,0 +1,200 @@
+---
+id: node-drain
+title: Draining Nodes and Upgrading the Cluster
+sidebar_label: 13 · Draining and Upgrading
+description: Follow how the control plane is upgraded first, then each worker node is cordoned, drained, and uncordoned one at a time while a PodDisruptionBudget prevents a service outage.
+hide_table_of_contents: true
+---
+
+# Draining Nodes and Upgrading the Cluster
+
+We are upgrading a 1.33 cluster to 1.34. Three web Pods are spread over three worker nodes, with a promise that "at least 2 web Pods must stay up". Follow how that promise is kept while each node is emptied and upgraded in turn.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~10 min', level: 'Intermediate'}}
+  groups={[
+    {label: '3 worker nodes', x: 310, y: 30, w: 597, h: 391, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'admin', label: 'Operator', sub: 'kubectl', icon: 'user', tone: 'ext', x: 110, y: 95, show: true},
+    {id: 'cp', label: 'Control plane', sub: 'incl. API server', icon: 'wheel', tone: 'cp', x: 110, y: 235, w: 160, show: true},
+    {id: 'pdb', label: 'PDB', sub: 'web min 2', icon: 'shield', tone: 'store', x: 110, y: 375, show: true},
+    {id: 'w1', label: 'worker-1', sub: '1.33', icon: 'server', tone: 'node', x: 410, y: 105, show: true},
+    {id: 'w2', label: 'worker-2', sub: '1.33', icon: 'server', tone: 'node', x: 410, y: 235, show: true},
+    {id: 'w3', label: 'worker-3', sub: '1.33', icon: 'server', tone: 'node', x: 410, y: 365, show: true},
+    {id: 'webA', label: 'web-a', sub: 'worker-1', icon: 'pod', tone: 'app', size: 'sm', x: 630, y: 105, show: true},
+    {id: 'webB', label: 'web-b', sub: 'worker-2', icon: 'pod', tone: 'app', size: 'sm', x: 630, y: 235, show: true},
+    {id: 'webC', label: 'web-c', sub: 'worker-3', icon: 'pod', tone: 'app', size: 'sm', x: 630, y: 365, show: true},
+    {id: 'webD', label: 'web-d', sub: 'worker-2', icon: 'pod', tone: 'app', size: 'sm', x: 830, y: 235},
+  ]}
+  metrics={[
+    {id: 'ver', label: 'Version'},
+    {id: 'node', label: 'Node in progress'},
+    {id: 'ready', label: 'Ready web Pods'},
+  ]}
+  learn={[
+    {text: 'Why the control plane goes first', at: 1},
+    {text: 'The difference between cordon and drain', at: 3},
+    {text: 'Drain deletes and recreates; it does not move', at: 4},
+    {text: 'How a PDB makes drain wait', at: 6},
+  ]}
+  steps={[
+    {
+      short: 'Start',
+      kind: '시작',
+      title: 'Upgrade a 1.33 cluster to 1.34',
+      text: [
+        'One web Pod runs on each of three worker nodes. web has a PodDisruptionBudget (PDB, a limit on how many Pods may be down at once during maintenance) set to "keep at least 2 (minAvailable: 2)".',
+        'Kubernetes upgrades one minor version at a time. Going from 1.33 to 1.35 means passing through 1.34.',
+      ],
+      flows: [{from: 'admin', to: 'cp', label: 'to 1.34', type: 'request'}],
+      focus: ['cp'],
+      status: {webA: 'ok', webB: 'ok', webC: 'ok'},
+      badges: {cp: '1.33'},
+      values: {ver: '1.33', ready: '3'},
+    },
+    {
+      short: 'Control',
+      kind: '원리',
+      title: 'Upgrade the control plane first',
+      text: [
+        'A node’s kubelet must not be newer than the API server. So the control plane is upgraded first and worker nodes later.',
+        'The kubelet may, however, lag the API server by a few versions. That gives you time to upgrade workers slowly, one at a time.',
+      ],
+      keyIdea: 'If there are several control plane nodes, upgrade them one at a time too, while the others keep serving API requests.',
+      focus: ['cp'],
+      badges: {cp: '1.34'},
+      values: {ver: 'CP 1.34 · workers 1.33'},
+    },
+    {
+      short: 'cordon',
+      kind: '원리',
+      title: 'Stop new Pods from landing on worker-1',
+      text: [
+        'The operator runs kubectl cordon worker-1. The node status becomes Ready,SchedulingDisabled.',
+        'The scheduler will no longer place new Pods on worker-1. The running web-a is still there.',
+      ],
+      flows: [
+        {from: 'admin', to: 'cp', label: 'cordon', type: 'request'},
+        {from: 'cp', to: 'w1', label: 'unschedulable', type: 'request'},
+      ],
+      focus: ['w1'],
+      status: {w1: 'warn'},
+      badges: {w1: 'cordoned'},
+      values: {node: 'worker-1'},
+    },
+    {
+      short: 'drain',
+      kind: '원리',
+      title: 'Drain asks the PDB before evicting a Pod',
+      text: [
+        'kubectl drain worker-1 asks to evict the node’s Pods one by one. DaemonSet Pods, which must run on every node, are not evicted.',
+        'Every eviction request checks the PDB. There are 3 Ready web Pods; removing one still leaves 2, so it is allowed.',
+      ],
+      flows: [
+        {from: 'admin', to: 'cp', label: 'drain', type: 'request'},
+        {from: 'cp', to: 'pdb', label: 'can I evict?', type: 'request'},
+        {from: 'pdb', to: 'cp', label: 'allowed 3→2', type: 'response'},
+      ],
+      focus: ['pdb'],
+      status: {webA: 'gone'},
+      values: {ready: '2'},
+    },
+    {
+      short: 'Recreate',
+      kind: '원리',
+      title: 'An evicted Pod is recreated on another node',
+      text: [
+        'web-a is deleted, and the Deployment creates web-d to replace the missing one. worker-1 is cordoned, so the scheduler picks worker-2.',
+        'Once web-d is ready, there are 3 Ready Pods again. Any data left in an emptyDir volume on the old node is gone.',
+      ],
+      keyIdea: 'Drain does not "move" Pods; it "deletes them and recreates them elsewhere". With a single replica there is a brief outage, and a bare Pod without a Deployment is never recreated.',
+      flows: [{from: 'w2', to: 'webD', label: 'recreate', type: 'request', bend: -0.2}],
+      focus: ['webD'],
+      status: {webD: 'ok'},
+      badges: {webD: 'new Pod'},
+      values: {ready: '3'},
+    },
+    {
+      short: 'Restore',
+      kind: '원리',
+      title: 'Upgrade the node and allow scheduling again',
+      text: [
+        'Upgrade the empty worker-1 to 1.34. When done, run kubectl uncordon worker-1 to allow scheduling.',
+        'worker-1 can now accept new Pods. Pods that already moved elsewhere do not come back on their own.',
+      ],
+      flows: [
+        {from: 'admin', to: 'w1', label: 'upgrade', type: 'request'},
+        {from: 'admin', to: 'cp', label: 'uncordon', type: 'request'},
+      ],
+      focus: ['w1'],
+      status: {w1: 'ok'},
+      badges: {w1: '1.34', webD: null},
+      values: {node: 'worker-1 done'},
+    },
+    {
+      short: 'PDB wait',
+      kind: '주의',
+      title: 'On the next node, the PDB makes drain wait',
+      text: [
+        'Cordon and drain worker-2. It runs both web-b and web-d. Evicting web-b leaves 2 Ready, so that is allowed.',
+        'Evicting web-d too would leave only 1. The PDB refuses, and drain waits until the replacement for web-b is Ready on another node.',
+      ],
+      keyIdea: 'A PDB can block drain forever. With 2 replicas and minAvailable: 2, no Pod can ever be evicted. If an upgrade is stuck on one node, suspect the PDB first.',
+      flows: [
+        {from: 'admin', to: 'cp', label: 'drain', type: 'request'},
+        {from: 'cp', to: 'pdb', label: 'one more?', type: 'request'},
+        {from: 'pdb', to: 'cp', label: 'denied · wait', type: 'response'},
+      ],
+      focus: ['pdb', 'w2'],
+      status: {w2: 'warn', webB: 'gone'},
+      badges: {w2: 'cordoned'},
+      values: {node: 'worker-2', ready: {text: '2 (minimum)', tone: 'bad'}},
+    },
+    {
+      short: 'Continue',
+      kind: '원리',
+      title: 'Once the new Pod is ready, drain continues',
+      text: [
+        'The replacement for web-b is created on the upgraded worker-1 and becomes Ready. There are 3 Ready again.',
+        'Now the PDB allows evicting web-d. Once worker-2 is empty, upgrade and uncordon it, then repeat for worker-3.',
+      ],
+      flows: [
+        {from: 'w1', to: 'webA', label: 'recreate', type: 'request'},
+        {from: 'pdb', to: 'cp', label: 'allowed', type: 'response'},
+      ],
+      focus: ['webA', 'pdb'],
+      status: {webA: 'ok'},
+      badges: {webA: 'new Pod'},
+      values: {ready: {text: '3', tone: 'good'}},
+    },
+    {
+      short: 'Recap',
+      kind: '정리',
+      title: 'Control plane first, then workers one at a time',
+      text: [
+        'An upgrade means upgrading the control plane first, then repeating cordon → drain → upgrade → uncordon for each worker node.',
+        'Drain respects PDBs, so a service never goes down all at once. But it stalls if the remaining nodes have no room or the PDB is too strict.',
+      ],
+      keyIdea: 'An upgrade repeats "empty a node, upgrade it". If drain stalls, run kubectl get pdb -A and look for a PDB with ALLOWED DISRUPTIONS at 0.',
+      status: {w2: 'ok', w3: 'ok'},
+      badges: {w2: '1.34', w3: '1.34', webA: null},
+      values: {ver: {text: '1.34', tone: 'good'}, node: 'all done'},
+    },
+  ]}
+/>
+
+## Common misconceptions about upgrades
+
+| Misconception | Reality |
+| --- | --- |
+| You can jump straight to the latest version | Minor versions go up one step at a time |
+| Drain moves Pods with zero downtime | It deletes them and recreates them elsewhere; a single replica means an outage |
+| A PDB protects you against node failure | A PDB only applies to voluntary maintenance like drain |
+| If the engine upgrade succeeds, apps are fine | Deployments using APIs removed in the new version fail on their next deploy |
+
+Further reading: [Safely Drain a Node](https://kubernetes.io/docs/tasks/administer-cluster/safely-drain-node/) · [Disruptions](https://kubernetes.io/docs/concepts/workloads/pods/disruptions/) · [Upgrading kubeadm clusters](https://kubernetes.io/docs/tasks/administer-cluster/kubeadm/kubeadm-upgrade/)
+
+Next lesson: [Requesting GPUs by Criteria (DRA)](./dra.mdx)

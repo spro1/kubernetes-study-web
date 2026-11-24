@@ -1,0 +1,181 @@
+---
+id: gitops-sync
+title: Helm and GitOps
+sidebar_label: 06 · Helm and GitOps
+description: Follow an animation of how a Helm chart and values become a release and revisions, and how a sync tool keeps the cluster matching Git as the source of truth and reverts drift
+hide_table_of_contents: true
+---
+
+# Helm and GitOps
+
+With many manifests, you must track two things separately: "what did I install together" and "is the cluster in the right state now". Helm solves the first, GitOps the second. Here we follow how a Helm release and a GitOps sync tool (for example Argo CD or Flux) keep the cluster in line.
+
+<StepDiagram
+  width={1000}
+  meta={{duration: '~10 min', level: 'Intermediate'}}
+  groups={[
+    {label: 'Workload cluster', x: 300, y: 200, w: 680, h: 230, tone: 'biz', from: 4},
+  ]}
+  nodes={[
+    {id: 'dev', label: 'Developer', sub: 'makes changes', icon: 'user', tone: 'ext', x: 100, y: 90, show: true},
+    {id: 'chart', label: 'Helm chart', sub: 'manifest template', icon: 'archive', tone: 'store', x: 100, y: 250, show: true},
+    {id: 'values', label: 'values', sub: 'per-env values', icon: 'book', tone: 'store', x: 100, y: 380, show: true},
+    {id: 'git', label: 'Git repo', sub: 'source of truth', icon: 'git', tone: 'store', x: 400, y: 90},
+    {id: 'ops', label: 'Operator', sub: 'edits directly', icon: 'user', tone: 'ext', x: 880, y: 90},
+    {id: 'sync', label: 'GitOps tool', sub: 'in the cluster', icon: 'gear', tone: 'cp', x: 400, y: 315},
+    {id: 'app', label: 'web app', sub: 'live state', icon: 'box', tone: 'app', x: 700, y: 315},
+  ]}
+  metrics={[
+    {id: 'rev', label: 'Helm revision'},
+    {id: 'want', label: 'Desired state in Git'},
+    {id: 'live', label: 'Live cluster state'},
+    {id: 'sync', label: 'Sync status'},
+  ]}
+  learn={[
+    {text: 'A chart plus values becomes a release', at: 2},
+    {text: 'Upgrades and rollbacks are recorded as revisions', at: 3},
+    {text: 'A GitOps tool pulls from Git and aligns the cluster', at: 5},
+    {text: 'Drift is detected and reverted', at: 7},
+  ]}
+  steps={[
+    {
+      short: 'Start',
+      kind: '시작',
+      title: 'Keep the template and the values apart',
+      text: [
+        'A Helm chart is a bundle of manifests with blanks. values are what fill those blanks. If the chart has replicas: {{ .Values.replicaCount }}, then replicaCount: 3 from values goes in.',
+        'Dev, staging and prod use the same chart with different values. This avoids mistakes from copying and editing files per environment.',
+      ],
+      flows: [{from: 'values', to: 'chart', label: 'fill blanks', type: 'request'}],
+      focus: ['chart', 'values'],
+      values: {rev: '—', want: '—', live: 'none', sync: '—'},
+    },
+    {
+      short: 'Install',
+      kind: '원리',
+      title: 'Installing creates a release at revision 1',
+      text: [
+        'Helm renders manifests from the chart and values and applies them to the cluster. One actual installation of a chart is called a release.',
+        'The first install is revision 1. Install the same chart twice and you get two releases.',
+      ],
+      flows: [{from: 'chart', to: 'app', label: 'install', type: 'request', bend: -0.1}],
+      focus: ['app'],
+      status: {app: 'ok'},
+      badges: {app: 'revision 1'},
+      values: {rev: '1', live: '3 · 1.4.1'},
+    },
+    {
+      short: 'Upgrade',
+      kind: '원리',
+      title: 'Each change bumps the revision, and you can roll back',
+      text: [
+        'Change the image tag in values to 1.4.2 and upgrade: that is revision 2. If something breaks, roll back to revision 1.',
+        'A rollback is also recorded, as a new revision 3. A release that was never changed has no earlier revision to return to.',
+      ],
+      keyIdea: 'helm list shows releases, and helm history <release> shows revision history. Roll back with helm rollback <release> <revision>.',
+      flows: [{from: 'values', to: 'app', label: 'upgrade', type: 'request', bend: 0.1}],
+      focus: ['values', 'app'],
+      badges: {app: 'revision 2'},
+      values: {rev: '2', live: '3 · 1.4.2'},
+    },
+    {
+      short: 'Git as truth',
+      kind: '원리',
+      title: 'GitOps keeps the desired state in Git',
+      text: [
+        'GitOps writes the state the cluster should be in to a Git repository and treats that repository as the single source of truth. Charts and values are committed to Git too.',
+        'Changes now go through Git, not the cluster. Change history and reviews stay in Git.',
+      ],
+      flows: [{from: 'dev', to: 'git', label: 'commit·review', type: 'request'}],
+      focus: ['git'],
+      badges: {app: null},
+      values: {want: '3 · 1.4.2'},
+    },
+    {
+      short: 'Pull',
+      kind: '원리',
+      title: 'A tool inside the cluster pulls from Git and aligns',
+      text: [
+        'A GitOps tool inside the cluster (Argo CD, Flux, etc.) checks the Git repository periodically. If the live state differs, it applies what Git says. This is called sync.',
+        'Unlike an external CI/CD tool that pushes once at run time, this comparison repeats continuously.',
+      ],
+      keyIdea: 'CI builds the image and only changes the image tag in Git. Cluster access never leaves the cluster.',
+      flows: [
+        {from: 'sync', to: 'git', label: 'periodic check', type: 'watch'},
+        {from: 'sync', to: 'app', label: 'apply diff', type: 'request'},
+      ],
+      focus: ['sync'],
+      status: {sync: 'ok'},
+      values: {live: '3 · 1.4.2', sync: {text: 'Synced', tone: 'good'}},
+    },
+    {
+      short: 'Drift',
+      kind: '문제',
+      title: 'Editing the cluster directly causes a mismatch',
+      text: [
+        'In a hurry, an operator scales the pods to 5 with a command. The live cluster state now differs from Git. This is called drift.',
+        'On the next comparison, the GitOps tool detects the difference and marks it OutOfSync.',
+      ],
+      flows: [
+        {from: 'ops', to: 'app', label: 'direct edit', type: 'request'},
+        {from: 'sync', to: 'app', label: 'compare', type: 'watch'},
+      ],
+      focus: ['ops', 'app'],
+      status: {app: 'warn'},
+      values: {live: {text: '5 · 1.4.2', tone: 'bad'}, sync: {text: 'OutOfSync', tone: 'bad'}},
+    },
+    {
+      short: 'Revert',
+      kind: '주의',
+      title: 'The tool reverts to the Git state',
+      text: [
+        'Depending on its settings, the GitOps tool automatically reverts the cluster to the Git state. The pod count goes back to 3.',
+        'This prevents drift, but it also reverts urgent manual fixes. In a GitOps setup, every change must go through Git.',
+      ],
+      flows: [{from: 'sync', to: 'app', label: 'match Git', type: 'request'}],
+      focus: ['sync', 'app'],
+      status: {app: 'ok'},
+      values: {live: {text: '3 · 1.4.2', tone: 'good'}, sync: {text: 'Synced', tone: 'good'}},
+    },
+    {
+      short: 'Rollback',
+      kind: '원리',
+      title: 'A rollback means reverting Git to an earlier commit',
+      text: [
+        'If 1.4.2 has a problem, revert to the previous commit in Git. The desired state becomes 1.4.1.',
+        'The GitOps tool sees the difference and updates the cluster to match. The rollback is recorded in Git history too.',
+      ],
+      flows: [
+        {from: 'dev', to: 'git', label: 'prev commit', type: 'request'},
+        {from: 'sync', to: 'app', label: 'follow Git', type: 'request'},
+      ],
+      focus: ['git', 'app'],
+      values: {want: '3 · 1.4.1', live: '3 · 1.4.1'},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Helm installs as a bundle; GitOps keeps things aligned',
+      text: [
+        'Helm manages charts and values as releases and revisions. GitOps keeps Git as the source of truth and keeps the cluster matching it.',
+        'A typical CI/CD pipeline deploys by push: it applies manifests directly at run time. GitOps tools such as Argo CD and Flux pull from Git inside the cluster.',
+      ],
+      keyIdea: 'Helm installs as a bundle and rolls back by revision. GitOps keeps Git as the source of truth and keeps aligning. In a GitOps setup, direct kubectl edits can be detected as drift and reverted, so make changes through Git.',
+      focus: ['git', 'sync'],
+    },
+  ]}
+/>
+
+## Push vs. pull
+
+| Aspect | Push (CI/CD pipeline deploy) | Pull (GitOps) |
+| --- | --- | --- |
+| Who applies | External CI/CD tool | GitOps tool inside the cluster |
+| When | Once, when a run is triggered | Continuously (periodic comparison) |
+| Source of truth | The tool's deploy config and run history | Git repository |
+| Reverting | Pick an earlier version from history and reapply | Revert to an earlier commit in Git and the tool follows |
+| Direct edits | Stay until the next deploy | Detected as drift and may be reverted |
+
+Further reading: [Helm docs](https://helm.sh/docs/) · [OpenGitOps principles](https://opengitops.dev/) · [Argo CD docs](https://argo-cd.readthedocs.io/en/stable/) · [Flux docs](https://fluxcd.io/flux/)
+
+Next lesson: [How an API Request Gets Stored](../advanced/api-request-path.mdx)

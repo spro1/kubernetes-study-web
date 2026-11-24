@@ -1,0 +1,172 @@
+---
+id: scheduling
+title: Which Node Gets the Pod (Scheduling)
+sidebar_label: 12 · Which Node Gets the Pod
+description: Follow, step by step, how the scheduler filters nodes by requests and scores them, how taints, tolerations, node selectors, and anti-affinity change placement, and what Pending means when no node fits
+hide_table_of_contents: true
+---
+
+# Which Node Gets the Pod (Scheduling)
+
+A web pod and a GPU job pod arrive in a cluster with three nodes. Let's see which nodes the scheduler rules out, which one it picks, and what happens when there is nowhere to go.
+
+<StepDiagram
+  meta={{duration: '~10 min', level: 'Intermediate'}}
+  groups={[
+    {label: '3 worker nodes', x: 635, y: 30, w: 210, h: 377, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'pod', label: 'web pod', sub: 'Requests 1 CPU', icon: 'pod', tone: 'app', x: 150, y: 120, show: true},
+    {id: 'gjob', label: 'GPU job', sub: 'Has toleration', icon: 'pod', tone: 'app', x: 150, y: 330},
+    {id: 'sched', label: 'Scheduler', sub: 'Picks a node', icon: 'target', tone: 'cp', x: 410, y: 225, show: true},
+    {id: 'n1', label: 'node-1', sub: 'CPU free 0.5', icon: 'server', tone: 'node', x: 740, y: 105, w: 160, show: true},
+    {id: 'n2', label: 'node-2', sub: 'CPU free 3', icon: 'server', tone: 'node', x: 740, y: 228, w: 160, show: true},
+    {id: 'n3', label: 'gpu-node', sub: 'Taint: gpu', icon: 'server', tone: 'node', x: 740, y: 351, w: 160, show: true},
+  ]}
+  metrics={[
+    {id: 'target', label: 'Pod to place'},
+    {id: 'left', label: 'Candidates left'},
+    {id: 'result', label: 'Result'},
+  ]}
+  learn={[
+    {text: 'Free capacity is the sum of requests, not real usage', at: 1},
+    {text: 'Taint means "keep out", node selector means "come here"', at: 4},
+    {text: 'Why anti-affinity spreads one app across nodes', at: 5},
+    {text: 'How to read a Pending message by cause', at: 6},
+  ]}
+  steps={[
+    {
+      short: 'New pod',
+      kind: '시작',
+      title: 'A pod with no node assigned appears',
+      text: [
+        'A new web pod is created. Its requests say "needs 1 CPU core", and its node is still empty.',
+        'The scheduler watches for pods with no node and picks this one up. It works in two phases: filtering and scoring.',
+      ],
+      flows: [{from: 'pod', to: 'sched', label: 'unscheduled', type: 'watch'}],
+      focus: ['sched'],
+      values: {target: 'web-1', left: '3'},
+    },
+    {
+      short: 'Filter',
+      kind: '원리',
+      title: 'Drop nodes without enough room for the requests',
+      text: [
+        'node-1 has only 0.5 CPU core free, so a pod requesting 1 core cannot fit. It is filtered out.',
+        'Free capacity here is not real usage. It is computed from the sum of requests of pods already placed. Even if the usage graph shows 20%, a node with full requests has no room.',
+      ],
+      keyIdea: 'The answer to "there seems to be room, so why won\'t it start?" usually lies in the sum of requests (allocation), not usage.',
+      flows: [{from: 'sched', to: 'n1', label: 'low CPU', type: 'request'}],
+      focus: ['n1'],
+      status: {n1: 'warn'},
+      badges: {n1: 'Out · CPU'},
+      values: {left: '2'},
+    },
+    {
+      short: 'Taint',
+      kind: '원리',
+      title: 'A tainted node accepts only pods that tolerate it',
+      text: [
+        'gpu-node has a taint, a "keep out" mark. The web pod has no toleration, the permission to tolerate it.',
+        'So gpu-node is also filtered out. This keeps regular pods off expensive GPU servers.',
+      ],
+      flows: [{from: 'sched', to: 'n3', label: 'taint', type: 'request'}],
+      focus: ['n3'],
+      status: {n3: 'warn'},
+      badges: {n3: 'Out · taint'},
+      values: {left: '1'},
+    },
+    {
+      short: 'Score',
+      kind: '원리',
+      title: 'Score the remaining nodes and pick one',
+      text: [
+        'Nodes that pass filtering are scored, and the best fit wins. Here only node-2 is left, so it is node-2.',
+        'The scheduler only writes its choice to the API server. The kubelet on node-2 actually runs the pod.',
+      ],
+      keyIdea: 'Preferred conditions such as "SSD nodes if possible" affect only scoring, not filtering. The pod still gets placed even if they are not met.',
+      flows: [{from: 'sched', to: 'n2', label: 'bind', type: 'request'}],
+      focus: ['n2'],
+      status: {n1: null, n3: null, n2: 'ok'},
+      badges: {n1: null, n3: null, n2: 'web-1'},
+      values: {result: {text: 'node-2', tone: 'good'}},
+    },
+    {
+      short: 'GPU job',
+      kind: '원리',
+      title: 'A GPU job is pulled in with a toleration and a node selector',
+      text: [
+        'The GPU job pod has both a toleration for the gpu taint and a nodeSelector that says "only nodes labeled gpu".',
+        'The node selector filters out the other nodes, and the toleration keeps gpu-node in. The pod lands on gpu-node.',
+      ],
+      keyIdea: 'A toleration only permits. It does not attract. For dedicated nodes, use both: a taint to keep others out, and a node selector or affinity to pull your pods in.',
+      flows: [
+        {from: 'gjob', to: 'sched', label: 'unscheduled', type: 'watch'},
+        {from: 'sched', to: 'n3', label: 'to GPU node', type: 'request'},
+      ],
+      focus: ['gjob', 'n3'],
+      status: {n3: 'ok'},
+      badges: {n3: 'GPU job'},
+      values: {target: 'GPU job', left: '1', result: {text: 'gpu-node', tone: 'good'}},
+    },
+    {
+      short: 'Spread',
+      kind: '주의',
+      title: 'Replicas of one app spread across nodes',
+      text: [
+        'Scale web to 2. The web pod has anti-affinity that says "do not put web pods on the same node".',
+        'node-2 already has web-1, so web-2 cannot go there. The rule keeps one node failure from taking out all replicas.',
+      ],
+      flows: [
+        {from: 'pod', to: 'sched', label: 'web-2', type: 'watch'},
+        {from: 'sched', to: 'n2', label: 'same app here', type: 'request'},
+      ],
+      focus: ['n2'],
+      status: {n2: 'warn'},
+      badges: {pod: 'web-2'},
+      values: {target: 'web-2', left: 'Checking', result: null},
+    },
+    {
+      short: 'Pending',
+      kind: '문제',
+      title: 'With no node left, the pod waits as Pending',
+      text: [
+        'node-1 lacks CPU, gpu-node has a taint, and node-2 fails anti-affinity. All three nodes are out.',
+        'web-2 stays Pending. The event sums up the reason for each node, like "0/3 nodes are available: 1 Insufficient cpu, 1 node(s) had untolerated taint, 1 node(s) didn\'t match pod anti-affinity rules".',
+      ],
+      keyIdea: 'Each cause needs its own fix. Adding nodes solves low CPU, but required anti-affinity keeps failing when replicas outnumber nodes. That is why it is sometimes written as preferred.',
+      flows: [
+        {from: 'sched', to: 'n1', label: 'low CPU', type: 'request'},
+        {from: 'sched', to: 'n3', label: 'taint', type: 'request'},
+      ],
+      focus: ['pod'],
+      status: {pod: 'error', n1: 'warn', n3: 'warn'},
+      badges: {pod: 'web-2 · Pending'},
+      values: {left: {text: '0', tone: 'bad'}, result: {text: 'Pending', tone: 'bad'}},
+    },
+    {
+      short: 'Recap',
+      kind: '정리',
+      title: 'Filter, score, and wait if nothing fits',
+      text: [
+        'The scheduler filters nodes by requests, taints, node selectors, and affinity, then scores the rest and picks one.',
+        'If no node is left, the pod stays Pending. Whether to add nodes or change rules depends on the reasons nodes were rejected.',
+      ],
+      keyIdea: 'The scheduler decides by requests, not real usage. If a pod is Pending, check the Events in kubectl describe pod to see whether nodes were rejected for resources, taints, or affinity.',
+      focus: ['sched'],
+    },
+  ]}
+/>
+
+## Placement rules at a glance
+
+| Rule | Direction | What it does | Example |
+| --- | --- | --- | --- |
+| Requests (`requests`) | Scheduler filters nodes | Drops nodes without room for the summed requests | Requests 1 CPU core → node with 0.5 free is excluded |
+| Taints · tolerations | Node filters pods | Accepts only pods that tolerate the mark | Keep regular pods off GPU nodes |
+| Node selector · node affinity | Pod chooses nodes | Goes only to nodes with matching labels | Only nodes with `gpu: "true"` |
+| Pod anti-affinity | Pod avoids other pods | Puts replicas of the same app on different nodes | One web replica per node |
+
+Further reading: [Kubernetes Scheduler](https://kubernetes.io/docs/concepts/scheduling-eviction/kube-scheduler/) · [Assigning Pods to Nodes](https://kubernetes.io/docs/concepts/scheduling-eviction/assign-pod-node/) · [Taints and Tolerations](https://kubernetes.io/docs/concepts/scheduling-eviction/taint-and-toleration/)
+
+Next lesson: [Draining Nodes and Upgrading the Cluster](./node-drain.mdx)

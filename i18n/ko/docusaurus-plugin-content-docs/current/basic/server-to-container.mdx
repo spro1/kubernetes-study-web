@@ -1,0 +1,180 @@
+---
+id: server-to-container
+title: 서버 한 대에서 컨테이너까지
+sidebar_label: 03 · 서버 한 대에서 컨테이너까지
+description: 물리 서버의 네 가지 자원과 프로세스에서 시작해 가상 머신, 커널을 함께 쓰는 컨테이너, 온프레미스와 클라우드까지 단계별 애니메이션으로 따라간다
+hide_table_of_contents: true
+---
+
+# 서버 한 대에서 컨테이너까지
+
+물리 서버 한 대가 어떻게 가상 머신으로 나뉘고, 그 위에서 컨테이너가 어떻게 돌아가는지 한 단계씩 쌓아 본다. 쿠버네티스 노드의 CPU·메모리 그래프와 노드 사양을 읽는 데 필요한 바탕이다.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '약 8분', level: '기초'}}
+  nodes={[
+    {id: 'hw', label: '물리 서버', sub: '하드웨어·리눅스', icon: 'server', tone: 'node', x: 90, y: 225, show: true},
+    {id: 'proc', label: '프로세스', sub: 'PID · 종료 코드', icon: 'gear', tone: 'app', x: 360, y: 380},
+    {id: 'hv', label: '하이퍼바이저', sub: '자원 나눠 줌', icon: 'layers', tone: 'cp', x: 360, y: 225},
+    {id: 'vm1', label: '가상 머신 1', sub: '자기 운영체제', icon: 'server', tone: 'node', x: 600, y: 110},
+    {id: 'vm2', label: '가상 머신 2', sub: '자기 운영체제', icon: 'server', tone: 'node', x: 600, y: 340},
+    {id: 'ct1', label: '컨테이너', sub: 'web', icon: 'box', tone: 'app', size: 'sm', x: 870, y: 280},
+    {id: 'ct2', label: '컨테이너', sub: 'api', icon: 'box', tone: 'app', size: 'sm', x: 870, y: 400},
+    {id: 'cloud', label: '클라우드', sub: 'OpenStack 등', icon: 'cloud', tone: 'ext', x: 870, y: 110},
+  ]}
+  metrics={[
+    {id: 'unit', label: '실행 단위'},
+    {id: 'os', label: '운영체제'},
+    {id: 'res', label: '자원 상황'},
+  ]}
+  learn={[
+    {text: 'CPU·메모리·디스크·네트워크가 각각 하는 일', at: 1},
+    {text: 'CPU 부족은 느려짐, 메모리 부족은 강제 종료라는 것', at: 1},
+    {text: '가상 머신은 운영체제를 통째로 하나씩 가진다는 것', at: 3},
+    {text: '컨테이너는 커널을 함께 쓰는 격리된 프로세스라는 것', at: 5},
+    {text: '온프레미스·퍼블릭·프라이빗 클라우드의 차이', at: 7},
+  ]}
+  steps={[
+    {
+      short: '서버 한 대',
+      kind: '시작',
+      title: '서버는 요청을 받아 일하는 컴퓨터다',
+      text: [
+        '서버는 특별한 기계가 아니라 역할의 이름이다. 실제 서비스용 서버는 24시간 켜져 있어야 해서, 전원·냉각·부품을 이중으로 갖춘 장비를 데이터센터 랙(rack)에 꽂아 운영한다.',
+        '서버 한 대는 하드웨어, 운영체제(대부분 리눅스), 애플리케이션으로 이루어진다. 애플리케이션은 하드웨어를 직접 다루지 않고 운영체제를 거쳐 쓴다.',
+      ],
+      flows: [{from: 'hw', to: 'proc', label: '프로그램 실행', type: 'request'}],
+      focus: ['hw'],
+      values: {unit: '프로그램', os: '서버에 1개'},
+    },
+    {
+      short: '네 자원',
+      kind: '원리',
+      title: '운영체제가 네 가지 자원을 나눠 준다',
+      text: [
+        'CPU는 계산을, 메모리는 지금 쓰는 데이터를 잠시 올려 두는 작업대 역할을, 디스크는 오래 보관을, 네트워크는 다른 컴퓨터와의 통신을 맡는다.',
+        '부족할 때 증상이 다르다. CPU가 부족하면 느려지고, 메모리가 부족하면 프로그램이 강제로 종료될 수 있다. 디스크는 로그가 쌓여 가득 차는 장애가 흔하다.',
+      ],
+      keyIdea: 'CPU 부족은 "느려짐", 메모리 부족은 "죽음"으로 나타나는 경우가 많다.',
+      flows: [{from: 'hw', to: 'proc', label: 'CPU·메모리', type: 'request'}],
+      focus: ['hw', 'proc'],
+      badges: {hw: '자원 4가지'},
+    },
+    {
+      short: '프로세스',
+      kind: '원리',
+      title: '실행 중인 프로그램 하나가 프로세스다',
+      text: [
+        '프로세스(process)는 실행 중인 프로그램 하나다. 운영체제는 프로세스마다 번호(PID)를 붙여 관리한다. 웹 서버처럼 계속 요청을 기다리는 프로세스는 데몬(daemon)이라고 부른다.',
+        '프로세스는 끝날 때 종료 코드를 남긴다. 0이면 정상, 0이 아니면 무언가 잘못된 것이다. 이 개념이 뒤에서 컨테이너 상태 표시로 그대로 이어진다.',
+      ],
+      flows: [{from: 'proc', to: 'hw', label: '종료 코드 0', type: 'response'}],
+      focus: ['proc'],
+      badges: {hw: null},
+      values: {unit: '프로세스'},
+    },
+    {
+      short: '가상화',
+      kind: '원리',
+      title: '하이퍼바이저가 서버를 여러 대로 나눈다',
+      text: [
+        '물리 서버 한 대에 프로그램 하나만 올리면 자원이 남는다. 가상화는 물리 서버를 소프트웨어로 나눠 여러 대의 서버처럼 쓰는 기술이다.',
+        '하이퍼바이저(hypervisor)가 물리 서버의 자원을 가상 머신(VM)들에게 나눠 주고 서로 격리한다. 가상 머신은 각자 자기만의 운영체제를 가진다.',
+      ],
+      flows: [
+        {from: 'hw', to: 'hv', label: '전체 자원', type: 'request'},
+        {from: 'hv', to: 'vm1', label: '나눠 줌', type: 'request'},
+        {from: 'hv', to: 'vm2', label: '나눠 줌', type: 'request'},
+      ],
+      focus: ['hv'],
+      status: {proc: 'gone'},
+      values: {unit: '가상 머신', os: 'VM마다 1개'},
+    },
+    {
+      short: '규격·단위',
+      kind: '주의',
+      title: '가상 머신은 정해진 규격으로 받는다',
+      text: [
+        '가상 머신의 CPU·메모리 조합을 미리 정해 둔 규격을 인스턴스 유형이라고 한다. "4 vCPU · 16 GiB" 같은 식이다. vCPU는 물리 코어를 소프트웨어로 나눠 할당한 가상 CPU다.',
+        'GiB(1024배씩)와 GB(1000배씩)는 다른 단위다. 쿠버네티스에서도 512Mi와 512M은 다른 값이고, CPU는 1000m을 1코어로 적는다.',
+      ],
+      flows: [{from: 'hv', to: 'vm1', label: '4 vCPU·16GiB', type: 'request'}],
+      focus: ['vm1'],
+      badges: {vm1: '4 vCPU · 16 GiB'},
+    },
+    {
+      short: '컨테이너',
+      kind: '원리',
+      title: '컨테이너는 운영체제 핵심부를 함께 쓴다',
+      text: [
+        '가상 머신은 운영체제까지 통째로 하나씩 가져서 무겁다. 컨테이너는 서버의 운영체제 핵심부(커널)를 함께 쓰고, 그 위의 프로그램과 라이브러리만 따로 가진다.',
+        '그래서 컨테이너는 수 초 안에 시작되고 같은 서버에 훨씬 많이 올릴 수 있다. 컨테이너는 사실상 격리된 프로세스라, 같은 서버에 있어도 서로의 라이브러리에 영향을 주지 않는다.',
+      ],
+      keyIdea: '가상 머신은 운영체제를 나눠 갖고, 컨테이너는 커널을 함께 쓴다.',
+      flows: [
+        {from: 'ct1', to: 'vm2', label: '커널 공유', type: 'request'},
+        {from: 'ct2', to: 'vm2', label: '커널 공유', type: 'request'},
+      ],
+      focus: ['ct1', 'ct2'],
+      status: {ct1: 'ok', ct2: 'ok'},
+      badges: {vm1: null},
+      values: {unit: '컨테이너', os: '커널 공유'},
+    },
+    {
+      short: '메모리 초과',
+      kind: '주의',
+      title: '메모리 상한을 넘은 컨테이너는 강제 종료된다',
+      text: [
+        'web 컨테이너가 쓰는 메모리가 늘어 상한을 넘었다. 쿠버네티스에서 컨테이너가 메모리 상한을 넘으면 강제 종료된다. 앞에서 본 "메모리 부족은 죽음"이 컨테이너에서도 그대로다.',
+        '옆의 api 컨테이너는 격리되어 있어 그대로 돈다. 종료된 컨테이너는 종료 코드를 남기고, 쿠버네티스는 이를 다시 시작한다.',
+      ],
+      flows: [{from: 'vm2', to: 'ct1', label: '강제 종료', type: 'response'}],
+      focus: ['ct1'],
+      status: {ct1: 'error'},
+      badges: {ct1: '메모리 초과'},
+      values: {res: {text: 'web 메모리 상한 초과', tone: 'bad'}},
+    },
+    {
+      short: '어디에 두나',
+      kind: '원리',
+      title: '서버를 사서 둘지, 빌려 쓸지',
+      text: [
+        '온프레미스(on-premises)는 회사가 서버를 사서 자기 데이터센터에 둔다. 퍼블릭 클라우드는 AWS·Azure·GCP 같은 사업자의 서버를 빌려 쓴다. 프라이빗 클라우드는 회사 안에 클라우드 플랫폼을 구축해 클라우드처럼 운영한다.',
+        '클라우드 플랫폼은 여러 물리 서버를 묶어 가상 머신·네트워크·스토리지를 필요할 때 만들어 준다. 사내 구축형으로는 OpenStack이 널리 쓰이고, 공공·금융 기관은 온프레미스나 프라이빗 클라우드와 폐쇄망을 택하는 경우가 많다.',
+      ],
+      flows: [{from: 'cloud', to: 'vm1', label: 'VM 제공', type: 'request'}],
+      focus: ['cloud'],
+      status: {ct1: 'ok'},
+      badges: {ct1: '재시작'},
+      values: {res: {text: '정상', tone: 'good'}},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '물리 서버 → 가상 머신 → 컨테이너',
+      text: [
+        '물리 서버의 네 가지 자원을 하이퍼바이저가 가상 머신으로 나누고, 가상 머신의 운영체제 위에서 컨테이너가 커널을 함께 쓰며 돈다. 컨테이너의 정체는 격리된 프로세스다.',
+        '쿠버네티스 노드도 결국 이런 서버(대개 가상 머신)다. 노드 사양은 인스턴스 유형으로 정하고, kubectl top nodes로 노드마다 CPU·메모리 사용량을 본다.',
+      ],
+      keyIdea: '노드는 서버이고, 컨테이너는 커널을 함께 쓰는 격리된 프로세스다. CPU가 모자라면 느려지고, 메모리가 모자라면 OOMKilled로 강제 종료된다. 메모리 단위 Gi와 G도 구분한다.',
+      focus: ['hw', 'vm2'],
+      badges: {ct1: null},
+    },
+  ]}
+/>
+
+## 물리 서버·가상 머신·컨테이너 비교
+
+| 구분 | 무엇을 따로 갖나 | 특징 |
+| --- | --- | --- |
+| 물리 서버 | 하드웨어와 운영체제 전체 | 한 대에 프로그램 하나만 올리면 자원이 남는다 |
+| 가상 머신 | 자기만의 운영체제 | 하이퍼바이저가 자원을 나눠 주고 격리한다. 운영체제를 통째로 가져 무겁다 |
+| 컨테이너 | 프로그램과 라이브러리만 | 커널을 함께 쓴다. 수 초 안에 시작되고 같은 서버에 훨씬 많이 올린다 |
+
+이렇게 만든 컨테이너의 원본(이미지)이 어디서 오는지는 다음 레슨에서, 컨테이너가 노드에서 실제로 시작되는 과정은 [파드가 뜨기까지](../k8s/pod-startup.mdx)에서 본다.
+
+더 읽을거리: [컨테이너 (쿠버네티스 문서)](https://kubernetes.io/ko/docs/concepts/containers/) · [노드](https://kubernetes.io/ko/docs/concepts/architecture/nodes/) · [파드 및 컨테이너 리소스 관리](https://kubernetes.io/ko/docs/concepts/configuration/manage-resources-containers/)
+
+다음 레슨: [이미지가 만들어지고 실행되기까지](./container-image.mdx)

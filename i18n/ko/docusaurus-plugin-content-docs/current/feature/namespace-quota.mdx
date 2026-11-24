@@ -1,0 +1,181 @@
+---
+id: namespace-quota
+title: 네임스페이스와 리소스 쿼터
+sidebar_label: 07 · 네임스페이스와 쿼터
+description: 쿠버네티스가 네임스페이스로 구획을 나누고 상한을 넘는 파드 생성을 거절하는 과정을 단계별 애니메이션으로 따라간다
+hide_table_of_contents: true
+---
+
+# 네임스페이스와 리소스 쿼터
+
+여러 팀이 클러스터 하나를 나눠 쓸 때는 쿠버네티스의 **네임스페이스(namespace — 클러스터 안의 구획)**와 **리소스 쿼터(resource quota — 구획별 자원 상한)**가 일한다. 구획을 나누고, 상한을 걸고, 상한을 넘는 파드가 거절되기까지 따라가 본다.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '약 8분', level: '기초'}}
+  groups={[
+    {label: 'NS · team-a', x: 515, y: 18, w: 210, h: 412, tone: 'biz'},
+    {label: 'NS · team-b', x: 760, y: 18, w: 225, h: 412, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'user', label: '사용자', sub: '배포·kubectl', icon: 'user', tone: 'ext', x: 80, y: 225, w: 130, show: true},
+    {id: 'api', label: 'API 서버', sub: '입구·쿼터 검사', icon: 'gate', tone: 'cp', x: 340, y: 225, show: true},
+    {id: 'rbac', label: 'RBAC', sub: 'Role·RoleBinding', icon: 'shield', tone: 'cp', x: 340, y: 390},
+    {id: 'quota', label: '리소스 쿼터', sub: '구획 상한', icon: 'scale', tone: 'store', x: 620, y: 95},
+    {id: 'podsA', label: '기존 파드', sub: 'team-a', icon: 'pod', tone: 'app', x: 620, y: 225},
+    {id: 'newpod', label: '새 파드', sub: 'CPU 2 요청', icon: 'pod', tone: 'app', x: 620, y: 355},
+    {id: 'podsB', label: '기존 파드', sub: 'team-b', icon: 'pod', tone: 'app', x: 872, y: 225},
+  ]}
+  metrics={[
+    {id: 'used', label: 'team-a CPU 요청 합계'},
+    {id: 'limit', label: 'team-a 상한'},
+    {id: 'result', label: '새 파드 결과'},
+  ]}
+  learn={[
+    {text: '네임스페이스가 이름과 권한의 경계라는 것', at: 0},
+    {text: '구획만 나눠서는 자원이 나뉘지 않는 이유', at: 1},
+    {text: '쿼터는 파드를 만드는 순간 검사된다는 것', at: 3},
+    {text: 'requests를 안 적은 파드가 거절되는 이유', at: 5},
+    {text: '권한(RBAC)도 네임스페이스 단위로 묶인다는 것', at: 6},
+  ]}
+  steps={[
+    {
+      short: '구획',
+      kind: '시작',
+      title: '한 클러스터를 팀별 구획으로 나눈다',
+      text: [
+        '클러스터 하나를 여러 팀이 같이 쓰면 자원 이름이 겹치고 남의 서비스를 건드리기 쉽다. 그래서 team-a, team-b처럼 이름 붙은 구획인 네임스페이스로 나눈다.',
+        '네임스페이스는 서버를 물리적으로 떼어 놓는 것이 아니다. 이름과 권한의 경계를 나눌 뿐이고, 워크로드·네트워크·스토리지 자원은 모두 어느 구획에 속하는지 정해진 채로 만들어진다.',
+      ],
+      flows: [{from: 'user', to: 'api', label: '구획 생성', type: 'request'}],
+      focus: ['podsA', 'podsB'],
+      values: {limit: '없음'},
+    },
+    {
+      short: '독점',
+      kind: '문제',
+      title: '구획을 나눠도 CPU·메모리는 함께 쓴다',
+      text: [
+        '구획이 달라도 CPU와 메모리는 같은 클러스터에서 나온다. team-a가 파드를 잔뜩 늘리면 team-b가 쓸 몫이 줄어든다.',
+        '그러면 team-b의 새 파드는 들어갈 노드를 찾지 못해 Pending(대기)으로 남을 수 있다. 다른 팀의 실수가 내 서비스에 번지는 것이다.',
+      ],
+      keyIdea: '네임스페이스는 이름과 권한을 나눌 뿐, 자원 사용량은 쿼터를 걸어야 비로소 나뉜다.',
+      flows: [{from: 'api', to: 'podsA', label: '파드 추가', type: 'request'}],
+      focus: ['podsA', 'podsB'],
+      status: {podsA: 'warn', podsB: 'warn'},
+      badges: {podsB: '자리 부족'},
+    },
+    {
+      short: '쿼터',
+      kind: '원리',
+      title: '리소스 쿼터로 구획마다 상한을 건다',
+      text: [
+        'team-a에 리소스 쿼터를 건다. 예를 들어 "CPU 요청 합계 4코어, 메모리 요청 합계 8Gi, 파드 20개까지"처럼 합계와 개수의 상한을 적는다.',
+        '쿼터는 ResourceQuota라는 쿠버네티스 오브젝트다. YAML로 적어 kubectl apply로 만들거나, kubectl create quota 명령으로 바로 만든다.',
+      ],
+      changes: ['+ team-a 쿼터: CPU 4 · 메모리 8Gi · 파드 20'],
+      flows: [
+        {from: 'user', to: 'api', label: '쿼터 생성', type: 'request'},
+        {from: 'api', to: 'quota', label: '상한 기록', type: 'request'},
+      ],
+      focus: ['quota'],
+      status: {podsA: null, podsB: null},
+      badges: {podsB: null, quota: 'CPU 4 · 8Gi'},
+      values: {limit: 'CPU 4코어', used: '0'},
+    },
+    {
+      short: '검사',
+      kind: '원리',
+      title: '파드를 만들 때마다 API 서버가 여유를 셈한다',
+      text: [
+        '새 파드를 만들어 달라는 요청이 오면 API 서버는 "지금 쓰는 요청값 합계 + 새 파드의 요청값"이 상한을 넘는지 먼저 계산한다.',
+        '넘지 않으면 파드가 만들어지고 사용량에 더해진다. team-a는 지금 CPU 3코어를 요청해 쓰는 중이다.',
+      ],
+      flows: [
+        {from: 'user', to: 'api', label: '파드 생성', type: 'request'},
+        {from: 'api', to: 'quota', label: '여유 확인', type: 'request'},
+        {from: 'api', to: 'podsA', label: '통과', type: 'request'},
+      ],
+      focus: ['api', 'quota'],
+      values: {used: 'CPU 3 / 4', result: '생성됨'},
+    },
+    {
+      short: '거절',
+      kind: '장애',
+      title: '상한을 넘는 파드는 만드는 순간 거절된다',
+      text: [
+        '여기에 CPU 2코어를 요청하는 파드가 오면 합계가 5코어가 되어 상한 4코어를 넘는다. API 서버는 이 파드를 만들지 않고 거절한다. 이미 돌고 있는 파드는 멈추지 않는다.',
+        '디플로이먼트로 배포했다면 파드 수가 늘지 않는 것으로만 보인다. 거절 이유는 레플리카셋 이벤트에 exceeded quota로 남는다. kubectl describe quota로 상한(Hard)과 사용량(Used)을 나란히 본다.',
+      ],
+      keyIdea: '쿼터는 만드는 순간에만 검사한다. 상한을 지금 사용량보다 낮춰도 이미 떠 있는 자원은 즉시 정리되지 않고 새로 만드는 쪽만 막힌다.',
+      flows: [
+        {from: 'api', to: 'quota', label: '3+2 > 4', type: 'request'},
+        {from: 'api', to: 'user', label: '생성 거절', type: 'response'},
+      ],
+      focus: ['newpod'],
+      status: {newpod: 'error'},
+      badges: {newpod: '쿼터 초과'},
+      values: {used: {text: '3 + 2 > 4', tone: 'bad'}, result: {text: '거절', tone: 'bad'}},
+    },
+    {
+      short: 'requests',
+      kind: '주의',
+      title: '요청값을 안 적은 파드도 거절된다',
+      text: [
+        '쿼터에 CPU·메모리 항목이 걸린 구획에서는 파드가 요청값(requests — "최소 이만큼은 필요하다"는 예약값)과 상한값(limits)을 반드시 적어야 한다. 적지 않으면 생성이 거절된다.',
+        '쿼터는 합계를 세어 상한과 비교하는 장치라서 값이 비어 있으면 셀 수가 없다. 리밋 레인지(LimitRange — 컨테이너 하나하나의 기본값과 최소·최대)로 기본값을 정해 두면 값을 빠뜨린 파드에도 기본값이 채워져 이 문제가 줄어든다.',
+      ],
+      keyIdea: '쿼터를 건 구획에 배포할 때는 요청값을 적었는지부터 본다. kubectl get limitrange로 기본값이 걸려 있는지도 확인한다.',
+      flows: [
+        {from: 'user', to: 'api', label: 'requests 없음', type: 'request'},
+        {from: 'api', to: 'user', label: '거절', type: 'response'},
+      ],
+      focus: ['newpod', 'api'],
+      badges: {newpod: 'requests 없음'},
+      values: {used: 'CPU 3 / 4', result: {text: '거절', tone: 'bad'}},
+    },
+    {
+      short: '권한',
+      kind: '원리',
+      title: '권한도 네임스페이스 단위로 나눈다',
+      text: [
+        '쿠버네티스 권한(RBAC)에는 범위가 둘 있다. ClusterRole·ClusterRoleBinding은 클러스터 전체에, Role·RoleBinding은 한 네임스페이스 안에만 걸린다.',
+        'team-a에 RoleBinding으로만 권한을 받은 사용자는 team-a 안의 자원만 보고 고칠 수 있다. 구획이 곧 권한의 경계가 된다.',
+      ],
+      keyIdea: '팀에게는 자기 네임스페이스 안의 권한만 주고, ResourceQuota를 고칠 권한은 주지 않는다. 구획과 상한은 클러스터 관리자가 정해야 쿼터가 의미를 가진다.',
+      flows: [
+        {from: 'user', to: 'rbac', label: 'kubectl 요청', type: 'request'},
+        {from: 'rbac', to: 'api', label: 'team-a만', type: 'request'},
+      ],
+      focus: ['rbac', 'podsA'],
+      status: {newpod: 'gone'},
+      badges: {newpod: null},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '구획은 이름·권한을, 쿼터는 양을 나눈다',
+      text: [
+        '네임스페이스가 이름과 권한의 경계를 긋고, 리소스 쿼터가 그 구획이 쓸 양의 상한을 건다. 상한을 넘거나 요청값이 빠진 파드는 API 서버가 만드는 순간 거절한다.',
+        'RBAC도 같은 구획을 권한의 단위로 쓴다. 그래서 "어느 구획인가"가 볼 수 있는 범위와 쓸 수 있는 자원 양을 함께 정한다.',
+      ],
+      keyIdea: '네임스페이스는 이름과 권한을, 리소스 쿼터는 쓸 양을 나눈다. 파드가 안 늘면 이벤트의 exceeded quota와 kubectl describe quota의 Used·Hard부터 본다.',
+      focus: ['quota', 'rbac'],
+    },
+  ]}
+/>
+
+## 직접 확인해 보기
+
+```bash
+kubectl get namespaces
+kubectl describe quota -n team-a          # Hard(상한)와 Used(사용량)
+kubectl get limitrange -n team-a          # 기본 requests·limits
+kubectl get events -n team-a | grep -i quota
+kubectl auth can-i create resourcequotas -n team-a
+```
+
+더 읽을거리: [네임스페이스](https://kubernetes.io/ko/docs/concepts/overview/working-with-objects/namespaces/) · [리소스 쿼터](https://kubernetes.io/ko/docs/concepts/policy/resource-quotas/) · [리밋 레인지](https://kubernetes.io/ko/docs/concepts/policy/limit-range/) · [RBAC 인가 사용하기](https://kubernetes.io/ko/docs/reference/access-authn-authz/rbac/)
+
+다음 레슨: [GPU 나눠 쓰기](./gpu-sharing.mdx)

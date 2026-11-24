@@ -1,0 +1,190 @@
+---
+id: probes
+title: Health checks — alive, and ready for requests?
+sidebar_label: 01 · Health checks
+description: Follow an animation of what the startup, readiness and liveness probes each ask, whether a failure removes the pod from the Service list or restarts it, and how a bad setup causes restart loops
+hide_table_of_contents: true
+---
+
+# Health checks — alive, and ready for requests?
+
+A running container does not guarantee that the application works. Here we follow what the kubelet asks with three periodic checks (probes), and what it does with each answer. How a dead container comes back is covered in [When a Pod Dies (Self-Healing)](../k8s/self-healing.mdx).
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~10 min', level: 'Intermediate'}}
+  groups={[
+    {label: 'Worker node', x: 560, y: 50, w: 420, h: 380, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'user', label: 'User', sub: 'sends requests', icon: 'user', tone: 'ext', x: 90, y: 120, show: true},
+    {id: 'svc', label: 'Service', sub: 'spreads requests', icon: 'split', tone: 'cp', x: 330, y: 120, show: true},
+    {id: 'eps', label: 'Endpoints', sub: 'Ready pod list', icon: 'db', tone: 'store', x: 330, y: 330, show: true},
+    {id: 'pa', label: 'web-a', sub: 'existing', icon: 'pod', tone: 'app', size: 'sm', w: 110, x: 640, y: 120, show: true},
+    {id: 'pb', label: 'web-b', sub: 'new pod', icon: 'pod', tone: 'app', size: 'sm', w: 110, x: 640, y: 330, show: true},
+    {id: 'kubelet', label: 'kubelet', sub: 'runs probes', icon: 'agent', tone: 'node', x: 870, y: 225, show: true},
+  ]}
+  metrics={[
+    {id: 'ready', label: 'web-b READY'},
+    {id: 'eps', label: 'Pods taking requests'},
+    {id: 'restart', label: 'web-b restarts'},
+  ]}
+  learn={[
+    {text: 'Why Running and Ready are different', at: 0},
+    {text: 'Why the startup probe holds back the other probes', at: 1},
+    {text: 'A readiness failure removes the pod from the list, not restarts it', at: 3},
+    {text: 'A liveness failure restarts the container', at: 4},
+    {text: 'Two ways a bad probe setup causes restart loops', at: 6},
+  ]}
+  steps={[
+    {
+      short: 'New pod',
+      kind: '시작',
+      title: 'A started process is not a ready app',
+      text: [
+        'web-a is taking requests, and a new pod, web-b, has just started. The container process is Running.',
+        'But the app may still be reading config or opening connections. Sending requests now causes errors.',
+      ],
+      flows: [
+        {from: 'user', to: 'svc', label: 'request', type: 'request'},
+        {from: 'svc', to: 'pa', type: 'request'},
+      ],
+      focus: ['pb'],
+      status: {pa: 'ok', pb: 'warn'},
+      badges: {pb: 'Running'},
+      values: {ready: '0/1', eps: '1 (web-a)', restart: '0'},
+    },
+    {
+      short: 'startup',
+      kind: '원리',
+      title: 'The startup probe first asks if startup is done',
+      text: [
+        'At a fixed interval, the kubelet asks web-b "has startup finished?". This is the startup probe, made for slow-starting apps.',
+        'Until it passes, the other two probes wait. If it does not pass in time, the container is restarted.',
+      ],
+      keyIdea: 'For example, checking every 10 seconds and tolerating up to 30 failures allows up to 5 minutes for startup.',
+      flows: [{from: 'kubelet', to: 'pb', label: 'started yet?', type: 'request'}],
+      focus: ['kubelet', 'pb'],
+    },
+    {
+      short: 'Ready',
+      kind: '원리',
+      title: 'Passing readiness lets it start taking requests',
+      text: [
+        'After startup, the kubelet asks with the readiness probe "can you take requests now?". If it passes, the result is reported to the API server.',
+        'web-b then joins the Service endpoints (the list of pods to send requests to), and requests split across both pods.',
+      ],
+      changes: ['Add web-b to endpoints'],
+      flows: [
+        {from: 'kubelet', to: 'pb', label: 'can take traffic?', type: 'request'},
+        {from: 'kubelet', to: 'eps', label: 'add to list', type: 'response'},
+        {from: 'svc', to: 'pb', type: 'request'},
+      ],
+      focus: ['pb', 'eps'],
+      status: {pb: 'ok'},
+      badges: {pb: 'Ready', eps: '2'},
+      values: {ready: {text: '1/1', tone: 'good'}, eps: '2'},
+    },
+    {
+      short: 'Not ready',
+      kind: '주의',
+      title: 'A readiness failure only removes it from the list',
+      text: [
+        'web-b briefly loses its connection to a service it depends on and fails the readiness probe. The kubelet does not restart the container.',
+        'Instead it removes web-b from the endpoints. Requests go only to web-a, and web-b returns to the list once the probe passes again.',
+      ],
+      keyIdea: 'READY 1/2 in kubectl get pods is the readiness result. The pod is alive but not taking requests right now.',
+      changes: ['- Remove web-b from endpoints'],
+      flows: [
+        {from: 'kubelet', to: 'pb', label: 'readiness failed', type: 'request'},
+        {from: 'kubelet', to: 'eps', label: 'remove from list', type: 'response'},
+        {from: 'svc', to: 'pa', type: 'request'},
+      ],
+      focus: ['pb', 'eps'],
+      status: {pb: 'warn'},
+      badges: {pb: 'Not Ready', eps: '1'},
+      values: {ready: {text: '0/1', tone: 'bad'}, eps: {text: '1 (web-a)', tone: 'bad'}, restart: '0'},
+    },
+    {
+      short: 'liveness',
+      kind: '장애',
+      title: 'A liveness failure restarts the container',
+      text: [
+        'After web-b is back in the list, its process gets stuck and stops responding. The liveness probe fails again and again.',
+        'After a set number of consecutive failures (e.g. 3), the kubelet restarts the container. While it comes back, web-b is out of the list.',
+      ],
+      keyIdea: 'The kubelet on that node handles the restart alone. The wait rules for repeated restarts are in the self-healing lesson.',
+      flows: [
+        {from: 'kubelet', to: 'pb', label: 'alive?', type: 'request'},
+        {from: 'kubelet', to: 'eps', label: 'remove from list', type: 'response'},
+      ],
+      focus: ['kubelet', 'pb'],
+      status: {pb: 'error'},
+      badges: {pb: 'restart 1'},
+      values: {restart: {text: '1', tone: 'bad'}},
+    },
+    {
+      short: 'Dependency',
+      kind: '문제',
+      title: 'If liveness checks the DB, everything restarts together',
+      text: [
+        'Say the liveness probe also checks the DB connection. When the DB slows down briefly, the probes on web-a and web-b fail at the same time.',
+        'The kubelet restarts both containers. A restart cannot fix this problem, and with no pod left to take requests, the outage grows.',
+      ],
+      keyIdea: 'Liveness only asks "is the process alive?". Check external dependencies in readiness.',
+      flows: [
+        {from: 'kubelet', to: 'pa', label: 'restart', type: 'request'},
+        {from: 'kubelet', to: 'pb', label: 'restart', type: 'request'},
+        {from: 'user', to: 'svc', label: 'requests fail', type: 'request'},
+      ],
+      focus: ['pa', 'pb'],
+      status: {pa: 'error', pb: 'error'},
+      badges: {pa: 'restart', pb: 'restart', eps: '0'},
+      values: {ready: {text: '0/1', tone: 'bad'}, eps: {text: '0', tone: 'bad'}, restart: {text: '2', tone: 'bad'}},
+    },
+    {
+      short: 'Too early',
+      kind: '문제',
+      title: 'Liveness that starts before startup ends loops restarts',
+      text: [
+        'Take an app that needs about a minute to start (example). With no startup probe and liveness checking from 10 seconds, the check fails before the app is ready.',
+        'The kubelet restarts the container, and it fails again while starting. It ends up in CrashLoopBackOff (repeated restart backoff).',
+      ],
+      keyIdea: 'If "Liveness probe failed" repeats in the events, suspect the probe runs earlier than startup. Add a startup probe or raise the initial delay.',
+      flows: [{from: 'kubelet', to: 'pb', label: 'restart mid-start', type: 'request'}],
+      focus: ['pb'],
+      status: {pa: 'ok', pb: 'warn'},
+      badges: {pa: null, pb: 'CrashLoop', eps: '1'},
+      values: {eps: {text: '1 (web-a)', tone: 'bad'}, restart: {text: '5', tone: 'bad'}},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Ask the three questions separately',
+      text: [
+        'startup asks "has startup finished?", readiness asks "can you take requests now?", and liveness asks "is the process alive?".',
+        'A readiness failure removes the pod from the list; a liveness or startup failure restarts it. What you ask, and where, decides whether the same fault stays small or spreads.',
+      ],
+      keyIdea: 'A readiness failure only takes the pod out of traffic without a restart; a liveness failure restarts it. Tell apart READY 0/1 with RESTARTS unchanged from RESTARTS that keep rising.',
+      focus: ['kubelet', 'eps'],
+      status: {pa: 'ok', pb: 'ok'},
+      badges: {pb: 'Ready', eps: '2'},
+      values: {ready: {text: '1/1', tone: 'good'}, eps: {text: '2', tone: 'good'}},
+    },
+  ]}
+/>
+
+## Probe mistakes and their results
+
+| Probe | Common mistake | Result | Fix |
+| --- | --- | --- | --- |
+| liveness | Also checks the DB connection | When the DB slows briefly, all pods restart at once | Check only that the process is alive |
+| liveness | Initial delay shorter than startup time | Restarts before ready, ending in `CrashLoopBackOff` | Add a startup probe or raise the delay |
+| readiness | Not set at all | Requests reach new pods before they are ready, causing errors on every update | Expose an endpoint that reports readiness |
+| readiness | Always returns success | Takes requests even when a dependency is down, returning errors to users | Check needed dependencies here |
+| startup | Missing on a slow-starting app | Liveness fails first and restarts it mid-start | Allow the maximum startup time |
+
+Further reading: [Configure liveness, readiness and startup probes](https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/) · [Pod lifecycle — container probes](https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/#container-probes) · [When a Pod Dies (Self-Healing)](../k8s/self-healing.mdx) · [How a Request Reaches a Pod](../k8s/traffic.mdx)
+
+Next lesson: [Requests and limits](./requests-limits.mdx)

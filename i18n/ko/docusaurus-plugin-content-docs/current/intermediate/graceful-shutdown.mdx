@@ -1,0 +1,176 @@
+---
+id: graceful-shutdown
+title: 정상 종료 — 요청을 잃지 않고 내려가기
+sidebar_label: 04 · 정상 종료
+description: 파드를 지울 때 요청 대상에서 빠지는 일과 종료 신호가 동시에 일어나는 이유, preStop과 유예 시간이 처리 중인 요청을 지키는 원리를 애니메이션으로 따라간다
+hide_table_of_contents: true
+---
+
+# 정상 종료 — 요청을 잃지 않고 내려가기
+
+배포·축소·노드 비우기는 모두 결국 "파드 하나를 지운다"로 끝난다. 그 파드가 처리하던 요청을 잃지 않고 내려가는 순서를 따라가 본다. 배포 전체 흐름은 [무중단 배포](../k8s/rolling-update.mdx), 노드 정비 흐름은 [노드 비우기와 업그레이드](../k8s/node-drain.mdx)에서 다룬다.
+
+<StepDiagram
+  width={1000}
+  meta={{duration: '약 8분', level: '중급'}}
+  nodes={[
+    {id: 'client', label: '사용자 요청', sub: '끊기면 안 됨', icon: 'browser', tone: 'ext', x: 100, y: 90, show: true},
+    {id: 'actor', label: '삭제 요청', sub: '배포·축소·drain', icon: 'user', tone: 'ext', x: 100, y: 215},
+    {id: 'api', label: 'API 서버', sub: '삭제 표시', icon: 'wheel', tone: 'cp', x: 100, y: 340, show: true},
+    {id: 'svc', label: 'Service', sub: '요청 분배', icon: 'target', tone: 'cp', x: 400, y: 90, show: true},
+    {id: 'kubelet', label: 'kubelet', sub: '노드 관리자', icon: 'gear', tone: 'node', x: 400, y: 340, show: true},
+    {id: 'web1', label: 'web-1', sub: '종료 대상', icon: 'pod', tone: 'app', size: 'sm', x: 760, y: 90, show: true},
+    {id: 'web2', label: 'web-2', sub: '계속 실행', icon: 'pod', tone: 'app', size: 'sm', x: 760, y: 230, show: true},
+  ]}
+  metrics={[
+    {id: 'ready', label: '요청 받는 파드'},
+    {id: 'inflight', label: 'web-1 처리 중 요청'},
+    {id: 'grace', label: '남은 유예 시간'},
+    {id: 'fail', label: '실패한 요청'},
+  ]}
+  learn={[
+    {text: '요청 대상에서 빠지는 일과 종료 신호가 동시에 일어난다는 것', at: 2},
+    {text: 'preStop으로 몇 초 기다리는 이유', at: 4},
+    {text: 'SIGTERM을 받은 앱이 해야 할 일', at: 5},
+    {text: '유예 시간이 지나면 SIGKILL로 강제 종료된다는 것', at: 6},
+  ]}
+  steps={[
+    {
+      short: '시작',
+      kind: '시작',
+      title: 'web-1과 web-2가 요청을 나눠 받고 있다',
+      text: [
+        'Service가 Ready 상태인 파드 두 개에 요청을 나눠 보낸다. web-1은 지금도 요청 세 개를 처리하는 중이다.',
+        '이제 web-1을 지운다. 새 버전 배포든, 개수 줄이기든, 노드 비우기(drain)든 마지막에는 모두 이 일이 일어난다.',
+      ],
+      flows: [
+        {from: 'client', to: 'svc', type: 'request'},
+        {from: 'svc', to: 'web1', type: 'request'},
+        {from: 'svc', to: 'web2', type: 'request'},
+      ],
+      status: {web1: 'ok', web2: 'ok'},
+      values: {ready: '2', inflight: '3', grace: '—', fail: '0'},
+    },
+    {
+      short: '삭제 표시',
+      kind: '원리',
+      title: '파드를 바로 지우지 않고 "종료 중"으로 표시한다',
+      text: [
+        '삭제 요청이 API 서버에 오면 파드는 곧바로 사라지지 않는다. 파드에 삭제 표시가 붙고 상태가 Terminating(종료 중)으로 바뀐다.',
+        '이 순간부터 유예 시간(terminationGracePeriodSeconds) 시계가 돈다. 기본값은 30초다.',
+      ],
+      flows: [{from: 'actor', to: 'api', label: '파드 삭제', type: 'request'}],
+      focus: ['api', 'web1'],
+      status: {web1: 'warn'},
+      badges: {web1: '종료 중'},
+      values: {grace: '30초'},
+    },
+    {
+      short: '동시 진행',
+      kind: '원리',
+      title: '두 가지 일이 동시에 시작된다',
+      text: [
+        '한쪽에서는 web-1을 Service의 요청 대상(엔드포인트)에서 뺀다. 다른 쪽에서는 web-1이 있는 노드의 kubelet이 컨테이너 종료를 시작한다.',
+        '두 일은 서로를 기다려 주지 않는다. 요청 대상에서 빠졌다는 소식이 클러스터 곳곳에 퍼지는 데는 잠깐 시간이 걸린다.',
+      ],
+      keyIdea: '"요청 대상에서 먼저 빠지고, 그다음 종료한다"는 순서가 보장되지 않는다. 그래서 종료가 먼저 시작되면 이미 들어오던 요청이 끊길 수 있다.',
+      flows: [
+        {from: 'api', to: 'svc', label: '대상에서 빼기', type: 'watch'},
+        {from: 'api', to: 'kubelet', label: '종료 시작', type: 'watch'},
+      ],
+      focus: ['svc', 'kubelet'],
+    },
+    {
+      short: '경합',
+      kind: '문제',
+      title: 'preStop이 없으면 요청이 닫힌 파드로 간다',
+      text: [
+        '아무 준비 없이 바로 종료 신호를 보내면, 앱은 연결을 닫기 시작한다. 그런데 요청 대상에서 빠졌다는 소식이 아직 다 퍼지지 않았다.',
+        '그 잠깐 사이에 들어온 요청은 이미 닫히는 web-1로 가서 실패한다. 사용자에게는 간헐적인 오류로 보인다.',
+      ],
+      flows: [
+        {from: 'client', to: 'svc', type: 'request'},
+        {from: 'svc', to: 'web1', label: '아직 감', type: 'request'},
+      ],
+      focus: ['web1'],
+      status: {web1: 'error'},
+      values: {fail: {text: '몇 건', tone: 'bad'}},
+    },
+    {
+      short: 'preStop',
+      kind: '원리',
+      title: 'preStop으로 몇 초 기다린 뒤 종료한다',
+      text: [
+        'preStop 훅은 종료 신호보다 먼저 실행되는 명령이다. 여기서 몇 초 기다리게 해 두면, 그동안 요청 대상에서 빠졌다는 소식이 다 퍼진다.',
+        '이제 새 요청은 web-2로만 간다. web-1은 이미 받은 요청만 계속 처리한다.',
+      ],
+      keyIdea: '몇 초 기다리는 preStop은 앱 기능이 아니라 "소식이 퍼질 시간"을 버는 장치다.',
+      flows: [
+        {from: 'kubelet', to: 'web1', label: 'preStop', type: 'request'},
+        {from: 'svc', to: 'web2', label: '새 요청', type: 'request'},
+      ],
+      focus: ['web1', 'web2'],
+      status: {web1: 'warn'},
+      badges: {web1: 'preStop'},
+      values: {ready: '1', fail: {text: '0', tone: 'good'}, grace: '25초'},
+    },
+    {
+      short: 'SIGTERM',
+      kind: '원리',
+      title: 'SIGTERM을 받은 앱은 하던 일을 마무리한다',
+      text: [
+        'preStop이 끝나면 kubelet이 SIGTERM 신호를 보낸다. "정리하고 끝내라"는 뜻이다. 앱은 새 요청을 받지 않고, 처리 중인 요청을 끝낸 뒤 연결을 닫는다.',
+        '정리를 마친 앱은 스스로 종료한다. 유예 시간은 preStop을 실행한 시간까지 포함해 센다.',
+      ],
+      flows: [{from: 'kubelet', to: 'web1', label: 'SIGTERM', type: 'request'}],
+      focus: ['web1'],
+      badges: {web1: 'SIGTERM'},
+      values: {inflight: {text: '3 → 0', tone: 'good'}, grace: '20초'},
+    },
+    {
+      short: 'SIGKILL',
+      kind: '장애',
+      title: '유예 시간이 지나면 강제로 끝낸다',
+      text: [
+        '앱이 SIGTERM을 무시하거나 정리가 유예 시간 안에 끝나지 않으면, kubelet은 SIGKILL로 컨테이너를 강제 종료한다. 처리 중이던 요청은 실패한다.',
+        'SIGTERM을 무시하는 앱은 유예 시간 내내 아무것도 하지 않다가 죽는다. 업데이트할 때마다 파드 하나당 30초씩 늦어진다.',
+      ],
+      keyIdea: '긴 작업을 처리하는 앱이나 데이터를 디스크에 다 써야 하는 데이터베이스는 유예 시간을 늘린다.',
+      flows: [{from: 'kubelet', to: 'web1', label: 'SIGKILL', type: 'request'}],
+      focus: ['web1'],
+      status: {web1: 'error'},
+      badges: {web1: '강제 종료'},
+      values: {grace: {text: '0초', tone: 'bad'}, inflight: {text: '남은 요청 실패', tone: 'bad'}},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '빠지고, 기다리고, 마무리하고, 내려간다',
+      text: [
+        '정상 종료는 요청 대상에서 빠지기, preStop으로 기다리기, SIGTERM 뒤 마무리하기, 유예 시간 안에 스스로 끝내기의 네 박자다.',
+        '이 약속을 지키는 앱이어야 배포와 노드 정비가 사용자에게 보이지 않는다. 유효 종료 시간은 kubectl get pod <이름> -o yaml의 terminationGracePeriodSeconds로 확인한다.',
+      ],
+      keyIdea: '정상 종료는 빠지기·기다리기·마무리·스스로 끝내기의 네 박자다. 파드가 Terminating에 오래 머물다 사라지면 유예 시간을 다 쓰고 SIGKILL을 맞은 것인지 의심한다.',
+      focus: ['web1', 'web2'],
+      status: {web1: 'gone'},
+      badges: {web1: null},
+      values: {ready: '1', inflight: '0', grace: '—', fail: {text: '0', tone: 'good'}},
+    },
+  ]}
+/>
+
+## 종료 순서 한눈에
+
+| 차례 | 무엇이 일어나나 | 앱·설정이 할 일 |
+| --- | --- | --- |
+| 1 | 파드가 Terminating으로 바뀌고 유예 시간이 돌기 시작한다 | 긴 작업이 있으면 `terminationGracePeriodSeconds`를 늘린다(기본 30초) |
+| 2 | 요청 대상에서 빠지는 일과 종료가 동시에 시작된다 | 순서가 보장되지 않는다는 것을 전제로 설계한다 |
+| 3 | `preStop` 훅이 실행된다 | 몇 초 기다리게 해 요청 대상에서 빠지는 소식이 퍼질 시간을 번다 |
+| 4 | SIGTERM 신호가 온다 | 새 요청을 받지 않고, 처리 중인 요청을 끝내고, 스스로 종료한다 |
+| 5 | 유예 시간이 지나면 SIGKILL로 강제 종료된다 | 여기까지 오면 처리 중이던 요청은 실패한다 |
+
+`terminationGracePeriodSeconds`와 `preStop`은 파드 템플릿의 `spec`에 적는다. 적용된 값은 `kubectl get pod <이름> -o yaml`로 확인한다.
+
+더 읽을거리: [파드 라이프사이클 — 파드의 종료](https://kubernetes.io/ko/docs/concepts/workloads/pods/pod-lifecycle/#pod-termination) · [컨테이너 라이프사이클 훅](https://kubernetes.io/ko/docs/concepts/containers/container-lifecycle-hooks/)
+
+다음 레슨: [스테이트풀셋과 데이터베이스](./statefulset.mdx)

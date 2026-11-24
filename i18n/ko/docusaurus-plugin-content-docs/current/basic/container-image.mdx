@@ -1,0 +1,182 @@
+---
+id: container-image
+title: 이미지가 만들어지고 실행되기까지
+sidebar_label: 04 · 이미지가 만들어지고 실행되기까지
+description: Dockerfile이 레이어로 쌓인 이미지가 되고, 이름·태그를 달고 레지스트리에 올라가 취약점 검사를 거쳐, 노드에서 컨테이너로 실행되고 사라지기까지를 단계별 애니메이션으로 따라간다
+hide_table_of_contents: true
+---
+
+# 이미지가 만들어지고 실행되기까지
+
+컨테이너의 원본인 이미지가 무엇으로 이루어지고, 어떤 이름을 달고, 어디에 보관되었다가 컨테이너가 되는지 따라가 본다. 빌드를 파이프라인에서 자동으로 돌리는 흐름은 [파이프라인이 도는 순서](./cicd-pipeline.mdx)에서, 노드의 kubelet·런타임이 이미지를 받아 파드를 띄우는 과정은 [파드가 뜨기까지](../k8s/pod-startup.mdx)에서 다룬다. 여기서는 이미지 자체에 집중한다.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '약 9분', level: '기초'}}
+  nodes={[
+    {id: 'dockerfile', label: 'Dockerfile', sub: '만드는 설명서', icon: 'book', tone: 'ext', x: 90, y: 110, show: true},
+    {id: 'image', label: '이미지', sub: '읽기 전용 원본', icon: 'layers', tone: 'store', x: 360, y: 110},
+    {id: 'registry', label: 'Harbor', sub: '레지스트리', icon: 'registry', tone: 'store', x: 630, y: 110},
+    {id: 'scan', label: '취약점 검사', sub: 'Trivy', icon: 'shield', tone: 'cp', x: 900, y: 110},
+    {id: 'node', label: '노드', sub: '이미지 내려받음', icon: 'server', tone: 'node', x: 630, y: 300},
+    {id: 'ct1', label: '컨테이너 1', sub: 'web', icon: 'box', tone: 'app', size: 'sm', w: 120, x: 380, y: 300},
+    {id: 'ct2', label: '컨테이너 2', sub: 'web', icon: 'box', tone: 'app', size: 'sm', w: 120, x: 380, y: 410},
+    {id: 'volume', label: '볼륨', sub: '바깥 저장 공간', icon: 'disk', tone: 'store', x: 120, y: 355},
+  ]}
+  metrics={[
+    {id: 'tag', label: '이미지'},
+    {id: 'where', label: '이미지 위치'},
+    {id: 'vuln', label: '취약점 검사'},
+    {id: 'ct', label: '실행 중 컨테이너'},
+  ]}
+  learn={[
+    {text: 'Dockerfile 한 줄이 레이어 하나가 된다는 것', at: 1},
+    {text: '이미지 이름을 레지스트리·프로젝트·이름·태그로 읽는 법', at: 2},
+    {text: 'latest 태그가 위험한 이유와 다이제스트', at: 3},
+    {text: '"검사 안 함"과 "취약점 0개"가 다르다는 것', at: 4},
+    {text: '컨테이너를 지우면 안에 쓴 데이터가 사라진다는 것', at: 7},
+  ]}
+  steps={[
+    {
+      short: '설명서',
+      kind: '시작',
+      title: 'Dockerfile대로 이미지를 만든다',
+      text: [
+        'Dockerfile은 이미지를 어떻게 만들지 한 줄씩 적은 텍스트 파일이다. FROM으로 출발할 베이스 이미지를 고르고, COPY로 파일을 넣고, RUN으로 설치 같은 명령을 실행한다.',
+        '위에서 아래로 차례로 실행되고, 대부분의 명령 한 줄이 레이어(layer) 하나가 된다. 이렇게 만든 이미지는 바뀌지 않는 읽기 전용 원본이다.',
+      ],
+      flows: [{from: 'dockerfile', to: 'image', label: '빌드', type: 'request'}],
+      focus: ['image'],
+      badges: {image: '레이어 4겹'},
+      values: {tag: 'web:1.4.2', where: '만든 곳'},
+    },
+    {
+      short: '레이어',
+      kind: '원리',
+      title: '바뀐 층만 새로 만든다',
+      text: [
+        '이미지는 기본 운영체제 파일, 언어 실행 환경, 라이브러리, 앱 코드 순으로 층을 쌓은 것이다. 아래층은 거의 안 바뀌고, 맨 위 앱 코드 층이 자주 바뀐다.',
+        '의존성 목록 파일만 먼저 복사해 설치해 두면, 소스 코드만 고쳤을 때 설치 단계를 다시 하지 않는다. 그래서 두 번째 빌드부터 빨라진다.',
+      ],
+      keyIdea: '앱 코드만 바뀌면 맨 위층만 새로 만든다. 아래층은 재사용된다.',
+      changes: ['~ 레이어 4 (앱 코드)만 새로 만듦', '레이어 1~3은 그대로 재사용'],
+      flows: [{from: 'dockerfile', to: 'image', label: '맨 위층만', type: 'request'}],
+      focus: ['image'],
+      values: {tag: 'web:1.4.3'},
+    },
+    {
+      short: '이름·올리기',
+      kind: '원리',
+      title: '이름을 달고 레지스트리에 올린다',
+      text: [
+        'harbor.example.com/demo/web:1.4.3은 레지스트리 주소, 프로젝트(demo), 이름(web), 태그(1.4.3)로 읽는다. 레지스트리를 생략하면 공용 레지스트리(Docker Hub)로, 태그를 생략하면 latest로 간주된다.',
+        '레지스트리(registry)는 이미지를 올리고(push) 내려받는(pull) 보관소다. 폐쇄망에서는 공용 레지스트리에 닿지 않으므로 Harbor 같은 사설 레지스트리에 필요한 이미지를 모두 미리 넣어 둔다.',
+      ],
+      flows: [{from: 'image', to: 'registry', label: 'push', type: 'request'}],
+      focus: ['registry'],
+      badges: {image: null, registry: 'demo/web:1.4.3'},
+      values: {where: 'Harbor · demo 프로젝트'},
+    },
+    {
+      short: 'latest',
+      kind: '주의',
+      title: 'latest는 옮겨 붙는 이름표일 뿐이다',
+      text: [
+        '누군가 같은 태그로 새 이미지를 올리면 이름표가 새 이미지로 옮겨 간다. 오늘의 web:latest와 다음 주의 web:latest가 서로 다른 이미지일 수 있고, 서버마다 받은 시점에 따라 다른 버전이 돈다.',
+        '그래서 운영에서는 1.4.3처럼 판을 특정하는 태그를 쓴다. "정확히 이 이미지"를 가리켜야 할 때는 내용으로 계산한 고유값인 다이제스트(sha256:…)를 쓴다.',
+      ],
+      flows: [{from: 'image', to: 'registry', label: 'push :latest', type: 'request'}],
+      focus: ['registry'],
+      status: {registry: 'warn'},
+      badges: {registry: 'latest → 새 이미지'},
+      values: {tag: {text: 'web:latest (어느 판?)', tone: 'bad'}},
+    },
+    {
+      short: '취약점 검사',
+      kind: '원리',
+      title: '이미지 안의 알려진 결함을 찾는다',
+      text: [
+        '취약점 검사는 이미지 안의 구성 요소 목록을 공개된 결함 데이터베이스(CVE)와 대조하는 작업이다. Trivy가 대표 도구이고, 결과는 Critical·High·Medium·Low 심각도별 개수로 나온다.',
+        '발견되었다고 바로 공격받는 것은 아니다. 대부분은 베이스 이미지나 라이브러리를 새 버전으로 바꿔 다시 빌드하면 해결된다. 레지스트리에 스캐너가 연결되어 있어야 검사 결과가 나온다(예: Harbor와 Trivy).',
+      ],
+      flows: [
+        {from: 'registry', to: 'scan', label: '검사', type: 'request'},
+        {from: 'scan', to: 'registry', label: '심각도별 개수', type: 'response'},
+      ],
+      focus: ['scan'],
+      status: {registry: null},
+      badges: {registry: 'demo/web:1.4.3'},
+      values: {tag: 'web:1.4.3', vuln: '심각도별 결과'},
+    },
+    {
+      short: '내려받기',
+      kind: '원리',
+      title: '실행할 노드가 이미지를 내려받는다',
+      text: [
+        '컨테이너를 실행할 서버(노드)는 레지스트리에서 이미지를 내려받는다. 이 일은 노드의 컨테이너 런타임(containerd 등)이 한다.',
+        '여러 이미지가 같은 아래층을 쓰면 그 층은 한 번만 내려받고 한 번만 저장한다. 이미 받은 층은 건너뛴다.',
+      ],
+      flows: [{from: 'registry', to: 'node', label: 'pull', type: 'response'}],
+      focus: ['node'],
+      badges: {node: '새 층만 받음'},
+      values: {where: 'Harbor · 노드'},
+    },
+    {
+      short: '실행',
+      kind: '원리',
+      title: '같은 이미지로 컨테이너를 여러 개 만든다',
+      text: [
+        '이미지는 붕어빵 틀, 컨테이너는 붕어빵이다. 같은 이미지로 컨테이너를 몇 개든 만들 수 있다. 컨테이너가 시작될 때마다 CMD에 적은 명령이 실행된다(RUN은 이미지를 만들 때 한 번만 실행된다).',
+        '환경마다 다른 값(DB 주소, 로그 수준)은 이미지에 고정하지 않고 실행할 때 환경 변수로 넣는다. 이미지는 하나로 두고 값만 환경마다 다르게 넣는 것이 원칙이다.',
+      ],
+      flows: [
+        {from: 'node', to: 'ct1', label: '실행', type: 'request'},
+        {from: 'node', to: 'ct2', label: '실행', type: 'request'},
+      ],
+      focus: ['ct1', 'ct2'],
+      status: {ct1: 'ok', ct2: 'ok'},
+      badges: {node: null},
+      values: {ct: '2개 (같은 이미지)'},
+    },
+    {
+      short: '수명·데이터',
+      kind: '주의',
+      title: '컨테이너를 지우면 안에 쓴 파일도 사라진다',
+      text: [
+        '컨테이너는 주 프로세스 하나가 도는 동안만 살아 있고, 끝날 때 종료 코드를 남긴다. 이미지는 읽기 전용이라 실행 중에 생긴 변경은 그 컨테이너에만 임시로 쌓이고, 컨테이너를 지우면 함께 사라진다.',
+        '데이터베이스·업로드 파일처럼 남아야 하는 데이터는 컨테이너 바깥의 볼륨(volume)에 둔다. 컨테이너 1이 지워져도 새로 만든 컨테이너가 같은 볼륨을 다시 연결하면 데이터가 이어진다.',
+      ],
+      flows: [{from: 'ct2', to: 'volume', label: '같은 볼륨 연결', type: 'request'}],
+      focus: ['ct1', 'volume'],
+      status: {ct1: 'gone'},
+      values: {ct: {text: '1개 (컨테이너 1 삭제)', tone: 'bad'}},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '설명서 → 원본 → 보관소 → 실행',
+      text: [
+        'Dockerfile이 레이어로 쌓인 이미지가 되고, 이름·태그를 달고 레지스트리에 올라가 검사를 받은 뒤, 노드가 내려받아 컨테이너로 실행한다. 컨테이너는 언제든 지우고 새로 만드는 일회성 실행 단위다.',
+        '레지스트리는 올라간 이미지마다 다이제스트·크기·태그 목록을 보관하고, 스캐너가 붙어 있으면 취약점 검사 결과도 함께 남긴다(예: Harbor).',
+      ],
+      keyIdea: '이미지는 레이어로 쌓이고, 레지스트리를 거쳐 노드에서 컨테이너가 된다. 태그는 바뀔 수 있는 이름표, 다이제스트는 내용의 고유 지문이다. "검사 안 함"과 "취약점 0개"는 다른 상태다.',
+      focus: ['image', 'registry', 'node'],
+    },
+  ]}
+/>
+
+## 헷갈리기 쉬운 짝
+
+| 짝 | 차이 |
+| --- | --- |
+| 이미지 / 컨테이너 | 이미지는 읽기 전용 원본, 컨테이너는 그 이미지를 실행한 실체(프로세스) |
+| RUN / CMD | RUN은 이미지를 만들 때 한 번, CMD는 컨테이너가 시작될 때마다 실행 |
+| 태그 / 다이제스트 | 태그는 옮겨 붙는 이름표, 다이제스트는 내용으로 계산한 바뀌지 않는 고유값 |
+| latest / 1.4.3 | latest는 저절로 최신을 가리키지 않는다. 운영에서는 판을 특정하는 태그를 쓴다 |
+| 검사 안 함 / 취약점 0개 | 검사 도구가 없어 결과가 없는 것과 검사했더니 없는 것은 다른 상태 |
+| EXPOSE / 실제 노출 | EXPOSE는 포트를 문서처럼 적어 둘 뿐, 이것만으로 바깥에서 접속되지 않는다 |
+
+더 읽을거리: [이미지 (쿠버네티스 문서)](https://kubernetes.io/ko/docs/concepts/containers/images/) · [Docker 빌드](https://docs.docker.com/build/) · [Harbor](https://goharbor.io/docs/) · [파드가 뜨기까지](../k8s/pod-startup.mdx)
+
+다음 레슨: [원하는 상태와 컨트롤 루프](./desired-state.mdx)

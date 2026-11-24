@@ -1,0 +1,209 @@
+---
+id: pod-security
+title: Pod Security Standards and securityContext
+sidebar_label: 09 · Pod Security Standards
+description: Set Pod Security Standards with namespace labels, watch a privileged Pod get rejected at admission, and see a Pod fixed with securityContext pass, step by step with animation
+hide_table_of_contents: true
+---
+
+# Pod Security Standards and securityContext
+
+If a Pod runs as root (the admin account) or borrows node privileges, one breached container can put the whole node at risk. Let's follow where a namespace's security standard stops a risky Pod, and what a developer must fix to get it through.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~10 min', level: 'Advanced'}}
+  groups={[
+    {label: 'Inside the API server', x: 225, y: 35, w: 480, h: 135, tone: 'mgmt'},
+  ]}
+  nodes={[
+    {id: 'user', label: 'Developer', sub: 'kubectl apply', icon: 'user', tone: 'ext', x: 85, y: 110, show: true},
+    {id: 'spec', label: 'Pod spec', sub: 'YAML', icon: 'book', tone: 'ext', x: 85, y: 300},
+    {id: 'api', label: 'API server', sub: 'authN · authZ', icon: 'gate', tone: 'cp', x: 330, y: 110, show: true},
+    {id: 'psa', label: 'Admission', sub: 'Pod security check', icon: 'shield', tone: 'cp', x: 600, y: 110, show: true},
+    {id: 'ns', label: 'shop', sub: 'security labels', icon: 'ticket', tone: 'store', x: 870, y: 110, show: true},
+    {id: 'etcd', label: 'etcd', sub: 'cluster store', icon: 'db', tone: 'store', x: 600, y: 300},
+    {id: 'kubelet', label: 'kubelet', sub: 'runs containers', icon: 'agent', tone: 'node', x: 870, y: 290},
+    {id: 'pod', label: 'web', sub: 'Pod', icon: 'pod', tone: 'app', size: 'sm', x: 870, y: 405},
+  ]}
+  metrics={[
+    {id: 'enforce', label: 'Reject level (enforce)'},
+    {id: 'result', label: 'Submit result'},
+    {id: 'running', label: 'Running Pods'},
+  ]}
+  learn={[
+    {text: 'privileged vs baseline vs restricted', at: 0},
+    {text: 'What the enforce, audit and warn modes do', at: 1},
+    {text: 'Why rejections are less visible with a Deployment', at: 4},
+    {text: 'Threats blocked by four securityContext fields', at: 6},
+  ]}
+  steps={[
+    {
+      short: '3 levels',
+      kind: '시작',
+      title: 'Pod Security Standards have three levels',
+      text: [
+        'Kubernetes defines three Pod security levels, the Pod Security Standards. privileged is unrestricted, baseline is a minimal standard that blocks known privilege escalations, and restricted is the hardened standard.',
+        'Admission inside the API server (the gate that checks a request against policy) checks every incoming Pod against this standard.',
+      ],
+      keyIdea: 'privileged is for system components. Aim for baseline or higher in regular application namespaces.',
+      flows: [{from: 'psa', to: 'ns', label: 'Read level', type: 'watch'}],
+      focus: ['psa'],
+      values: {enforce: 'None', running: '0'},
+    },
+    {
+      short: 'Labels',
+      kind: '원리',
+      title: 'Namespace labels set the level and mode',
+      text: [
+        'The level is set as a label on the namespace. There are three modes: enforce rejects violating Pods, audit records them in the audit log, and warn only warns the user.',
+        'Namespace shop has enforce: baseline and warn: restricted. baseline violations are blocked; restricted violations are only reported.',
+      ],
+      changes: ['+ pod-security.kubernetes.io/enforce: baseline', '+ pod-security.kubernetes.io/warn: restricted'],
+      flows: [{from: 'psa', to: 'ns', label: 'Check labels', type: 'watch'}],
+      focus: ['ns'],
+      badges: {ns: 'enforce: baseline'},
+      values: {enforce: 'baseline'},
+    },
+    {
+      short: 'Privileged',
+      kind: '문제',
+      title: 'A Pod with a privileged container is submitted',
+      text: [
+        'A developer creates a Pod in shop with privileged: true (a privileged container that uses almost every node privilege).',
+        'Authentication and authorization (RBAC) pass, because this developer may create Pods in shop. The check fails at the next gate.',
+      ],
+      keyIdea: 'Permission checks ask "who can create"; Pod Security Standards ask "what kind of Pod can be created". Neither replaces the other.',
+      flows: [
+        {from: 'user', to: 'api', label: 'privileged', type: 'request'},
+        {from: 'api', to: 'psa', label: 'Check content', type: 'request'},
+      ],
+      focus: ['api', 'psa'],
+      status: {api: 'ok'},
+    },
+    {
+      short: 'Rejected',
+      kind: '문제',
+      title: 'Admission rejects it',
+      text: [
+        'A privileged container is something baseline blocks. Admission rejects the request, and the user gets a message containing `forbidden:` and `PodSecurity "baseline:latest"`.',
+        'Nothing is written to etcd. The Pod was never created.',
+      ],
+      keyIdea: 'The rejection message names the level and the item violated. Fix that item in securityContext.',
+      flows: [
+        {from: 'psa', to: 'api', label: 'Reject', type: 'response'},
+        {from: 'api', to: 'user', label: '403 rejected', type: 'response'},
+      ],
+      focus: ['psa'],
+      status: {psa: 'error', api: null},
+      values: {result: {text: 'Rejected', tone: 'bad'}},
+    },
+    {
+      short: 'Hidden',
+      kind: '주의',
+      title: 'With a Deployment, the rejection happens one step later',
+      text: [
+        'enforce applies only to Pods. Submit the same content as a Deployment and the Deployment is stored; the rejection happens when the actual Pods are created.',
+        'So the rollout looks "successful" but there are zero Pods. The cause shows up in the ReplicaSet\'s events. warn and audit do flag it at Deployment submit time.',
+      ],
+      keyIdea: 'When "deployed but no Pods" shows up, check the events for a security standard rejection first.',
+      flows: [
+        {from: 'user', to: 'api', label: 'Deployment', type: 'request'},
+        {from: 'api', to: 'etcd', label: 'Store', type: 'request'},
+      ],
+      focus: ['etcd'],
+      status: {psa: 'warn'},
+      badges: {etcd: '0 Pods'},
+      values: {result: {text: 'Stored but 0 Pods', tone: 'bad'}},
+    },
+    {
+      short: 'Warn first',
+      kind: '원리',
+      title: 'Start with warn and audit, then raise to enforce',
+      text: [
+        'Setting enforce: restricted from day one can reject existing applications all at once. So apply warn and audit modes first.',
+        'warn comes back as a warning on submit, and audit lands in the audit log. Collect the violations, fix the images, then raise to enforce. That order is safe.',
+      ],
+      flows: [
+        {from: 'psa', to: 'api', label: 'Add warning', type: 'response'},
+        {from: 'api', to: 'user', label: 'Warning', type: 'response'},
+      ],
+      focus: ['ns'],
+      status: {psa: null},
+      badges: {ns: 'warn: restricted'},
+    },
+    {
+      short: 'Fix spec',
+      kind: '원리',
+      title: 'Fix the Pod with securityContext',
+      text: [
+        'securityContext states what privileges a Pod and its containers run with. runAsNonRoot refuses to run as root; allowPrivilegeEscalation: false forbids gaining privileges at runtime.',
+        'capabilities drop ALL removes all Linux kernel capabilities, and readOnlyRootFilesystem makes the container file system read-only. restricted also requires seccomp (a filter that blocks dangerous system calls).',
+      ],
+      changes: [
+        '- privileged: true',
+        '+ runAsNonRoot: true',
+        '+ allowPrivilegeEscalation: false',
+        '+ capabilities.drop: ALL',
+        '+ readOnlyRootFilesystem: true',
+        '+ seccompProfile: RuntimeDefault',
+      ],
+      flows: [
+        {from: 'spec', to: 'user', label: 'Fixed spec', type: 'request'},
+        {from: 'user', to: 'api', label: 'Resubmit', type: 'request'},
+        {from: 'api', to: 'psa', type: 'request'},
+      ],
+      focus: ['spec'],
+      badges: {etcd: null},
+      values: {result: 'Checking'},
+    },
+    {
+      short: 'Pass · run',
+      kind: '주의',
+      title: 'Passing admission is not enough; the image must fit',
+      text: [
+        'The fixed Pod passes the standard and is stored, and kubelet starts the container. But if the image is built to run as root, runAsNonRoot makes it fail to start.',
+        'Applications that write temp files need a separate writable temp volume on a read-only file system, and programs that open ports below 1024 need one kernel capability added back.',
+      ],
+      keyIdea: 'These settings work only if the image is built to run that way. Raising security standards is shared work with the developers who build the images.',
+      flows: [
+        {from: 'psa', to: 'etcd', label: 'Allow', type: 'request'},
+        {from: 'api', to: 'kubelet', label: 'Assign Pod', type: 'watch'},
+        {from: 'kubelet', to: 'pod', label: 'Run as non-root', type: 'request'},
+      ],
+      focus: ['pod', 'kubelet'],
+      status: {psa: 'ok', pod: 'ok'},
+      badges: {pod: 'non-root'},
+      values: {result: {text: 'Passed', tone: 'good'}, running: {text: '1', tone: 'good'}},
+    },
+    {
+      short: 'Recap',
+      kind: '정리',
+      title: 'Standards go on the namespace; fixes go in the Pod spec and image',
+      text: [
+        'Namespace labels set the level and mode, and admission checks each Pod, rejecting or warning on violations.',
+        'To pass, reduce privileges with securityContext, and build images that run as non-root on a read-only file system.',
+      ],
+      keyIdea: 'Set the standard with namespace labels; the fixes go in the Pod spec and image. Before switching to enforce, check the impact with warn or audit mode, or kubectl label --dry-run=server.',
+      focus: ['ns', 'psa', 'pod'],
+    },
+  ]}
+/>
+
+## What each level blocks, and securityContext fields
+
+| Item | What it blocks | What happens when you apply it |
+| --- | --- | --- |
+| baseline | Privileged containers, sharing node network or processes, mounting node paths | Most regular applications pass as is |
+| restricted | baseline + running as root, privilege escalation, kernel capabilities, missing seccomp | Images built to run as root are rejected or fail to start |
+| `runAsNonRoot` | Gaining node root after a container escape | Images built to run as root fail to start |
+| `readOnlyRootFilesystem` | Changing executables or planting tools | You must attach a separate writable volume for temp files |
+| `capabilities.drop` | Abuse of special privileges like network config or file ownership changes | Using a port below 1024 needs one capability added back |
+| `allowPrivilegeEscalation: false` | Gaining privileges at runtime | Usually no impact |
+
+The full set of API server gates (authentication, authorization, admission) is covered in [How an API Request Gets Stored](./api-request-path.mdx).
+
+Further reading: [Pod Security Standards](https://kubernetes.io/docs/concepts/security/pod-security-standards/) · [Pod Security Admission](https://kubernetes.io/docs/concepts/security/pod-security-admission/) · [Configure a security context for a Pod or container](https://kubernetes.io/docs/tasks/configure-pod-container/security-context/)
+
+Next lesson: [Image and Supply Chain Security](./supply-chain.mdx)

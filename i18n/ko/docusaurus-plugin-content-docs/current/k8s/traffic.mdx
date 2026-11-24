@@ -1,0 +1,165 @@
+---
+id: traffic
+title: 요청이 파드에 닿기까지
+sidebar_label: 02 · 요청이 파드에 닿기까지
+description: 브라우저 요청이 로드밸런서·Ingress·Service·EndpointSlice를 거쳐 파드에 닿는 경로와, 준비되지 않은 파드가 대상에서 빠지는 원리를 애니메이션으로 따라간다
+hide_table_of_contents: true
+---
+
+# 요청이 파드에 닿기까지
+
+사용자가 `shop.example.com`을 열었을 때, 그 요청이 클러스터 안의 어느 파드에 어떻게 도착하는지 따라가 본다.
+
+<StepDiagram
+  width={1000}
+  meta={{duration: '약 10분', level: '기초'}}
+  groups={[
+    {label: '쿠버네티스 클러스터', x: 300, y: 30, w: 685, h: 395, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'user', label: '브라우저', sub: 'shop.example.com', icon: 'browser', tone: 'ext', x: 120, y: 100, w: 160, show: true},
+    {id: 'lb', label: '로드밸런서', sub: '바깥 진입점', icon: 'split', tone: 'ext', x: 120, y: 305, w: 160},
+    {id: 'ing', label: 'Ingress', sub: '컨트롤러', icon: 'route', tone: 'node', x: 430, y: 305},
+    {id: 'rule', label: 'Ingress 규칙', sub: 'shop → shop-svc', icon: 'book', tone: 'store', x: 430, y: 110, w: 160},
+    {id: 'svc', label: 'Service', sub: 'shop-svc', icon: 'target', tone: 'cp', x: 680, y: 305},
+    {id: 'eps', label: '엔드포인트', sub: 'Ready 파드 목록', icon: 'db', tone: 'store', x: 680, y: 110, w: 150},
+    {id: 'pa', label: 'shop-a', sub: '10.0.1.11', icon: 'pod', tone: 'app', size: 'sm', w: 110, x: 905, y: 215, show: true},
+    {id: 'pb', label: 'shop-b', sub: '10.0.2.12', icon: 'pod', tone: 'app', size: 'sm', w: 110, x: 905, y: 300, show: true},
+    {id: 'pc', label: 'shop-c', sub: '10.0.3.13', icon: 'pod', tone: 'app', size: 'sm', w: 110, x: 905, y: 385, show: true},
+  ]}
+  metrics={[
+    {id: 'host', label: '요청 주소'},
+    {id: 'svc', label: '도착할 Service'},
+    {id: 'pod', label: '처리한 파드'},
+    {id: 'ready', label: 'Ready 파드'},
+  ]}
+  learn={[
+    {text: '클러스터 바깥 요청이 들어오는 입구', at: 1},
+    {text: 'Ingress 규칙과 Ingress 컨트롤러의 차이', at: 2},
+    {text: 'Service가 고정 주소 역할을 하는 이유', at: 3},
+    {text: '준비되지 않은 파드에 트래픽이 가지 않는 원리', at: 6},
+  ]}
+  steps={[
+    {
+      short: '시작',
+      kind: '시작',
+      title: '파드는 세 개, 주소는 제각각이다',
+      text: [
+        'shop 애플리케이션 파드 세 개가 서로 다른 노드에서 돌고 있다. 파드마다 내부 IP가 있지만, 파드는 다시 만들어질 때마다 IP가 바뀐다.',
+        '그래서 사용자가 파드 IP로 직접 접속하게 만들 수는 없다. 바뀌지 않는 입구가 필요하다.',
+      ],
+      keyIdea: '파드는 언제든 사라지고 새로 생긴다. 요청 경로는 "바뀌는 파드"와 "바뀌지 않는 이름"을 이어 주는 장치들로 이루어진다.',
+      status: {pa: 'ok', pb: 'ok', pc: 'ok'},
+      values: {ready: '3 / 3'},
+    },
+    {
+      short: '진입',
+      kind: '원리',
+      title: '도메인은 로드밸런서로 연결된다',
+      text: [
+        '브라우저가 shop.example.com을 물으면 DNS가 로드밸런서 주소를 알려 준다. 요청은 먼저 이 로드밸런서에 도착한다.',
+        '로드밸런서는 받은 요청을 클러스터 안의 Ingress 컨트롤러로 넘긴다.',
+      ],
+      flows: [
+        {from: 'user', to: 'lb', label: 'GET /', type: 'request'},
+        {from: 'lb', to: 'ing', label: 'HTTP 전달', type: 'request'},
+      ],
+      focus: ['lb'],
+      values: {host: 'shop.example.com'},
+    },
+    {
+      short: 'Ingress',
+      kind: '원리',
+      title: 'Ingress 컨트롤러가 규칙표를 본다',
+      text: [
+        'Ingress 규칙은 "이 주소·경로로 온 요청은 이 Service로"라고 적어 둔 표다. 규칙만으로는 아무 일도 일어나지 않는다.',
+        '실제로 요청을 받아 규칙대로 넘기는 것은 Ingress 컨트롤러(예: NGINX)다. 컨트롤러는 규칙 변경을 지켜보다가 자기 설정에 반영한다.',
+      ],
+      keyIdea: 'Ingress 규칙은 "표", Ingress 컨트롤러는 그 표를 들고 문 앞에 선 "안내원"이다.',
+      flows: [{from: 'rule', to: 'ing', label: 'host·path 규칙', type: 'watch'}],
+      focus: ['ing', 'rule'],
+      values: {svc: 'shop-svc'},
+    },
+    {
+      short: 'Service',
+      kind: '원리',
+      title: 'Service라는 고정 주소로 넘긴다',
+      text: [
+        'Ingress 컨트롤러는 요청을 파드에 직접 보내지 않고 Service(shop-svc)로 보낸다.',
+        'Service는 이름과 주소가 바뀌지 않는 가상의 창구다. 뒤에 어떤 파드가 있는지는 Service가 알아서 따라간다.',
+      ],
+      flows: [{from: 'ing', to: 'svc', label: 'shop-svc:80', type: 'request'}],
+      focus: ['svc'],
+    },
+    {
+      short: '대상 목록',
+      kind: '원리',
+      title: '지금 받을 수 있는 파드 목록을 본다',
+      text: [
+        'Service는 레이블로 대상 파드를 고른다. 그중 준비(Ready)된 파드의 주소만 엔드포인트(EndpointSlice) 목록에 오른다.',
+        '이 목록은 파드가 생기고 사라질 때마다 자동으로 갱신된다.',
+      ],
+      flows: [{from: 'eps', to: 'svc', label: 'Ready 3개', type: 'watch'}],
+      focus: ['eps'],
+      badges: {eps: '3개'},
+    },
+    {
+      short: '파드 선택',
+      kind: '원리',
+      title: '목록 중 한 파드로 보낸다',
+      text: [
+        '노드의 네트워크 구성요소(kube-proxy 또는 Cilium 같은 네트워크 플러그인)가 목록 중 한 파드를 골라 요청을 전달한다. 요청이 여러 개면 파드들에 나뉘어 간다.',
+        '파드 shop-b가 요청을 처리하고 응답을 돌려보낸다.',
+      ],
+      flows: [
+        {from: 'svc', to: 'pb', label: '전달', type: 'request'},
+        {from: 'pb', to: 'ing', label: '200 OK', type: 'response', bend: 0.18},
+      ],
+      focus: ['pb'],
+      values: {pod: 'shop-b'},
+    },
+    {
+      short: '파드 이상',
+      kind: '주의',
+      title: '준비되지 않은 파드는 목록에서 빠진다',
+      text: [
+        'shop-c의 준비 상태 검사(readiness probe)가 실패했다. 컨테이너는 살아 있지만 요청을 받을 준비가 안 된 상태다.',
+        '엔드포인트 목록에서 shop-c가 빠지고, 새 요청은 shop-a와 shop-b로만 간다. 검사가 다시 통과하면 목록에 돌아온다.',
+      ],
+      keyIdea: '준비 상태 검사는 "살아 있나"가 아니라 "지금 손님을 받아도 되나"를 묻는다. 그래서 잠깐 바쁜 파드를 죽이지 않고 비켜 세울 수 있다.',
+      changes: ['shop-c NotReady → 엔드포인트에서 제외'],
+      flows: [
+        {from: 'eps', to: 'svc', label: 'Ready 2개', type: 'watch'},
+        {from: 'svc', to: 'pa', label: '전달', type: 'request'},
+      ],
+      focus: ['pc', 'eps'],
+      status: {pc: 'warn'},
+      badges: {pc: 'NotReady', eps: '2개'},
+      values: {pod: 'shop-a', ready: {text: '2 / 3', tone: 'bad'}},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '이름은 고정, 대상은 계속 바뀐다',
+      text: [
+        '바깥에서 보면 주소는 shop.example.com 하나뿐이다. 안쪽에서는 Ingress → Service → 엔드포인트 목록이 바뀌는 파드를 계속 따라간다.',
+        '접속이 안 될 때는 이 순서대로 어디서 끊겼는지 확인하면 된다.',
+      ],
+      keyIdea: '요청은 로드밸런서 → Ingress → Service → Ready 파드 순으로 간다. 접속이 안 되면 kubectl get ingress,svc,endpointslices로 이 순서대로 끊긴 곳을 찾는다.',
+      focus: ['ing', 'svc', 'eps'],
+    },
+  ]}
+/>
+
+## 접속이 안 될 때 확인 순서
+
+| 순서 | 확인할 것 | 흔한 원인 |
+| --- | --- | --- |
+| 1 | 도메인이 로드밸런서 주소로 연결되는가 | DNS 미등록, 로드밸런서 주소 변경 |
+| 2 | Ingress 규칙의 host·path가 맞는가 | 오타, 다른 Ingress와 규칙 충돌 |
+| 3 | Service가 가리키는 레이블과 포트가 맞는가 | 레이블 불일치로 대상 파드 0개 |
+| 4 | Ready 파드가 하나 이상 있는가 | 준비 상태 검사 실패, 파드 전부 재시작 중 |
+
+더 읽을거리: [인그레스](https://kubernetes.io/ko/docs/concepts/services-networking/ingress/) · [서비스](https://kubernetes.io/ko/docs/concepts/services-networking/service/) · [엔드포인트슬라이스](https://kubernetes.io/ko/docs/concepts/services-networking/endpoint-slices/)
+
+다음 레슨: [무중단 배포 (롤링 업데이트)](./rolling-update.mdx)

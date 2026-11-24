@@ -1,0 +1,189 @@
+---
+id: service-dns
+title: Finding Services by Name (Service·DNS)
+sidebar_label: 08 · Finding Services by Name
+description: Follow, step by step, how a pod calls another service by name through a CoreDNS lookup and the Service virtual IP to reach a target pod, and how name lookup fails across namespaces, with typos, or when DNS is down
+hide_table_of_contents: true
+---
+
+# Finding Services by Name (Service·DNS)
+
+The web pod in the `shop` namespace calls the order service `order-svc`. Let's follow how it gets there by name alone, without knowing any IP, and the cases where name lookup fails.
+
+<StepDiagram
+  width={1000}
+  meta={{duration: '~10 min', level: 'Beginner'}}
+  groups={[
+    {label: 'kube-system', x: 380, y: 29, w: 200, h: 127, tone: 'mgmt'},
+    {label: 'Namespace ops', x: 720, y: 29, w: 200, h: 127, tone: 'plain', from: 4},
+    {label: 'Namespace shop', x: 30, y: 185, w: 930, h: 242, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'web', label: 'web', sub: 'Pod in shop', icon: 'pod', tone: 'app', x: 130, y: 310, show: true},
+    {id: 'dns', label: 'CoreDNS', sub: 'Cluster DNS', icon: 'book', tone: 'cp', x: 480, y: 100, show: true},
+    {id: 'svc', label: 'order-svc', sub: '10.96.12.34', icon: 'target', tone: 'cp', x: 480, y: 310, show: true},
+    {id: 'pa', label: 'order-a', sub: '10.244.1.5', icon: 'pod', tone: 'app', size: 'sm', w: 120, x: 820, y: 260, show: true},
+    {id: 'pb', label: 'order-b', sub: '10.244.2.7', icon: 'pod', tone: 'app', size: 'sm', w: 120, x: 820, y: 370, show: true},
+    {id: 'admin', label: 'admin', sub: 'Pod in ops', icon: 'pod', tone: 'app', x: 820, y: 100},
+  ]}
+  metrics={[
+    {id: 'name', label: 'Name called'},
+    {id: 'fqdn', label: 'Full name resolved'},
+    {id: 'ip', label: 'Address returned'},
+    {id: 'result', label: 'Result'},
+  ]}
+  learn={[
+    {text: 'How a Service name becomes a DNS name', at: 0},
+    {text: 'Why short names work only in the same namespace', at: 4},
+    {text: 'Where the Service virtual IP turns into a pod', at: 2},
+    {text: 'What a name typo and a DNS outage look like', at: 6},
+  ]}
+  steps={[
+    {
+      short: 'Lookup',
+      kind: '시작',
+      title: 'The web pod asks for the address of order-svc',
+      text: [
+        'When you create a Service, its name is registered automatically in cluster DNS (the server that turns names into IPs). In most clusters, CoreDNS does this job.',
+        'The web pod code uses only the name order-svc, not an IP. It first asks CoreDNS for that name\'s address.',
+      ],
+      keyIdea: 'A pod IP changes every time the pod is recreated. So you call the stable Service name instead.',
+      flows: [{from: 'web', to: 'dns', label: 'order-svc?', type: 'request'}],
+      focus: ['web', 'dns'],
+      values: {name: 'order-svc', result: 'Looking up'},
+    },
+    {
+      short: 'Expand',
+      kind: '원리',
+      title: 'A short name is tried with your own namespace appended',
+      text: [
+        'Each pod has a list of domains to append to short names (search), and the first entry is its own namespace, shop.svc.cluster.local.',
+        'So order-svc expands to order-svc.shop.svc.cluster.local, is found on the first try, and CoreDNS returns the Service\'s stable address.',
+      ],
+      keyIdea: 'The full name has the form <service>.<namespace>.svc.cluster.local. cluster.local is the default domain and may differ depending on cluster settings.',
+      flows: [{from: 'dns', to: 'web', label: '10.96.12.34', type: 'response'}],
+      focus: ['dns'],
+      badges: {dns: 'order-svc.shop.svc…'},
+      values: {fqdn: 'order-svc.shop.svc.cluster.local', ip: '10.96.12.34'},
+    },
+    {
+      short: 'Virtual IP',
+      kind: '원리',
+      title: 'The address returned is the Service virtual IP',
+      text: [
+        'The web pod sends a request to 10.96.12.34 on port 80. This address is a virtual IP (ClusterIP) not attached to any real device.',
+        'Translation rules on every node (kube-proxy, or Cilium\'s eBPF implementation) intercept requests to this address.',
+      ],
+      keyIdea: 'A Service IP only has port translation rules, so it usually does not answer ping. To check connectivity, connect to the port.',
+      flows: [{from: 'web', to: 'svc', label: ':80', type: 'request'}],
+      focus: ['svc'],
+      badges: {dns: null},
+    },
+    {
+      short: 'To pod',
+      kind: '원리',
+      title: 'The rules forward to one Ready pod',
+      text: [
+        'The translation rules pick one pod that matches the Service selector and is Ready, and rewrite the request to that pod IP on port 8080.',
+        'The web pod never needed to know order-a\'s IP. Pods may change, but the name and virtual IP stay the same.',
+      ],
+      flows: [
+        {from: 'svc', to: 'pa', label: ':8080', type: 'request'},
+        {from: 'pa', to: 'web', type: 'response', bend: 0.12},
+      ],
+      focus: ['pa'],
+      status: {pa: 'ok', pb: 'ok'},
+      values: {result: {text: 'Success', tone: 'good'}},
+    },
+    {
+      short: 'Other ns',
+      kind: '문제',
+      title: 'Short names do not work from another namespace',
+      text: [
+        'The admin pod in the ops namespace calls the same short name, order-svc. The first entry in its search list is ops.svc.cluster.local.',
+        'So it looks up order-svc.ops.svc.cluster.local. No such Service exists, so it gets "name not found".',
+      ],
+      keyIdea: 'A namespace is a naming boundary. Services with the same name in shop and ops do not collide, but a short name is only looked up in your own namespace.',
+      flows: [
+        {from: 'admin', to: 'dns', label: 'order-svc?', type: 'request'},
+        {from: 'dns', to: 'admin', label: 'not found', type: 'response'},
+      ],
+      focus: ['admin'],
+      status: {admin: 'error'},
+      badges: {admin: 'host not found'},
+      values: {name: 'order-svc (from ops)', fqdn: 'order-svc.ops.svc.cluster.local', ip: 'None', result: {text: 'No such name', tone: 'bad'}},
+    },
+    {
+      short: 'Full name',
+      kind: '원리',
+      title: 'Include the namespace and it works from anywhere',
+      text: [
+        'If the admin pod calls order-svc.shop or order-svc.shop.svc.cluster.local, it points exactly at the Service in shop.',
+        'CoreDNS returns the same virtual IP, and the rest of the flow matches the web pod. Traffic across namespaces is allowed by default.',
+      ],
+      flows: [
+        {from: 'admin', to: 'dns', label: 'order-svc.shop', type: 'request'},
+        {from: 'dns', to: 'admin', label: '10.96.12.34', type: 'response'},
+        {from: 'admin', to: 'svc', label: ':80', type: 'request'},
+      ],
+      focus: ['admin', 'svc'],
+      status: {admin: 'ok'},
+      badges: {admin: null},
+      values: {name: 'order-svc.shop', fqdn: 'order-svc.shop.svc.cluster.local', ip: '10.96.12.34', result: {text: 'Success', tone: 'good'}},
+    },
+    {
+      short: 'Typo',
+      kind: '문제',
+      title: 'A typo in the Service name means "no such name" right away',
+      text: [
+        'If the web pod config says oder-svc by mistake, CoreDNS answers immediately that no such Service exists. The request never even reaches a Service.',
+        'App logs show a name lookup error such as "host not found" or "unknown host". This looks different from connection refused or a timeout.',
+      ],
+      flows: [
+        {from: 'web', to: 'dns', label: 'oder-svc?', type: 'request'},
+        {from: 'dns', to: 'web', type: 'response'},
+      ],
+      focus: ['web'],
+      status: {web: 'error'},
+      values: {name: 'oder-svc', fqdn: 'None', ip: 'None', result: {text: 'No such name', tone: 'bad'}},
+    },
+    {
+      short: 'DNS down',
+      kind: '장애',
+      title: 'If CoreDNS stops answering, every call by name stops',
+      text: [
+        'If CoreDNS stops or traffic to DNS is blocked, every call by Service name fails. This happens even when Services and pods are healthy.',
+        'If calling by IP works but calling by name does not, suspect DNS. A common cause is the next lesson\'s network policy accidentally blocking DNS lookups.',
+      ],
+      keyIdea: 'In an air-gapped network, CoreDNS forwards names outside the cluster to the internal DNS. Names missing from the internal DNS cannot be resolved inside the cluster either.',
+      flows: [{from: 'web', to: 'dns', label: 'no response', type: 'request'}],
+      focus: ['dns'],
+      status: {web: 'warn', dns: 'error'},
+      values: {name: 'order-svc', fqdn: '-', ip: '-', result: {text: 'DNS failure', tone: 'bad'}},
+    },
+    {
+      short: 'Recap',
+      kind: '정리',
+      title: 'Name → virtual IP → pod, in three stages',
+      text: [
+        'CoreDNS turned the name into the Service virtual IP, and the node translation rules turned the virtual IP into a Ready pod.',
+        'Short names work only inside your own namespace. Call Services in other namespaces with the namespace appended.',
+      ],
+      keyIdea: 'Use the short name in the same namespace, and name.namespace or the full name (svc.cluster.local) from another. If a name does not resolve, check the Service name, the namespace, and CoreDNS health first.',
+      focus: ['dns', 'svc'],
+      status: {web: 'ok', dns: null, admin: null},
+    },
+  ]}
+/>
+
+## Find where it stopped by the symptom
+
+| Symptom in the app | Where it stopped | Common causes |
+| --- | --- | --- |
+| Name not found (host not found) | DNS lookup | Typo in the Service name, calling a Service in another namespace by its short name |
+| Name lookup fails with no response, but the IP works | DNS server | CoreDNS outage, a network policy blocking DNS (port 53) lookups |
+| Name resolves but connection fails | Service → pod | Selector and pod labels do not match so there are 0 target pods, port mismatch |
+
+Further reading: [Service](https://kubernetes.io/docs/concepts/services-networking/service/) · [DNS for Services and Pods](https://kubernetes.io/docs/concepts/services-networking/dns-pod-service/)
+
+Next lesson: [Blocking and Allowing Traffic (NetworkPolicy)](./network-policy.mdx)

@@ -1,0 +1,193 @@
+---
+id: service-types
+title: Service Types (ClusterIP · NodePort · LoadBalancer)
+sidebar_label: 01 · Service Types
+description: Animated walkthrough of how a Service selector groups pods, and how the Service type decides whether it is reachable inside the cluster, on a node port, or at an external address
+hide_table_of_contents: true
+---
+
+# Service Types (ClusterIP · NodePort · LoadBalancer)
+
+Create one Service. Follow which pods it groups, and **how far it is exposed** depending on its type.
+
+<StepDiagram
+  width={1000}
+  meta={{duration: '~10 min', level: 'Beginner'}}
+  groups={[
+    {label: 'Kubernetes cluster', x: 270, y: 30, w: 715, h: 395, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'user', label: 'External user', sub: 'Outside cluster', icon: 'browser', tone: 'ext', x: 120, y: 95, show: true},
+    {id: 'lb', label: 'Load balancer', sub: 'External address', icon: 'split', tone: 'ext', x: 120, y: 335},
+    {id: 'caller', label: 'Caller pod', sub: 'Same cluster', icon: 'pod', tone: 'app', x: 390, y: 115},
+    {id: 'worker', label: 'Worker node', sub: 'Node IP', icon: 'server', tone: 'node', x: 390, y: 335},
+    {id: 'svc', label: 'Service', sub: 'shop-svc', icon: 'target', tone: 'cp', x: 660, y: 240, show: true},
+    {id: 'pa', label: 'shop-a', sub: 'app=shop', icon: 'pod', tone: 'app', size: 'sm', w: 110, x: 880, y: 120, show: true},
+    {id: 'pb', label: 'shop-b', sub: 'app=shop', icon: 'pod', tone: 'app', size: 'sm', w: 110, x: 880, y: 240, show: true},
+    {id: 'pc', label: 'shop-c', sub: 'app=shop', icon: 'pod', tone: 'app', size: 'sm', w: 110, x: 880, y: 360, show: true},
+  ]}
+  metrics={[
+    {id: 'type', label: 'Service type'},
+    {id: 'target', label: 'Target pods'},
+    {id: 'reach', label: 'Reachable from'},
+  ]}
+  learn={[
+    {text: 'A Service picks pods by label, not by name', at: 1},
+    {text: 'Why ClusterIP is reachable only inside the cluster', at: 3},
+    {text: 'How NodePort and LoadBalancer expose it outside', at: 5},
+    {text: 'A wrong selector silently leaves zero targets', at: 7},
+  ]}
+  steps={[
+    {
+      short: 'Start',
+      kind: '시작',
+      title: 'Three pods, and their addresses keep changing',
+      text: [
+        'Three shop app pods are running. A pod gets a new address every time it is recreated, so callers cannot rely on pod addresses.',
+        'So you put one stable address and port in front of the pods. That is a Service.',
+      ],
+      status: {pa: 'ok', pb: 'ok', pc: 'ok'},
+      focus: ['pa', 'pb', 'pc'],
+      values: {target: '—', reach: '—'},
+    },
+    {
+      short: 'Selector',
+      kind: '원리',
+      title: 'A Service groups pods by label',
+      text: [
+        'A Service has a pod selector (a rule that picks pods by label). Here it is app=shop.',
+        'Whatever pods match at the moment become targets. As pods come and go, the Service config needs no changes as long as the labels match.',
+      ],
+      keyIdea: 'A Service does not name its pods. It just says "all pods with this label".',
+      flows: [
+        {from: 'svc', to: 'pa', type: 'watch'},
+        {from: 'svc', to: 'pb', type: 'watch'},
+        {from: 'svc', to: 'pc', type: 'watch'},
+      ],
+      focus: ['svc'],
+      badges: {svc: 'app=shop'},
+      values: {target: '3'},
+    },
+    {
+      short: 'ClusterIP',
+      kind: '원리',
+      title: 'ClusterIP — an address for calls inside the cluster',
+      text: [
+        'If you do not set a type, ClusterIP (a stable address used only inside the cluster) is the default. Other pods in the same cluster call it by this address or by the Service name.',
+        'The Service forwards each request to one of its pods. Callers do not need to know how many pods are behind it.',
+      ],
+      flows: [
+        {from: 'caller', to: 'svc', label: 'shop-svc', type: 'request'},
+        {from: 'svc', to: 'pb', type: 'request'},
+      ],
+      focus: ['caller', 'svc'],
+      badges: {svc: 'ClusterIP'},
+      values: {type: 'ClusterIP', reach: 'Inside cluster'},
+    },
+    {
+      short: 'No outside',
+      kind: '주의',
+      title: 'This address is unreachable from outside the cluster',
+      text: [
+        'An external user cannot reach the ClusterIP address. It means something only on the cluster\'s internal network.',
+        'For Services that pods call each other through, that is enough. To expose it outside, change the type or put an entry (Ingress) in front.',
+      ],
+      flows: [{from: 'user', to: 'svc', label: 'Unreachable', type: 'response', bend: 0.15}],
+      focus: ['user', 'svc'],
+      status: {user: 'warn'},
+      values: {reach: {text: 'Inside cluster only', tone: 'bad'}},
+    },
+    {
+      short: 'NodePort',
+      kind: '원리',
+      title: 'NodePort — opens the same port on every node',
+      text: [
+        'Switch to NodePort and every node opens the same port number (one from 30000-32767 by default). Requests from outside to a node IP and that port go to the Service.',
+        'The ClusterIP address stays too. NodePort adds an outside door to the in-cluster address.',
+      ],
+      flows: [
+        {from: 'user', to: 'worker', label: 'NodeIP:port', type: 'request'},
+        {from: 'worker', to: 'svc', type: 'request'},
+        {from: 'svc', to: 'pa', type: 'request'},
+      ],
+      focus: ['worker', 'svc'],
+      status: {user: null},
+      badges: {svc: 'NodePort', worker: 'Port open'},
+      values: {type: 'NodePort', reach: {text: 'Node IP:port', tone: 'good'}},
+    },
+    {
+      short: 'LB',
+      kind: '원리',
+      title: 'LoadBalancer — an external load balancer attaches an address',
+      text: [
+        'Switch to LoadBalancer and a load balancer outside the cluster gets an external address and attaches it to the Service. Users come in through that address without knowing any node IP.',
+        'The load balancer forwards requests to nodes, and the nodes forward them to the Service. Use it in clouds or environments with a separate load balancer implementation.',
+      ],
+      flows: [
+        {from: 'user', to: 'lb', label: 'External addr', type: 'request'},
+        {from: 'lb', to: 'worker', type: 'request'},
+        {from: 'worker', to: 'svc', type: 'request'},
+      ],
+      focus: ['lb'],
+      badges: {svc: 'LoadBalancer', worker: null, lb: 'Address assigned'},
+      values: {type: 'LoadBalancer', reach: {text: 'External address', tone: 'good'}},
+    },
+    {
+      short: 'Pending IP',
+      kind: '주의',
+      title: 'With nothing to hand out addresses, the external address stays empty',
+      text: [
+        'If there is no load balancer implementation or no free address to assign, the Service is created but stays without an external address.',
+        'kubectl get svc shows EXTERNAL-IP stuck at <pending>. On-premises, check that you have a load balancer implementation such as MetalLB and an address pool.',
+      ],
+      keyIdea: '"The Service was created" and "it is reachable from outside" are different states. Check separately that EXTERNAL-IP is filled in.',
+      flows: [{from: 'user', to: 'lb', label: 'No address', type: 'request'}],
+      focus: ['lb'],
+      status: {lb: 'warn'},
+      badges: {lb: 'Pending'},
+      values: {reach: {text: 'No external address', tone: 'bad'}},
+    },
+    {
+      short: 'Zero targets',
+      kind: '문제',
+      title: 'A wrong selector leaves zero targets',
+      text: [
+        'If you mistype the selector as app=shpo, no pods match. The Service still exists but has nowhere to send requests.',
+        'This does not show up as an error. kubectl get endpointslices shows no pod addresses attached.',
+      ],
+      keyIdea: 'If you cannot connect, check the endpoints first. If they are empty, compare the selector with the pod labels side by side.',
+      flows: [{from: 'caller', to: 'svc', label: 'Request', type: 'request'}],
+      focus: ['svc'],
+      status: {lb: null, pa: 'off', pb: 'off', pc: 'off', svc: 'error'},
+      badges: {lb: null, svc: '0 targets'},
+      values: {target: {text: '0', tone: 'bad'}, reach: {text: 'Goes nowhere', tone: 'bad'}},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'The selector sets the targets; the type sets the reach',
+      text: [
+        'Fix the selector and the three pods become targets again. A Service picks pods with its selector and decides how far it is exposed with its type.',
+        'ClusterIP reaches inside the cluster, NodePort adds node ports, and LoadBalancer adds an external address. Exposing by domain and path is the job of Ingress.',
+      ],
+      keyIdea: 'The selector sets the target pods; the type sets how far it is exposed. Endpoints and external addresses can be empty with no error, so check them separately.',
+      focus: ['svc'],
+      status: {pa: 'ok', pb: 'ok', pc: 'ok', svc: 'ok'},
+      badges: {svc: null},
+      values: {target: {text: '3', tone: 'good'}, reach: 'Depends on type'},
+    },
+  ]}
+/>
+
+## Try it yourself
+
+```bash
+kubectl get svc shop-svc -o wide                       # TYPE, CLUSTER-IP, EXTERNAL-IP, PORT(S), SELECTOR
+kubectl get pods -l app=shop --show-labels             # Are there pods matching the selector?
+kubectl get endpointslices -l kubernetes.io/service-name=shop-svc   # Are target pod addresses non-empty?
+kubectl get svc shop-svc -o yaml                       # type, selector, ports, sessionAffinity
+```
+
+Further reading: [Service](https://kubernetes.io/docs/concepts/services-networking/service/) · [EndpointSlices](https://kubernetes.io/docs/concepts/services-networking/endpoint-slices/) · [Finding Services by Name (Service·DNS)](../k8s/service-dns.mdx)
+
+Next lesson: [Ingress Rules and TLS](./ingress.mdx)

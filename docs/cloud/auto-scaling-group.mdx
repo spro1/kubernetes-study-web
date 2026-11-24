@@ -1,0 +1,188 @@
+---
+id: auto-scaling-group
+title: Auto-Scaling VMs (Auto Scaling Groups)
+sidebar_label: 04 · Auto-Scaling VMs
+description: Follow in animation the launch template and min/desired/max counts, scaling out on a metric alarm, health checks and load balancer registration for new VMs, replacing unhealthy ones, and scaling in with a cooldown
+hide_table_of_contents: true
+---
+
+# Auto-Scaling VMs (Auto Scaling Groups)
+
+An online store runs on two virtual machines. An auto scaling group adds VMs automatically when traffic spikes, replaces broken ones, and removes some when things quiet down. HPA, which does the same for Pods, is covered in [Scaling with Load (HPA)](../k8s/autoscaling.mdx). Here we look one layer below: the number of servers (VMs) going up and down.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~9 min', level: 'Beginner'}}
+  groups={[
+    {label: 'Auto scaling group', x: 270, y: 190, w: 380, h: 245, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'user', label: 'User', sub: 'Shopping requests', icon: 'browser', tone: 'ext', x: 90, y: 90, show: true},
+    {id: 'lb', label: 'Load balancer', sub: 'To registered VMs', icon: 'split', tone: 'cp', x: 90, y: 300, show: true},
+    {id: 'mon', label: 'Monitoring', sub: 'Alarm at CPU 70%', icon: 'bell', tone: 'cp', x: 560, y: 90},
+    {id: 'asg', label: 'Scaling group', sub: 'Keeps desired count', icon: 'scale', tone: 'cp', x: 870, y: 90, show: true},
+    {id: 'tmpl', label: 'Launch template', sub: 'Image · type', icon: 'book', tone: 'store', x: 870, y: 300},
+    {id: 'vm1', label: 'VM 1', sub: 'Virtual machine', icon: 'server', tone: 'app', size: 'sm', x: 360, y: 270, show: true},
+    {id: 'vm2', label: 'VM 2', sub: 'Virtual machine', icon: 'server', tone: 'app', size: 'sm', x: 560, y: 270, show: true},
+    {id: 'vm3', label: 'VM 3', sub: 'New VM', icon: 'server', tone: 'app', size: 'sm', x: 560, y: 380},
+    {id: 'vm4', label: 'VM 4', sub: 'Replacement', icon: 'server', tone: 'app', size: 'sm', x: 360, y: 380},
+  ]}
+  metrics={[
+    {id: 'cpu', label: 'Average CPU'},
+    {id: 'desired', label: 'Desired (min 2 · max 4)'},
+    {id: 'serving', label: 'VMs serving'},
+  ]}
+  learn={[
+    {text: 'What the launch template and min/desired/max counts do', at: 1},
+    {text: 'How a metric alarm changes the desired count', at: 3},
+    {text: 'A new VM serves only after passing health checks', at: 5},
+    {text: 'The group replaces broken VMs on its own', at: 6},
+    {text: 'Why scale-in uses a cooldown', at: 7},
+  ]}
+  steps={[
+    {
+      short: 'Normal',
+      kind: '시작',
+      title: 'Two VMs share the requests',
+      text: [
+        'Two VMs behind a load balancer are taking requests. Both belong to a group called an auto scaling group.',
+        'The group says "min 2, desired 2, max 4". It always tries to keep the actual VM count at the desired count.',
+      ],
+      flows: [
+        {from: 'user', to: 'lb', type: 'request'},
+        {from: 'lb', to: 'vm1', type: 'request'},
+        {from: 'lb', to: 'vm2', type: 'request', bend: -0.15},
+      ],
+      status: {vm1: 'ok', vm2: 'ok'},
+      values: {cpu: '40%', desired: '2', serving: '2'},
+    },
+    {
+      short: 'Template',
+      kind: '원리',
+      title: 'New VMs follow the launch template',
+      text: [
+        'A launch template is the blueprint of a VM. It lists the boot image, the instance type (CPU and memory size), network, security groups, and a script to run at boot.',
+        'The group uses the same blueprint every time it creates a VM, so added VMs are configured exactly like the existing ones.',
+      ],
+      flows: [{from: 'tmpl', to: 'asg', label: 'Blueprint', type: 'response'}],
+      focus: ['tmpl'],
+    },
+    {
+      short: 'Load rises',
+      kind: '문제',
+      title: 'Requests pour in and CPU spikes',
+      text: [
+        'A sale starts and requests pour in. CPU usage on both VMs climbs to 85% and responses slow down.',
+        'The monitoring service collects each VM\'s CPU usage at regular intervals.',
+      ],
+      flows: [
+        {from: 'vm1', to: 'mon', label: 'CPU metric', type: 'response'},
+        {from: 'vm2', to: 'mon', type: 'response'},
+      ],
+      focus: ['mon'],
+      status: {vm1: 'warn', vm2: 'warn'},
+      values: {cpu: {text: '85%', tone: 'bad'}},
+    },
+    {
+      short: 'Alarm',
+      kind: '원리',
+      title: 'The alarm fires and desired becomes 3',
+      text: [
+        'The alarm condition "average CPU above 70% for a set period" is met. The scaling policy tied to the alarm raises the group\'s desired count from 2 to 3.',
+        'The desired count cannot exceed the max of 4. There is also a mode where you set a target metric value and it computes the needed count for you (target tracking).',
+      ],
+      keyIdea: 'An auto scaling group only changes "how many there should be" (the desired count), then creates or removes VMs to match.',
+      flows: [{from: 'mon', to: 'asg', label: 'Alarm', type: 'request'}],
+      focus: ['asg'],
+      values: {desired: '3'},
+    },
+    {
+      short: 'VM boots',
+      kind: '원리',
+      title: 'The group creates and boots a new VM',
+      text: [
+        'The group creates VM 3 from the launch template. Booting the OS and starting the app usually takes a few minutes.',
+        'That is far slower than a container, which starts in seconds. So set the alarm to start scaling VMs a bit before the load arrives.',
+      ],
+      flows: [{from: 'asg', to: 'vm3', label: 'Create VM', type: 'request'}],
+      focus: ['vm3'],
+      status: {vm3: 'warn'},
+      badges: {vm3: 'Booting'},
+      values: {serving: '2 (1 getting ready)'},
+    },
+    {
+      short: 'Register',
+      kind: '원리',
+      title: 'Pass the health check, join the load balancer',
+      text: [
+        'VM 3 is registered as a load balancer target, and the load balancer uses health checks to confirm the app actually responds. Only after passing does it start getting requests.',
+        'With three VMs sharing the load, average CPU comes down.',
+      ],
+      flows: [
+        {from: 'lb', to: 'vm3', label: 'Health check', type: 'watch', bend: 0.15},
+        {from: 'lb', to: 'vm1', type: 'request'},
+      ],
+      focus: ['vm3'],
+      status: {vm1: 'ok', vm2: 'ok', vm3: 'ok'},
+      badges: {vm3: null},
+      values: {cpu: {text: '57%', tone: 'good'}, serving: '3'},
+    },
+    {
+      short: 'Replace',
+      kind: '주의',
+      title: 'The group replaces broken VMs on its own',
+      text: [
+        'The app on VM 1 stops and fails health checks repeatedly. The group marks VM 1 unhealthy, terminates it, and creates VM 4 from the template.',
+        'The desired count is still 3, so the count is restored without anyone stepping in. But files stored inside the VM vanish with it, so keep data in storage outside the VM.',
+      ],
+      flows: [
+        {from: 'lb', to: 'vm1', label: 'Check fails', type: 'watch'},
+        {from: 'tmpl', to: 'vm4', label: 'Replacement', type: 'request'},
+      ],
+      focus: ['vm1', 'vm4'],
+      status: {vm1: 'error', vm4: 'warn'},
+      badges: {vm1: 'Replace', vm4: 'Booting'},
+      values: {serving: {text: '2 (1 being replaced)', tone: 'bad'}},
+    },
+    {
+      short: 'Scale in',
+      kind: '원리',
+      title: 'Scale in when quiet, then wait out the cooldown',
+      text: [
+        'The sale ends and CPU stays low, so the desired count drops from 3 to 2. The group picks one VM, removes it from the load balancer first, and terminates it once in-flight requests finish.',
+        'Right after a change, the next change waits for a cooldown period. This keeps the group from scaling out and in every time load briefly wobbles.',
+      ],
+      flows: [{from: 'asg', to: 'vm3', label: 'Terminate', type: 'request'}],
+      focus: ['asg', 'vm3'],
+      status: {vm1: 'gone', vm4: 'ok', vm3: 'off'},
+      badges: {vm1: null, vm4: null, vm3: 'Cooldown'},
+      values: {cpu: {text: '30%', tone: 'good'}, desired: '2', serving: '2'},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Blueprint, count range, alarm, health check',
+      text: [
+        'An auto scaling group stamps out identical VMs from a launch template and scales out and in to match the desired count set by alarms. It replaces VMs that fail health checks by itself.',
+        'If HPA adds Pods in seconds, this group adds servers in minutes. Automatic node scaling in Kubernetes ultimately runs on top of VM scaling like this.',
+      ],
+      keyIdea: 'An auto scaling group stamps out VMs from a launch template and keeps the desired count within the min/max range. New VMs take time to boot and pass health checks, so leave headroom in alarm thresholds.',
+      focus: ['asg'],
+      status: {vm3: 'gone'},
+      badges: {vm3: null},
+    },
+  ]}
+/>
+
+## Auto scaling group names (AWS · Azure · GCP)
+
+| Concept | AWS | Azure | GCP |
+| --- | --- | --- | --- |
+| Auto-scaling group of VMs | Auto Scaling group | Virtual Machine Scale Sets | Managed instance group (MIG) |
+| VM blueprint | Launch template | Scale set VM model | Instance template |
+| Replace VMs failing health checks | Health check-based replacement | Automatic instance repairs | Autohealing |
+
+Further reading: [Amazon EC2 Auto Scaling (AWS)](https://docs.aws.amazon.com/autoscaling/ec2/userguide/what-is-amazon-ec2-auto-scaling.html) · [Node Autoscaling (Kubernetes docs)](https://kubernetes.io/docs/concepts/cluster-administration/node-autoscaling/) · [Scaling with Load (HPA)](../k8s/autoscaling.mdx)
+
+Next lesson: [Permission Checks on One API Request (IAM)](./iam-request.mdx)

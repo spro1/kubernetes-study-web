@@ -1,0 +1,190 @@
+---
+id: node-troubleshoot
+title: Node NotReady and component failures (CKA)
+sidebar_label: 02 · Node and component failures
+description: Follow an animation of narrowing down a NotReady node through kubelet status and logs, and of using crictl and fixing the manifest when the API server, running as a static pod, dies and kubectl stops working
+hide_table_of_contents: true
+---
+
+# Node NotReady and component failures (CKA)
+
+This relates to troubleshooting "clusters and nodes" and "cluster components" in the CKA Troubleshooting (30%) domain. We work through two scenes: a worker node turning NotReady, and the control plane API server dying so that even kubectl stops answering.
+
+How pods get recreated on other nodes when a node stops is in [When a Pod Dies (Self-Healing)](../k8s/self-healing.mdx), and how expired certificates cut communication is in [Cluster Certificate Expiry](../advanced/cluster-cert.mdx). Here we focus on the order of finding the cause from inside the node.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~10 min', level: 'Intermediate'}}
+  groups={[
+    {label: 'Control plane node', x: 220, y: 25, w: 440, h: 265, tone: 'mgmt'},
+    {label: 'Worker node · worker-1', x: 720, y: 25, w: 200, h: 395, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'admin', label: 'Operator', sub: 'kubectl · ssh', icon: 'user', tone: 'ext', x: 85, y: 380, show: true},
+    {id: 'cpRuntime', label: 'Runtime', sub: 'query with crictl', icon: 'box', tone: 'node', x: 320, y: 230, show: true},
+    {id: 'api', label: 'API server', sub: 'static pod', icon: 'gate', tone: 'cp', x: 560, y: 230, show: true},
+    {id: 'manifests', label: 'Manifests', sub: 'static pod specs', icon: 'book', tone: 'store', x: 320, y: 100, show: true},
+    {id: 'cpKubelet', label: 'kubelet', sub: 'control plane', icon: 'agent', tone: 'cp', x: 560, y: 100, show: true},
+    {id: 'journal', label: 'Logs', sub: 'journalctl', icon: 'archive', tone: 'store', x: 820, y: 100, show: true},
+    {id: 'wKubelet', label: 'kubelet', sub: 'worker-1', icon: 'agent', tone: 'node', x: 820, y: 230, show: true},
+    {id: 'wRuntime', label: 'Runtime', sub: 'containerd', icon: 'box', tone: 'node', x: 820, y: 360, show: true},
+  ]}
+  metrics={[
+    {id: 'node', label: 'worker-1 status'},
+    {id: 'kubectl', label: 'kubectl'},
+    {id: 'cmd', label: 'Command just run'},
+  ]}
+  learn={[
+    {text: 'Why NotReady means "the kubelet stopped reporting"', at: 1},
+    {text: 'Narrowing the cause with systemctl status and journalctl -u kubelet', at: 2},
+    {text: 'Why the API server can be fixed without kubectl: it is a static pod', at: 5},
+    {text: 'Viewing containers with crictl when kubectl is down', at: 6},
+  ]}
+  steps={[
+    {
+      short: 'NotReady',
+      kind: '시작',
+      title: 'kubectl get nodes shows NotReady',
+      text: [
+        'The operator runs kubectl get nodes and worker-1 shows STATUS NotReady. The other nodes are Ready.',
+        'First, check Conditions (node status items) and events with kubectl describe node worker-1. Start by telling whether one node or many nodes are affected.',
+      ],
+      flows: [
+        {from: 'admin', to: 'api', label: 'get nodes', type: 'request'},
+        {from: 'api', to: 'admin', label: 'NotReady', type: 'response'},
+      ],
+      focus: ['api'],
+      status: {wKubelet: 'error'},
+      values: {node: {text: 'NotReady', tone: 'bad'}, kubectl: 'OK', cmd: 'kubectl get nodes'},
+    },
+    {
+      short: 'No reports',
+      kind: '원리',
+      title: 'NotReady means the kubelet stopped reporting',
+      text: [
+        'Each node\'s kubelet (node manager) reports its status to the API server periodically. If reports stop for a while, the Ready condition becomes Unknown and describe shows "Kubelet stopped posting node status."',
+        'Pods on that node stay at their last reported Running for a while, then by default move to other nodes after about 5 minutes.',
+      ],
+      keyIdea: 'The API server cannot see inside a node. To find the cause, you must log in to that node.',
+      flows: [{from: 'wKubelet', to: 'api', label: 'status report', type: 'request'}],
+      focus: ['wKubelet', 'api'],
+      badges: {wKubelet: 'no reports'},
+      values: {cmd: 'kubectl describe node'},
+    },
+    {
+      short: 'status·logs',
+      kind: '원리',
+      title: 'Log in to the node and check kubelet status and logs',
+      text: [
+        'ssh worker-1 and run systemctl status kubelet. inactive (dead) means it is off; flapping on and off means it fails while starting.',
+        'Why it fails is recorded in journalctl -u kubelet. Read from the most recent error lines at the bottom.',
+      ],
+      flows: [
+        {from: 'admin', to: 'wKubelet', label: 'ssh', type: 'request', bend: 0.1},
+        {from: 'wKubelet', to: 'journal', label: 'error log', type: 'response'},
+      ],
+      focus: ['wKubelet', 'journal'],
+      values: {cmd: 'journalctl -u kubelet'},
+    },
+    {
+      short: 'Causes',
+      kind: '문제',
+      title: 'Logs usually point to one of four causes',
+      text: [
+        'The service may be stopped or not enabled at boot. A config file path or value (in /var/lib/kubelet/config.yaml, etc.) may be wrong.',
+        'If certificates are expired or mismatched, it cannot talk to the API server. If the container runtime (containerd) is down, the kubelet cannot run pods.',
+      ],
+      changes: ['kubelet stopped/disabled → systemctl start·enable kubelet', 'Config error → fix config file path or value', 'Cert expired/mismatched → renew certs', 'Runtime stopped → systemctl status containerd'],
+      flows: [{from: 'wKubelet', to: 'wRuntime', label: 'runtime conn', type: 'request'}],
+      focus: ['wKubelet', 'wRuntime'],
+      status: {wRuntime: 'warn'},
+    },
+    {
+      short: 'Recover',
+      kind: '원리',
+      title: 'Fix it and restart the kubelet',
+      text: [
+        'After fixing the cause, run systemctl daemon-reload and systemctl restart kubelet. Also check systemctl enable kubelet so it starts after a reboot.',
+        'Once the kubelet reports again, worker-1 returns to Ready in kubectl get nodes shortly.',
+      ],
+      flows: [{from: 'wKubelet', to: 'api', label: 'status report', type: 'request'}],
+      focus: ['wKubelet'],
+      status: {wKubelet: 'ok', wRuntime: 'ok'},
+      badges: {wKubelet: null},
+      values: {node: {text: 'Ready', tone: 'good'}, cmd: 'systemctl restart kubelet'},
+    },
+    {
+      short: 'kubectl dead',
+      kind: '장애',
+      title: 'This time kubectl itself does not answer',
+      text: [
+        'kubectl get pods ends with "The connection to the server ... was refused". The API server is down.',
+        'In a kubeadm cluster, the API server, etcd, scheduler and controller manager are static pods. The control plane node\'s kubelet reads files in /etc/kubernetes/manifests and starts them directly, without the API server.',
+      ],
+      keyIdea: 'kubectl works only through the API server. When the API server is down, kubectl cannot show you anything.',
+      flows: [{from: 'admin', to: 'api', label: 'kubectl', type: 'request'}],
+      focus: ['api', 'manifests'],
+      status: {api: 'error'},
+      values: {kubectl: {text: 'conn refused', tone: 'bad'}, cmd: 'kubectl get pods'},
+    },
+    {
+      short: 'crictl',
+      kind: '원리',
+      title: 'Ask the runtime directly with crictl',
+      text: [
+        'ssh into the control plane node and run crictl ps -a. crictl asks the container runtime directly, bypassing the API server, so you can see right away whether the kube-apiserver container is Exited.',
+        'Read the last error with crictl logs <container ID>. Causes like a wrong flag name, a bad certificate path or a wrong etcd address show up here.',
+      ],
+      flows: [
+        {from: 'admin', to: 'cpRuntime', label: 'crictl ps', type: 'request'},
+        {from: 'cpKubelet', to: 'cpRuntime', label: 'restart loop', type: 'request'},
+      ],
+      focus: ['cpRuntime'],
+      badges: {api: 'Exited'},
+      values: {cmd: 'crictl ps -a · crictl logs'},
+    },
+    {
+      short: 'Edit file',
+      kind: '원리',
+      title: 'Fix the manifest file and the kubelet restarts it on its own',
+      text: [
+        'Fix the error in /etc/kubernetes/manifests/kube-apiserver.yaml and save. You do not use kubectl apply, and you cannot.',
+        'The kubelet watches this folder and recreates the static pod when a file changes. After 1 to 2 minutes, kubectl answers again.',
+      ],
+      flows: [
+        {from: 'cpKubelet', to: 'manifests', label: 'watch files', type: 'watch'},
+        {from: 'cpKubelet', to: 'api', label: 'restart', type: 'request'},
+      ],
+      focus: ['manifests', 'cpKubelet'],
+      status: {api: 'ok'},
+      badges: {api: null},
+      values: {kubectl: {text: 'OK', tone: 'good'}, cmd: 'vi kube-apiserver.yaml'},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Node problems: start with the kubelet. Component problems: start with crictl',
+      text: [
+        'If a node is NotReady, log in to it and narrow the cause with systemctl status kubelet → journalctl -u kubelet.',
+        'If kubectl is down, remember the API server is a static pod. Look at containers with crictl and fix the file in /etc/kubernetes/manifests.',
+      ],
+      keyIdea: 'Narrow NotReady down from kubelet status and logs (systemctl status kubelet, journalctl -u kubelet). If the API server is down and kubectl fails, look with crictl and fix the static pod manifest. Running for pods on a NotReady node is only the last reported value.',
+      focus: ['wKubelet', 'cpKubelet'],
+    },
+  ]}
+/>
+
+## Common exam questions
+
+| Situation | What to do / command | Trap |
+| --- | --- | --- |
+| A node is NotReady | `kubectl describe node <node>` → `ssh <node>` → `systemctl status kubelet` → `journalctl -u kubelet` | Do not read logs on the control plane node. Log in to the problem node |
+| The kubelet is off | `systemctl start kubelet`, `systemctl enable kubelet` | Forget enable and it is NotReady again after a reboot |
+| You edited the kubelet config file | `systemctl daemon-reload` → `systemctl restart kubelet` | Editing without restarting does not take effect |
+| kubectl says connection refused | On the control plane node: `crictl ps -a`, `crictl logs <container ID>` | `kubectl logs` needs the API server to work |
+| A static pod config is wrong | Edit the file under `/etc/kubernetes/manifests/` directly | `kubectl edit` or `kubectl delete` cannot fix it. Only editing the file makes the kubelet recreate it |
+
+Further reading: [CNCF certification curriculum](https://github.com/cncf/curriculum) · [Troubleshooting clusters](https://kubernetes.io/docs/tasks/debug/debug-cluster/) · [Debugging nodes with crictl](https://kubernetes.io/docs/tasks/debug/debug-cluster/crictl/) · [When a Pod Dies (Self-Healing)](../k8s/self-healing.mdx) · [Cluster Certificate Expiry](../advanced/cluster-cert.mdx)
+
+Next lesson: [Per-environment deploys with Kustomize (CKA·CKAD)](./kustomize.mdx)

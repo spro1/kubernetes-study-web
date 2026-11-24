@@ -1,0 +1,182 @@
+---
+id: iam-request
+title: Permission Checks on One API Request (IAM)
+sidebar_label: 05 · Permission Checks (IAM)
+description: Follow in animation how a cloud API request is allowed or denied through authentication and policy evaluation (default deny, explicit allow, explicit deny), plus temporary credentials from roles, a leaked long-term key, and least privilege
+hide_table_of_contents: true
+---
+
+# Permission Checks on One API Request (IAM)
+
+A deploy script asks the cloud: "upload this file to storage". For every single request, the cloud checks "who are you?" and "may you do this?". IAM (Identity and Access Management) handles these checks. RBAC, which does the same inside Kubernetes, is covered in [Who Can Do What (RBAC)](../k8s/rbac.mdx).
+
+<StepDiagram
+  width={1000}
+  meta={{duration: '~9 min', level: 'Beginner'}}
+  nodes={[
+    {id: 'caller', label: 'Script', sub: 'deploy-bot', icon: 'agent', tone: 'app', x: 100, y: 120, show: true},
+    {id: 'attacker', label: 'Attacker', sub: 'Leaked key', icon: 'alert', tone: 'ext', x: 100, y: 350},
+    {id: 'auth', label: 'Authentication', sub: 'Who are you?', icon: 'shield', tone: 'cp', x: 370, y: 120, show: true},
+    {id: 'pol', label: 'Policy eval', sub: 'Allowed to?', icon: 'target', tone: 'cp', x: 640, y: 120, show: true},
+    {id: 'res', label: 'Storage bucket', sub: 'Deploy files', icon: 'archive', tone: 'store', x: 900, y: 120, show: true},
+    {id: 'db', label: 'Prod DB', sub: 'Customer data', icon: 'db', tone: 'store', x: 900, y: 340},
+    {id: 'role', label: 'Role', sub: 'Temp credentials', icon: 'ticket', tone: 'cp', x: 370, y: 340},
+    {id: 'audit', label: 'Audit log', sub: 'Who · when · what', icon: 'book', tone: 'store', x: 640, y: 340},
+  ]}
+  metrics={[
+    {id: 'who', label: 'Caller identity'},
+    {id: 'decision', label: 'Decision'},
+    {id: 'cred', label: 'Credential in use'},
+  ]}
+  learn={[
+    {text: 'Authentication (who) vs authorization (may you)', at: 1},
+    {text: 'No allow means deny (default deny)', at: 2},
+    {text: 'An explicit deny always beats an allow', at: 4},
+    {text: 'Assuming a role to get temporary credentials', at: 5},
+    {text: 'Why leaked long-term keys are dangerous, and least privilege', at: 6},
+  ]}
+  steps={[
+    {
+      short: 'Request',
+      kind: '시작',
+      title: 'The deploy script sends an API request',
+      text: [
+        'The deploy script sends "upload a new deploy file to the storage bucket" to the cloud API. The request carries a signature made with an access key.',
+        'An access key is like a username and password for programs. This script uses a long-term key that never expires.',
+      ],
+      flows: [{from: 'caller', to: 'auth', label: 'Request + sig', type: 'request'}],
+      focus: ['auth'],
+      values: {who: 'Not checked', decision: '-', cred: 'Long-term access key'},
+    },
+    {
+      short: 'Authenticate',
+      kind: '원리',
+      title: 'Authentication: confirm who is asking',
+      text: [
+        'Authentication checks "who are you?". It verifies that the signature matches a registered key and establishes that the caller is deploy-bot.',
+        'Passing authentication does not mean you can do anything. "May you do this?" is decided in the next step, authorization.',
+      ],
+      flows: [{from: 'auth', to: 'pol', label: 'deploy-bot', type: 'request'}],
+      focus: ['auth'],
+      status: {auth: 'ok'},
+      values: {who: 'deploy-bot'},
+    },
+    {
+      short: 'Default deny',
+      kind: '원리',
+      title: 'Without an allow, the default is deny',
+      text: [
+        'Policy evaluation gathers every policy attached to deploy-bot. A policy is a document that says "who may or may not do which action on which resource".',
+        'If none of the gathered policies allows this action, it is denied. This is called default deny. You start with no permissions and add only what you need, one at a time.',
+      ],
+      flows: [{from: 'pol', to: 'res', label: 'Check target · action', type: 'watch'}],
+      focus: ['pol'],
+      values: {decision: 'Evaluating (deny by default)'},
+    },
+    {
+      short: 'Allow',
+      kind: '원리',
+      title: 'An explicit allow lets the request through',
+      text: [
+        'The deploy-bot policy says "allow writing files to the deploy bucket". An allow written directly in a policy like this is called an explicit allow.',
+        'There is no deny statement either, so the request passes and the file is uploaded to the bucket.',
+      ],
+      flows: [{from: 'pol', to: 'res', label: 'Write allowed', type: 'request'}],
+      focus: ['res'],
+      status: {pol: 'ok', res: 'ok'},
+      values: {decision: {text: 'Allow', tone: 'good'}},
+    },
+    {
+      short: 'Explicit deny',
+      kind: '주의',
+      title: 'A single deny wins',
+      text: [
+        'The same script requests deleting the production DB. An overly broad admin policy allows it, but an organization-wide "no deleting the production DB" policy explicitly denies it.',
+        'When allow and deny collide, an explicit deny always wins. That is why organization-level guardrails are set as deny policies.',
+      ],
+      keyIdea: 'Evaluation order: if there is an explicit deny, deny → otherwise, if there is an explicit allow, allow → if neither, default deny.',
+      flows: [
+        {from: 'caller', to: 'auth', label: 'Delete DB', type: 'request'},
+        {from: 'pol', to: 'db', label: 'Explicit deny', type: 'response'},
+      ],
+      focus: ['pol', 'db'],
+      status: {pol: 'warn', res: null, db: 'ok'},
+      badges: {db: 'Denied'},
+      values: {decision: {text: 'Deny (explicit deny)', tone: 'bad'}},
+    },
+    {
+      short: 'Role',
+      kind: '원리',
+      title: 'Assume a role to get temporary credentials',
+      text: [
+        'A role is a bundle of permissions that a person or program "assumes" for a while. When the script asks to assume a role, it gets temporary credentials that expire after a set time (for example 1 hour).',
+        'VMs and functions inside the cloud get temporary credentials automatically from their attached role. There is no need to write keys in code or config files.',
+      ],
+      flows: [
+        {from: 'caller', to: 'role', label: 'Assume role', type: 'request'},
+        {from: 'role', to: 'caller', label: 'Temp key', type: 'response'},
+      ],
+      focus: ['role'],
+      status: {pol: null, db: null},
+      badges: {db: null},
+      values: {decision: '-', cred: {text: 'Temp credentials (expire soon)', tone: 'good'}},
+    },
+    {
+      short: 'Key leak',
+      kind: '장애',
+      title: 'An old long-term key leaks and gets used',
+      text: [
+        'An old long-term access key was accidentally pushed to a public code repository. Someone picks it up and calls the cloud API.',
+        'The key itself is real, so it passes authentication. If it carried broad permissions, the attacker can do just as much.',
+      ],
+      flows: [
+        {from: 'attacker', to: 'auth', label: 'Leaked key', type: 'request'},
+        {from: 'auth', to: 'pol', label: 'deploy-bot', type: 'request'},
+      ],
+      focus: ['attacker', 'auth'],
+      status: {attacker: 'error', auth: 'warn'},
+      badges: {attacker: 'Real key'},
+      values: {who: {text: 'deploy-bot (really attacker)', tone: 'bad'}, cred: {text: 'Leaked long-term key', tone: 'bad'}},
+    },
+    {
+      short: 'Audit · fix',
+      kind: '원리',
+      title: 'Spot it in the audit log and cut off the key',
+      text: [
+        'Every API call leaves "who, when, from where, what" in the audit log. Calls from an unusual location or time reveal the leak.',
+        'Deactivate the key immediately and replace it. With only temporary credentials, it would have expired soon. With narrow permissions, the damage would have been small.',
+      ],
+      flows: [{from: 'pol', to: 'audit', label: 'Call record', type: 'response'}],
+      focus: ['audit'],
+      status: {attacker: 'off', auth: 'ok'},
+      badges: {attacker: 'Key disabled'},
+      values: {who: '-', cred: 'Key revoked → role'},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Confirm who it is, allow only what is needed',
+      text: [
+        'Each request is decided as authentication (who) → policy evaluation (explicit deny → explicit allow → default deny). Turn on MFA (multi-factor authentication) for human accounts, and use roles instead of long-term keys for programs.',
+        'Least privilege means allowing only the actions and resources a job truly needs. Even if a key leaks, the damage stays within that scope.',
+      ],
+      keyIdea: 'Every API request is authenticated and then evaluated against policies. If denied, first find which policy caused it, and follow least privilege: allow only the needed actions instead of everything.',
+      focus: ['pol', 'role'],
+      status: {attacker: 'gone'},
+      badges: {attacker: null},
+    },
+  ]}
+/>
+
+## Names used in permission checks (AWS · Azure · GCP)
+
+| Concept | AWS | Azure | GCP |
+| --- | --- | --- | --- |
+| Identity and permission management | IAM | Microsoft Entra ID · Azure RBAC | Cloud IAM |
+| Identity a program assumes | IAM role (temporary credentials via STS) | Managed Identity | Service account |
+| Organization-wide deny | Service control policy (SCP) | Deny assignment | IAM deny policy |
+| API call records | CloudTrail | Activity Log | Cloud Audit Logs |
+
+Further reading: [What is IAM? (AWS)](https://docs.aws.amazon.com/IAM/latest/UserGuide/introduction.html) · [Policy evaluation logic (AWS)](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_evaluation-logic.html) · [Who Can Do What (RBAC)](../k8s/rbac.mdx)
+
+Next lesson: This is the last lesson in this track. Go back to the [lesson guide](../index.mdx) and continue with another track.

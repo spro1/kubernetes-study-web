@@ -1,0 +1,205 @@
+---
+id: deploy-strategies
+title: 블루/그린과 카나리를 기본 요소로 (CKAD)
+sidebar_label: 04 · 블루/그린과 카나리
+description: 서비스 메시 없이 디플로이먼트 두 개와 서비스 셀렉터만으로 블루/그린 전환을 하고, 같은 레이블을 공유하는 두 디플로이먼트의 레플리카 수로 카나리 비율을 조절하고 되돌리는 흐름을 애니메이션으로 따라간다
+hide_table_of_contents: true
+---
+
+# 블루/그린과 카나리를 기본 요소로 (CKAD)
+
+CKAD의 Application Deployment(20%) 영역 중 "쿠버네티스 기본 요소로 배포 전략(블루/그린, 카나리) 쓰기"와 관련 있다. 서비스 메시 같은 추가 도구 없이 디플로이먼트·서비스·레이블만으로 web 1.0을 2.0으로 바꾸는 두 가지 방법을 따라가 본다.
+
+디플로이먼트 하나가 파드를 하나씩 바꾸는 기본 방식은 [무중단 배포 (롤링 업데이트)](../k8s/rolling-update.mdx)에서, 메시로 파드 수와 상관없이 비율을 나누는 방식은 [서비스 메시 ② 트래픽 나누기](../feature/mesh-traffic.mdx)에서 다룬다.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '약 10분', level: '중급'}}
+  groups={[
+    {label: '블루 · 지금 버전', x: 500, y: 35, w: 450, h: 135, tone: 'plain'},
+    {label: '그린 · 새 버전', x: 500, y: 265, w: 450, h: 135, tone: 'biz', from: 1},
+  ]}
+  nodes={[
+    {id: 'user', label: '사용자', sub: '요청', icon: 'user', tone: 'ext', x: 88, y: 225, show: true},
+    {id: 'svc', label: 'web 서비스', sub: '셀렉터로 고름', icon: 'split', tone: 'cp', x: 330, y: 225, show: true},
+    {id: 'admin', label: '운영자', sub: 'kubectl', icon: 'user', tone: 'ext', x: 330, y: 395},
+    {id: 'podsBlue', label: '블루 파드', sub: 'web:1.0', icon: 'pod', tone: 'app', x: 600, y: 110, show: true},
+    {id: 'depBlue', label: 'web-blue', sub: 'Deployment', icon: 'gear', tone: 'cp', x: 850, y: 110, show: true},
+    {id: 'podsGreen', label: '그린 파드', sub: 'web:2.0', icon: 'pod', tone: 'app', x: 600, y: 340},
+    {id: 'depGreen', label: 'web-green', sub: 'Deployment', icon: 'gear', tone: 'cp', x: 850, y: 340},
+  ]}
+  metrics={[
+    {id: 'blue', label: '블루로 가는 요청'},
+    {id: 'green', label: '그린으로 가는 요청'},
+    {id: 'pods', label: '파드 수 (블루·그린)'},
+  ]}
+  learn={[
+    {text: '서비스 셀렉터 하나로 블루/그린을 전환하는 법', at: 2},
+    {text: '블루를 남겨 두면 되돌리기가 셀렉터 한 줄인 이유', at: 3},
+    {text: '레플리카 수가 카나리 비율이 되는 원리와 한계', at: 5},
+    {text: '메시 없는 카나리와 메시 비율 분할의 차이', at: 7},
+  ]}
+  steps={[
+    {
+      short: '블루 가동',
+      kind: '시작',
+      title: '지금은 web-blue가 모든 요청을 받는다',
+      text: [
+        'Deployment web-blue가 web:1.0 파드 3개를 띄웠다. 파드에는 app: web, version: blue 레이블(이름표)이 붙어 있다.',
+        'web 서비스의 selector(어느 파드로 보낼지 고르는 조건)는 app: web, version: blue다. 그래서 요청은 블루 파드로만 간다.',
+      ],
+      flows: [
+        {from: 'user', to: 'svc', label: '요청', type: 'request'},
+        {from: 'svc', to: 'podsBlue', label: 'version=blue', type: 'request'},
+      ],
+      focus: ['svc', 'podsBlue'],
+      status: {podsBlue: 'ok'},
+      badges: {podsBlue: '3개'},
+      values: {blue: '100%', green: '-', pods: '3 · 0'},
+    },
+    {
+      short: '그린 준비',
+      kind: '원리',
+      title: '새 버전을 web-green으로 따로 띄운다',
+      text: [
+        'web:2.0 이미지로 Deployment web-green을 하나 더 만든다. 파드 레이블은 app: web, version: green이다.',
+        '그린 파드는 모두 Ready가 되지만 서비스 셀렉터와 맞지 않아 요청을 하나도 받지 않는다. 그동안 kubectl port-forward 등으로 따로 시험해 볼 수 있다.',
+      ],
+      flows: [{from: 'depGreen', to: 'podsGreen', label: '파드 3개', type: 'request'}],
+      focus: ['depGreen', 'podsGreen'],
+      status: {podsGreen: 'ok'},
+      badges: {podsGreen: '3개 · 대기'},
+      values: {green: '0%', pods: '3 · 3'},
+    },
+    {
+      short: '전환',
+      kind: '원리',
+      title: '서비스 셀렉터를 green으로 바꾸면 한 번에 넘어간다',
+      text: [
+        'kubectl edit service web(또는 kubectl patch)으로 selector의 version을 blue에서 green으로 바꾼다.',
+        '서비스의 엔드포인트(실제로 요청을 받을 파드 주소 목록)가 그린 파드로 바뀌고, 새 요청은 모두 web:2.0으로 간다.',
+      ],
+      changes: ['~ selector version: blue → green'],
+      flows: [
+        {from: 'admin', to: 'svc', label: 'selector 변경', type: 'request'},
+        {from: 'svc', to: 'podsGreen', label: 'version=green', type: 'request'},
+      ],
+      focus: ['svc', 'podsGreen'],
+      badges: {podsGreen: '3개', podsBlue: '3개 · 대기'},
+      values: {blue: '0%', green: {text: '100%', tone: 'good'}},
+    },
+    {
+      short: '되돌리기',
+      kind: '주의',
+      title: '블루를 남겨 두면 되돌리기도 셀렉터 한 줄이다',
+      text: [
+        '그린에 문제가 보이면 셀렉터를 다시 version: blue로 바꾼다. 블루 파드가 아직 떠 있으니 기다릴 것 없이 바로 돌아간다.',
+        '대신 전환하는 동안 파드가 두 벌 떠 있어 자원이 두 배 든다. 그린이 충분히 안정되면 web-blue를 지운다.',
+      ],
+      keyIdea: '블루/그린은 "빠른 전환·빠른 되돌리기"를 자원 두 배와 맞바꾸는 방식이다.',
+      flows: [
+        {from: 'admin', to: 'svc', label: 'blue로 복귀', type: 'request'},
+        {from: 'svc', to: 'podsBlue', label: 'version=blue', type: 'request'},
+      ],
+      focus: ['svc', 'podsBlue'],
+      status: {podsGreen: 'warn'},
+      badges: {podsBlue: '3개', podsGreen: '3개 · 대기'},
+      values: {blue: '100%', green: {text: '0% · 문제 확인', tone: 'bad'}, pods: {text: '3 · 3 (두 배)', tone: 'bad'}},
+    },
+    {
+      short: '카나리',
+      kind: '원리',
+      title: '카나리는 같은 레이블로 두 디플로이먼트를 함께 묶는다',
+      text: [
+        '이번엔 서비스 셀렉터에서 version을 빼고 app: web만 남긴다. 그리고 web-green의 레플리카를 1로 줄인다.',
+        '이제 셀렉터는 블루 파드 3개와 그린 파드 1개를 모두 고른다. 탄광의 카나리아처럼 새 버전을 소수에게 먼저 보내 보는 방식이다.',
+      ],
+      changes: ['- selector version', '~ web-green replicas 3 → 1'],
+      flows: [
+        {from: 'admin', to: 'svc', label: 'app=web만', type: 'request'},
+        {from: 'depGreen', to: 'podsGreen', label: '1개로', type: 'request'},
+      ],
+      focus: ['svc', 'podsGreen'],
+      status: {podsGreen: 'ok'},
+      badges: {podsGreen: '1개'},
+      values: {pods: '3 · 1'},
+    },
+    {
+      short: '비율',
+      kind: '원리',
+      title: '요청은 파드 수에 비례해 대략 나뉜다',
+      text: [
+        '서비스는 엔드포인트 파드들에 요청을 고르게 나눈다. 파드 4개 중 1개가 그린이니 요청의 대략 4분의 1이 web:2.0으로 간다.',
+        '정확히 25%가 아니라 확률적으로 그 근처다. 10%를 원하면 블루 9개와 그린 1개처럼 파드 수를 맞춰야 한다.',
+      ],
+      keyIdea: '메시 없는 카나리에서는 "비율 = 파드 수의 비"다. 비율을 바꾸려면 파드 수를 바꿔야 한다.',
+      flows: [
+        {from: 'svc', to: 'podsBlue', label: '약 75%', type: 'request'},
+        {from: 'svc', to: 'podsGreen', label: '약 25%', type: 'request'},
+      ],
+      focus: ['svc'],
+      values: {blue: '약 75%', green: '약 25%'},
+    },
+    {
+      short: '늘리기',
+      kind: '원리',
+      title: '괜찮으면 레플리카를 옮겨 비율을 키운다',
+      text: [
+        'kubectl scale deployment web-green --replicas=3과 kubectl scale deployment web-blue --replicas=0을 차례로 쳐서 그린 쪽으로 옮긴다.',
+        '블루가 0이 되면 모든 요청이 그린으로 간다. 이후 web-blue를 지우거나 다음 배포를 위해 남겨 둔다.',
+      ],
+      changes: ['~ web-green replicas 1 → 3', '~ web-blue replicas 3 → 0'],
+      flows: [
+        {from: 'depGreen', to: 'podsGreen', label: '3개로', type: 'request'},
+        {from: 'depBlue', to: 'podsBlue', label: '0개로', type: 'request'},
+      ],
+      focus: ['depGreen', 'depBlue'],
+      status: {podsBlue: 'off'},
+      badges: {podsGreen: '3개', podsBlue: '0개'},
+      values: {blue: '0%', green: {text: '100%', tone: 'good'}, pods: '0 · 3'},
+    },
+    {
+      short: '되돌리기',
+      kind: '주의',
+      title: '카나리가 문제면 그린을 0으로 줄인다',
+      text: [
+        '카나리 단계(블루 3, 그린 1)에서 오류가 늘면 kubectl scale deployment web-green --replicas=0을 친다. 셀렉터에 맞는 파드가 블루만 남아 요청이 모두 1.0으로 돌아간다.',
+        '메시를 쓰면 파드 수와 상관없이 1%만 보내거나 특정 사용자만 보낼 수 있다. 메시 없는 카나리는 단순한 대신 파드 수만큼 거칠게 나뉜다.',
+      ],
+      flows: [
+        {from: 'depGreen', to: 'podsGreen', label: '0개로', type: 'request'},
+        {from: 'svc', to: 'podsBlue', label: '100%', type: 'request'},
+      ],
+      focus: ['podsGreen', 'podsBlue'],
+      status: {podsBlue: 'ok', podsGreen: 'off'},
+      badges: {podsBlue: '3개', podsGreen: '0개'},
+      values: {blue: '100%', green: '0%', pods: '3 · 0'},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '블루/그린은 셀렉터를, 카나리는 파드 수를 바꾼다',
+      text: [
+        '블루/그린은 두 디플로이먼트를 다른 레이블로 띄우고 서비스 셀렉터를 바꿔 한 번에 넘어간다. 되돌리기도 셀렉터 한 줄이다.',
+        '카나리는 두 디플로이먼트가 서비스 셀렉터의 레이블을 함께 갖게 하고, 레플리카 수의 비로 요청을 나눈다. 되돌릴 때는 카나리 쪽을 0으로 줄인다.',
+      ],
+      keyIdea: '블루/그린은 서비스 셀렉터를 바꿔 한 번에 넘기고, 메시 없는 카나리는 레플리카 수 비율로 나눈다. kubectl get pods -L version으로 버전별 파드 수를 세면 요청이 대략 몇 %씩 가는지 알 수 있다.',
+      focus: ['svc'],
+    },
+  ]}
+/>
+
+## 시험에서 자주 묻는 것
+
+| 상황 | 해야 할 일·명령 | 함정 |
+| --- | --- | --- |
+| 블루에서 그린으로 전환하라 | 그린 디플로이먼트 생성 → `kubectl edit svc web`(또는 `kubectl patch`)로 selector의 version 변경 | 그린 파드의 레이블이 새 셀렉터와 정확히 맞아야 한다. 틀리면 엔드포인트가 비어 요청이 실패한다 |
+| 전환이 됐는지 확인하라 | `kubectl get endpoints web` 또는 `kubectl describe svc web` | 디플로이먼트만 보고 판단하지 않는다. 서비스가 실제로 고른 파드 주소를 본다 |
+| 요청의 약 20%만 새 버전으로 보내라 | 기존 4개 + 카나리 1개처럼 레플리카 수를 맞추고 둘 다 셀렉터 레이블을 갖게 한다 | 셀렉터에 version을 남겨 두면 카나리 파드가 요청을 받지 못한다 |
+| 카나리를 되돌려라 | `kubectl scale deployment <카나리> --replicas=0` | 기존 디플로이먼트를 고치거나 롤백할 필요는 없다 |
+| 디플로이먼트 하나에서 이전 버전으로 | `kubectl rollout undo deployment <이름>` | 이것은 롤링 업데이트의 되돌리기다. 블루/그린·카나리의 되돌리기와 다르다 |
+
+더 읽을거리: [CNCF 자격증 출제 범위](https://github.com/cncf/curriculum) · [디플로이먼트](https://kubernetes.io/ko/docs/concepts/workloads/controllers/deployment/) · [서비스](https://kubernetes.io/ko/docs/concepts/services-networking/service/) · [무중단 배포 (롤링 업데이트)](../k8s/rolling-update.mdx) · [서비스 메시 ② 트래픽 나누기](../feature/mesh-traffic.mdx)
+
+다음 레슨: [멀티 컨테이너 파드 — init과 사이드카 (CKAD)](./multi-container.mdx)

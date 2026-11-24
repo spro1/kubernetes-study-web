@@ -1,0 +1,203 @@
+---
+id: threat-model
+title: 4C와 위협 모델로 클러스터 보기 (KCSA·KCNA)
+sidebar_label: 07 · 4C와 위협 모델
+description: 공격자 한 명이 Code·Container·Cluster 경계를 차례로 넘으려 할 때 위협 모델의 각 항목이 어디서 생기고 어떤 장치가 막는지를 애니메이션으로 따라간다
+hide_table_of_contents: true
+---
+
+# 4C와 위협 모델로 클러스터 보기 (KCSA·KCNA)
+
+KCSA 출제 영역 중 Overview of Cloud Native Security(14%)의 4C와 Kubernetes Threat Model(16%)에 해당하고, KCNA의 Container Orchestration(28%) 안 보안 항목과도 이어진다. 공격자 한 명이 바깥에서 시작해 경계를 하나씩 넘으려 할 때, 위협 모델의 각 항목이 어디서 생기고 어떤 장치가 막는지 따라가 본다.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '약 12분', level: '중급'}}
+  groups={[
+    {label: 'Cloud · 인프라', x: 180, y: 15, w: 810, h: 425, tone: 'plain'},
+    {label: 'Cluster', x: 205, y: 55, w: 760, h: 360, tone: 'mgmt'},
+    {label: 'Container · Code', x: 230, y: 99, w: 200, h: 127, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'attacker', label: '공격자', sub: '바깥', icon: 'user', tone: 'ext', x: 85, y: 165, show: true},
+    {id: 'web', label: 'web', sub: '앱 컨테이너', icon: 'pod', tone: 'app', x: 330, y: 170, show: true},
+    {id: 'api', label: 'API 서버', sub: '요청 입구', icon: 'gate', tone: 'cp', x: 600, y: 130, show: true},
+    {id: 'etcd', label: 'etcd', sub: '시크릿 저장', icon: 'db', tone: 'store', x: 860, y: 130, show: true},
+    {id: 'node', label: 'node-1', sub: '워커 노드', icon: 'server', tone: 'node', x: 330, y: 340, show: true},
+    {id: 'audit', label: '감사 로그', sub: '요청별 기록', icon: 'archive', tone: 'store', x: 600, y: 340, show: true},
+    {id: 'db', label: 'DB', sub: '민감 데이터', icon: 'db', tone: 'app', x: 860, y: 300, show: true},
+  ]}
+  metrics={[
+    {id: 'where', label: '공격자 위치'},
+    {id: 'threat', label: '위협 항목'},
+    {id: 'defense', label: '막은 장치'},
+  ]}
+  learn={[
+    {text: '4C(Cloud·Cluster·Container·Code)가 바깥부터 차례로 감싸는 구조', at: 0},
+    {text: '신뢰 경계와 데이터 흐름으로 그림 읽기', at: 0},
+    {text: '위협 모델 일곱 항목이 생기는 자리', at: 2},
+    {text: '경계마다 맞는 방어: 네트워크 폴리시·RBAC·파드 보안 기준·시크릿 암호화·감사 로그', at: 7},
+  ]}
+  steps={[
+    {
+      short: '4C 경계',
+      kind: '시작',
+      title: '보안을 네 개의 경계로 나눠 본다',
+      text: [
+        '클라우드 네이티브 보안은 바깥부터 Cloud(인프라), Cluster, Container, Code의 네 층, 줄여서 4C로 본다. 안쪽 층은 바깥 층의 보안에 기대므로 코드만 튼튼해도 바깥이 뚫리면 소용없다.',
+        '그림의 틀 하나하나가 신뢰 경계(trust boundary, 믿는 정도가 바뀌는 선)이고, 화살표가 데이터 흐름이다. 위협 모델은 흐름이 경계를 넘는 곳마다 "여기서 무엇이 잘못될 수 있나"를 묻는다.',
+      ],
+      keyIdea: '위협 모델 항목의 첫째는 신뢰 경계와 데이터 흐름이다. 경계와 흐름을 그릴 수 있어야 나머지 위협이 어디서 생기는지 찾을 수 있다.',
+      flows: [{from: 'attacker', to: 'web', label: '평범한 요청', type: 'request'}],
+      focus: ['attacker', 'web'],
+      values: {where: '바깥', threat: '신뢰 경계와 데이터 흐름', defense: '-'},
+    },
+    {
+      short: '코드 침투',
+      kind: '문제',
+      title: 'Code의 취약점으로 컨테이너 안에 들어온다',
+      text: [
+        '공격자가 web 애플리케이션 코드의 취약점을 이용해 컨테이너 안에서 자기 명령을 실행한다. 위협 모델의 "컨테이너 안 악성 코드·침해"다.',
+        '이 지점의 방어는 취약점이 적은 이미지와, 침해되더라도 할 수 있는 일을 줄이는 설정이다. 파드 보안 기준 restricted는 루트 실행과 권한 상승, 커널 기능을 막는다.',
+      ],
+      keyIdea: '침해를 완전히 막을 수 없다고 보고, 뚫렸을 때 다음 경계에서 멈추게 하는 것이 위협 모델의 출발점이다.',
+      flows: [{from: 'attacker', to: 'web', label: '취약점 공격', type: 'request'}],
+      focus: ['web'],
+      status: {web: 'error'},
+      badges: {web: '침해됨'},
+      values: {where: {text: 'Container 안', tone: 'bad'}, threat: '컨테이너 침해', defense: '파드 보안 기준'},
+    },
+    {
+      short: '옆 이동',
+      kind: '문제',
+      title: '네트워크로 다른 파드에 닿으려 한다',
+      text: [
+        '기본 상태의 쿠버네티스는 모든 파드가 모든 파드와 통신할 수 있다. 공격자는 web에서 DB 파드로 바로 접속하려 한다. 위협 모델의 "네트워크 위 공격자"다.',
+        '네임스페이스마다 기본 차단 네트워크 폴리시를 걸고 필요한 통신만 열어 두었다면 이 접속은 막힌다. 통신 내용 엿보기와 상대 위장은 서비스 메시의 mTLS가 따로 다룬다.',
+      ],
+      changes: ['+ NetworkPolicy 기본 차단', '+ web → DB 허용 규칙 없음'],
+      flows: [{from: 'web', to: 'db', label: 'DB 접속', type: 'request'}],
+      focus: ['db'],
+      status: {db: 'ok'},
+      badges: {db: '차단'},
+      values: {threat: '네트워크 위 공격자', defense: {text: '네트워크 폴리시', tone: 'good'}},
+    },
+    {
+      short: '권한 상승',
+      kind: '문제',
+      title: '파드의 토큰과 노드로 권한을 키우려 한다',
+      text: [
+        '컨테이너에 붙은 서비스 어카운트 토큰으로 API 서버에 파드 생성이나 시크릿 조회를 시도하고, 특권 컨테이너를 띄워 노드를 장악하려 한다. 위협 모델의 "권한 상승"이다.',
+        '서비스 어카운트에 최소 권한만 준 RBAC가 API 요청을 403으로 거절하고, 파드 보안 기준 baseline이 특권 컨테이너를 어드미션에서 거절한다. 토큰이 필요 없는 파드는 자동 마운트를 끈다.',
+      ],
+      keyIdea: '파드 생성 권한 하나도 다른 서비스 어카운트의 권한을 빌리는 경로가 된다. "약해 보이는 권한"을 따로 점검한다.',
+      changes: ['~ RBAC 최소 권한', '+ automountServiceAccountToken: false'],
+      flows: [
+        {from: 'web', to: 'api', label: '토큰 사용', type: 'request'},
+        {from: 'api', to: 'web', label: '403 거절', type: 'response', bend: 0.15},
+        {from: 'web', to: 'node', label: '노드 탈출', type: 'request'},
+      ],
+      focus: ['api', 'node'],
+      status: {api: 'ok', node: 'ok'},
+      badges: {db: null},
+      values: {threat: '권한 상승', defense: {text: 'RBAC · 파드 보안 기준', tone: 'good'}},
+    },
+    {
+      short: '민감 데이터',
+      kind: '문제',
+      title: '시크릿이 저장된 곳을 노린다',
+      text: [
+        '시크릿 값은 base64로 바꿔 저장될 뿐 암호화가 아니다. etcd나 그 백업 파일을 손에 넣으면 비밀번호를 그대로 읽을 수 있다. 위협 모델의 "민감 데이터 접근"이다.',
+        'API 서버에 etcd 저장 암호화를 설정하면 etcd에는 암호화된 값만 남는다. API로 꺼내는 길은 시크릿 조회 권한을 꼭 필요한 주체에게만 준 RBAC가 막는다.',
+      ],
+      changes: ['+ etcd 저장 암호화(EncryptionConfiguration)', '~ 시크릿 get·list 권한 축소'],
+      flows: [
+        {from: 'api', to: 'etcd', label: '암호화 저장', type: 'request'},
+      ],
+      focus: ['etcd'],
+      status: {etcd: 'ok', api: null, node: null},
+      badges: {etcd: '암호화됨'},
+      values: {threat: '민감 데이터 접근', defense: {text: '시크릿 암호화 · RBAC', tone: 'good'}},
+    },
+    {
+      short: '지속성',
+      kind: '주의',
+      title: '다시 들어올 발판을 남기려 한다',
+      text: [
+        '공격자는 파드가 교체돼도 다시 들어올 수 있도록 크론잡 같은 워크로드를 몰래 만들어 두려 한다. 위협 모델의 "지속성 확보"다.',
+        '생성 권한이 없으면 RBAC가 거절하고, 시도 자체는 감사 로그에 누가·언제·무엇을 만들려 했는지로 남는다. 읽기 전용 루트 파일 시스템은 컨테이너 안에 도구를 심어 두는 것도 막는다.',
+      ],
+      flows: [
+        {from: 'web', to: 'api', label: '크론잡 생성', type: 'request'},
+        {from: 'api', to: 'audit', label: '시도 기록', type: 'request'},
+      ],
+      focus: ['audit'],
+      status: {audit: 'warn'},
+      badges: {audit: 'create 거절'},
+      values: {threat: '지속성 확보', defense: {text: 'RBAC · 감사 로그', tone: 'good'}},
+    },
+    {
+      short: '서비스 거부',
+      kind: '장애',
+      title: '자원을 독차지해 이웃을 멈추게 한다',
+      text: [
+        '더 나아가지 못한 공격자는 CPU·메모리를 다 써 버리거나 API 서버에 요청을 퍼부어 다른 서비스까지 멈추게 하려 한다. 위협 모델의 "서비스 거부"다.',
+        '컨테이너의 requests·limits와 네임스페이스 리소스 쿼터가 한 파드가 쓸 수 있는 양을 묶고, API 서버의 우선순위와 공정성(API Priority and Fairness)이 요청 폭주가 다른 요청을 막지 못하게 나눈다.',
+      ],
+      flows: [
+        {from: 'web', to: 'node', label: 'CPU 독점', type: 'request'},
+        {from: 'web', to: 'api', label: '요청 폭주', type: 'request'},
+      ],
+      focus: ['node', 'api'],
+      status: {node: 'warn', api: 'warn', audit: null},
+      badges: {audit: null, node: 'limits 적용'},
+      values: {threat: '서비스 거부', defense: {text: 'limits · 쿼터 · APF', tone: 'good'}},
+    },
+    {
+      short: '추적',
+      kind: '원리',
+      title: '감사 로그로 공격자의 발자국을 따라간다',
+      text: [
+        '지금까지 API 서버를 거친 시도(토큰 사용, 크론잡 생성, 요청 폭주)는 모두 감사 로그에 남았다. 어느 서비스 어카운트가 언제 무엇을 했는지 순서대로 읽으면 침해된 파드가 web임이 드러난다.',
+        '침해된 파드를 교체하고 그 토큰을 폐기한 뒤, 처음 뚫린 Code의 취약점을 고친 이미지로 다시 배포한다.',
+      ],
+      keyIdea: '감사 로그는 기본으로 꺼져 있다. API 서버에 감사 정책을 설정해야 남는다.',
+      flows: [
+        {from: 'api', to: 'audit', label: '요청 기록', type: 'request'},
+      ],
+      focus: ['audit', 'web'],
+      status: {web: 'gone', node: 'ok', api: 'ok', audit: 'ok'},
+      badges: {web: null, node: null, audit: '침해 경로'},
+      values: {where: {text: '차단·교체됨', tone: 'good'}, threat: '-', defense: '감사 로그'},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '경계마다 막고, 뚫려도 다음 경계에서 멈춘다',
+      text: [
+        '공격자는 Code에서 Container 안으로 들어왔지만, 네트워크 폴리시가 옆 이동을, RBAC와 파드 보안 기준이 권한 상승을, 시크릿 암호화가 데이터 유출을, limits와 쿼터가 서비스 거부를 막았다.',
+        '감사 로그는 막힌 시도까지 남겨 누가 어디로 들어왔는지 따라가게 해 주었다. 위협 모델은 이렇게 경계와 흐름 위에 위협과 방어를 짝지어 보는 방법이다.',
+      ],
+      keyIdea: '4C는 안쪽 경계가 바깥 경계를 대신하지 못한다. 방어 장치마다 어느 경계(Cloud·Cluster·Container·Code)를 지키는지 적어 보고, 비어 있는 경계를 먼저 메운다.',
+      focus: ['web', 'api', 'etcd', 'db', 'audit'],
+    },
+  ]}
+/>
+
+## 시험에서 자주 묻는 것
+
+| 상황 | 해야 할 일·명령 | 함정 |
+| --- | --- | --- |
+| 4C 순서를 묻는다 | 바깥부터 Cloud → Cluster → Container → Code | 안쪽 층은 바깥 층의 보안에 기댄다. 코드만 지켜서는 부족하다 |
+| 침해된 파드가 다른 파드에 닿는다 | 네임스페이스에 기본 차단 NetworkPolicy, 필요한 통신만 허용 | 기본 상태는 모든 파드끼리 통신이 열려 있다 |
+| 파드 토큰으로 권한 상승 | 서비스 어카운트 최소 권한, `automountServiceAccountToken: false` | 파드 생성 권한도 다른 계정 권한을 빌리는 경로가 된다 |
+| 시크릿 보호 | etcd 저장 암호화(`EncryptionConfiguration`) + 시크릿 조회 RBAC 축소 | base64는 암호화가 아니다 |
+| 서비스 거부 | requests·limits, ResourceQuota, API 우선순위와 공정성 | limits가 없으면 한 파드가 노드의 이웃 파드까지 굶긴다 |
+| 지속성·침해 경로 추적 | 감사 로그에서 create·exec 요청과 사용자를 확인 | 감사 로그는 감사 정책을 설정해야 남는다 |
+
+경계별 방어를 하나씩 깊게 보려면 [통신 막고 열기](../k8s/network-policy.mdx), [누가 무엇을 할 수 있나 (RBAC)](../k8s/rbac.mdx), [파드 보안 기준과 securityContext](../advanced/pod-security.mdx), [감사 로그](../advanced/audit-log.mdx) 레슨을 이어서 본다.
+
+더 읽을거리: [CNCF 자격증 출제 범위](https://github.com/cncf/curriculum) · [클라우드 네이티브 보안 개요](https://kubernetes.io/ko/docs/concepts/security/overview/) · [멀티 테넌시](https://kubernetes.io/docs/concepts/security/multi-tenancy/)
+
+다음 레슨: [누가 어디까지 맡나 — IaaS·PaaS·SaaS (클라우드 기초)](../cloud/service-models.mdx)

@@ -1,0 +1,22 @@
+{
+  "title": {
+    "message": "K8s Flow",
+    "description": "The title in the navbar"
+  },
+  "logo.alt": {
+    "message": "K8s Flow",
+    "description": "The alt text of navbar logo"
+  },
+  "item.label.Lessons": {
+    "message": "레슨",
+    "description": "Navbar item with label Lessons"
+  },
+  "item.label.Start learning": {
+    "message": "첫 레슨 시작",
+    "description": "Navbar item with label Start learning"
+  },
+  "item.label.⭐ GitHub": {
+    "message": "⭐ GitHub",
+    "description": "Navbar item with label ⭐ GitHub"
+  }
+}

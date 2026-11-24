@@ -1,0 +1,193 @@
+---
+id: service-types
+title: 서비스 종류 (ClusterIP · NodePort · LoadBalancer)
+sidebar_label: 01 · 서비스 종류
+description: 서비스의 셀렉터가 파드를 묶고, 서비스 유형에 따라 클러스터 안·노드 포트·외부 주소로 열리는 범위가 달라지는 원리를 애니메이션으로 따라간다
+hide_table_of_contents: true
+---
+
+# 서비스 종류 (ClusterIP · NodePort · LoadBalancer)
+
+서비스(Service)를 하나 만든다. 이 서비스가 어떤 파드를 묶는지, 그리고 유형에 따라 **어디까지 열리는지** 따라가 본다.
+
+<StepDiagram
+  width={1000}
+  meta={{duration: '약 10분', level: '기초'}}
+  groups={[
+    {label: '쿠버네티스 클러스터', x: 270, y: 30, w: 715, h: 395, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'user', label: '외부 사용자', sub: '클러스터 밖', icon: 'browser', tone: 'ext', x: 120, y: 95, show: true},
+    {id: 'lb', label: '로드밸런서', sub: '외부 주소', icon: 'split', tone: 'ext', x: 120, y: 335},
+    {id: 'caller', label: '호출 파드', sub: '같은 클러스터', icon: 'pod', tone: 'app', x: 390, y: 115},
+    {id: 'worker', label: '워커 노드', sub: '노드 IP', icon: 'server', tone: 'node', x: 390, y: 335},
+    {id: 'svc', label: 'Service', sub: 'shop-svc', icon: 'target', tone: 'cp', x: 660, y: 240, show: true},
+    {id: 'pa', label: 'shop-a', sub: 'app=shop', icon: 'pod', tone: 'app', size: 'sm', w: 110, x: 880, y: 120, show: true},
+    {id: 'pb', label: 'shop-b', sub: 'app=shop', icon: 'pod', tone: 'app', size: 'sm', w: 110, x: 880, y: 240, show: true},
+    {id: 'pc', label: 'shop-c', sub: 'app=shop', icon: 'pod', tone: 'app', size: 'sm', w: 110, x: 880, y: 360, show: true},
+  ]}
+  metrics={[
+    {id: 'type', label: '서비스 유형'},
+    {id: 'target', label: '대상 파드'},
+    {id: 'reach', label: '닿는 곳'},
+  ]}
+  learn={[
+    {text: '서비스가 이름이 아니라 레이블로 파드를 고른다는 것', at: 1},
+    {text: 'ClusterIP가 클러스터 안에서만 닿는 이유', at: 3},
+    {text: 'NodePort와 LoadBalancer가 바깥으로 여는 방식', at: 5},
+    {text: '셀렉터가 어긋나면 오류 없이 대상이 0개가 된다는 것', at: 7},
+  ]}
+  steps={[
+    {
+      short: '시작',
+      kind: '시작',
+      title: '파드 세 개, 주소는 계속 바뀐다',
+      text: [
+        'shop 앱 파드 세 개가 떠 있다. 파드는 다시 만들어질 때마다 주소가 바뀌므로, 부르는 쪽이 파드 주소를 외워 둘 수 없다.',
+        '그래서 파드 앞에 바뀌지 않는 주소와 포트 하나를 세운다. 이것이 서비스(Service)다.',
+      ],
+      status: {pa: 'ok', pb: 'ok', pc: 'ok'},
+      focus: ['pa', 'pb', 'pc'],
+      values: {target: '—', reach: '—'},
+    },
+    {
+      short: '셀렉터',
+      kind: '원리',
+      title: '서비스는 레이블로 파드를 묶는다',
+      text: [
+        '서비스에는 파드 셀렉터(selector — 레이블 조건으로 파드를 골라내는 규칙)를 적는다. 여기서는 app=shop이다.',
+        '조건에 맞는 파드가 그때그때 대상이 된다. 파드가 새로 뜨고 사라져도 레이블만 맞으면 서비스 설정은 손댈 것이 없다.',
+      ],
+      keyIdea: '서비스는 파드를 이름으로 지목하지 않는다. "이 레이블을 가진 파드 모두"라고 적어 둘 뿐이다.',
+      flows: [
+        {from: 'svc', to: 'pa', type: 'watch'},
+        {from: 'svc', to: 'pb', type: 'watch'},
+        {from: 'svc', to: 'pc', type: 'watch'},
+      ],
+      focus: ['svc'],
+      badges: {svc: 'app=shop'},
+      values: {target: '3개'},
+    },
+    {
+      short: 'ClusterIP',
+      kind: '원리',
+      title: 'ClusterIP — 클러스터 안에서 부르는 주소',
+      text: [
+        '유형을 따로 정하지 않으면 ClusterIP(클러스터 안에서만 쓰는 고정 주소)가 기본값이다. 같은 클러스터의 다른 파드가 이 주소나 서비스 이름으로 부른다.',
+        '서비스는 받은 요청을 묶인 파드 중 하나로 넘긴다. 부르는 쪽은 뒤에 파드가 몇 개인지 몰라도 된다.',
+      ],
+      flows: [
+        {from: 'caller', to: 'svc', label: 'shop-svc', type: 'request'},
+        {from: 'svc', to: 'pb', type: 'request'},
+      ],
+      focus: ['caller', 'svc'],
+      badges: {svc: 'ClusterIP'},
+      values: {type: 'ClusterIP', reach: '클러스터 안'},
+    },
+    {
+      short: '바깥 차단',
+      kind: '주의',
+      title: '클러스터 밖에서는 이 주소로 닿지 않는다',
+      text: [
+        '외부 사용자가 ClusterIP 주소로 들어오려 해도 닿지 않는다. 이 주소는 클러스터 안쪽 네트워크에서만 의미가 있다.',
+        '파드끼리 부르는 서비스라면 이것으로 충분하다. 바깥에 열려면 유형을 바꾸거나 앞에 입구(인그레스)를 둔다.',
+      ],
+      flows: [{from: 'user', to: 'svc', label: '닿지 않음', type: 'response', bend: 0.15}],
+      focus: ['user', 'svc'],
+      status: {user: 'warn'},
+      values: {reach: {text: '클러스터 안만', tone: 'bad'}},
+    },
+    {
+      short: 'NodePort',
+      kind: '원리',
+      title: 'NodePort — 모든 노드에 같은 포트를 연다',
+      text: [
+        'NodePort로 바꾸면 모든 노드가 같은 포트 번호(기본 30000~32767 중 하나)를 연다. 바깥에서 노드 IP와 그 포트로 들어오면 서비스로 넘어간다.',
+        'ClusterIP 주소도 그대로 남는다. NodePort는 클러스터 안 주소에 바깥 문을 하나 더 단 것이다.',
+      ],
+      flows: [
+        {from: 'user', to: 'worker', label: '노드IP:포트', type: 'request'},
+        {from: 'worker', to: 'svc', type: 'request'},
+        {from: 'svc', to: 'pa', type: 'request'},
+      ],
+      focus: ['worker', 'svc'],
+      status: {user: null},
+      badges: {svc: 'NodePort', worker: '포트 열림'},
+      values: {type: 'NodePort', reach: {text: '노드 IP:포트', tone: 'good'}},
+    },
+    {
+      short: 'LB',
+      kind: '원리',
+      title: 'LoadBalancer — 외부 로드밸런서가 주소를 붙인다',
+      text: [
+        'LoadBalancer로 바꾸면 클러스터 바깥의 로드밸런서가 외부 주소 하나를 받아 서비스에 붙인다. 사용자는 노드 IP를 몰라도 그 주소로 들어온다.',
+        '로드밸런서는 받은 요청을 노드로 넘기고, 노드가 다시 서비스로 넘긴다. 클라우드나 별도 로드밸런서 구현이 있는 환경에서 쓴다.',
+      ],
+      flows: [
+        {from: 'user', to: 'lb', label: '외부 주소', type: 'request'},
+        {from: 'lb', to: 'worker', type: 'request'},
+        {from: 'worker', to: 'svc', type: 'request'},
+      ],
+      focus: ['lb'],
+      badges: {svc: 'LoadBalancer', worker: null, lb: '주소 할당'},
+      values: {type: 'LoadBalancer', reach: {text: '외부 주소', tone: 'good'}},
+    },
+    {
+      short: '주소 대기',
+      kind: '주의',
+      title: '주소를 나눠 줄 곳이 없으면 외부 주소가 비어 있다',
+      text: [
+        '로드밸런서 구현이 없거나 나눠 줄 여유 주소가 없으면, 서비스는 만들어지지만 외부 주소가 붙지 않은 채 남는다.',
+        'kubectl get svc로 보면 EXTERNAL-IP가 <pending>으로 남아 있다. 온프레미스라면 MetalLB 같은 로드밸런서 구현과 주소 풀이 있는지 확인한다.',
+      ],
+      keyIdea: '서비스가 "만들어졌다"와 "바깥에서 닿는다"는 다른 상태다. EXTERNAL-IP가 채워졌는지 따로 봐야 한다.',
+      flows: [{from: 'user', to: 'lb', label: '주소 없음', type: 'request'}],
+      focus: ['lb'],
+      status: {lb: 'warn'},
+      badges: {lb: '주소 대기'},
+      values: {reach: {text: '외부 주소 없음', tone: 'bad'}},
+    },
+    {
+      short: '대상 0개',
+      kind: '문제',
+      title: '셀렉터가 어긋나면 대상이 0개가 된다',
+      text: [
+        '셀렉터를 app=shpo처럼 잘못 적으면 맞는 파드가 하나도 없다. 서비스는 만들어진 채로 남지만 요청을 넘길 곳이 없다.',
+        '이것은 오류로 보이지 않는다. kubectl get endpointslices로 보면 연결된 파드 주소가 비어 있다.',
+      ],
+      keyIdea: '접속이 안 되면 엔드포인트부터 본다. 비어 있으면 셀렉터와 파드 레이블을 나란히 놓고 비교한다.',
+      flows: [{from: 'caller', to: 'svc', label: '요청', type: 'request'}],
+      focus: ['svc'],
+      status: {lb: null, pa: 'off', pb: 'off', pc: 'off', svc: 'error'},
+      badges: {lb: null, svc: '대상 0개'},
+      values: {target: {text: '0개', tone: 'bad'}, reach: {text: '어디에도 안 감', tone: 'bad'}},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '셀렉터는 대상을, 유형은 열리는 범위를 정한다',
+      text: [
+        '셀렉터를 고치면 파드 세 개가 다시 대상이 된다. 서비스는 셀렉터로 묶을 파드를 고르고, 유형으로 어디까지 열지를 정한다.',
+        'ClusterIP는 클러스터 안, NodePort는 노드 포트, LoadBalancer는 외부 주소까지다. 도메인·경로로 나눠 바깥에 여는 일은 인그레스가 맡는다.',
+      ],
+      keyIdea: '셀렉터는 대상 파드를, 유형은 열리는 범위를 정한다. 엔드포인트와 외부 주소는 오류 없이 비어 있을 수 있으니 따로 확인한다.',
+      focus: ['svc'],
+      status: {pa: 'ok', pb: 'ok', pc: 'ok', svc: 'ok'},
+      badges: {svc: null},
+      values: {target: {text: '3개', tone: 'good'}, reach: '유형에 따라'},
+    },
+  ]}
+/>
+
+## 직접 확인해 보기
+
+```bash
+kubectl get svc shop-svc -o wide                       # TYPE, CLUSTER-IP, EXTERNAL-IP, PORT(S), SELECTOR
+kubectl get pods -l app=shop --show-labels             # 셀렉터에 맞는 파드가 있는지
+kubectl get endpointslices -l kubernetes.io/service-name=shop-svc   # 대상 파드 주소가 비어 있지 않은지
+kubectl get svc shop-svc -o yaml                       # type, selector, ports, sessionAffinity
+```
+
+더 읽을거리: [서비스](https://kubernetes.io/ko/docs/concepts/services-networking/service/) · [엔드포인트슬라이스](https://kubernetes.io/ko/docs/concepts/services-networking/endpoint-slices/) · [서비스와 DNS](../k8s/service-dns.mdx)
+
+다음 레슨: [인그레스 규칙과 TLS](./ingress.mdx)

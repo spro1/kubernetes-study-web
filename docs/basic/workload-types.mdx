@@ -1,0 +1,181 @@
+---
+id: workload-types
+title: Workload Types
+sidebar_label: 06 · Workload Types
+description: Compare in animation the ownership chain of Deployment, ReplicaSet and Pod, the StatefulSet with fixed names and storage, and the DaemonSet that runs one Pod per node
+hide_table_of_contents: true
+---
+
+# Workload Types
+
+A Pod is the smallest unit of execution, but users rarely create Pods directly. Usually you create a managing resource (a workload) that decides "how and how many Pods to run", and that resource creates the Pods for you. Compare how three managers handle Pods differently.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~10 min', level: 'Beginner'}}
+  nodes={[
+    {id: 'deploy', label: 'Deployment', sub: 'Manages versions', icon: 'layers', tone: 'cp', x: 100, y: 80, show: true},
+    {id: 'rs', label: 'ReplicaSet', sub: 'Keeps the count', icon: 'gear', tone: 'cp', x: 340, y: 80},
+    {id: 'web1', label: 'web-x2kqp', sub: 'Pod', icon: 'pod', tone: 'app', size: 'sm', w: 124, x: 580, y: 80},
+    {id: 'web2', label: 'web-9fz7m', sub: 'Pod', icon: 'pod', tone: 'app', size: 'sm', w: 124, x: 800, y: 80},
+    {id: 'sts', label: 'StatefulSet', sub: 'Fixed name · storage', icon: 'layers', tone: 'cp', x: 100, y: 230},
+    {id: 'db0', label: 'db-0', sub: 'Pod', icon: 'pod', tone: 'app', size: 'sm', x: 340, y: 230},
+    {id: 'pvc', label: 'Own volume', sub: 'data-db-0', icon: 'disk', tone: 'store', x: 580, y: 230},
+    {id: 'ds', label: 'DaemonSet', sub: 'One per node', icon: 'layers', tone: 'cp', x: 100, y: 380},
+    {id: 'ag1', label: 'Collector', sub: 'node-1', icon: 'pod', tone: 'app', size: 'sm', x: 340, y: 380},
+    {id: 'ag2', label: 'Collector', sub: 'node-2', icon: 'pod', tone: 'app', size: 'sm', x: 580, y: 380},
+  ]}
+  metrics={[
+    {id: 'kind', label: 'Workload in view'},
+    {id: 'name', label: 'Pod name'},
+    {id: 'count', label: 'What sets the count'},
+  ]}
+  learn={[
+    {text: 'The Deployment → ReplicaSet → Pod ownership chain', at: 1},
+    {text: 'A recreated Pod gets a new name and IP', at: 2},
+    {text: 'StatefulSet fixed names and dedicated volumes', at: 4},
+    {text: 'A DaemonSet\'s count is set by the number of nodes', at: 7},
+  ]}
+  steps={[
+    {
+      short: 'Managers',
+      kind: '시작',
+      title: 'Higher resources create Pods for you',
+      text: [
+        'Workloads are chained top to bottom. A higher resource creates and manages the one below it.',
+        'When you create a Deployment, the most common workload, it first creates a ReplicaSet.',
+      ],
+      flows: [{from: 'deploy', to: 'rs', label: 'Create, manage', type: 'request'}],
+      focus: ['deploy', 'rs'],
+      values: {kind: 'Deployment', count: 'replicas value'},
+    },
+    {
+      short: 'Keep count',
+      kind: '원리',
+      title: 'The ReplicaSet keeps the Pod count',
+      text: [
+        'A ReplicaSet always keeps a set number (replicas) of identical Pods. If one disappears, it makes a new one. If there are too many, it removes some.',
+        'A ReplicaSet only handles the count, not version changes. The Deployment handles version changes by creating a new ReplicaSet.',
+      ],
+      keyIdea: 'A ReplicaSet you see in a list was almost always created by a Deployment. You rarely create one yourself.',
+      flows: [
+        {from: 'rs', to: 'web1', label: 'Pods ×2', type: 'request'},
+        {from: 'rs', to: 'web2', type: 'request', bend: -0.12},
+      ],
+      focus: ['web1', 'web2'],
+      status: {web1: 'ok', web2: 'ok'},
+      values: {name: 'Random, e.g. web-x2kqp'},
+    },
+    {
+      short: 'New name',
+      kind: '주의',
+      title: 'Pods are replaced, not repaired',
+      text: [
+        'When a node goes down or a new version is deployed, Pods are replaced with new ones instead of being fixed. A new Pod gets a different random suffix and IP address.',
+        'So designs that remember a Pod name or IP break easily. If you need a fixed address, use a Service.',
+      ],
+      keyIdea: 'Deployments like this suit stateless apps, where any Pod gives the same result for a request. Web servers and API servers are examples.',
+      flows: [{from: 'rs', to: 'web1', label: 'New Pod', type: 'request'}],
+      focus: ['web1'],
+      badges: {web1: 'New name · IP'},
+      values: {name: {text: 'Changes', tone: 'bad'}},
+    },
+    {
+      short: 'Ordinal name',
+      kind: '원리',
+      title: 'A StatefulSet fixes names by ordinal',
+      text: [
+        'For stateful apps like databases, where each Pod has its own identity and data, use a StatefulSet. Pod names are ordinal, like db-0 and db-1.',
+        'By default Pods are created in order from 0 and deleted in reverse order. Each Pod also gets a fixed DNS name such as db-0.db.shop.svc.',
+      ],
+      flows: [{from: 'sts', to: 'db0', label: 'In order from 0', type: 'request'}],
+      focus: ['sts', 'db0'],
+      status: {db0: 'ok'},
+      badges: {web1: null},
+      values: {kind: 'StatefulSet', name: 'db-0 (fixed)', count: 'replicas value'},
+    },
+    {
+      short: 'Own volume',
+      kind: '원리',
+      title: 'Recreated with the same name and volume',
+      text: [
+        'A StatefulSet attaches a dedicated volume to each Pod. db-0 gets data-db-0.',
+        'If db-0 is deleted and recreated, it comes back as db-0 and reuses the same volume. The data carries over.',
+      ],
+      keyIdea: 'A Deployment Pod is "a worker anyone can replace". A StatefulSet Pod is "an employee with an assigned desk and drawer".',
+      flows: [{from: 'db0', to: 'pvc', label: 'Attach same vol', type: 'request'}],
+      focus: ['db0', 'pvc'],
+      status: {pvc: 'ok'},
+      badges: {db0: 'Still db-0'},
+      values: {name: {text: 'Still db-0', tone: 'good'}},
+    },
+    {
+      short: 'Leftover vol',
+      kind: '주의',
+      title: 'Deleting a StatefulSet leaves the volumes',
+      text: [
+        'When you delete a StatefulSet, the Pods go away, but the volumes (PVCs) attached to each Pod stay by default.',
+        'This protects the data. The downside is that storage stays allocated after deletion.',
+      ],
+      flows: [{from: 'sts', to: 'db0', label: 'Delete', type: 'request'}],
+      focus: ['pvc'],
+      status: {sts: 'off', db0: 'off', pvc: 'warn'},
+      badges: {db0: null, pvc: 'Still there'},
+    },
+    {
+      short: 'Per node',
+      kind: '원리',
+      title: 'A DaemonSet runs one Pod per node',
+      text: [
+        'A DaemonSet runs one Pod on every node that matches its conditions. Right now there is only node-1, so there is one collector Pod.',
+        'It is used less for applications and more for cluster operations components: node metrics and log collectors, CNI plugins, GPU device plugins.',
+      ],
+      flows: [{from: 'ds', to: 'ag1', label: '1 on node-1', type: 'request'}],
+      focus: ['ds', 'ag1'],
+      status: {ag1: 'ok'},
+      values: {kind: 'DaemonSet', name: 'One per node', count: '1 node → 1'},
+    },
+    {
+      short: 'Add node',
+      kind: '원리',
+      title: 'More nodes, more Pods, automatically',
+      text: [
+        'When node-2 joins the cluster, the DaemonSet automatically creates a collector Pod there too. When a node leaves, its Pod goes away.',
+        'You do not set a replica count on a DaemonSet. The node count decides it.',
+      ],
+      keyIdea: 'A DaemonSet follows the node count instead of a replica count. Check that DESIRED and READY in kubectl get daemonset match the node count.',
+      flows: [{from: 'ds', to: 'ag2', label: 'Also node-2', type: 'request', bend: -0.2}],
+      focus: ['ag2'],
+      status: {ag2: 'ok'},
+      values: {count: {text: '2 nodes → 2', tone: 'good'}},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Choose by how Pods should be handled',
+      text: [
+        'If any Pod can take a request, use a Deployment. If each Pod needs its own name and data, use a StatefulSet. If you need one per node, use a DaemonSet.',
+        'Work that runs once and finishes is handled by a Job. Work that repeats on a schedule is handled by a CronJob.',
+      ],
+      keyIdea: 'Pods are consumables that higher resources create and replace. Do not memorize Pod names. Use the higher resource name (for example kubectl logs deploy/web).',
+      focus: ['deploy', 'sts', 'ds'],
+    },
+  ]}
+/>
+
+## When to use what
+
+| If the application is | Workload to use | What sets the count |
+| --- | --- | --- |
+| Like a web front end or API server, where any of several copies can take a request | Deployment | Replica count |
+| Like a database or message queue, where each copy holds its own data | StatefulSet | Replica count (ordinal names) |
+| A collector or agent that must run on every node | DaemonSet | Node count |
+| A migration or computation that runs once and ends | Job | Number of required successes |
+| A task repeated at set times daily or weekly | CronJob | One Job per schedule |
+
+The Job and CronJob flow continues in [Run Once and Finish (Job · CronJob)](../k8s/job-cronjob.mdx), and Deployment version changes in [Zero-Downtime Deploys (Rolling Update)](../k8s/rolling-update.mdx).
+
+Further reading: [Workloads (Kubernetes docs)](https://kubernetes.io/docs/concepts/workloads/) · [Deployments](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/) · [StatefulSets](https://kubernetes.io/docs/concepts/workloads/controllers/statefulset/) · [DaemonSet](https://kubernetes.io/docs/concepts/workloads/controllers/daemonset/)
+
+Next lesson: [From Branch to Merge Request](./git-merge-request.mdx)

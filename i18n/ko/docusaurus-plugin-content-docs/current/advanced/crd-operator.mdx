@@ -1,0 +1,192 @@
+---
+id: crd-operator
+title: CRD와 오퍼레이터
+sidebar_label: 03 · CRD와 오퍼레이터
+description: CRD로 새 자원 종류를 등록하고, 오퍼레이터가 그 자원을 지켜보며 하위 자원을 만들고 상태를 보고하는 흐름과 CRD 삭제의 위험을 애니메이션으로 따라간다
+hide_table_of_contents: true
+---
+
+# CRD와 오퍼레이터
+
+쿠버네티스 기본 자원에는 "데이터베이스 하나"나 "매일 밤 백업" 같은 개념이 없다. 그래서 새 자원 종류를 등록하고(CRD), 그 자원을 처리하는 프로그램(오퍼레이터)을 붙인다. Istio(서비스 메시), Velero(백업), NVIDIA GPU Operator 같은 도구 대부분이 이 구조 위에 서 있다. 아래 `Database`는 설명을 위한 예시 자원이다.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '약 10분', level: '고급'}}
+  nodes={[
+    {id: 'user', label: '사용자', sub: 'kubectl', icon: 'user', tone: 'ext', x: 85, y: 225, show: true},
+    {id: 'api', label: 'API 서버', sub: '자원의 입구', icon: 'gate', tone: 'cp', x: 330, y: 225, show: true},
+    {id: 'crd', label: 'CRD', sub: '자원 종류 등록', icon: 'book', tone: 'store', x: 330, y: 80},
+    {id: 'cr', label: 'shop-db', sub: 'Database CR', icon: 'db', tone: 'store', x: 330, y: 370},
+    {id: 'op', label: '오퍼레이터', sub: 'DB 컨트롤러', icon: 'agent', tone: 'node', x: 600, y: 225},
+    {id: 'sts', label: '스테이트풀셋', sub: 'DB 파드', icon: 'layers', tone: 'app', x: 860, y: 80},
+    {id: 'svc', label: '서비스', sub: '접속 주소', icon: 'target', tone: 'app', x: 860, y: 225},
+    {id: 'sec', label: '시크릿', sub: '접속 비밀번호', icon: 'shield', tone: 'app', x: 860, y: 370},
+  ]}
+  metrics={[
+    {id: 'kind', label: 'Database 종류'},
+    {id: 'status', label: 'CR status'},
+    {id: 'child', label: '하위 자원'},
+  ]}
+  learn={[
+    {text: 'CRD(정의)와 CR(실제 자원)의 차이', at: 1},
+    {text: 'CRD만으로는 아무 일도 일어나지 않는 이유', at: 2},
+    {text: '오퍼레이터가 조정 루프로 운영 지식을 실행하는 방식', at: 5},
+    {text: 'CRD를 지우면 CR이 모두 사라진다는 것', at: 7},
+  ]}
+  steps={[
+    {
+      short: '필요',
+      kind: '시작',
+      title: '기본 자원에는 "데이터베이스"가 없다',
+      text: [
+        '기본 자원은 파드·디플로이먼트·서비스·PVC처럼 어느 회사에나 필요한 공통 개념만 다룬다.',
+        'API 서버는 모르는 종류의 자원을 받아들이지 않는다. "DB 하나 만들어 줘"라는 요청을 그대로 보낼 수 없다.',
+      ],
+      flows: [{from: 'user', to: 'api', label: 'Database?', type: 'request'}],
+      focus: ['api'],
+      values: {kind: {text: '모름', tone: 'bad'}, status: '—', child: '—'},
+    },
+    {
+      short: 'CRD 등록',
+      kind: '원리',
+      title: 'CRD로 새 자원 종류를 등록한다',
+      text: [
+        'CRD(Custom Resource Definition, 사용자 정의 자원 정의)는 "이런 이름과 구조를 가진 자원 종류가 있다"고 API 서버에 등록하는 정의서다.',
+        '등록하면 그 종류도 기본 자원처럼 만들기·읽기·수정·삭제·watch가 되고, etcd 저장·RBAC·스키마 검증이 그대로 적용된다.',
+      ],
+      keyIdea: '정의(CRD)와 그 정의로 만든 실제 자원(CR, Custom Resource)은 클래스와 인스턴스의 관계와 같다.',
+      changes: ['+ 자원 종류 Database'],
+      flows: [
+        {from: 'user', to: 'api', label: 'CRD 등록', type: 'request'},
+        {from: 'api', to: 'crd', label: '종류 추가', type: 'request'},
+      ],
+      focus: ['crd'],
+      values: {kind: {text: '등록됨', tone: 'good'}},
+    },
+    {
+      short: 'CR 생성',
+      kind: '주의',
+      title: 'CR을 만들면 저장은 되지만 아무 일도 없다',
+      text: [
+        '사용자가 Database 자원 shop-db를 만든다. API 서버는 스키마를 검증하고 저장한다.',
+        '하지만 CRD는 데이터 형식을 등록할 뿐이다. 이 자원을 읽고 실제로 DB를 세우는 주체가 없으면 etcd에 기록만 남고 status는 비어 있다.',
+      ],
+      keyIdea: 'CRD를 설치했다고 기능이 생기지 않는다. status가 계속 비어 있으면 그 자원을 처리할 컨트롤러가 실행 중인지부터 본다.',
+      flows: [
+        {from: 'user', to: 'api', label: 'shop-db', type: 'request'},
+        {from: 'api', to: 'cr', label: '저장', type: 'request'},
+      ],
+      focus: ['cr'],
+      status: {cr: 'warn'},
+      badges: {cr: 'status 없음'},
+      values: {status: {text: '비어 있음', tone: 'bad'}, child: '없음'},
+    },
+    {
+      short: 'watch',
+      kind: '원리',
+      title: '오퍼레이터가 새 CR을 지켜보다 발견한다',
+      text: [
+        '오퍼레이터는 CRD와 그 CRD를 담당하는 컨트롤러의 묶음이다. 클러스터 안에서 계속 실행되며 Database 자원의 변화를 watch로 받는다.',
+        '새 shop-db를 발견하면 원하는 상태(spec)와 실제 상태를 비교하는 조정 루프를 돌린다.',
+      ],
+      flows: [{from: 'api', to: 'op', label: '새 shop-db', type: 'watch'}],
+      focus: ['op'],
+      status: {op: 'ok'},
+      badges: {cr: null},
+    },
+    {
+      short: '하위 자원',
+      kind: '원리',
+      title: '사람이 하던 설치를 오퍼레이터가 대신한다',
+      text: [
+        'CR이 생기면 오퍼레이터는 스테이트풀셋·서비스·시크릿을 만든다. 실제로는 이 요청도 API 서버를 거친다.',
+        '사람 운영자가 설치 절차서를 보며 하던 일을 코드로 옮겨 둔 것이다.',
+      ],
+      changes: ['+ 스테이트풀셋', '+ 서비스', '+ 시크릿'],
+      flows: [
+        {from: 'op', to: 'sts', label: '생성', type: 'request'},
+        {from: 'op', to: 'svc', label: '생성', type: 'request'},
+        {from: 'op', to: 'sec', label: '생성', type: 'request'},
+      ],
+      focus: ['sts', 'svc', 'sec'],
+      status: {sts: 'ok', svc: 'ok', sec: 'ok'},
+      values: {status: '만드는 중', child: '3개'},
+    },
+    {
+      short: '조정',
+      kind: '원리',
+      title: 'spec이 바뀌면 정해진 절차로 맞춘다',
+      text: [
+        '사용자가 shop-db의 spec.version을 올린다. 오퍼레이터는 변화를 받고 정해진 순서대로 DB를 한 대씩 교체한다.',
+        '주 서버 파드가 죽으면 예비 서버를 승격하는 것처럼, 사람이 판단하던 운영 절차도 같은 루프 안에 들어 있다.',
+      ],
+      keyIdea: 'Helm은 설치·업그레이드를 실행할 때만 동작한다. 오퍼레이터는 항상 실행되며 상태를 계속 맞춘다.',
+      flows: [
+        {from: 'user', to: 'api', label: 'version 변경', type: 'request'},
+        {from: 'api', to: 'op', label: 'spec 변경', type: 'watch'},
+        {from: 'op', to: 'sts', label: '순서대로 교체', type: 'request'},
+      ],
+      focus: ['op', 'sts'],
+      status: {sts: 'warn'},
+      values: {status: '교체 중'},
+    },
+    {
+      short: '상태 보고',
+      kind: '원리',
+      title: '결과를 CR의 status에 적는다',
+      text: [
+        '오퍼레이터는 진행 단계(phase)와 조건(conditions)을 CR의 status에 기록한다. 조건에는 기계가 읽는 reason과 사람이 읽는 message가 함께 들어간다.',
+        'kubectl get으로 보이는 상태는 거의 여기서 나온다. 단, phase 값은 도구마다 달라서 어떤 도구는 Completed, 어떤 도구는 Succeeded를 쓴다.',
+      ],
+      flows: [{from: 'op', to: 'cr', label: 'status 기록', type: 'response'}],
+      focus: ['cr'],
+      status: {sts: 'ok', cr: 'ok'},
+      badges: {cr: 'Ready'},
+      values: {status: {text: 'Ready', tone: 'good'}},
+    },
+    {
+      short: 'CRD 삭제',
+      kind: '장애',
+      title: 'CRD를 지우면 그 종류의 CR이 모두 사라진다',
+      text: [
+        '도구를 정리하다 CRD를 지우면 그 종류로 만든 CR이 한꺼번에 삭제된다. 백업 일정·인증서 정의·라우팅 규칙이 이렇게 사라질 수 있다.',
+        '그래서 Helm은 CRD를 처음 설치할 때만 만들고 업그레이드·삭제 때는 건드리지 않는 것이 기본이다. 반대로 오퍼레이터를 먼저 지우면 파이널라이저를 치울 주체가 없어 CR이 Terminating에 멈춘다.',
+      ],
+      keyIdea: '도구를 지우기 전에 CR을 백업하고, CR을 먼저 지운 뒤 오퍼레이터를 지운다.',
+      flows: [
+        {from: 'user', to: 'api', label: 'CRD 삭제', type: 'request'},
+        {from: 'api', to: 'cr', label: '모두 삭제', type: 'request'},
+      ],
+      focus: ['crd', 'cr'],
+      status: {crd: 'gone', cr: 'gone'},
+      badges: {cr: null},
+      values: {kind: {text: '삭제됨', tone: 'bad'}, status: {text: 'CR 사라짐', tone: 'bad'}},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: 'CRD는 형식, 오퍼레이터는 실행',
+      text: [
+        'CRD는 새 자원 종류를 등록할 뿐이고 오퍼레이터가 그 자원을 지켜보며 하위 자원을 만들고 상태를 맞추고 결과를 status에 적는다.',
+        'Velero 백업도 같은 구조다. Backup CR을 만들면 Velero가 백업을 실행하고 그 결과를 status에 적는다.',
+      ],
+      keyIdea: 'CRD는 형식을 등록하고, 오퍼레이터는 그 형식을 실행한다. status가 비어 있으면 진행 중이 아니라 처리할 오퍼레이터가 없을 수 있으니 kubectl describe로 이벤트와 status를 먼저 본다.',
+      focus: ['op', 'cr'],
+    },
+  ]}
+/>
+
+## 증상으로 거꾸로 찾기
+
+| 증상 | 원인 후보 | 확인할 것 |
+| --- | --- | --- |
+| CR을 만들었는데 몇 시간째 status가 비어 있다 | 처리할 컨트롤러(오퍼레이터)가 없거나 멈춤 | 컨트롤러 파드 실행 여부, 로그, CR의 이벤트 |
+| 도구를 새 버전으로 올렸는데 새 필드를 쓰면 저장이 거절된다 | Helm이 CRD를 갱신하지 않아 옛 스키마가 남음 | 도구 업그레이드 안내의 CRD 갱신 절차 |
+| 도구를 지운 뒤 네임스페이스가 Terminating에서 끝나지 않는다 | CR의 파이널라이저를 치울 오퍼레이터가 먼저 지워짐 | 남은 CR의 finalizers |
+| 백업 일정이 한꺼번에 사라졌다 | CRD 삭제로 그 종류의 CR이 모두 삭제됨 | 도구 제거·업그레이드 이력 |
+
+더 읽을거리: [커스텀 리소스](https://kubernetes.io/ko/docs/concepts/extend-kubernetes/api-extension/custom-resources/) · [오퍼레이터 패턴](https://kubernetes.io/ko/docs/concepts/extend-kubernetes/operator/) · [Velero](https://velero.io/docs/) · 삭제가 멈추는 원리는 [삭제는 생각보다 복잡하다](./deletion-finalizer.mdx)
+
+다음 레슨: [컨트롤 플레인 고가용성과 etcd 쿼럼](./etcd-quorum.mdx)

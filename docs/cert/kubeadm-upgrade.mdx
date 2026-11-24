@@ -1,0 +1,196 @@
+---
+id: kubeadm-upgrade
+title: Upgrading a cluster with kubeadm (CKA)
+sidebar_label: 01 · kubeadm upgrade
+description: Follow an animation of the order in which you upgrade a kubeadm cluster by one minor version, for the control plane (kubeadm → plan → apply → kubelet) and for workers (kubeadm → upgrade node → drain → kubelet → uncordon)
+hide_table_of_contents: true
+---
+
+# Upgrading a cluster with kubeadm (CKA)
+
+This relates to "Manage the lifecycle of Kubernetes clusters (upgrades)" in the CKA Cluster Architecture, Installation and Configuration (25%) domain. We upgrade a 1.36 cluster built with kubeadm (the official Kubernetes install tool) to 1.37, and follow which commands run on each node, in what order.
+
+Why the control plane goes first, and how drain respects PDBs, are covered in [Draining Nodes and Upgrading the Cluster](../k8s/node-drain.mdx). Here we focus on the order of kubeadm commands.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~10 min', level: 'Intermediate'}}
+  groups={[
+    {label: 'Control plane node', x: 270, y: 35, w: 430, h: 285, tone: 'mgmt'},
+    {label: 'Worker node · worker-1', x: 770, y: 35, w: 200, h: 285, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'admin', label: 'Operator', sub: 'ssh · kubectl', icon: 'user', tone: 'ext', x: 95, y: 185, show: true},
+    {id: 'repo', label: 'pkgs.k8s.io', sub: 'package repo', icon: 'archive', tone: 'store', x: 95, y: 360, w: 160},
+    {id: 'cpKubeadm', label: 'kubeadm', sub: 'upgrade tool', icon: 'hammer', tone: 'cp', x: 370, y: 110, show: true},
+    {id: 'cpKubelet', label: 'kubelet', sub: 'node manager', icon: 'agent', tone: 'node', x: 370, y: 260, show: true},
+    {id: 'cpParts', label: 'Components', sub: 'API, etcd, etc.', icon: 'wheel', tone: 'cp', x: 600, y: 185, show: true},
+    {id: 'wKubeadm', label: 'kubeadm', sub: 'upgrade tool', icon: 'hammer', tone: 'node', x: 870, y: 110, show: true},
+    {id: 'wKubelet', label: 'kubelet', sub: 'node manager', icon: 'agent', tone: 'node', x: 870, y: 260, show: true},
+    {id: 'apps', label: 'App pods', sub: 'worker-1', icon: 'pod', tone: 'app', size: 'sm', x: 870, y: 395},
+  ]}
+  metrics={[
+    {id: 'cp', label: 'Control plane'},
+    {id: 'worker', label: 'worker-1 kubelet'},
+    {id: 'cmd', label: 'Command just run'},
+  ]}
+  learn={[
+    {text: 'The rule: upgrade one minor version at a time', at: 0},
+    {text: 'What upgrade plan and upgrade apply do', at: 2},
+    {text: 'Why the kubelet must be upgraded separately after apply', at: 4},
+    {text: 'Workers use upgrade node instead of apply', at: 5},
+  ]}
+  steps={[
+    {
+      short: 'Start',
+      kind: '시작',
+      title: 'Upgrade a 1.36 cluster to 1.37',
+      text: [
+        'Kubernetes upgrades one minor version (the middle number, as in 1.36 → 1.37) at a time. To go from 1.35 to 1.37 you must pass through 1.36; skipping is not supported.',
+        'The order is always the same. The control plane node goes first, then the worker nodes one at a time.',
+      ],
+      keyIdea: 'If the task says "upgrade to 1.37", check the current version first. The VERSION column of kubectl get nodes is the starting point.',
+      flows: [{from: 'admin', to: 'cpKubeadm', label: 'to 1.37', type: 'request'}],
+      focus: ['cpKubeadm'],
+      badges: {cpParts: '1.36', wKubelet: '1.36'},
+      values: {cp: '1.36', worker: '1.36', cmd: 'kubectl get nodes'},
+    },
+    {
+      short: 'Tool first',
+      kind: '원리',
+      title: 'On the control plane node, upgrade kubeadm first',
+      text: [
+        'The official package repository (pkgs.k8s.io) has a separate address per minor version. So first switch the repository address to 1.37, or the new packages will not show up.',
+        'Then install only the kubeadm package at 1.37 and check with kubeadm version. Do not touch kubelet and kubectl yet.',
+      ],
+      changes: ['~ repo address 1.36 → 1.37', '~ kubeadm 1.36 → 1.37', 'check with kubeadm version'],
+      flows: [{from: 'repo', to: 'cpKubeadm', label: 'kubeadm only', type: 'response'}],
+      focus: ['repo', 'cpKubeadm'],
+      badges: {cpKubeadm: '1.37'},
+      values: {cmd: 'kubeadm version'},
+    },
+    {
+      short: 'plan',
+      kind: '원리',
+      title: 'Check readiness with kubeadm upgrade plan',
+      text: [
+        'sudo kubeadm upgrade plan checks whether the cluster can be upgraded, and shows a table of available versions plus current and target versions per component.',
+        'This command changes nothing. At the end of the output, it prints the kubeadm upgrade apply command to run.',
+      ],
+      flows: [
+        {from: 'cpKubeadm', to: 'cpParts', label: 'health check', type: 'request'},
+        {from: 'cpParts', to: 'cpKubeadm', label: 'versions', type: 'response'},
+      ],
+      focus: ['cpKubeadm', 'cpParts'],
+      values: {cmd: 'kubeadm upgrade plan'},
+    },
+    {
+      short: 'apply',
+      kind: '원리',
+      title: 'kubeadm upgrade apply replaces the components',
+      text: [
+        'Run sudo kubeadm upgrade apply v1.37.x and components such as the API server, controller manager and scheduler switch to new-version images one by one. By default, it also renews this node\'s kubeadm-managed certificates.',
+        'With several control plane nodes, run apply only once, on the first node. On the other control plane nodes, run sudo kubeadm upgrade node.',
+      ],
+      keyIdea: 'apply runs once for the whole cluster; upgrade node runs once on each remaining node.',
+      flows: [{from: 'cpKubeadm', to: 'cpParts', label: 'apply new ver.', type: 'request'}],
+      focus: ['cpParts'],
+      status: {cpParts: 'ok'},
+      badges: {cpParts: '1.37'},
+      values: {cp: 'components 1.37', cmd: 'kubeadm upgrade apply'},
+    },
+    {
+      short: 'kubelet',
+      kind: '주의',
+      title: 'After apply, this node\'s kubelet is still 1.36',
+      text: [
+        'kubeadm does not change the kubelet package. So drain this node, install the kubelet and kubectl packages at 1.37, then restart with systemctl daemon-reload and systemctl restart kubelet.',
+        'When done, lift the scheduling block with kubectl uncordon. The VERSION column of kubectl get nodes is the kubelet version, so skip this step and the control plane node keeps showing 1.36.',
+      ],
+      changes: ['kubectl drain (control plane node)', '~ kubelet·kubectl 1.36 → 1.37', 'systemctl daemon-reload', 'systemctl restart kubelet', 'kubectl uncordon'],
+      flows: [{from: 'admin', to: 'cpKubelet', label: 'upgrade pkgs', type: 'request'}],
+      focus: ['cpKubelet'],
+      status: {cpKubelet: 'ok'},
+      badges: {cpKubelet: '1.37'},
+      values: {cp: {text: '1.37', tone: 'good'}, cmd: 'systemctl restart kubelet'},
+    },
+    {
+      short: 'Worker tool',
+      kind: '원리',
+      title: 'On workers, run kubeadm upgrade node',
+      text: [
+        'Log in to worker-1, switch the repository address the same way, and upgrade only the kubeadm package to 1.37.',
+        'On workers, run sudo kubeadm upgrade node, not apply. On a worker, this command updates this node\'s kubelet config for the new version.',
+      ],
+      flows: [
+        {from: 'admin', to: 'wKubeadm', label: 'ssh worker-1', type: 'request'},
+        {from: 'wKubeadm', to: 'wKubelet', label: 'update config', type: 'request'},
+      ],
+      focus: ['wKubeadm'],
+      badges: {wKubeadm: '1.37'},
+      values: {cmd: 'kubeadm upgrade node'},
+    },
+    {
+      short: 'drain',
+      kind: '원리',
+      title: 'Empty the node before changing the kubelet',
+      text: [
+        'From a place where kubectl works, run kubectl drain worker-1 --ignore-daemonsets. The node is cordoned, and its app pods are deleted and recreated on other nodes.',
+        'DaemonSet pods stay, since each node needs one. Cases where a PDB blocks drain are in the node drain lesson.',
+      ],
+      flows: [
+        {from: 'admin', to: 'cpParts', label: 'drain', type: 'request'},
+        {from: 'cpParts', to: 'apps', label: 'evict pods', type: 'request'},
+      ],
+      focus: ['apps'],
+      status: {apps: 'gone', wKubelet: 'warn'},
+      badges: {wKubelet: 'cordoned'},
+      values: {cmd: 'kubectl drain'},
+    },
+    {
+      short: 'uncordon',
+      kind: '원리',
+      title: 'Upgrade the kubelet and allow scheduling again',
+      text: [
+        'On worker-1, install the kubelet and kubectl packages at 1.37 and run systemctl daemon-reload and systemctl restart kubelet.',
+        'Finally, lift the block with kubectl uncordon worker-1. Repeat this order for the other workers, one at a time.',
+      ],
+      changes: ['~ kubelet·kubectl 1.36 → 1.37', 'systemctl restart kubelet', 'kubectl uncordon worker-1'],
+      flows: [
+        {from: 'admin', to: 'wKubelet', label: 'upgrade pkgs', type: 'request'},
+        {from: 'admin', to: 'cpParts', label: 'uncordon', type: 'request'},
+      ],
+      focus: ['wKubelet'],
+      status: {wKubelet: 'ok', apps: null},
+      badges: {wKubelet: '1.37'},
+      values: {worker: {text: '1.37', tone: 'good'}, cmd: 'kubectl uncordon'},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Tool → plan → apply → kubelet, repeated per node',
+      text: [
+        'The control plane goes kubeadm → upgrade plan → upgrade apply → kubelet. Workers go kubeadm → upgrade node → drain → kubelet → uncordon.',
+        'kubeadm only changes components and config; a person upgrades the kubelet package separately. So afterwards, always check every node\'s VERSION with kubectl get nodes.',
+      ],
+      keyIdea: 'Control plane first, then workers one at a time: drain → upgrade → uncordon. When done, check component versions in kubeadm upgrade plan and each node\'s kubelet version in kubectl get nodes separately, so no node is left half-done.',
+      focus: ['cpParts', 'cpKubelet', 'wKubelet'],
+      values: {cmd: 'kubectl get nodes'},
+    },
+  ]}
+/>
+
+## Common exam questions
+
+| Situation | What to do / command | Trap |
+| --- | --- | --- |
+| Upgrade the control plane by one version | Switch repo address → install kubeadm → `kubeadm upgrade plan` → `kubeadm upgrade apply v1.37.x` | You cannot skip minor versions. With the old repo address, the new packages do not show up |
+| Second control plane node | `kubeadm upgrade node` | `upgrade apply` runs only once, on the first node |
+| apply finished but the node version did not change | Install kubelet and kubectl → `systemctl daemon-reload` → `systemctl restart kubelet` | VERSION in `kubectl get nodes` is the kubelet version |
+| Upgrade a worker node | Install kubeadm → `kubeadm upgrade node` → `kubectl drain <node> --ignore-daemonsets` → install and restart kubelet → `kubectl uncordon <node>` | Do not run `upgrade apply` on a worker. Run drain where kubectl is available, and install packages on the node itself |
+| The job is done | `kubectl uncordon`, then check Ready and VERSION with `kubectl get nodes` | Forget uncordon and the node stays SchedulingDisabled |
+
+Further reading: [CNCF certification curriculum](https://github.com/cncf/curriculum) · [Upgrading kubeadm clusters](https://kubernetes.io/docs/tasks/administer-cluster/kubeadm/kubeadm-upgrade/) · [Version skew policy](https://kubernetes.io/docs/setup/release/version-skew-policy/) · [Draining Nodes and Upgrading the Cluster](../k8s/node-drain.mdx)
+
+Next lesson: [Node NotReady and component failures (CKA)](./node-troubleshoot.mdx)

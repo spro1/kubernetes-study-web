@@ -1,0 +1,206 @@
+---
+id: runtime-security
+title: Runtime security — catching abnormal behavior (CKS)
+sidebar_label: 06 · Runtime security
+description: Follow an animation of Falco catching a shell opened in a container and a sensitive file read through system calls, seccomp, AppArmor and a read-only filesystem blocking them, and audit logs used to investigate
+hide_table_of_contents: true
+---
+
+# Runtime security — catching abnormal behavior (CKS)
+
+This covers the CKS Monitoring, Logging and Runtime Security (20%) domain and "kernel hardening tools such as AppArmor and seccomp" in System Hardening (10%). Even a container that passed every pre-deploy check can be breached at run time. We follow how to notice, block and investigate abnormal behavior inside a running container. Security standards applied at pod creation are in [Pod Security Standards and securityContext](../advanced/pod-security.mdx), and audit policies in [Audit Logs](../advanced/audit-log.mdx).
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~10 min', level: 'Advanced'}}
+  groups={[
+    {label: 'Worker node', x: 495, y: 25, w: 465, h: 305, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'attacker', label: 'Attacker', sub: 'stolen account', icon: 'user', tone: 'ext', x: 85, y: 100, show: true},
+    {id: 'api', label: 'API server', sub: 'request gateway', icon: 'gate', tone: 'cp', x: 330, y: 100, show: true},
+    {id: 'app', label: 'web', sub: 'container', icon: 'pod', tone: 'app', x: 600, y: 100, show: true},
+    {id: 'audit', label: 'Audit log', sub: 'per-request record', icon: 'archive', tone: 'store', x: 330, y: 270},
+    {id: 'kernel', label: 'Linux kernel', sub: 'system calls', icon: 'layers', tone: 'node', x: 600, y: 270, show: true},
+    {id: 'falco', label: 'Falco', sub: 'runs on each node', icon: 'shield', tone: 'node', x: 860, y: 270},
+    {id: 'alert', label: 'Alert channel', sub: 'notifications·logs', icon: 'bell', tone: 'ext', x: 860, y: 400},
+    {id: 'sec', label: 'Security team', sub: 'investigates', icon: 'user', tone: 'ext', x: 330, y: 400},
+  ]}
+  metrics={[
+    {id: 'alerts', label: 'Falco alerts'},
+    {id: 'blocked', label: 'Blocked attempts'},
+    {id: 'who', label: 'Who did it'},
+  ]}
+  learn={[
+    {text: 'Why every action in a container becomes a system call', at: 1},
+    {text: 'Falco detects but does not block', at: 3},
+    {text: 'Immutability enforced by a read-only root filesystem', at: 5},
+    {text: 'What seccomp and AppArmor each block', at: 6},
+    {text: 'Investigating with Falco alerts and audit logs together', at: 7},
+  ]}
+  steps={[
+    {
+      short: 'Intrusion',
+      kind: '시작',
+      title: 'A stolen account opens a shell in a container',
+      text: [
+        'An attacker gets a developer\'s credentials and opens a shell (a command prompt) in the web container with kubectl exec.',
+        'This request also goes through the API server. If audit logging is on, it records who exec\'d into which pod and when.',
+      ],
+      keyIdea: 'Pre-deploy checks (image scanning, Pod Security Standards) cannot see what happens at run time. Runtime security covers that gap.',
+      flows: [
+        {from: 'attacker', to: 'api', label: 'exec', type: 'request'},
+        {from: 'api', to: 'app', label: 'open shell', type: 'request'},
+        {from: 'api', to: 'audit', label: 'record', type: 'request'},
+      ],
+      focus: ['attacker', 'app'],
+      status: {app: 'warn'},
+      values: {alerts: '0', blocked: '0', who: 'unknown'},
+    },
+    {
+      short: 'Syscalls',
+      kind: '원리',
+      title: 'Every action in a container becomes a system call',
+      text: [
+        'Launching a shell is execve, opening a file is openat: whatever a program does, it sends system calls (requests asking the kernel to do work) to the Linux kernel.',
+        'Containers share the node\'s single kernel. So from the kernel\'s vantage point, you can see what every container does.',
+      ],
+      keyIdea: 'Unlike virtual machines, containers share the kernel. The kernel is the place to watch, and if it is breached, the whole node is at risk.',
+      flows: [{from: 'app', to: 'kernel', label: 'execve', type: 'request'}],
+      focus: ['kernel'],
+      badges: {kernel: 'execve bash'},
+    },
+    {
+      short: 'Falco',
+      kind: '원리',
+      title: 'Falco watches system calls and matches them to rules',
+      text: [
+        'Falco runs one per node (usually as a DaemonSet) and receives system call events through a kernel driver (an eBPF probe, etc.).',
+        'It matches each event against rules written in YAML. A rule has a condition, an output (alert message) and a priority.',
+      ],
+      flows: [{from: 'kernel', to: 'falco', label: 'events', type: 'watch'}],
+      focus: ['falco'],
+      status: {falco: 'ok'},
+    },
+    {
+      short: 'Shell found',
+      kind: '문제',
+      title: 'The "shell in container" rule fires an alert',
+      text: [
+        'The default rule Terminal shell in container matches and fires an alert. The alert includes the rule name, the command run, and the container, pod and namespace names.',
+        'Alerts go to outputs such as stdout, a file or syslog, and from there to notification channels. Falco only alerts; it does not stop the shell.',
+      ],
+      keyIdea: 'Falco is a detection tool. Blocking is the job of other mechanisms such as seccomp and AppArmor.',
+      flows: [
+        {from: 'kernel', to: 'falco', type: 'watch'},
+        {from: 'falco', to: 'alert', label: 'alert', type: 'request'},
+      ],
+      focus: ['falco', 'alert'],
+      status: {falco: 'warn'},
+      badges: {falco: 'shell spawned'},
+      values: {alerts: {text: '1', tone: 'bad'}},
+    },
+    {
+      short: 'Sensitive file',
+      kind: '문제',
+      title: 'Reading a sensitive file triggers another rule',
+      text: [
+        'From the shell, the attacker reads /etc/shadow (the file holding account password hashes). This reaches the kernel as an openat system call.',
+        'The default rule Read sensitive file untrusted matches and fires a second alert. One attack trips several rules and leaves traces.',
+      ],
+      flows: [
+        {from: 'app', to: 'kernel', label: 'openat', type: 'request'},
+        {from: 'kernel', to: 'falco', type: 'watch'},
+        {from: 'falco', to: 'alert', label: 'alert', type: 'request'},
+      ],
+      focus: ['kernel', 'falco'],
+      badges: {kernel: '/etc/shadow', falco: 'sensitive file'},
+      values: {alerts: {text: '2', tone: 'bad'}},
+    },
+    {
+      short: 'Immutability',
+      kind: '원리',
+      title: 'A read-only root filesystem stops planting tools',
+      text: [
+        'The attacker tries to download a hacking tool into the container and put it in a binaries folder. web has readOnlyRootFilesystem: true, so the write fails.',
+        'Not modifying running containers, and replacing them with a new image when something must change, is called immutability. Only paths that need temp files get a separate emptyDir.',
+      ],
+      changes: ['+ readOnlyRootFilesystem: true', '+ emptyDir mounted only at /tmp'],
+      flows: [
+        {from: 'app', to: 'kernel', label: 'write file', type: 'request'},
+        {from: 'kernel', to: 'app', label: 'read-only', type: 'response', bend: 0.15},
+      ],
+      focus: ['app'],
+      badges: {kernel: null, app: 'read-only'},
+      values: {blocked: {text: '1', tone: 'good'}},
+    },
+    {
+      short: 'Prevent',
+      kind: '원리',
+      title: 'Block it up front with seccomp and AppArmor',
+      text: [
+        'seccomp is a filter on which system calls a container may make. Just the RuntimeDefault profile blocks many dangerous system calls.',
+        'AppArmor uses profiles to limit which files a program may read, write and execute. Load the profile on the node in advance, then name it in the pod securityContext.',
+      ],
+      keyIdea: 'Both tools work in the kernel. If the profile is missing on the node, the pod cannot start, so prepare the node first.',
+      changes: [
+        '+ seccompProfile.type: RuntimeDefault',
+        '+ appArmorProfile.type: Localhost',
+        '+ appArmorProfile.localhostProfile: deny-shell',
+      ],
+      flows: [
+        {from: 'app', to: 'kernel', label: 'run shell', type: 'request'},
+        {from: 'kernel', to: 'app', label: 'denied', type: 'response', bend: 0.15},
+      ],
+      focus: ['kernel'],
+      status: {kernel: 'ok'},
+      badges: {app: null, kernel: 'AppArmor denied'},
+      values: {blocked: {text: '2', tone: 'good'}},
+    },
+    {
+      short: 'Investigate',
+      kind: '주의',
+      title: 'Match Falco alerts with audit logs to find who did it',
+      text: [
+        'Falco alerts tell you what happened inside the container; audit logs tell you who came into it through the API server. Match the two by time and pod name.',
+        'Find the user name on the pods/exec request in the audit log, revoke that account\'s credentials, and replace the pod with a fresh one. If the audit policy leaves out this request, there is no record.',
+      ],
+      keyIdea: 'A runtime alert alone tells you "what" but not "who". You need the audit log too to close the investigation.',
+      flows: [
+        {from: 'alert', to: 'sec', label: 'review alert', type: 'request'},
+        {from: 'audit', to: 'sec', label: 'exec record', type: 'response'},
+      ],
+      focus: ['sec', 'audit'],
+      status: {app: 'gone', falco: 'ok'},
+      badges: {kernel: null, falco: null, sec: 'account found'},
+      values: {who: {text: 'developer B account', tone: 'good'}},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Detect, block, and investigate with records',
+      text: [
+        'Every action in the container became a system call, and Falco matched that stream to rules to flag abnormal behavior. seccomp, AppArmor and a read-only filesystem made the same actions fail up front.',
+        'Finally, the audit log showed who came in, leading to revoking the account and replacing the pod.',
+      ],
+      keyIdea: 'Falco catches; seccomp, AppArmor and a read-only root filesystem block; audit logs reveal who did it. When investigating, link the pod and time in Falco alerts to the user in audit logs to decide "what happened, and because of whom".',
+      focus: ['falco', 'kernel', 'audit'],
+    },
+  ]}
+/>
+
+## Common exam questions
+
+| Situation | What to do / command | Trap |
+| --- | --- | --- |
+| Find the container where a shell was opened | Check the rule name and container/pod names in Falco output, then replace that pod | Falco only alerts. You must clean up the pod yourself |
+| Add or change a Falco rule | Write it in a local rules file such as `falco_rules.local.yaml`, not the default rules file | Edits to the default rules file can be overwritten on upgrade |
+| Container immutability | `readOnlyRootFilesystem: true`, with `emptyDir` only for paths that need writes | Apps that write temp files fail to start without a volume |
+| Apply seccomp | `securityContext.seccompProfile.type: RuntimeDefault` or `Localhost` | A `Localhost` profile path is relative to the kubelet seccomp folder |
+| Apply AppArmor | Load the profile on the node with `apparmor_parser` and name it in `appArmorProfile` | A pod scheduled to a node without the profile cannot start |
+| Who ran exec? | Check the user on `pods/exec` requests in the audit log | Without a rule in the audit policy, nothing is recorded |
+
+Further reading: [CNCF certification curriculum](https://github.com/cncf/curriculum) · [Falco docs](https://falco.org/docs/) · [Restrict a container's syscalls with seccomp](https://kubernetes.io/docs/tutorials/security/seccomp/) · [Pod Security Standards and securityContext](../advanced/pod-security.mdx) · [Audit Logs](../advanced/audit-log.mdx)
+
+Next lesson: [Viewing the cluster through the 4Cs and a threat model (KCSA·KCNA)](./threat-model.mdx)

@@ -1,0 +1,192 @@
+---
+id: crd-operator
+title: CRDs and Operators
+sidebar_label: 03 · CRDs and Operators
+description: Register a new resource kind with a CRD, watch an operator create child resources and report status, and see why deleting a CRD is risky, step by step with animation
+hide_table_of_contents: true
+---
+
+# CRDs and Operators
+
+Built-in Kubernetes resources have no concept like "a database" or "a nightly backup". So you register a new resource kind (CRD) and attach a program that handles it (an operator). Most tools, such as Istio (service mesh), Velero (backup) and the NVIDIA GPU Operator, are built on this pattern. The `Database` below is an example resource for illustration.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~10 min', level: 'Advanced'}}
+  nodes={[
+    {id: 'user', label: 'User', sub: 'kubectl', icon: 'user', tone: 'ext', x: 85, y: 225, show: true},
+    {id: 'api', label: 'API server', sub: 'entry for resources', icon: 'gate', tone: 'cp', x: 330, y: 225, show: true},
+    {id: 'crd', label: 'CRD', sub: 'registers a kind', icon: 'book', tone: 'store', x: 330, y: 80},
+    {id: 'cr', label: 'shop-db', sub: 'Database CR', icon: 'db', tone: 'store', x: 330, y: 370},
+    {id: 'op', label: 'Operator', sub: 'DB controller', icon: 'agent', tone: 'node', x: 600, y: 225},
+    {id: 'sts', label: 'StatefulSet', sub: 'DB Pods', icon: 'layers', tone: 'app', x: 860, y: 80},
+    {id: 'svc', label: 'Service', sub: 'connection address', icon: 'target', tone: 'app', x: 860, y: 225},
+    {id: 'sec', label: 'Secret', sub: 'DB password', icon: 'shield', tone: 'app', x: 860, y: 370},
+  ]}
+  metrics={[
+    {id: 'kind', label: 'Database kind'},
+    {id: 'status', label: 'CR status'},
+    {id: 'child', label: 'Child resources'},
+  ]}
+  learn={[
+    {text: 'CRD (definition) vs CR (actual resource)', at: 1},
+    {text: 'Why a CRD alone does nothing', at: 2},
+    {text: 'How an operator runs ops knowledge in a reconcile loop', at: 5},
+    {text: 'Deleting a CRD deletes all its CRs', at: 7},
+  ]}
+  steps={[
+    {
+      short: 'Need',
+      kind: '시작',
+      title: 'Built-in resources have no "database"',
+      text: [
+        'Built-in resources cover only concepts every company needs, like Pods, Deployments, Services and PVCs.',
+        'The API server does not accept unknown kinds. You cannot just send "make me a DB".',
+      ],
+      flows: [{from: 'user', to: 'api', label: 'Database?', type: 'request'}],
+      focus: ['api'],
+      values: {kind: {text: 'Unknown', tone: 'bad'}, status: '—', child: '—'},
+    },
+    {
+      short: 'Add CRD',
+      kind: '원리',
+      title: 'A CRD registers a new resource kind',
+      text: [
+        'A CRD (Custom Resource Definition) tells the API server "a resource kind with this name and structure exists".',
+        'Once registered, the kind supports create, read, update, delete and watch like built-in resources, with etcd storage, RBAC and schema validation applied as usual.',
+      ],
+      keyIdea: 'The definition (CRD) and the actual resource made from it (CR, Custom Resource) relate like a class and an instance.',
+      changes: ['+ resource kind Database'],
+      flows: [
+        {from: 'user', to: 'api', label: 'Register CRD', type: 'request'},
+        {from: 'api', to: 'crd', label: 'Add kind', type: 'request'},
+      ],
+      focus: ['crd'],
+      values: {kind: {text: 'Registered', tone: 'good'}},
+    },
+    {
+      short: 'Create CR',
+      kind: '주의',
+      title: 'Creating a CR stores it, but nothing happens',
+      text: [
+        'The user creates Database resource shop-db. The API server validates the schema and stores it.',
+        'But a CRD only registers a data format. Without something that reads the resource and actually builds a DB, there is just a record in etcd and an empty status.',
+      ],
+      keyIdea: 'Installing a CRD does not add a feature. If status stays empty, first check that the controller handling the resource is running.',
+      flows: [
+        {from: 'user', to: 'api', label: 'shop-db', type: 'request'},
+        {from: 'api', to: 'cr', label: 'Store', type: 'request'},
+      ],
+      focus: ['cr'],
+      status: {cr: 'warn'},
+      badges: {cr: 'No status'},
+      values: {status: {text: 'Empty', tone: 'bad'}, child: 'None'},
+    },
+    {
+      short: 'watch',
+      kind: '원리',
+      title: 'The operator watches and finds the new CR',
+      text: [
+        'An operator is a CRD bundled with the controller that handles it. It runs continuously in the cluster and receives changes to Database resources via watch.',
+        'When it sees the new shop-db, it runs a reconcile loop that compares desired state (spec) with actual state.',
+      ],
+      flows: [{from: 'api', to: 'op', label: 'New shop-db', type: 'watch'}],
+      focus: ['op'],
+      status: {op: 'ok'},
+      badges: {cr: null},
+    },
+    {
+      short: 'Children',
+      kind: '원리',
+      title: 'The operator does the install a person used to do',
+      text: [
+        'When a CR appears, the operator creates a StatefulSet, a Service and a Secret. In reality these requests also go through the API server.',
+        'It is the install runbook a human operator used to follow, turned into code.',
+      ],
+      changes: ['+ StatefulSet', '+ Service', '+ Secret'],
+      flows: [
+        {from: 'op', to: 'sts', label: 'Create', type: 'request'},
+        {from: 'op', to: 'svc', label: 'Create', type: 'request'},
+        {from: 'op', to: 'sec', label: 'Create', type: 'request'},
+      ],
+      focus: ['sts', 'svc', 'sec'],
+      status: {sts: 'ok', svc: 'ok', sec: 'ok'},
+      values: {status: 'Creating', child: '3'},
+    },
+    {
+      short: 'Reconcile',
+      kind: '원리',
+      title: 'When spec changes, it follows a set procedure',
+      text: [
+        'The user bumps spec.version on shop-db. The operator receives the change and replaces DB instances one at a time, in a set order.',
+        'Ops procedures that used to need human judgment, like promoting a replica when the primary Pod dies, live in the same loop.',
+      ],
+      keyIdea: 'Helm acts only when you run an install or upgrade. An operator runs all the time and keeps reconciling state.',
+      flows: [
+        {from: 'user', to: 'api', label: 'Change version', type: 'request'},
+        {from: 'api', to: 'op', label: 'spec changed', type: 'watch'},
+        {from: 'op', to: 'sts', label: 'Replace in order', type: 'request'},
+      ],
+      focus: ['op', 'sts'],
+      status: {sts: 'warn'},
+      values: {status: 'Replacing'},
+    },
+    {
+      short: 'Status',
+      kind: '원리',
+      title: 'Results are written to the CR status',
+      text: [
+        'The operator records progress (phase) and conditions in the CR status. Each condition carries a machine-readable reason and a human-readable message.',
+        'Most of what kubectl get shows comes from here. Phase values differ by tool, though: some use Completed, others Succeeded.',
+      ],
+      flows: [{from: 'op', to: 'cr', label: 'Write status', type: 'response'}],
+      focus: ['cr'],
+      status: {sts: 'ok', cr: 'ok'},
+      badges: {cr: 'Ready'},
+      values: {status: {text: 'Ready', tone: 'good'}},
+    },
+    {
+      short: 'Delete CRD',
+      kind: '장애',
+      title: 'Deleting a CRD deletes every CR of that kind',
+      text: [
+        'Delete a CRD while cleaning up a tool, and every CR of that kind is deleted at once. Backup schedules, certificate definitions and routing rules can vanish this way.',
+        'That is why Helm by default creates CRDs only on first install and leaves them alone on upgrade and uninstall. Conversely, if you delete the operator first, nothing clears the finalizers and CRs get stuck in Terminating.',
+      ],
+      keyIdea: 'Back up CRs before removing a tool. Delete the CRs first, then the operator.',
+      flows: [
+        {from: 'user', to: 'api', label: 'Delete CRD', type: 'request'},
+        {from: 'api', to: 'cr', label: 'Delete all', type: 'request'},
+      ],
+      focus: ['crd', 'cr'],
+      status: {crd: 'gone', cr: 'gone'},
+      badges: {cr: null},
+      values: {kind: {text: 'Deleted', tone: 'bad'}, status: {text: 'CRs gone', tone: 'bad'}},
+    },
+    {
+      short: 'Recap',
+      kind: '정리',
+      title: 'CRD is the format, operator is the execution',
+      text: [
+        'A CRD only registers a new resource kind. The operator watches those resources, creates children, reconciles state and writes results to status.',
+        'Velero backup works the same way. Create a Backup CR and Velero runs the backup and writes the result to status.',
+      ],
+      keyIdea: 'A CRD registers a format; an operator executes it. An empty status may mean no operator is handling it, not that work is in progress. Check events and status with kubectl describe first.',
+      focus: ['op', 'cr'],
+    },
+  ]}
+/>
+
+## Working back from the symptom
+
+| Symptom | Likely cause | What to check |
+| --- | --- | --- |
+| A CR was created hours ago and status is still empty | No controller (operator) to handle it, or it is stopped | Whether the controller Pod runs, its logs, the CR's events |
+| After upgrading a tool, saving with new fields is rejected | Helm did not update the CRD, so the old schema remains | The CRD update steps in the tool's upgrade guide |
+| After removing a tool, the namespace never leaves Terminating | The operator that clears CR finalizers was deleted first | Finalizers on the remaining CRs |
+| All backup schedules disappeared at once | A CRD deletion removed every CR of that kind | History of tool removal and upgrades |
+
+Further reading: [Custom resources](https://kubernetes.io/docs/concepts/extend-kubernetes/api-extension/custom-resources/) · [Operator pattern](https://kubernetes.io/docs/concepts/extend-kubernetes/operator/) · [Velero](https://velero.io/docs/) · Why deletion gets stuck: [Deletion Is More Complex Than You Think](./deletion-finalizer.mdx)
+
+Next lesson: [Control Plane HA and etcd Quorum](./etcd-quorum.mdx)

@@ -1,0 +1,188 @@
+---
+id: desired-state
+title: Desired State and the Control Loop
+sidebar_label: 05 · Desired State
+description: Follow the animation to see how controllers compare a written desired state with the current state and close the gap, and how labels and selectors connect resources
+hide_table_of_contents: true
+---
+
+# Desired State and the Control Loop
+
+You do not tell Kubernetes "do this". You write down "it should look like this", and controllers keep comparing that with how things are now and fix the difference. Follow this comparison loop, and how resources find each other with labels and selectors. How a Pod starts, part by part, is covered in [How a Pod Starts](../k8s/pod-startup.mdx).
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~10 min', level: 'Beginner'}}
+  groups={[
+    {label: 'Manifest in the API server', x: 215, y: 40, w: 200, h: 350, tone: 'mgmt'},
+    {label: 'Pods · app=web', x: 635, y: 125, w: 360, h: 245, tone: 'biz', from: 2},
+  ]}
+  nodes={[
+    {id: 'user', label: 'User', sub: 'kubectl apply', icon: 'user', tone: 'ext', x: 75, y: 120, w: 130, show: true},
+    {id: 'spec', label: 'Desired state', sub: 'spec', icon: 'book', tone: 'store', x: 315, y: 120, show: true},
+    {id: 'status', label: 'Current state', sub: 'status', icon: 'chart', tone: 'store', x: 315, y: 330, show: true},
+    {id: 'ctrl', label: 'Controller', sub: 'Compare and fix', icon: 'gear', tone: 'cp', x: 500, y: 225},
+    {id: 'svc', label: 'Service web', sub: 'Selects app=web', icon: 'target', tone: 'cp', x: 817, y: 65},
+    {id: 'p1', label: 'web-a', sub: 'app=web', icon: 'pod', tone: 'app', size: 'sm', x: 720, y: 190},
+    {id: 'p2', label: 'web-b', sub: 'app=web', icon: 'pod', tone: 'app', size: 'sm', x: 914, y: 190},
+    {id: 'p3', label: 'web-c', sub: 'app=web', icon: 'pod', tone: 'app', size: 'sm', x: 720, y: 320},
+    {id: 'p4', label: 'web-d', sub: 'app=web', icon: 'pod', tone: 'app', size: 'sm', x: 914, y: 320},
+  ]}
+  metrics={[
+    {id: 'want', label: 'Desired (spec)'},
+    {id: 'now', label: 'Current (status)'},
+    {id: 'judge', label: 'Controller decision'},
+    {id: 'target', label: 'Service targets'},
+  ]}
+  learn={[
+    {text: 'Imperative vs declarative', at: 0},
+    {text: 'Why you read spec and status side by side', at: 1},
+    {text: 'A control loop repeats "compare → act"', at: 2},
+    {text: 'An unreachable goal means waiting, not an error', at: 4},
+    {text: 'Resources connect by labels, not names', at: 5},
+  ]}
+  steps={[
+    {
+      short: 'Declare',
+      kind: '시작',
+      title: 'Describe the result instead of giving orders',
+      text: [
+        'Imperative style gives orders, like "run a container". It only matters at that moment, so if one dies later, someone has to give the order again.',
+        'Declarative style states only the result, like "there must always be 3 web Pods". Kubernetes is declarative. The user just submits that statement with kubectl apply.',
+      ],
+      keyIdea: 'It works like a thermostat. You set "24 degrees", and the thermostat decides when to turn on the cooling.',
+      flows: [{from: 'user', to: 'spec', label: 'Must be 3', type: 'request'}],
+      focus: ['spec'],
+      badges: {spec: 'replicas: 3'},
+      values: {want: '3', now: '0'},
+    },
+    {
+      short: 'Two fields',
+      kind: '원리',
+      title: 'A manifest has separate spec and status',
+      text: [
+        'The user writes spec (desired state). Kubernetes fills in status (current state). Users do not write status.',
+        'The controller watches both. Right now they differ: 3 desired, 0 current.',
+      ],
+      keyIdea: 'If spec and status differ, the goal is not reached yet. If the gap lasts, something is stuck.',
+      flows: [
+        {from: 'spec', to: 'ctrl', label: 'Want 3', type: 'watch'},
+        {from: 'status', to: 'ctrl', label: 'Have 0', type: 'watch'},
+      ],
+      focus: ['ctrl'],
+      values: {judge: 'Different'},
+    },
+    {
+      short: 'Act',
+      kind: '원리',
+      title: 'If they differ, the controller acts',
+      text: [
+        'The controller sees "should be 3, have 0" and asks for 3 Pods. Too few, it creates. Too many, it deletes. Different, it changes.',
+        'This cycle of comparing and acting is called a control loop. Many controllers each run this loop forever for the objects they own.',
+      ],
+      changes: ['Request Pods web-a · web-b · web-c'],
+      flows: [
+        {from: 'ctrl', to: 'p1', label: 'Create Pod', type: 'request'},
+        {from: 'ctrl', to: 'p3', type: 'request'},
+      ],
+      focus: ['ctrl', 'p1', 'p2', 'p3'],
+      status: {p1: 'warn', p2: 'warn', p3: 'warn'},
+      values: {judge: 'Create 3 Pods'},
+    },
+    {
+      short: 'Match',
+      kind: '원리',
+      title: 'Once they match, it does nothing',
+      text: [
+        'When the Pods run, the result is recorded in status. Now desired and current are both 3.',
+        'When they match, the controller does nothing but keep watching. If a Pod disappears later, a gap appears again and the same loop creates a new Pod.',
+      ],
+      keyIdea: 'Self-healing comes from this loop. What brings things back, and how, is in the "When a Pod Dies" lesson.',
+      flows: [{from: 'p3', to: 'status', label: '3 running', type: 'response'}],
+      focus: ['status'],
+      status: {p1: 'ok', p2: 'ok', p3: 'ok'},
+      badges: {status: 'ready 3'},
+      values: {now: {text: '3', tone: 'good'}, judge: 'Same → wait'},
+    },
+    {
+      short: 'Can\'t match',
+      kind: '주의',
+      title: 'An unreachable goal means waiting, not an error',
+      text: [
+        'The user changes the desired count to 4. The controller creates a fourth Pod, but the nodes lack free resources, so there is nowhere to place it.',
+        'Kubernetes does not end this as a failure. The Pod stays Pending and Kubernetes keeps trying until room opens up.',
+      ],
+      keyIdea: 'Submitting means "the goal is written down", not "it is done". You can get a long wait with no error.',
+      changes: ['~ spec.replicas 3 → 4', '+ Pod web-d (Pending)'],
+      flows: [
+        {from: 'user', to: 'spec', label: 'Change to 4', type: 'request'},
+        {from: 'ctrl', to: 'p4', label: 'Create Pod', type: 'request', bend: -0.05},
+      ],
+      focus: ['p4'],
+      status: {p4: 'warn'},
+      badges: {spec: 'replicas: 4', p4: 'Pending'},
+      values: {want: '4', now: {text: '3', tone: 'bad'}, judge: 'Different → retry'},
+    },
+    {
+      short: 'Selector',
+      kind: '원리',
+      title: 'Resources find each other by labels',
+      text: [
+        'A label is a "key: value" tag on a resource. A selector is a condition: "things with this label". The selector of Service web is app=web.',
+        'The Service picks Pods by the app=web label, not by name. A Pod labeled app=api would not be a target. It does not send requests to web-d, which is not ready yet.',
+      ],
+      keyIdea: 'A Deployment recognizing its own Pods and a Service picking Pods to send requests to both rely on labels and selectors.',
+      flows: [
+        {from: 'svc', to: 'p1', label: 'app=web', type: 'request'},
+        {from: 'svc', to: 'p2', type: 'request'},
+        {from: 'svc', to: 'p3', type: 'request', bend: -0.2},
+      ],
+      focus: ['svc'],
+      values: {target: {text: '3', tone: 'good'}},
+    },
+    {
+      short: 'Typo',
+      kind: '문제',
+      title: 'A label typo silently breaks the connection',
+      text: [
+        'Someone mistakenly changes the Service selector to app=wep. If even one letter differs, no Pod matches.',
+        'Kubernetes does not report this as an error. A Service with 0 targets is saved as "valid", and requests just go nowhere.',
+      ],
+      keyIdea: 'All Pods are fine. Only the connection is broken. That is why the status display alone makes the cause hard to find.',
+      changes: ['~ selector app=web → app=wep'],
+      flows: [{from: 'svc', to: 'p1', label: 'No matching Pod', type: 'request'}],
+      focus: ['svc'],
+      status: {svc: 'error'},
+      badges: {svc: 'app=wep'},
+      values: {target: {text: '0', tone: 'bad'}},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'The written statement stays in force',
+      text: [
+        'The user writes the desired shape in spec, and the controller compares it with status and closes the gap. When they match, it rests. When they differ, it acts again.',
+        'Resources connect through labels and selectors. A single typo can leave 0 targets without any error.',
+      ],
+      keyIdea: 'Write the desired state and controllers keep matching the current state to it. Compare desired and current in kubectl get, such as READY 3/4. If a Service has no endpoints, suspect the selector first.',
+      focus: ['spec', 'status'],
+    },
+  ]}
+/>
+
+## Myths and facts
+
+| Common myth | In reality |
+| --- | --- |
+| If apply succeeds, all Pods are up | Only the desired state is recorded. The actual state takes time to catch up |
+| Lack of resources causes an error | No error. Pods wait as Pending and keep retrying until room opens up |
+| Users edit status too | Kubernetes fills status. Users write only spec |
+| A Service finds targets by Pod name | It uses a label selector. New Pods with matching labels join automatically |
+| A wrong selector is rejected on save | It saves fine, with 0 targets |
+
+The control loop actually bringing a Pod back continues in [When a Pod Dies (Self-Healing)](../k8s/self-healing.mdx).
+
+Further reading: [Controllers (Kubernetes docs)](https://kubernetes.io/docs/concepts/architecture/controller/) · [Labels and Selectors](https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/) · [How a Pod Starts](../k8s/pod-startup.mdx) · [When a Pod Dies (Self-Healing)](../k8s/self-healing.mdx)
+
+Next lesson: [Workload Types](./workload-types.mdx)

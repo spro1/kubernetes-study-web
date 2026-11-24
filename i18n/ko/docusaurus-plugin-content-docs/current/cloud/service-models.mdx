@@ -1,0 +1,180 @@
+---
+id: service-models
+title: 누가 어디까지 맡나 (IaaS·PaaS·SaaS)
+sidebar_label: 01 · 누가 어디까지 맡나
+description: 같은 웹 서비스를 온프레미스에서 IaaS·PaaS·SaaS로 옮길 때 우리 팀과 클라우드 사업자의 책임 경계가 계층별로 어떻게 움직이는지 애니메이션으로 따라간다
+hide_table_of_contents: true
+---
+
+# 누가 어디까지 맡나 (IaaS·PaaS·SaaS)
+
+회사 전산실에서 돌던 웹 서비스 하나를 클라우드로 옮긴다. 어떤 방식으로 옮기느냐에 따라 우리 팀이 직접 챙겨야 하는 일이 크게 달라진다. 서비스를 여섯 계층으로 나눠, 책임 경계가 어디로 움직이는지 따라가 본다.
+
+<StepDiagram
+  width={1000}
+  meta={{duration: '약 8분', level: '기초'}}
+  nodes={[
+    {id: 'team', label: '우리 팀', sub: '서비스 운영자', icon: 'user', tone: 'ext', x: 110, y: 90, show: true},
+    {id: 'vendor', label: '사업자', sub: '클라우드 회사', icon: 'cloud', tone: 'cp', x: 110, y: 370},
+    {id: 'app', label: '앱', sub: '우리 코드', icon: 'box', tone: 'app', x: 480, y: 90, show: true},
+    {id: 'data', label: '데이터', sub: '고객 정보·설정', icon: 'db', tone: 'store', x: 800, y: 90, show: true},
+    {id: 'runtime', label: '런타임', sub: '언어·미들웨어', icon: 'layers', tone: 'node', x: 480, y: 230, show: true},
+    {id: 'os', label: '운영체제', sub: '리눅스 등', icon: 'gear', tone: 'node', x: 800, y: 230, show: true},
+    {id: 'virt', label: '가상화', sub: '가상 머신', icon: 'split', tone: 'node', x: 800, y: 370, show: true},
+    {id: 'hw', label: '하드웨어', sub: '서버·네트워크', icon: 'server', tone: 'node', x: 480, y: 370, show: true},
+  ]}
+  metrics={[
+    {id: 'model', label: '운영 방식'},
+    {id: 'mine', label: '직접 관리하는 계층 수'},
+    {id: 'chores', label: '우리 팀의 주된 일'},
+  ]}
+  learn={[
+    {text: '서비스를 하드웨어부터 데이터까지 여섯 계층으로 나눠 보는 법', at: 1},
+    {text: 'IaaS·PaaS·SaaS가 각각 어느 계층까지 넘기는지', at: 6},
+    {text: 'IaaS에서도 운영체제 패치는 우리 몫이라는 것', at: 4},
+    {text: '어떤 방식이든 데이터와 접근 권한은 우리 책임이라는 것', at: 7},
+  ]}
+  steps={[
+    {
+      short: '전산실',
+      kind: '시작',
+      title: '온프레미스에서는 모든 계층이 우리 몫이다',
+      text: [
+        '온프레미스(on-premises)는 회사가 직접 산 서버를 회사 전산실이나 데이터센터에 두고 운영하는 방식이다. 지금 웹 서비스는 이렇게 돌고 있다.',
+        '서버 구매부터 운영체제 설치, 앱 배포, 데이터 백업까지 여섯 계층을 모두 우리 팀이 맡는다.',
+      ],
+      flows: [{from: 'team', to: 'app', label: '모두 직접', type: 'request'}],
+      badges: {app: '우리', data: '우리', runtime: '우리', os: '우리', virt: '우리', hw: '우리'},
+      values: {model: '온프레미스', mine: '6 / 6', chores: '장비 구매부터 전부'},
+    },
+    {
+      short: '계층',
+      kind: '원리',
+      title: '서비스는 여섯 계층이 쌓여 돈다',
+      text: [
+        '맨 아래 하드웨어(서버·네트워크·전기·냉각) 위에 가상화가 한 대를 여러 가상 머신으로 나누고, 그 위에 운영체제, 런타임(프로그램 실행 환경·미들웨어), 앱이 차례로 쌓인다.',
+        '데이터는 앱이 다루는 고객 정보와 설정이다. 아래 계층이 멈추면 그 위는 모두 멈춘다.',
+      ],
+      flows: [
+        {from: 'hw', to: 'virt', label: '위에 얹음', type: 'request'},
+        {from: 'virt', to: 'os', type: 'request'},
+      ],
+      focus: ['hw', 'virt', 'os'],
+    },
+    {
+      short: '부담',
+      kind: '주의',
+      title: '전산실 운영은 미리 사 둬야 하는 일이다',
+      text: [
+        '사용자가 늘 것 같으면 서버를 미리 사서 설치해야 한다. 주문·입고·설치에 시간이 걸려 갑자기 몰리는 수요에는 늦고, 남는 장비는 놀게 된다.',
+        '이렇게 처음에 큰돈을 들여 자산을 사는 비용을 자본 지출(CapEx)이라고 한다. 클라우드는 이것을 쓴 만큼 내는 운영 비용(OpEx)으로 바꾼다.',
+      ],
+      flows: [{from: 'team', to: 'hw', label: '장비 구매', type: 'request'}],
+      focus: ['hw'],
+      status: {hw: 'warn'},
+      values: {chores: {text: '장비 구매·교체', tone: 'bad'}},
+    },
+    {
+      short: 'IaaS',
+      kind: '원리',
+      title: 'IaaS — 하드웨어와 가상화를 빌린다',
+      text: [
+        'IaaS(Infrastructure as a Service, 인프라를 서비스로)는 사업자가 하드웨어와 가상화를 맡고, 우리는 가상 머신을 빌려 쓰는 방식이다. 서버가 필요하면 관리 콘솔이나 API로 몇 분 만에 만든다.',
+        '운영체제부터 위로는 여전히 우리가 설치하고 관리한다. 전산실 서버를 거의 그대로 옮겨 오기 쉬운 방식이다.',
+      ],
+      flows: [
+        {from: 'vendor', to: 'hw', label: '사업자가 운영', type: 'response'},
+        {from: 'vendor', to: 'virt', type: 'response', bend: -0.15},
+      ],
+      focus: ['virt', 'hw'],
+      status: {hw: null},
+      badges: {virt: '사업자', hw: '사업자'},
+      values: {model: 'IaaS', mine: '4 / 6', chores: '운영체제부터 위'},
+    },
+    {
+      short: 'OS 패치',
+      kind: '주의',
+      title: 'IaaS에서도 운영체제 보안 패치는 우리 몫이다',
+      text: [
+        '가상 머신을 빌렸다고 운영체제까지 사업자가 고쳐 주지 않는다. 보안 패치를 미루면 취약점이 그대로 남는다.',
+        '방화벽 규칙, 디스크 백업, 앱 설정도 우리가 정한다. 사업자는 가상 머신이 돌아갈 바닥까지만 책임진다.',
+      ],
+      flows: [{from: 'team', to: 'os', label: 'OS 패치', type: 'request'}],
+      focus: ['os'],
+      status: {os: 'warn'},
+    },
+    {
+      short: 'PaaS',
+      kind: '원리',
+      title: 'PaaS — 코드와 데이터만 올린다',
+      text: [
+        'PaaS(Platform as a Service, 플랫폼을 서비스로)는 운영체제와 런타임까지 사업자가 맡는다. 우리는 코드를 올리고 설정만 고른다. 관리형 데이터베이스, 앱 실행 플랫폼이 여기에 속한다.',
+        '운영체제 패치·런타임 업그레이드를 신경 쓰지 않아도 되는 대신, 사업자가 지원하는 언어·버전 안에서만 고를 수 있다.',
+      ],
+      flows: [
+        {from: 'vendor', to: 'runtime', label: '사업자가 운영', type: 'response'},
+        {from: 'vendor', to: 'os', type: 'response'},
+      ],
+      focus: ['runtime', 'os'],
+      status: {os: null},
+      badges: {runtime: '사업자', os: '사업자'},
+      values: {model: 'PaaS', mine: '2 / 6', chores: '코드·데이터·설정'},
+    },
+    {
+      short: 'SaaS',
+      kind: '원리',
+      title: 'SaaS — 완성된 소프트웨어를 쓴다',
+      text: [
+        'SaaS(Software as a Service, 소프트웨어를 서비스로)는 앱까지 사업자가 만들고 운영한다. 웹 메일이나 협업 도구처럼 가입하고 바로 쓴다.',
+        '우리 팀은 프로그램을 만들지 않는다. 대신 누가 쓰는지(계정), 무엇을 볼 수 있는지(권한), 어떤 데이터를 넣는지는 여전히 우리가 정한다.',
+      ],
+      flows: [
+        {from: 'vendor', to: 'app', label: '앱까지 운영', type: 'response'},
+        {from: 'team', to: 'data', label: '계정·권한', type: 'request', bend: 0.08},
+      ],
+      focus: ['app', 'data'],
+      badges: {app: '사업자'},
+      values: {model: 'SaaS', mine: '1 / 6', chores: '계정·권한·데이터'},
+    },
+    {
+      short: '데이터',
+      kind: '주의',
+      title: '데이터와 접근 설정은 끝까지 우리 책임이다',
+      text: [
+        '저장소를 실수로 "누구나 읽기"로 열어 고객 정보가 새어 나갔다면, 그것은 사업자 장애가 아니라 우리 설정 문제다. 이렇게 책임을 나눠 지는 것을 공동 책임 모델이라고 한다.',
+        '사업자는 클라우드 자체(건물·장비·가상화)를 지키고, 사용자는 클라우드 안에 올린 것(데이터·계정·설정)을 지킨다.',
+      ],
+      flows: [{from: 'team', to: 'data', label: '공개 범위', type: 'request', bend: 0.08}],
+      focus: ['data'],
+      status: {data: 'error'},
+      badges: {data: '우리'},
+      values: {chores: {text: '접근 설정 실수 = 우리 책임', tone: 'bad'}},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '넘길수록 편하지만 고를 수 있는 것도 줄어든다',
+      text: [
+        '온프레미스 → IaaS → PaaS → SaaS로 갈수록 직접 관리할 계층이 6 → 4 → 2 → 1로 줄어든다. 대신 운영체제 버전이나 세부 설정을 고를 자유도 함께 줄어든다.',
+        '쿠버네티스도 이 경계 위에 놓인다. 서버에 직접 설치하면 노드와 컨트롤 플레인까지 우리가 맡고, 관리형 쿠버네티스(예: EKS·GKE·AKS)를 쓰면 컨트롤 플레인은 사업자가, 워크로드와 권한 설정은 우리가 맡는다.',
+      ],
+      keyIdea: 'IaaS → PaaS → SaaS로 갈수록 사업자가 맡는 층이 늘어난다. 그래도 데이터 공개 범위·계정·권한은 어느 모델에서나 우리 몫이다.',
+      focus: ['team', 'data'],
+      status: {data: 'ok'},
+      values: {chores: '방식마다 다름'},
+    },
+  ]}
+/>
+
+## 방식별 책임 경계 한눈에
+
+| 운영 방식 | 우리가 관리 | 사업자가 관리 | 예 (AWS · Azure · GCP) |
+| --- | --- | --- | --- |
+| 온프레미스 | 하드웨어부터 데이터까지 전부 | 없음 | 회사 전산실·데이터센터 |
+| IaaS | 운영체제·런타임·앱·데이터 | 하드웨어·가상화 | EC2 · Virtual Machines · Compute Engine |
+| PaaS | 앱·데이터 | 하드웨어·가상화·운영체제·런타임 | Elastic Beanstalk · App Service · App Engine |
+| SaaS | 데이터·계정·권한 | 앱까지 전부 | Microsoft 365 · Google Workspace 같은 업무용 서비스 |
+
+더 읽을거리: [클라우드 컴퓨팅 정의 (NIST SP 800-145)](https://csrc.nist.gov/pubs/sp/800/145/final) · [공동 책임 모델 (AWS)](https://aws.amazon.com/compliance/shared-responsibility-model/) · [서버 한 대에서 컨테이너까지](../basic/server-to-container.mdx)
+
+다음 레슨: [VPC 안에서 요청이 가는 길](./vpc-request.mdx)

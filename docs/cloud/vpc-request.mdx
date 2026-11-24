@@ -1,0 +1,187 @@
+---
+id: vpc-request
+title: How a Request Travels Inside a VPC
+sidebar_label: 02 · Requests Inside a VPC
+description: Follow in animation how an internet user's request passes the internet gateway, a load balancer in a public subnet, and servers and a DB in a private subnet and back, and what security groups and the NAT gateway do
+hide_table_of_contents: true
+---
+
+# How a Request Travels Inside a VPC
+
+A user visits an online store running in the cloud. The request enters your private network in the cloud (a VPC) and passes several gates. Follow what is exposed to the internet and what is hidden, and what each gate lets through or blocks. The basic flow of a request inside a data center comes first in [When You Type an Address](../basic/web-request.mdx).
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~9 min', level: 'Beginner'}}
+  groups={[
+    {label: 'VPC · your private network', x: 180, y: 15, w: 810, h: 425, tone: 'plain'},
+    {label: 'Public subnet', x: 390, y: 45, w: 240, h: 365, tone: 'mgmt'},
+    {label: 'Private subnet', x: 660, y: 45, w: 320, h: 365, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'user', label: 'User', sub: 'Internet browser', icon: 'browser', tone: 'ext', x: 85, y: 110, show: true},
+    {id: 'repo', label: 'External repo', sub: 'Packages · patches', icon: 'archive', tone: 'ext', x: 85, y: 360},
+    {id: 'igw', label: 'Inet GW', sub: 'Front door', icon: 'gate', tone: 'cp', size: 'sm', x: 302, y: 230, show: true},
+    {id: 'lb', label: 'Load balancer', sub: 'Public address', icon: 'split', tone: 'cp', x: 520, y: 120, show: true},
+    {id: 'nat', label: 'NAT GW', sub: 'Outbound only', icon: 'route', tone: 'cp', x: 520, y: 350},
+    {id: 'app', label: 'Web server', sub: 'No public IP', icon: 'server', tone: 'app', x: 820, y: 120, show: true},
+    {id: 'db', label: 'DB', sub: 'Orders · members', icon: 'db', tone: 'store', x: 820, y: 350, show: true},
+  ]}
+  metrics={[
+    {id: 'path', label: 'Passing through'},
+    {id: 'sg', label: 'Security group verdict'},
+    {id: 'exposed', label: 'Exposed to internet'},
+  ]}
+  learn={[
+    {text: 'What a VPC, a subnet and an internet gateway each are', at: 1},
+    {text: 'What separates public and private subnets', at: 2},
+    {text: 'How security groups open doors with allow rules only', at: 3},
+    {text: 'Responses to allowed requests go out automatically (stateful)', at: 5},
+    {text: 'How private servers get updates through a NAT gateway', at: 7},
+  ]}
+  steps={[
+    {
+      short: 'Request',
+      kind: '시작',
+      title: 'A user visits the store address',
+      text: [
+        'The user\'s browser sends a request to the store address. The store lives in a VPC (Virtual Private Cloud) inside the cloud.',
+        'A VPC is a network carved out of the cloud for you alone. Inside, it is split again into smaller zones called subnets.',
+      ],
+      flows: [{from: 'user', to: 'igw', label: 'HTTPS request', type: 'request'}],
+      focus: ['igw'],
+      values: {path: 'Internet', sg: '-', exposed: 'LB address'},
+    },
+    {
+      short: 'Front door',
+      kind: '원리',
+      title: 'The internet gateway is the VPC front door',
+      text: [
+        'An internet gateway is the door connecting a VPC and the internet. Without it, nothing in the VPC can talk to the internet.',
+        'The request passes the door and goes to the load balancer, which has a public address.',
+      ],
+      flows: [{from: 'igw', to: 'lb', label: 'To public addr', type: 'request'}],
+      focus: ['lb'],
+      values: {path: 'Internet gateway'},
+    },
+    {
+      short: 'Two zones',
+      kind: '원리',
+      title: 'Public subnets and private subnets',
+      text: [
+        'If a subnet\'s route table says "the way to the internet = the internet gateway", it is a public subnet. If not, it is private. The load balancer goes in public, the web server and DB in private.',
+        'The load balancer takes the request and passes it to the web server behind it. The web server has no public IP, so the internet cannot reach it directly.',
+      ],
+      flows: [{from: 'lb', to: 'app', label: 'To server', type: 'request'}],
+      focus: ['lb', 'app'],
+      values: {path: 'Public → private'},
+    },
+    {
+      short: 'Security grp',
+      kind: '원리',
+      title: 'Only what the security group allows gets in',
+      text: [
+        'A security group is a virtual firewall attached to each server. You write only allow rules, and everything not listed is blocked.',
+        'The web server\'s security group says "allow only port 443 from the load balancer". This request matches the rule and passes.',
+      ],
+      keyIdea: 'If a rule\'s source is "the load balancer\'s security group" instead of an IP, you do not need to edit the rule when the load balancer address changes.',
+      flows: [{from: 'lb', to: 'app', label: '443 allowed', type: 'request'}],
+      focus: ['app'],
+      status: {app: 'ok'},
+      badges: {app: 'Only 443'},
+      values: {path: 'Web server', sg: {text: 'Allowed', tone: 'good'}},
+    },
+    {
+      short: 'DB query',
+      kind: '원리',
+      title: 'The web server reads orders from the DB',
+      text: [
+        'The web server asks the DB for order data. The DB security group is narrowed to "allow only the DB port from the web server security group".',
+        'The DB never meets the load balancer or the user directly. Only the web server can talk to it.',
+      ],
+      flows: [
+        {from: 'app', to: 'db', label: 'Query orders', type: 'request'},
+        {from: 'db', to: 'app', type: 'response'},
+      ],
+      focus: ['db'],
+      status: {db: 'ok'},
+      values: {path: 'DB'},
+    },
+    {
+      short: 'Response',
+      kind: '원리',
+      title: 'The response goes back the way it came, automatically',
+      text: [
+        'Security groups remember state (stateful). If an inbound request was allowed, the response on that connection goes out without a separate outbound rule.',
+        'A network ACL, applied per subnet, does not remember state, so you must open both the inbound and the outbound direction.',
+      ],
+      flows: [
+        {from: 'app', to: 'lb', type: 'response'},
+        {from: 'lb', to: 'igw', type: 'response'},
+        {from: 'igw', to: 'user', label: '200 OK', type: 'response'},
+      ],
+      focus: ['user'],
+      badges: {app: null},
+      values: {path: 'Response back', sg: {text: 'Response auto-allowed', tone: 'good'}},
+    },
+    {
+      short: 'Blocked',
+      kind: '주의',
+      title: 'Direct attempts to reach the server are blocked',
+      text: [
+        'Someone on the internet tries to reach port 22 (SSH remote access) on the web server directly. The web server is in a private subnet, so there is no path from the internet in the first place.',
+        'Even if a path were open, the security group has no rule allowing 22, so it is blocked. You are guarded at both the road and the door.',
+      ],
+      flows: [{from: 'igw', to: 'app', label: 'Port 22 blocked', type: 'request'}],
+      focus: ['app'],
+      status: {app: 'warn'},
+      badges: {app: '22 denied'},
+      values: {sg: {text: 'Denied', tone: 'bad'}},
+    },
+    {
+      short: 'NAT',
+      kind: '원리',
+      title: 'Servers get updates through the NAT gateway',
+      text: [
+        'The web server needs to download OS security patches. A private subnet cannot go straight out the internet gateway, so the NAT gateway in the public subnet goes out and fetches them for it.',
+        'A NAT gateway only lets out connections started from inside. It does not accept connections started from outside, so the server stays hidden.',
+      ],
+      flows: [
+        {from: 'app', to: 'nat', label: 'Get patches', type: 'request'},
+        {from: 'nat', to: 'igw', type: 'request'},
+        {from: 'igw', to: 'repo', type: 'request'},
+      ],
+      focus: ['nat'],
+      status: {app: 'ok'},
+      badges: {app: null},
+      values: {path: 'NAT → internet', sg: 'Outbound allowed'},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Only the load balancer is exposed',
+      text: [
+        'All the internet sees is the load balancer\'s public address. The web server and DB hide in private subnets, and security groups open only the ports needed.',
+        'When servers need to go out, the NAT gateway handles it. Keeping separate inbound and outbound paths is the basic pattern of cloud network design.',
+      ],
+      keyIdea: 'The way in is internet gateway → load balancer in a public subnet → server in a private subnet. The way out is the NAT gateway. Keep what is exposed and which ports are open to a minimum.',
+      focus: ['lb', 'app', 'db'],
+      values: {path: '-', sg: '-'},
+    },
+  ]}
+/>
+
+## Names for each gate (AWS · Azure · GCP)
+
+| Concept | AWS | Azure | GCP |
+| --- | --- | --- | --- |
+| Your private network | VPC | Virtual Network (VNet) | VPC network |
+| Internet door | Internet Gateway | Default internet route, no separate resource | Default internet gateway route |
+| Outbound-only address translation | NAT Gateway | NAT Gateway | Cloud NAT |
+| Stateful firewall in front of servers | Security Group | Network Security Group (NSG) | VPC firewall rules |
+| Load balancer | Elastic Load Balancing | Load Balancer · Application Gateway | Cloud Load Balancing |
+
+Further reading: [What is Amazon VPC? (AWS)](https://docs.aws.amazon.com/vpc/latest/userguide/what-is-amazon-vpc.html) · [Security groups (AWS)](https://docs.aws.amazon.com/vpc/latest/userguide/vpc-security-groups.html) · [Service (Kubernetes docs)](https://kubernetes.io/docs/concepts/services-networking/service/) · [When You Type an Address](../basic/web-request.mdx)
+
+Next lesson: [When One Availability Zone Goes Down](./az-failover.mdx)

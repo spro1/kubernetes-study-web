@@ -1,0 +1,197 @@
+---
+id: storage-volume
+title: How Storage Gets Attached (PVC·PV)
+sidebar_label: 07 · How Storage Gets Attached
+description: Follow, step by step, how a PVC request becomes a PV through a StorageClass and a CSI provisioner, how it is attached and mounted on the node where the pod runs, and why a PVC stays Pending
+hide_table_of_contents: true
+---
+
+# How Storage Gets Attached (PVC·PV)
+
+We request 10Gi of storage for a database pod. Let's follow how one request turns into a real disk attached to the pod, and why the data survives when the pod goes away.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~10 min', level: 'Intermediate'}}
+  groups={[
+    {label: 'node-2', x: 790, y: 23, w: 200, h: 258, tone: 'biz', from: 4},
+  ]}
+  nodes={[
+    {id: 'user', label: 'Operator', sub: 'Requests a PVC', icon: 'user', tone: 'ext', x: 85, y: 90, w: 140, show: true},
+    {id: 'pvc', label: 'PVC', sub: '10Gi · RWO', icon: 'ticket', tone: 'store', x: 350, y: 90},
+    {id: 'sc', label: 'StorageClass', sub: 'fast · spec', icon: 'book', tone: 'cp', x: 345, y: 350, w: 160, show: true},
+    {id: 'prov', label: 'Provisioner', sub: 'CSI controller', icon: 'gear', tone: 'cp', x: 620, y: 350, show: true},
+    {id: 'storage', label: 'Storage', sub: 'Real disk', icon: 'disk', tone: 'ext', x: 890, y: 370, w: 140, show: true},
+    {id: 'pv', label: 'PV', sub: 'Actual 10Gi', icon: 'archive', tone: 'store', x: 620, y: 90},
+    {id: 'agent', label: 'kubelet', sub: 'CSI node', icon: 'agent', tone: 'node', x: 890, y: 225},
+    {id: 'pod', label: 'db', sub: 'Pod', icon: 'pod', tone: 'app', size: 'sm', x: 890, y: 85},
+  ]}
+  metrics={[
+    {id: 'pvc', label: 'PVC status'},
+    {id: 'pv', label: 'PV'},
+    {id: 'pod', label: 'Pod status'},
+    {id: 'data', label: 'Data'},
+  ]}
+  learn={[
+    {text: 'How PVC, PV, and StorageClass relate', at: 0},
+    {text: 'How a provisioner creates a disk', at: 2},
+    {text: 'Who does attach and who does mount', at: 5},
+    {text: 'Why data survives when the pod is deleted', at: 6},
+    {text: 'Common reasons a PVC stays Pending', at: 7},
+  ]}
+  steps={[
+    {
+      short: 'Request',
+      kind: '시작',
+      title: 'Request storage with a PVC',
+      text: [
+        'The operator creates a PVC (a storage request): "10Gi, read-write from one node (RWO), class fast".',
+        'No real space exists yet. The PVC waits quietly as Pending until a matching PV appears.',
+      ],
+      keyIdea: 'A PVC is the request, a PV is the actual space, and a StorageClass is the spec for how that space gets created.',
+      flows: [{from: 'user', to: 'pvc', label: 'create PVC', type: 'request'}],
+      focus: ['pvc'],
+      status: {pvc: 'warn'},
+      badges: {pvc: 'Pending'},
+      values: {pvc: 'Pending', pv: 'None', pod: 'None', data: 'None'},
+    },
+    {
+      short: 'Read spec',
+      kind: '원리',
+      title: 'The provisioner notices the new request',
+      text: [
+        'StorageClass fast says "space of this class is created by this provisioner". A provisioner is the program that actually creates storage.',
+        'Here the controller of a CSI driver (the standard interface connecting storage to Kubernetes) does the job. It watches for new PVCs and reads the class spec.',
+      ],
+      flows: [
+        {from: 'pvc', to: 'prov', label: 'new PVC', type: 'watch'},
+        {from: 'sc', to: 'prov', label: 'read spec', type: 'watch'},
+      ],
+      focus: ['prov', 'sc'],
+    },
+    {
+      short: 'Create disk',
+      kind: '원리',
+      title: 'A real disk is created on the storage system',
+      text: [
+        'The provisioner asks the storage system to "create a 10Gi volume", and the system returns the new volume ID.',
+        'If the StorageClass name is wrong, the provisioner is missing, or the system is out of capacity, it stops here and the PVC stays Pending.',
+      ],
+      flows: [
+        {from: 'prov', to: 'storage', label: 'create 10Gi', type: 'request'},
+        {from: 'storage', to: 'prov', label: 'volume ID', type: 'response'},
+      ],
+      focus: ['storage'],
+      badges: {storage: '10Gi'},
+    },
+    {
+      short: 'Binding',
+      kind: '원리',
+      title: 'A PV is created and paired with the PVC',
+      text: [
+        'The provisioner creates a PV pointing at that volume and pairs it with the requesting PVC (binding). The PVC status becomes Bound.',
+        'Once made, this pairing lasts until the PVC is deleted. No other request can take this PV.',
+      ],
+      changes: ['+ PV created (10Gi)', '~ PVC Pending → Bound'],
+      flows: [
+        {from: 'prov', to: 'pv', label: 'create PV', type: 'request'},
+        {from: 'pv', to: 'pvc', label: 'Bound', type: 'response'},
+      ],
+      focus: ['pv', 'pvc'],
+      status: {pvc: 'ok'},
+      badges: {pvc: 'Bound'},
+      values: {pvc: {text: 'Bound', tone: 'good'}, pv: '10Gi'},
+    },
+    {
+      short: 'Schedule',
+      kind: '원리',
+      title: 'A pod using this PVC is placed on node-2',
+      text: [
+        'Create a db pod that says "mount the PVC db-data at /var/lib/db". The scheduler places it on node-2.',
+        'The kubelet on node-2 looks at the pod\'s PVC and checks which volume its bound PV refers to.',
+      ],
+      flows: [{from: 'pv', to: 'agent', label: 'check volume', type: 'watch'}],
+      focus: ['agent', 'pod'],
+      status: {pod: 'warn'},
+      values: {pod: 'ContainerCreating'},
+    },
+    {
+      short: 'Attach',
+      kind: '원리',
+      title: 'Attach to the node, then mount inside the pod',
+      text: [
+        'First the control plane side (the attach-detach controller and CSI) attaches the volume to node-2. Next, the kubelet and CSI node plugin on node-2 format it if it is new and mount it where the pod will use it. Only then does the container start.',
+        'If attach fails, the pod events show FailedAttachVolume. If mount fails, they show FailedMount. Either way the pod stays in ContainerCreating.',
+      ],
+      keyIdea: 'RWO means it attaches to "one node" only. If the volume is still attached to another node, it cannot attach to the new node and waits.',
+      flows: [
+        {from: 'storage', to: 'agent', label: 'attach', type: 'request'},
+        {from: 'agent', to: 'pod', label: 'mount', type: 'request'},
+      ],
+      focus: ['pod'],
+      status: {pod: 'ok'},
+      badges: {pod: 'Running'},
+      values: {pod: {text: 'Running', tone: 'good'}, data: 'Writing'},
+    },
+    {
+      short: 'Replace pod',
+      kind: '원리',
+      title: 'The data survives when the pod is deleted',
+      text: [
+        'The data was written to the volume on the storage system, not inside the pod. When the pod is deleted, the PVC, PV, and volume all remain.',
+        'When a new pod uses the same PVC, the same volume is attached and mounted again, and the old data is read as is.',
+      ],
+      keyIdea: 'Deleting a PVC deletes data, not deleting a pod. If the reclaim policy is Delete, deleting the PVC also deletes the PV and the actual data.',
+      changes: ['- Old db pod deleted', '+ New db pod · same PVC'],
+      flows: [
+        {from: 'storage', to: 'agent', label: 're-attach', type: 'request'},
+        {from: 'agent', to: 'pod', label: 'mount', type: 'request'},
+      ],
+      focus: ['storage', 'pod'],
+      badges: {storage: 'Data intact', pod: 'New pod'},
+      values: {data: {text: 'Intact', tone: 'good'}},
+    },
+    {
+      short: 'Pending',
+      kind: '문제',
+      title: 'When a PVC will not leave Pending',
+      text: [
+        'If a new PVC has a typo in its StorageClass name, the provisioner is not installed, or it asks for an unsupported access mode, the PVC stays Pending with no error.',
+        'The cause appears in the PVC events. But with a WaitForFirstConsumer class, which creates space after the pod is placed on a node, Pending is normal until a pod exists.',
+      ],
+      keyIdea: 'Even with no matching PV or StorageClass, the PVC is created and stays Pending. Check the Events in kubectl describe pvc for the reason.',
+      flows: [
+        {from: 'user', to: 'pvc', label: 'class typo', type: 'request'},
+        {from: 'pvc', to: 'sc', label: 'no such class', type: 'watch'},
+      ],
+      focus: ['pvc', 'sc'],
+      status: {pvc: 'error', sc: 'warn'},
+      badges: {pvc: 'Pending', storage: null, pod: null},
+      values: {pvc: {text: 'Pending', tone: 'bad'}},
+    },
+    {
+      short: 'Recap',
+      kind: '정리',
+      title: 'The request and the actual space are separate',
+      text: [
+        'The operator requested only what was needed with a PVC. The StorageClass and provisioner created the space. Attaching happened on the node where the pod ran.',
+        'Because the space lives outside the pod, data survives pod changes. But deleting the PVC can delete the data too, depending on the reclaim policy.',
+      ],
+      keyIdea: 'A PVC is the request, a PV is the actual space. Before deleting a PVC, check RECLAIM POLICY in kubectl get pv to see whether the data will remain.',
+      focus: ['pvc', 'pv'],
+    },
+  ]}
+/>
+
+## Symptoms by the stage that stopped
+
+| Stage that stopped | What kubectl get shows | Where to look |
+| --- | --- | --- |
+| 3. Create disk | PVC stays `Pending` | PVC events — StorageClass name typo, provisioner not installed, out of capacity, unsupported access mode |
+| 6. Attach to node | Pod stays in `ContainerCreating` | `FailedAttachVolume` in pod events — often the volume is still attached to another node |
+| 6. Mount | Pod stays in `ContainerCreating` | `FailedMount` in pod events — permissions, file system errors, NFS server unreachable |
+
+Further reading: [Persistent Volumes](https://kubernetes.io/docs/concepts/storage/persistent-volumes/) · [Storage Classes](https://kubernetes.io/docs/concepts/storage/storage-classes/)
+
+Next lesson: [Finding Services by Name (Service·DNS)](./service-dns.mdx)

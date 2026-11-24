@@ -1,0 +1,197 @@
+---
+id: ingress
+title: Ingress Rules and TLS
+sidebar_label: 02 · Ingress Rules and TLS
+description: Animated walkthrough of Ingress host and path rules, the IngressClass that picks the implementation, TLS termination with a certificate Secret, and common failures
+hide_table_of_contents: true
+---
+
+# Ingress Rules and TLS
+
+Create one Ingress rule. Follow **who reads it**, **where HTTPS is decrypted**, and when connections silently fail with no error.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~10 min', level: 'Beginner'}}
+  groups={[
+    {label: 'Kubernetes cluster', x: 250, y: 30, w: 725, h: 410, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'user', label: 'Browser', sub: 'HTTPS request', icon: 'browser', tone: 'ext', x: 110, y: 245, show: true},
+    {id: 'ctrl', label: 'Controller', sub: 'Ingress impl.', icon: 'gate', tone: 'node', x: 430, y: 245},
+    {id: 'rule', label: 'Ingress', sub: 'Host · path rules', icon: 'book', tone: 'store', x: 430, y: 105},
+    {id: 'cls', label: 'IngressClass', sub: 'Picks the handler', icon: 'gear', tone: 'cp', x: 430, y: 375, w: 160},
+    {id: 'secret', label: 'TLS Secret', sub: 'Cert · key', icon: 'shield', tone: 'store', x: 670, y: 375, w: 140},
+    {id: 'web', label: 'web', sub: 'Path /', icon: 'target', tone: 'cp', size: 'sm', w: 110, x: 895, y: 120, show: true},
+    {id: 'api', label: 'api', sub: 'Path /api', icon: 'target', tone: 'cp', size: 'sm', w: 110, x: 895, y: 245, show: true},
+    {id: 'cart', label: 'cart', sub: 'No Service', icon: 'target', tone: 'cp', size: 'sm', w: 110, x: 895, y: 370},
+  ]}
+  metrics={[
+    {id: 'path', label: 'Request'},
+    {id: 'match', label: 'Matched rule'},
+    {id: 'backend', label: 'Target Service'},
+    {id: 'tls', label: 'HTTPS'},
+  ]}
+  learn={[
+    {text: 'An Ingress is a rule document; the controller receives requests', at: 1},
+    {text: 'How host and path rules pick a Service', at: 2},
+    {text: 'The IngressClass picks which implementation handles it', at: 3},
+    {text: 'TLS termination: decrypting HTTPS at the entry with a Secret\'s certificate', at: 5},
+    {text: 'How missing backends and overlapping rules fail with no error', at: 7},
+  ]}
+  steps={[
+    {
+      short: 'Start',
+      kind: '시작',
+      title: 'One external request, many internal Services',
+      text: [
+        'A browser opens https://shop.example.com/api/orders. Inside the cluster are two Services: web serves pages and api serves data.',
+        'Instead of opening an external address per Service, you want one entry that routes by domain and path. Those routing rules are an Ingress.',
+      ],
+      flows: [{from: 'user', to: 'ctrl', label: 'HTTPS', type: 'request'}],
+      focus: ['user', 'ctrl'],
+      values: {path: 'shop.example.com/api/orders'},
+    },
+    {
+      short: 'Rules',
+      kind: '원리',
+      title: 'An Ingress is a rule document; the controller receives requests',
+      text: [
+        'An Ingress does not handle requests itself. It is only a document with rules such as "on shop.example.com, / goes to web and /api goes to api".',
+        'The controller (the ingress implementation) installed in the cluster actually receives requests and forwards them by the rules. It keeps watching Ingress rules and applies them.',
+      ],
+      keyIdea: 'Creating an Ingress with kubectl apply only stores a document. If you cannot connect, check whether the problem is in the rules or the controller.',
+      flows: [{from: 'rule', to: 'ctrl', label: 'Apply rules', type: 'watch'}],
+      focus: ['rule'],
+    },
+    {
+      short: 'Path routing',
+      kind: '원리',
+      title: 'Match the host, then pick a Service by path',
+      text: [
+        'The controller first finds rules whose host (shop.example.com) matches, then looks at the path. With the Prefix path type, /api also matches /api/orders.',
+        'When both / and /api match, the longer path /api wins. So /api/orders goes to api, and everything else goes to web.',
+      ],
+      flows: [
+        {from: 'user', to: 'ctrl', label: '/api/orders', type: 'request'},
+        {from: 'ctrl', to: 'api', label: '/api', type: 'request'},
+        {from: 'ctrl', to: 'web', label: 'Other /', type: 'request'},
+      ],
+      focus: ['ctrl', 'api'],
+      values: {match: '/api (Prefix)', backend: 'api'},
+    },
+    {
+      short: 'Class',
+      kind: '원리',
+      title: 'The IngressClass picks the implementation',
+      text: [
+        'A cluster can have several ingress implementations. The Ingress\'s ingressClassName field decides which implementation handles these rules.',
+        'There are many implementations (for example, ingress-nginx, Traefik, Istio). Run kubectl get ingressclass to see which classes exist and which is the default. Here, the Istio ingress handles it.',
+      ],
+      flows: [{from: 'cls', to: 'ctrl', label: 'Handler', type: 'watch'}],
+      focus: ['cls', 'ctrl'],
+      badges: {cls: 'Istio ingress'},
+    },
+    {
+      short: 'No handler',
+      kind: '주의',
+      title: 'If the class points to no implementation, nothing happens',
+      text: [
+        'If the implementation the IngressClass points to is not in the cluster, the rules exist but nobody reads them. No address is assigned and no requests are forwarded.',
+        'If the ADDRESS column in kubectl get ingress is empty, suspect the handler first. A typo in the class name or a dead controller pod looks the same.',
+      ],
+      keyIdea: 'Correct rules are useless without a handler. An Ingress with no address may be a handler problem, not a rule error.',
+      flows: [{from: 'user', to: 'ctrl', label: 'No response', type: 'request'}],
+      focus: ['cls', 'ctrl'],
+      status: {ctrl: 'error'},
+      badges: {cls: null, ctrl: 'No handler'},
+      values: {match: {text: 'No reader', tone: 'bad'}, backend: '—'},
+    },
+    {
+      short: 'TLS',
+      kind: '원리',
+      title: 'The entry decrypts HTTPS with the Secret\'s certificate',
+      text: [
+        'In the Ingress tls field, list the host and a Secret name (a Secret holds sensitive values such as certificates). The controller decrypts HTTPS with that Secret\'s certificate and key.',
+        'This is called TLS termination. Encryption ends at the entry, and the decrypted request goes to the Service by the rules. Certificates expire, so renewal becomes an ops task.',
+      ],
+      keyIdea: 'The Secret must be of type kubernetes.io/tls and live in the same namespace as the Ingress. Renewal is often automated with a tool such as cert-manager.',
+      flows: [
+        {from: 'secret', to: 'ctrl', label: 'Certificate', type: 'watch'},
+        {from: 'user', to: 'ctrl', label: 'HTTPS', type: 'request'},
+        {from: 'ctrl', to: 'api', label: 'Decrypted', type: 'request'},
+      ],
+      focus: ['secret', 'ctrl'],
+      status: {ctrl: 'ok'},
+      badges: {ctrl: null, secret: 'shop-tls'},
+      values: {tls: {text: 'Terminated at entry', tone: 'good'}, match: '/api (Prefix)', backend: 'api'},
+    },
+    {
+      short: 'No backend',
+      kind: '문제',
+      title: 'An Ingress is created even if it points to a missing Service',
+      text: [
+        'The /cart rule points to a cart Service that does not exist. The Ingress is created without error, and the problem shows up only as a failed connection when someone visits.',
+        'The Service a rule points to must actually exist in the same namespace, and it must select pods.',
+      ],
+      flows: [
+        {from: 'user', to: 'ctrl', label: '/cart', type: 'request'},
+        {from: 'ctrl', to: 'cart', label: 'No target', type: 'request'},
+      ],
+      focus: ['cart'],
+      status: {cart: 'error'},
+      badges: {secret: null},
+      values: {path: 'shop.example.com/cart', match: '/cart', backend: {text: 'cart (missing)', tone: 'bad'}},
+    },
+    {
+      short: 'Overlap',
+      kind: '문제',
+      title: 'Overlapping path rules send everything one way',
+      text: [
+        'If you wrote the /api rule as Exact, /api/orders does not match /api. The / rule catches it instead and sends it to web.',
+        'If paths that should go to different places all go to one, check that each rule is its own entry, and that the path types (Prefix, Exact) and ranges do not overlap.',
+      ],
+      flows: [
+        {from: 'user', to: 'ctrl', label: '/api/orders', type: 'request'},
+        {from: 'ctrl', to: 'web', label: '/ catches it', type: 'request'},
+      ],
+      focus: ['rule', 'web'],
+      status: {cart: 'off', rule: 'warn'},
+      badges: {rule: 'Exact /api'},
+      values: {path: 'shop.example.com/api/orders', match: {text: '/ (unintended)', tone: 'bad'}, backend: {text: 'web', tone: 'bad'}},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Rules, class, and TLS must all line up',
+      text: [
+        'An Ingress is made of host and path rules, an IngressClass that picks the implementation, and a certificate Secret for HTTPS. If any one is off, connections can fail with no error.',
+        'The Ingress API is frozen and gets no new features. If you need richer routing rules, look at the Gateway API too.',
+      ],
+      keyIdea: 'An Ingress works only when rules, class, and TLS Secret all line up. Many failures raise no error at creation, so follow each rule to its Service and that Service\'s endpoints.',
+      flows: [
+        {from: 'ctrl', to: 'api', label: '/api', type: 'request'},
+        {from: 'ctrl', to: 'web', label: '/', type: 'request'},
+      ],
+      focus: ['rule', 'cls', 'secret'],
+      status: {rule: null},
+      badges: {rule: null},
+      values: {match: {text: '/api (Prefix)', tone: 'good'}, backend: {text: 'api', tone: 'good'}},
+    },
+  ]}
+/>
+
+## Try it yourself
+
+```bash
+kubectl get ingressclass                             # Available handlers and the default class
+kubectl get ingress shop -o wide                     # CLASS, HOSTS, ADDRESS
+kubectl describe ingress shop                        # Backends per path and events
+kubectl get endpointslices -l kubernetes.io/service-name=api   # Does the backend Service select pods?
+kubectl get secret shop-tls -o jsonpath='{.type}'    # Is it kubernetes.io/tls?
+```
+
+Further reading: [Ingress](https://kubernetes.io/docs/concepts/services-networking/ingress/) · [Ingress controllers](https://kubernetes.io/docs/concepts/services-networking/ingress-controllers/) · [Gateway API](https://kubernetes.io/docs/concepts/services-networking/gateway/)
+
+Next lesson: [Service Mesh ① Sidecars and Mutual Authentication](./mesh-sidecar.mdx)

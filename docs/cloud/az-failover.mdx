@@ -1,0 +1,185 @@
+---
+id: az-failover
+title: When One Availability Zone Goes Down
+sidebar_label: 03 · When One AZ Goes Down
+description: Follow in animation what happens to load balancer health checks, standby replica promotion, and RPO and RTO when one of two availability zones holding servers and a primary/standby DB goes down
+hide_table_of_contents: true
+---
+
+# When One Availability Zone Goes Down
+
+The store's servers and DB are split across two availability zones within one region (an area where the provider groups its data centers). On the day one zone goes down entirely, follow what happens automatically and what is lost.
+
+<StepDiagram
+  width={1000}
+  meta={{duration: '~9 min', level: 'Beginner'}}
+  groups={[
+    {label: 'Availability zone A', x: 480, y: 15, w: 505, h: 200, tone: 'biz'},
+    {label: 'Availability zone B', x: 480, y: 235, w: 505, h: 200, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'user', label: 'User', sub: 'Order request', icon: 'browser', tone: 'ext', x: 90, y: 225, show: true},
+    {id: 'lb', label: 'Load balancer', sub: 'Spreads to 2 zones', icon: 'split', tone: 'cp', x: 330, y: 225, show: true},
+    {id: 'webA', label: 'Web server A', sub: 'Zone A', icon: 'server', tone: 'app', x: 600, y: 120, show: true},
+    {id: 'webB', label: 'Web server B', sub: 'Zone B', icon: 'server', tone: 'app', x: 600, y: 340, show: true},
+    {id: 'dbA', label: 'DB primary', sub: 'Read · write', icon: 'db', tone: 'store', x: 860, y: 120, show: true},
+    {id: 'dbB', label: 'DB standby', sub: 'Replica', icon: 'db', tone: 'store', x: 860, y: 340, show: true},
+  ]}
+  metrics={[
+    {id: 'servers', label: 'Servers taking requests'},
+    {id: 'rpo', label: 'Data lost (RPO)'},
+    {id: 'rto', label: 'Downtime (RTO)'},
+  ]}
+  learn={[
+    {text: 'What an availability zone is and why to spread across two or more', at: 0},
+    {text: 'How the primary DB replicates data to a standby', at: 1},
+    {text: 'How a load balancer drops a dead server via health checks', at: 3},
+    {text: 'Standby promotion, and what RPO and RTO mean', at: 6},
+    {text: 'What changes if everything is in one zone', at: 7},
+  ]}
+  steps={[
+    {
+      short: 'Two zones',
+      kind: '시작',
+      title: 'Spread servers and DB across two availability zones',
+      text: [
+        'An availability zone (AZ) is a group of data centers within a region with its own power, cooling and network. Zones are physically apart, so a power cut or fire in one does not spread to another.',
+        'There is one web server per zone. The DB has a primary in zone A and a standby in zone B. The load balancer spreads requests across both web servers.',
+      ],
+      flows: [
+        {from: 'user', to: 'lb', type: 'request'},
+        {from: 'lb', to: 'webA', type: 'request'},
+        {from: 'lb', to: 'webB', type: 'request'},
+      ],
+      status: {webA: 'ok', webB: 'ok', dbA: 'ok', dbB: 'ok'},
+      values: {servers: '2 / 2', rpo: '-', rto: '-'},
+    },
+    {
+      short: 'Replicate',
+      kind: '원리',
+      title: 'Writes to the primary are replicated to the standby',
+      text: [
+        'Both web servers write orders to the primary DB. The primary replicates each write to the standby. The standby takes no requests in normal times. It only follows along.',
+        'Multi-AZ setups for managed DBs usually use synchronous replication. The primary says "saved" only after the standby has it too, so confirmed orders survive on the standby even if the primary stops.',
+      ],
+      flows: [
+        {from: 'webA', to: 'dbA', label: 'Write order', type: 'request'},
+        {from: 'webB', to: 'dbA', type: 'request'},
+        {from: 'dbA', to: 'dbB', label: 'Sync replication', type: 'watch'},
+      ],
+      focus: ['dbA', 'dbB'],
+    },
+    {
+      short: 'Zone outage',
+      kind: '장애',
+      title: 'Zone A goes down entirely',
+      text: [
+        'Zone A has a power failure. Web server A and the primary DB stop responding at the same time.',
+        'The load balancer does not know yet. Requests sent to web server A fail, and web server B cannot write to the primary DB either, so orders fail.',
+      ],
+      flows: [
+        {from: 'lb', to: 'webA', label: 'No response', type: 'request'},
+        {from: 'webB', to: 'dbA', label: 'Write fails', type: 'request'},
+      ],
+      focus: ['webA', 'dbA'],
+      status: {webA: 'error', dbA: 'error'},
+      badges: {webA: 'Down', dbA: 'Down'},
+      values: {servers: {text: '2 / 2 (1 not responding)', tone: 'bad'}, rto: {text: 'Outage begins', tone: 'bad'}},
+    },
+    {
+      short: 'Health check',
+      kind: '원리',
+      title: 'The load balancer drops server A via health checks',
+      text: [
+        'At set intervals, the load balancer asks each server "are you alive?". This is a health check. After a set number of consecutive failures, it marks the server unhealthy and stops sending it traffic.',
+        'Detection takes interval × count. Some requests arriving during that time can fail.',
+      ],
+      flows: [
+        {from: 'lb', to: 'webA', label: 'Health check', type: 'watch'},
+        {from: 'lb', to: 'webB', label: 'Healthy', type: 'watch'},
+      ],
+      focus: ['lb'],
+      badges: {webA: 'Removed'},
+      values: {servers: '1 / 2'},
+    },
+    {
+      short: 'Promote',
+      kind: '원리',
+      title: 'The standby DB is promoted to the new primary',
+      text: [
+        'The managed DB service detects that the primary is not responding and raises the standby to be the new primary. This is called promotion, and the whole switch is called failover.',
+        'The app keeps using the same connection address, which now points to the new primary. But dropped connections must be reopened by the app, so it needs retry handling.',
+      ],
+      flows: [{from: 'webB', to: 'dbB', label: 'Write to new', type: 'request'}],
+      focus: ['dbB'],
+      status: {dbB: 'ok'},
+      badges: {dbB: 'Promoted'},
+    },
+    {
+      short: 'RPO',
+      kind: '원리',
+      title: 'RPO: how much data can you afford to lose?',
+      text: [
+        'RPO (Recovery Point Objective) is the maximum window of data you can afford to lose in an outage. If "losing up to the last 5 minutes is acceptable", the RPO is 5 minutes.',
+        'This time it was synchronous replication, so confirmed orders are already on the standby. With asynchronous replication, you could lose a short stretch since the last replication.',
+      ],
+      flows: [{from: 'dbA', to: 'dbB', label: 'Replicated orders', type: 'watch'}],
+      focus: ['dbB'],
+      values: {rpo: {text: 'Near 0 (sync replication)', tone: 'good'}},
+    },
+    {
+      short: 'RTO',
+      kind: '원리',
+      title: 'RTO: how soon must service come back?',
+      text: [
+        'RTO (Recovery Time Objective) is the maximum time allowed for service to come back after it stops.',
+        'This time, the downtime equals the health check detection time plus the DB promotion time. It recovered automatically with no human action.',
+      ],
+      keyIdea: 'RPO is "how much you lose". RTO is "how long you are down". The shorter you make them, the more standby resources you need, and the higher the cost.',
+      flows: [
+        {from: 'user', to: 'lb', type: 'request'},
+        {from: 'lb', to: 'webB', label: 'Order succeeds', type: 'request'},
+      ],
+      focus: ['webB', 'dbB'],
+      values: {rto: {text: 'Auto failover time', tone: 'good'}},
+    },
+    {
+      short: 'One zone',
+      kind: '주의',
+      title: 'If everything were in one zone',
+      text: [
+        'If the servers and DB were all in zone A, the whole service would stop the moment zone A goes down. There is no standby to take over.',
+        'You would have to rebuild from backups kept elsewhere, so the RTO stretches to hours, and everything since the last backup is lost.',
+      ],
+      flows: [{from: 'user', to: 'lb', label: 'All fail', type: 'request'}],
+      focus: ['lb'],
+      values: {servers: {text: '0 (hypothetical)', tone: 'bad'}, rpo: {text: 'All since last backup (hyp.)', tone: 'bad'}, rto: {text: 'Hours (hypothetical)', tone: 'bad'}},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Two zones let you survive a single-zone outage',
+      text: [
+        'Spread across multiple availability zones, health checks and DB promotion hand work over automatically when one zone goes down. When zone A comes back, its DB becomes the new standby.',
+        'The cost is the extra standby resources. To survive an entire region outage, you need a separate disaster recovery (DR) design with replication to another region.',
+      ],
+      keyIdea: 'Spread across multiple availability zones, service continues through one zone\'s outage thanks to health checks and standby promotion. In Kubernetes, check a node\'s zone with the topology.kubernetes.io/zone label and spread Pods evenly across zones.',
+      focus: ['webB', 'dbB'],
+      status: {webA: 'off', dbA: 'off'},
+      badges: {webA: null, dbA: null, dbB: 'Primary'},
+      values: {servers: '1 / 2 (A recovering)', rpo: 'Near 0', rto: 'Auto failover time'},
+    },
+  ]}
+/>
+
+## Failure-handling names (AWS · Azure · GCP)
+
+| Concept | AWS | Azure | GCP |
+| --- | --- | --- | --- |
+| Availability zone | Availability Zone | Availability Zone | Zone |
+| Load balancer health check | Target group health check | Health probe | Health check |
+| Primary/standby DB across zones | RDS Multi-AZ deployment | Zone-redundant high availability (Flexible Server) | Cloud SQL high availability (regional instance) |
+
+Further reading: [Running in multiple zones (Kubernetes docs)](https://kubernetes.io/docs/setup/best-practices/multiple-zones/) · [Pod Topology Spread Constraints](https://kubernetes.io/docs/concepts/scheduling-eviction/topology-spread-constraints/) · [Regions and Availability Zones (AWS)](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/using-regions-availability-zones.html)
+
+Next lesson: [Auto-Scaling VMs (Auto Scaling Groups)](./auto-scaling-group.mdx)

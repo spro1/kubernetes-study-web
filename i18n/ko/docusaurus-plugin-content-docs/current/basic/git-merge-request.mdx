@@ -1,0 +1,189 @@
+---
+id: git-merge-request
+title: 브랜치에서 머지 리퀘스트까지
+sidebar_label: 07 · 머지 리퀘스트
+description: 저장소·커밋·브랜치에서 머지 리퀘스트, 코드 리뷰, 충돌, 태그까지 코드 변경 하나가 기본 줄기에 합쳐지는 과정을 애니메이션으로 따라간다
+hide_table_of_contents: true
+---
+
+# 브랜치에서 머지 리퀘스트까지
+
+CI/CD의 모든 흐름은 Git 저장소에 기록된 변경 하나(커밋)에서 출발한다. 두 개발자가 동시에 작업한 변경이 어떻게 리뷰를 거쳐 기본 줄기에 합쳐지고, 출시 버전 이름표가 붙는지 따라가 본다.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '약 10분', level: '기초'}}
+  groups={[
+    {label: '원격 저장소 (GitLab 등)', x: 240, y: 20, w: 200, h: 400, tone: 'mgmt'},
+  ]}
+  nodes={[
+    {id: 'devA', label: '개발자 A', sub: '로그인 화면', icon: 'user', tone: 'ext', x: 90, y: 95, w: 140, show: true},
+    {id: 'devB', label: '개발자 B', sub: '같은 화면 수정', icon: 'user', tone: 'ext', x: 90, y: 345, w: 140, show: true},
+    {id: 'feat', label: 'feat-login', sub: 'A의 브랜치', icon: 'split', tone: 'node', x: 340, y: 95},
+    {id: 'main', label: 'main', sub: '기본 줄기', icon: 'git', tone: 'store', x: 340, y: 220, show: true},
+    {id: 'featB', label: 'feat-copy', sub: 'B의 브랜치', icon: 'split', tone: 'node', x: 340, y: 345},
+    {id: 'mr', label: 'MR', sub: '머지 리퀘스트', icon: 'ticket', tone: 'cp', x: 600, y: 95, w: 160},
+    {id: 'ci', label: '자동 검사', sub: '빌드·테스트', icon: 'hammer', tone: 'cp', x: 850, y: 95},
+    {id: 'rev', label: '리뷰어', sub: '동료 개발자', icon: 'user', tone: 'ext', x: 850, y: 250},
+    {id: 'tag', label: 'v1.4.2', sub: '태그', icon: 'book', tone: 'store', x: 600, y: 345},
+  ]}
+  metrics={[
+    {id: 'branch', label: 'A의 작업 위치'},
+    {id: 'mr', label: '머지 리퀘스트'},
+    {id: 'main', label: 'main 상태'},
+  ]}
+  learn={[
+    {text: '로컬 저장소와 원격 저장소의 차이', at: 0},
+    {text: '커밋 하나에 담기는 정보', at: 2},
+    {text: '머지 리퀘스트와 코드 리뷰가 하는 일', at: 4},
+    {text: '충돌이 왜 생기고 누가 푸는지', at: 6},
+    {text: 'Git 태그와 이미지 태그의 차이', at: 7},
+  ]}
+  steps={[
+    {
+      short: '복제',
+      kind: '시작',
+      title: '원격 저장소를 내 PC로 복제한다',
+      text: [
+        '저장소(repository)는 파일과 그 변경 기록 전체를 담은 단위다. 팀이 함께 보는 정본은 서버의 원격 저장소에 있고, 각자의 PC에는 로컬 저장소가 있다.',
+        '개발자 A는 처음 한 번 clone으로 원격 저장소를 통째로 내려받는다. 이후 새 기록은 pull로 가져온다.',
+      ],
+      keyIdea: '"기획서_최종_진짜최종" 같은 파일 이름 대신, 누가 언제 무엇을 왜 바꿨는지가 기록으로 남는다.',
+      flows: [{from: 'main', to: 'devA', label: 'clone', type: 'response'}],
+      focus: ['main', 'devA'],
+      values: {branch: 'main', mr: '없음', main: '정상'},
+    },
+    {
+      short: '브랜치',
+      kind: '원리',
+      title: '기본 줄기에서 작업 줄기를 갈라낸다',
+      text: [
+        '브랜치(branch)는 같은 저장소 안에서 갈라져 나온 작업 줄기다. A는 main을 건드리지 않고 feat-login 브랜치에서 로그인 화면을 고친다.',
+        '그동안 B도 feat-copy 브랜치에서 다른 작업을 한다. 서로의 미완성 작업이 섞이지 않는다.',
+      ],
+      flows: [{from: 'main', to: 'feat', label: '갈라짐', type: 'request'}],
+      focus: ['feat'],
+      values: {branch: 'feat-login'},
+    },
+    {
+      short: '커밋',
+      kind: '원리',
+      title: '변경을 커밋으로 확정하고 올린다',
+      text: [
+        '커밋(commit)은 "이 시점에 이 파일들을 이렇게 바꿨다"는 기록 하나다. 커밋 해시, 작성자·시각, 커밋 메시지, 변경 내용, 바로 앞 커밋이 함께 담긴다.',
+        'A는 PC에서 커밋한 뒤 push로 원격 저장소의 feat-login에 올린다. 커밋은 앞 커밋을 가리키며 끊기지 않는 사슬이 된다.',
+      ],
+      keyIdea: '좋은 커밋 메시지는 무엇을 왜 바꿨는지 한 줄로 알려 준다. "수정" 같은 메시지는 나중에 쓸모가 없다.',
+      changes: ['+ 커밋 1a5f75f "로그인 오류 문구 추가"'],
+      flows: [{from: 'devA', to: 'feat', label: 'push', type: 'request'}],
+      focus: ['feat'],
+      badges: {feat: '1a5f75f'},
+    },
+    {
+      short: 'MR 생성',
+      kind: '원리',
+      title: '바로 합치지 않고 "합쳐 달라"고 요청한다',
+      text: [
+        'A는 feat-login을 main에 바로 합치지 않고 머지 리퀘스트(Merge Request, MR)를 만든다. GitHub에서는 풀 리퀘스트(PR)라고 부르는 같은 개념이다.',
+        '머지 리퀘스트에는 바뀐 줄, 리뷰 의견, 자동 검사 결과, 승인 여부가 한곳에 모인다.',
+      ],
+      flows: [{from: 'feat', to: 'mr', label: '합쳐 주세요', type: 'request'}],
+      focus: ['mr'],
+      values: {mr: '열림'},
+    },
+    {
+      short: '검사·리뷰',
+      kind: '원리',
+      title: '자동 검사와 동료 리뷰를 거친다',
+      text: [
+        '머지 리퀘스트가 열리면 빌드와 테스트가 통과하는지 자동 검사(CI)가 돌고, 동료가 바뀐 줄마다 의견을 단다.',
+        '수정이 필요하면 A가 브랜치에 커밋을 더 올리고, 같은 머지 리퀘스트에서 다시 확인받는다.',
+      ],
+      keyIdea: '코드 리뷰는 결함 찾기 말고도 "누가 무엇을 왜 바꿨는지"를 팀에 공유하고 결정의 근거를 남긴다.',
+      flows: [
+        {from: 'mr', to: 'ci', label: '빌드·테스트', type: 'request'},
+        {from: 'mr', to: 'rev', label: '리뷰 요청', type: 'request'},
+        {from: 'rev', to: 'mr', label: '승인', type: 'response', bend: 0.15},
+      ],
+      focus: ['ci', 'rev'],
+      status: {ci: 'ok', rev: 'ok'},
+      badges: {ci: '통과'},
+      values: {mr: {text: '검사 통과 · 승인', tone: 'good'}},
+    },
+    {
+      short: '머지',
+      kind: '원리',
+      title: '승인되면 기본 줄기에 합친다',
+      text: [
+        '머지(merge)는 한 브랜치의 변경을 다른 브랜치에 합치는 일이다. feat-login의 커밋이 main에 들어간다.',
+        '리뷰 의견과 검사 결과는 머지 리퀘스트에 기록으로 남는다. 나중에 결정의 근거를 찾을 때 여기를 본다.',
+      ],
+      flows: [{from: 'mr', to: 'main', label: '머지', type: 'request'}],
+      focus: ['main'],
+      status: {ci: null, rev: null},
+      badges: {ci: null, main: 'A 변경 반영'},
+      values: {branch: 'main에 합쳐짐', mr: '머지됨'},
+    },
+    {
+      short: '충돌',
+      kind: '문제',
+      title: '같은 줄을 다르게 고치면 충돌이 난다',
+      text: [
+        'B도 feat-copy를 올려 합치려 한다. 그런데 B는 A가 고친 파일의 같은 줄을 다르게 고쳤다. Git은 어느 쪽이 맞는지 판단하지 못한다.',
+        '이것이 충돌(conflict)이다. 오류가 아니라 사람의 판단이 필요하다는 신호다. B가 두 내용을 보고 어떻게 합칠지 직접 정한다.',
+      ],
+      keyIdea: '같은 영역을 오래 따로 고칠수록 충돌이 잦아진다. 브랜치는 짧게 유지하고 자주 합치는 편이 낫다.',
+      flows: [
+        {from: 'devB', to: 'featB', label: 'push', type: 'request'},
+        {from: 'featB', to: 'main', label: '머지 시도', type: 'request'},
+      ],
+      focus: ['featB'],
+      status: {featB: 'error'},
+      badges: {featB: '충돌', main: null},
+      values: {main: {text: 'B 변경 보류', tone: 'bad'}},
+    },
+    {
+      short: '태그',
+      kind: '원리',
+      title: '출시 시점의 커밋에 이름표를 단다',
+      text: [
+        '충돌을 풀고 B의 변경까지 합친 뒤, 출시할 커밋에 v1.4.2라는 태그(tag)를 단다. 커밋 해시는 기억하기 어렵기 때문이다.',
+        'Git 태그는 커밋에 붙는 이름표다. 컨테이너 이미지의 태그는 이미지 버전에 붙는 이름표로, 붙는 대상이 다르다.',
+      ],
+      changes: ['~ feat-copy 충돌 해결 후 main에 머지', '+ 태그 v1.4.2'],
+      flows: [{from: 'main', to: 'tag', label: '이름표', type: 'request'}],
+      focus: ['tag'],
+      status: {featB: 'ok', tag: 'ok'},
+      badges: {featB: null, tag: '출시본'},
+      values: {main: {text: 'v1.4.2 출시', tone: 'good'}},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '변경 하나가 기록으로 이어진다',
+      text: [
+        '브랜치에서 커밋하고, 머지 리퀘스트로 검사와 리뷰를 거쳐, 기본 줄기에 합치고, 출시 시점에 태그를 단다.',
+        '각 단계가 기록으로 남아 "이번 배포에 무엇이 들어갔나"를 나중에도 되짚을 수 있다.',
+      ],
+      keyIdea: '커밋은 변경 기록, 브랜치는 갈라진 작업 줄기, 머지 리퀘스트는 합치기 전 검토, 태그는 릴리스 이름표다. 배포된 이미지가 어느 커밋에서 나왔는지 늘 따라갈 수 있어야 한다.',
+      focus: ['main', 'mr'],
+    },
+  ]}
+/>
+
+## 낱말과 직접 해 보기
+
+| 낱말 | 한 줄 뜻 | 확인하는 방법 |
+| --- | --- | --- |
+| 커밋 해시 | 커밋마다 붙는 고유 문자열 | `git log --oneline`으로 앞 7자리 짧은 해시와 메시지를 본다 |
+| 브랜치 | 갈라져 나온 작업 줄기 | `git switch -c feature/login`으로 만들고 `git branch`로 목록을 본다 |
+| 머지 리퀘스트 | 합쳐 달라는 요청과 리뷰 기록 | GitLab은 머지 리퀘스트, GitHub는 풀 리퀘스트라고 부른다. 변경(diff)은 `git diff main`으로 미리 본다 |
+| 충돌 | 같은 줄을 다르게 고친 상태 | 오류가 아니다. `git status`로 충돌 파일을 찾아 사람이 고친 뒤 커밋한다 |
+| 태그 | 커밋에 붙인 이름표 | `git tag v1.2.0`으로 붙인다. 이미지 태그와는 다른 것이다 |
+
+이미지 태그에 커밋 해시나 Git 태그를 넣어 두면, 클러스터에서 도는 이미지가 어느 코드에서 나왔는지 바로 따라갈 수 있다. 지금 도는 이미지는 `kubectl describe deployment <이름>`의 Image 항목에서 본다.
+
+더 읽을거리: [Pro Git (한국어)](https://git-scm.com/book/ko/v2) · [GitLab 머지 리퀘스트](https://docs.gitlab.com/ee/user/project/merge_requests/) · [GitHub 풀 리퀘스트](https://docs.github.com/ko/pull-requests)
+
+다음 레슨: [파이프라인이 도는 순서](./cicd-pipeline.mdx)

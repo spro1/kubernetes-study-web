@@ -1,0 +1,187 @@
+---
+id: mesh-sidecar
+title: 서비스 메시 ① 사이드카와 상호 인증
+sidebar_label: 03 · 사이드카와 mTLS
+description: 네임스페이스에 Istio 사이드카 주입을 켜면 파드마다 사이드카 프록시가 붙고, istiod가 나눠 준 인증서로 프록시끼리 서로 확인하며 지표를 남기는 과정을 애니메이션으로 따라간다
+hide_table_of_contents: true
+---
+
+# 서비스 메시 ① 사이드카와 상호 인증
+
+여기서는 대표적인 서비스 메시인 Istio를 예로 든다. 네임스페이스에 설정 하나를 켜면 앱 코드를 고치지 않아도 통신이 **암호화되고, 상대를 확인하고, 기록으로 남는다**. 그 뒤에서 무슨 일이 일어나는지 따라가 본다.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '약 10분', level: '중급'}}
+  groups={[
+    {label: 'shop 네임스페이스', x: 20, y: 165, w: 888, h: 140, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'web', label: 'web 앱', sub: '보내는 쪽', icon: 'pod', tone: 'app', x: 120, y: 240, show: true},
+    {id: 'webpx', label: '프록시', sub: 'Envoy', icon: 'shield', tone: 'node', size: 'sm', x: 337, y: 240},
+    {id: 'apipx', label: '프록시', sub: 'Envoy', icon: 'shield', tone: 'node', size: 'sm', x: 591, y: 240},
+    {id: 'api', label: 'api 앱', sub: '받는 쪽', icon: 'pod', tone: 'app', x: 808, y: 240, show: true},
+    {id: 'istiod', label: 'istiod', sub: '설정·인증서', icon: 'gear', tone: 'cp', x: 464, y: 75},
+    {id: 'ops', label: '운영자', sub: 'kubectl·Kiali', icon: 'browser', tone: 'ext', x: 120, y: 385},
+    {id: 'kiali', label: 'Kiali', sub: '통신 그래프', icon: 'chart', tone: 'store', x: 464, y: 385},
+    {id: 'legacy', label: '미적용 파드', sub: '사이드카 없음', icon: 'pod', tone: 'app', x: 808, y: 385},
+  ]}
+  metrics={[
+    {id: 'enc', label: '통신 암호화'},
+    {id: 'who', label: '상대 신원 확인'},
+    {id: 'obs', label: '통신 관측'},
+  ]}
+  learn={[
+    {text: 'Istio Injection이 네임스페이스 단위 설정이고 새 파드부터 적용된다는 것', at: 1},
+    {text: '모든 통신이 사이드카 프록시를 거치는 구조', at: 3},
+    {text: 'istiod(컨트롤 플레인)와 프록시(데이터 플레인)의 역할 차이', at: 4},
+    {text: 'mTLS가 앱 코드 수정 없이 암호화·신원 확인을 하는 원리', at: 5},
+    {text: '사이드카가 없는 파드와 통신할 때 생기는 빈틈', at: 7},
+  ]}
+  steps={[
+    {
+      short: '메시 없음',
+      kind: '시작',
+      title: '메시가 없으면 앱끼리 직접 통신한다',
+      text: [
+        'shop 네임스페이스의 web 앱이 api 앱을 부른다. 요청은 서비스 주소를 거쳐 상대 파드로 바로 간다.',
+        '암호화, 상대가 진짜 api인지 확인, 호출 기록은 모두 앱 코드가 알아서 해야 한다. 앱마다 방식이 제각각이 되기 쉽다.',
+      ],
+      flows: [{from: 'web', to: 'api', label: '평문 요청', type: 'request'}],
+      values: {enc: {text: '없음 (평문)', tone: 'bad'}, who: {text: '앱이 직접', tone: 'bad'}, obs: '앱마다 따로'},
+    },
+    {
+      short: '주입 켜기',
+      kind: '원리',
+      title: '네임스페이스에 Istio Injection을 켠다',
+      text: [
+        'kubectl label namespace shop istio-injection=enabled로 네임스페이스에 레이블을 단다. 사이드카(sidecar — 앱 옆에 붙는 보조 컨테이너) 자동 주입을 켜는 설정이다.',
+        '이 설정은 앞으로 만들어지는 파드에 적용된다. 이미 돌고 있던 파드에는 사이드카가 붙지 않으므로 파드를 다시 만들어야 한다.',
+      ],
+      keyIdea: '메시 적용 단위는 네임스페이스다. 레이블이 없는 구획에서는 메시 자원을 만들어도 통신에 반영되지 않는다.',
+      flows: [{from: 'ops', to: 'web', label: '주입 켜기', type: 'request'}],
+      focus: ['ops'],
+    },
+    {
+      short: '사이드카',
+      kind: '원리',
+      title: '파드가 새로 뜰 때 프록시가 함께 들어간다',
+      text: [
+        '파드를 다시 만들면 Istio의 컨트롤 플레인인 istiod가 파드 정의에 프록시 컨테이너(Envoy)를 하나 더 끼워 넣는다. 앱 컨테이너와 프록시가 한 파드 안에서 함께 돈다.',
+        '앱 이미지와 코드는 그대로다. 파드 목록에서는 컨테이너 수가 하나 늘어난 것으로 보인다(예: 1/1 → 2/2).',
+      ],
+      changes: ['+ web 파드에 프록시 컨테이너', '+ api 파드에 프록시 컨테이너'],
+      flows: [
+        {from: 'istiod', to: 'webpx', label: '주입', type: 'request'},
+        {from: 'istiod', to: 'apipx', label: '주입', type: 'request'},
+      ],
+      focus: ['webpx', 'apipx'],
+      status: {webpx: 'ok', apipx: 'ok'},
+    },
+    {
+      short: '프록시 경유',
+      kind: '원리',
+      title: '모든 통신이 사이드카 프록시를 거친다',
+      text: [
+        'web 앱은 예전처럼 api 주소로 요청을 보낼 뿐이다. 그 요청을 web 쪽 프록시가 가로채 api 쪽 프록시에 넘기고, api 쪽 프록시가 api 앱에 건넨다.',
+        '들어오는 통신과 나가는 통신이 모두 프록시를 지나므로, 통신 규칙은 앱이 아니라 프록시에 걸면 된다.',
+      ],
+      keyIdea: '요청마다 프록시를 두 번 거치므로 지연과 자원 사용이 조금 늘어난다. 메시가 공짜는 아니다.',
+      flows: [
+        {from: 'web', to: 'webpx', type: 'request'},
+        {from: 'webpx', to: 'apipx', label: '프록시끼리', type: 'request'},
+        {from: 'apipx', to: 'api', type: 'request'},
+      ],
+    },
+    {
+      short: '설정 배포',
+      kind: '원리',
+      title: 'istiod가 규칙과 인증서를 나눠 준다',
+      text: [
+        'istiod는 요청을 직접 나르지 않는다. 가상 서비스·트래픽 정책 같은 규칙을 모든 프록시에 배포하고, 각 프록시에 신분증 역할을 하는 인증서를 발급한다.',
+        '이렇게 규칙을 정하는 층을 컨트롤 플레인, 실제 요청을 나르는 프록시들을 데이터 플레인이라고 부른다.',
+      ],
+      flows: [
+        {from: 'istiod', to: 'webpx', label: '설정·인증서', type: 'watch'},
+        {from: 'istiod', to: 'apipx', type: 'watch'},
+      ],
+      focus: ['istiod'],
+      badges: {istiod: '컨트롤 플레인'},
+    },
+    {
+      short: 'mTLS',
+      kind: '원리',
+      title: '프록시끼리 서로 인증서를 확인하고 암호화한다',
+      text: [
+        '두 프록시는 연결할 때 서로 인증서를 보여 주고 확인한다. 이것을 상호 인증(mTLS — 양쪽이 서로 인증서를 확인하는 암호화 통신)이라고 한다.',
+        '확인이 끝나면 둘 사이 구간이 암호화된다. 앱은 여전히 평문으로 보내고 받지만, 파드 밖으로 나가는 구간은 암호문이다.',
+      ],
+      keyIdea: '바깥에서 들어오는 HTTPS(TLS)와는 별개의 층이다. mTLS는 클러스터 안 파드 사이 구간을 지킨다.',
+      flows: [
+        {from: 'webpx', to: 'apipx', label: 'mTLS', type: 'request'},
+        {from: 'apipx', to: 'webpx', type: 'response'},
+      ],
+      focus: ['webpx', 'apipx'],
+      badges: {istiod: null},
+      values: {enc: {text: '자동 암호화', tone: 'good'}, who: {text: '인증서로 확인', tone: 'good'}},
+    },
+    {
+      short: '관측',
+      kind: '원리',
+      title: '프록시가 남긴 지표로 트래픽 그래프를 그린다',
+      text: [
+        '모든 요청이 프록시를 지나므로 프록시가 요청 수·지연·실패를 기록한다. 이 지표를 모아 Kiali가 서비스 사이 호출 관계를 그림으로 만든다.',
+        '지표는 Prometheus에 모이고 Kiali가 그것을 읽는다. Prometheus가 없거나 사이드카가 붙지 않았으면 그래프가 비어 있다.',
+      ],
+      keyIdea: '게이트웨이·가상 서비스·트래픽 정책을 하나도 만들지 않아도 트래픽 관측은 된다. 메시 자원은 통신을 제어할 때 만든다.',
+      flows: [
+        {from: 'webpx', to: 'kiali', label: '지표', type: 'watch'},
+        {from: 'apipx', to: 'kiali', type: 'watch'},
+        {from: 'kiali', to: 'ops', label: '통신 그래프', type: 'response'},
+      ],
+      focus: ['kiali', 'ops'],
+      values: {obs: {text: '트래픽 그래프', tone: 'good'}},
+    },
+    {
+      short: '미적용 파드',
+      kind: '주의',
+      title: '사이드카가 없는 파드와의 통신은 따로 따져야 한다',
+      text: [
+        '주입 레이블이 없는 다른 네임스페이스의 파드에는 프록시가 없다. 인증서가 없으니 mTLS를 할 수 없고 평문으로 요청을 보낸다.',
+        'Istio는 기본으로 평문과 mTLS를 둘 다 받는 허용(PERMISSIVE) 모드이고, 엄격(STRICT) 모드로 바꾸면 평문 요청을 거절한다. 모드는 PeerAuthentication 자원으로 정한다. 평문으로 부르는 파드가 남았는지 확인한 뒤 엄격 모드로 바꾼다.',
+      ],
+      keyIdea: '메시 지표는 메시가 적용된 워크로드만 자세히 보인다. 그래프에 빈 곳이 있으면 먼저 사이드카가 붙었는지 본다.',
+      flows: [{from: 'legacy', to: 'apipx', label: '평문 요청', type: 'request'}],
+      focus: ['legacy'],
+      status: {legacy: 'warn'},
+      values: {enc: {text: '미적용 구간은 평문', tone: 'bad'}},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '사이드카가 통신을 맡고, istiod가 사이드카를 맡는다',
+      text: [
+        '네임스페이스에 주입을 켜면 파드마다 프록시가 붙고 모든 통신이 프록시를 거친다. istiod는 규칙과 인증서를 나눠 주고, 프록시끼리는 mTLS로 서로 확인하며 지표를 남긴다.',
+        '암호화와 관측은 주입만으로 시작된다. 게이트웨이·가상 서비스·트래픽 정책 같은 메시 자원은 통신을 제어할 때 더한다.',
+      ],
+      keyIdea: '메시는 앱 옆의 프록시가 통신을 맡는 구조다. 주입은 네임스페이스 레이블로 켜고 새 파드부터 붙는다. 규칙이 안 먹거나 그래프가 비면 파드의 READY가 2/2인지부터 본다.',
+      focus: ['webpx', 'apipx', 'istiod'],
+      status: {legacy: null},
+    },
+  ]}
+/>
+
+## 직접 확인해 보기
+
+```bash
+kubectl label namespace shop istio-injection=enabled   # 사이드카 자동 주입 켜기
+kubectl get namespace -L istio-injection               # 어느 구획에 켜져 있는지
+kubectl rollout restart deployment -n shop             # 기존 파드를 다시 만들어 사이드카 붙이기
+kubectl get pods -n shop                               # READY 2/2 이면 프록시가 붙은 것
+kubectl get peerauthentication -A                      # mTLS 모드(PERMISSIVE·STRICT)
+```
+
+더 읽을거리: [Istio 개념](https://istio.io/latest/docs/concepts/) · [Istio 보안(mTLS)](https://istio.io/latest/docs/concepts/security/) · [Istio 관측](https://istio.io/latest/docs/concepts/observability/) · [Kiali](https://kiali.io/) · [네트워크 정책](../k8s/network-policy.mdx)
+
+다음 레슨: [서비스 메시 ② 트래픽 나누기](./mesh-traffic.mdx)

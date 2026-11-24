@@ -1,0 +1,164 @@
+---
+id: job-cronjob
+title: Run Once and Finish (Job · CronJob)
+sidebar_label: 11 · Run Once and Finish
+description: Follow how a Job creates a Pod, watches it to completion, and retries on failure, and how a CronJob creates Jobs on a schedule and handles overlapping runs and history.
+hide_table_of_contents: true
+---
+
+# Run Once and Finish (Job · CronJob)
+
+A program that builds a monthly report does not need to stay up. It just needs to run once and finish. Follow the Job that handles this kind of work, and the CronJob that stamps out Jobs on a schedule.
+
+<StepDiagram
+  meta={{duration: '~10 min', level: 'Beginner'}}
+  nodes={[
+    {id: 'user', label: 'User', sub: 'kubectl', icon: 'user', tone: 'ext', x: 130, y: 110, show: true},
+    {id: 'cron', label: 'CronJob', sub: 'daily 02:00', icon: 'bell', tone: 'cp', x: 130, y: 330},
+    {id: 'job', label: 'Job', sub: 'monthly report', icon: 'gear', tone: 'cp', x: 440, y: 110},
+    {id: 'job2', label: 'Job · 02:00', sub: 'scheduled run', icon: 'gear', tone: 'cp', x: 440, y: 330, w: 160},
+    {id: 'pod1', label: 'pod-1', sub: '1st try', icon: 'pod', tone: 'app', size: 'sm', x: 760, y: 60},
+    {id: 'pod2', label: 'pod-2', sub: 'retry', icon: 'pod', tone: 'app', size: 'sm', x: 760, y: 170},
+    {id: 'pod3', label: 'pod', sub: '02:00 run', icon: 'pod', tone: 'app', size: 'sm', x: 760, y: 330},
+  ]}
+  metrics={[
+    {id: 'state', label: 'Job status'},
+    {id: 'fail', label: 'Failures / limit'},
+    {id: 'runs', label: 'CronJob runs'},
+  ]}
+  learn={[
+    {text: 'How a Job creates a Pod and watches it to completion', at: 1},
+    {text: 'How retries up to backoffLimit work', at: 2},
+    {text: 'A CronJob does no work itself; it stamps out Jobs', at: 4},
+    {text: 'The concurrency policy for overlapping runs', at: 5},
+  ]}
+  steps={[
+    {
+      short: 'Submit',
+      kind: '시작',
+      title: 'Hand finite work to a Job',
+      text: [
+        'The user submits a Job that builds the monthly report. A Job is a one-off run that ends once its work is done.',
+        'This Job says "done after one success (completions: 1)" and "retry up to 3 times on failure (backoffLimit: 3)".',
+      ],
+      flows: [{from: 'user', to: 'job', label: 'submit Job', type: 'request'}],
+      focus: ['job'],
+      values: {state: 'not started', fail: '0 / 3'},
+    },
+    {
+      short: 'Create Pod',
+      kind: '원리',
+      title: 'The Job creates a Pod to do the work',
+      text: [
+        'The Job does not do the work itself. It creates a Pod, gives it the work, and watches how the Pod ends.',
+        'A Job’s Pod has restartPolicy Never or OnFailure. That is what sets it apart from a Deployment’s Pod, which must stay up.',
+      ],
+      flows: [{from: 'job', to: 'pod1', label: 'create Pod', type: 'request'}],
+      focus: ['pod1'],
+      status: {pod1: 'warn'},
+      badges: {pod1: 'Running'},
+      values: {state: 'running'},
+    },
+    {
+      short: 'Retry',
+      kind: '문제',
+      title: 'If the Pod fails, a new Pod retries',
+      text: [
+        'pod-1 exited with an error. The Job detects the failure and creates pod-2 to do the same work again.',
+        'The wait before each retry grows a little longer. The failed pod-1 is not deleted, so you can still read its logs.',
+      ],
+      keyIdea: 'Once failures exceed backoffLimit, the Job stops retrying and ends as Failed. If unset, the default is 6.',
+      flows: [
+        {from: 'pod1', to: 'job', label: 'failure seen', type: 'watch'},
+        {from: 'job', to: 'pod2', label: 'create again', type: 'request'},
+      ],
+      focus: ['pod1', 'pod2'],
+      status: {pod1: 'error', pod2: 'warn'},
+      badges: {pod1: 'Error', pod2: 'Running'},
+      values: {fail: {text: '1 / 3', tone: 'bad'}},
+    },
+    {
+      short: 'Complete',
+      kind: '원리',
+      title: 'When the Pod exits cleanly, the Job completes',
+      text: [
+        'pod-2 finished its work and exited cleanly. The success count reached completions (1), so the Job becomes Complete.',
+        'The finished Pod stays as Completed. It does not restart and uses no more resources.',
+      ],
+      keyIdea: 'A Deployment aims to "keep running"; a Job aims to "finish successfully". For a Job, exiting is normal.',
+      flows: [{from: 'pod2', to: 'job', label: 'exited OK', type: 'watch'}],
+      focus: ['job'],
+      status: {pod2: 'ok', job: 'ok'},
+      badges: {pod2: 'Completed', job: 'done 1/1'},
+      values: {state: {text: 'Complete', tone: 'good'}},
+    },
+    {
+      short: 'CronJob',
+      kind: '원리',
+      title: 'A CronJob stamps out a Job on each schedule',
+      text: [
+        'A CronJob holds a schedule as a cron expression such as "0 2 * * *". Every day at 02:00 it creates a new Job.',
+        'The CronJob itself does no work. The Job it creates makes a Pod and watches it to completion, exactly as before.',
+      ],
+      flows: [
+        {from: 'cron', to: 'job2', label: 'create at 02:00', type: 'request'},
+        {from: 'job2', to: 'pod3', label: 'create Pod', type: 'request'},
+      ],
+      focus: ['cron', 'job2'],
+      status: {pod3: 'warn'},
+      badges: {pod3: 'Running'},
+      values: {runs: '1'},
+    },
+    {
+      short: 'Overlap',
+      kind: '주의',
+      title: 'The next run is due before the last one finished',
+      text: [
+        'With lots of data, the 02:00 run is still going at 02:00 the next day. What happens now is set by concurrencyPolicy.',
+        'Allow (the default) creates another Job to run alongside, Forbid skips this run, and Replace deletes the running Job and starts a new one.',
+      ],
+      keyIdea: 'Two runs editing the same data at once can corrupt the result. If runs must not overlap, choose Forbid or Replace.',
+      flows: [{from: 'cron', to: 'job2', label: 'next schedule', type: 'watch'}],
+      focus: ['cron', 'job2'],
+      badges: {job2: 'still running', cron: 'check policy'},
+      values: {runs: 'run 2 due'},
+    },
+    {
+      short: 'History',
+      kind: '원리',
+      title: 'Finished Jobs are kept only up to a limit',
+      text: [
+        'A long-lived CronJob would pile up Jobs on every run. So by default it keeps 3 successful and 1 failed Job and deletes the oldest first.',
+        'For Jobs you create yourself, set ttlSecondsAfterFinished and the Job is deleted with its Pods that long after finishing. Otherwise it stays until you delete it.',
+      ],
+      keyIdea: 'Deleting history also removes that Job’s Pods and logs. If you need the cause of a failure, look before it is cleaned up.',
+      flows: [{from: 'cron', to: 'job2', label: 'prune history', type: 'request'}],
+      focus: ['cron'],
+      status: {job: 'gone', pod1: 'gone', pod2: 'gone'},
+      badges: {cron: 'keep 3 ok · 1 failed'},
+    },
+    {
+      short: 'Recap',
+      kind: '정리',
+      title: 'A workload where finishing is normal',
+      text: [
+        'A Job creates Pods, watches them to completion, and retries up to backoffLimit on failure. A CronJob creates such a Job on every schedule.',
+        'Logs live in the Pods the Job created, not in the Job itself. Read them with kubectl logs job/NAME or by Pod name.',
+      ],
+      keyIdea: 'A Job watches to completion and retries on failure; a CronJob creates Jobs on a schedule. To confirm a schedule actually ran, check LAST SCHEDULE in kubectl get cronjob and the Job’s COMPLETIONS.',
+      focus: ['cron', 'job2'],
+    },
+  ]}
+/>
+
+## Concurrency policy at a glance
+
+| `concurrencyPolicy` | When the previous run is still going | Good for |
+| --- | --- | --- |
+| `Allow` (default) | Creates a new Job that runs alongside | Runs that do not affect each other |
+| `Forbid` | Skips this scheduled run | Work on the same data that must not overlap |
+| `Replace` | Deletes the running Job and starts a new one | Work where only the latest run matters |
+
+Further reading: [Jobs](https://kubernetes.io/docs/concepts/workloads/controllers/job/) · [CronJob](https://kubernetes.io/docs/concepts/workloads/controllers/cron-jobs/)
+
+Next lesson: [Which Node Gets the Pod (Scheduling)](./scheduling.mdx)

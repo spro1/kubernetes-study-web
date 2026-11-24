@@ -1,0 +1,180 @@
+---
+id: priority-preemption
+title: Priority and Preemption
+sidebar_label: 08 · Priority and Preemption
+description: Follow how a high-priority Pod evicts lower-priority Pods when there is no room, how the evicted Pod shuts down gracefully and goes Pending, why PDBs are honored only on a best-effort basis, and system priority classes, step by step with animation
+hide_table_of_contents: true
+---
+
+# Priority and Preemption
+
+When nodes are full, a new Pod usually waits in Pending ([Which Node Gets the Pod (Scheduling)](../k8s/scheduling.mdx)). But what if it is an important Pod that must not wait? Let's follow priority and preemption, which decide **who to keep alive first** when resources run short.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~10 min', level: 'Advanced'}}
+  groups={[
+    {label: 'node-1 · full', x: 480, y: 40, w: 480, h: 390, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'newpod', label: 'payment', sub: 'high priority', icon: 'pod', tone: 'app', x: 95, y: 110, show: true},
+    {id: 'pc', label: 'Priority', sub: 'PriorityClass', icon: 'layers', tone: 'cp', x: 95, y: 330, show: true},
+    {id: 'sched', label: 'Scheduler', sub: 'picks Pod node', icon: 'target', tone: 'cp', x: 340, y: 110, show: true},
+    {id: 'pdb', label: 'PDB', sub: 'batch min 1', icon: 'shield', tone: 'cp', x: 340, y: 330},
+    {id: 'lowA', label: 'batch-a', sub: 'low · 100', icon: 'pod', tone: 'app', size: 'sm', x: 580, y: 130, show: true},
+    {id: 'lowB', label: 'batch-b', sub: 'low · 100', icon: 'pod', tone: 'app', size: 'sm', x: 790, y: 130, show: true},
+    {id: 'web', label: 'web', sub: 'equal · 100000', icon: 'pod', tone: 'app', size: 'sm', w: 128, x: 580, y: 260, show: true},
+    {id: 'sys', label: 'coredns', sub: 'system top', icon: 'pod', tone: 'app', size: 'sm', x: 790, y: 260, show: true},
+    {id: 'paid', label: 'payment', sub: 'running', icon: 'pod', tone: 'app', size: 'sm', x: 685, y: 375},
+  ]}
+  metrics={[
+    {id: 'pay', label: 'payment'},
+    {id: 'batch', label: 'batch-a'},
+    {id: 'room', label: 'node-1 free room'},
+  ]}
+  learn={[
+    {text: 'Priority is a number; higher goes first', at: 0},
+    {text: 'Only lower-priority Pods can be preempted', at: 2},
+    {text: 'Preemption honors PDBs only on a best-effort basis', at: 3},
+    {text: 'How an evicted Pod shuts down and goes Pending', at: 5},
+    {text: 'Why system components get the highest priority', at: 7},
+  ]}
+  steps={[
+    {
+      short: 'Arrives',
+      kind: '시작',
+      title: 'An important Pod arrives at a full node',
+      text: [
+        'node-1 is full by requests. A new payment-processing Pod, payment, wants to come in.',
+        'payment uses the PriorityClass business-critical. Its value is 100000, and a higher value goes first.',
+      ],
+      keyIdea: 'A PriorityClass is a table of named grades with numbers. A Pod names only the grade; the comparison uses the number.',
+      flows: [
+        {from: 'pc', to: 'newpod', label: 'value 100000', type: 'request'},
+        {from: 'newpod', to: 'sched', label: 'Schedule me', type: 'request'},
+      ],
+      focus: ['newpod', 'pc'],
+      values: {pay: 'Pending', batch: 'Running', room: '0'},
+    },
+    {
+      short: 'No room',
+      kind: '원리',
+      title: 'No node can take it',
+      text: [
+        'The scheduler filters nodes and finds none that can fit payment\'s requests. Normally the Pod would wait in Pending here.',
+        'But payment has high priority. The scheduler looks for a node where "removing lower Pods would make room". This is preemption.',
+      ],
+      flows: [{from: 'sched', to: 'newpod', label: 'No room', type: 'response'}],
+      focus: ['sched'],
+      status: {newpod: 'warn'},
+    },
+    {
+      short: 'Pick victim',
+      kind: '원리',
+      title: 'Only lower-priority Pods can be evicted',
+      text: [
+        'Only Pods with lower priority than payment can be preempted. web, with the same value (100000), and the system component coredns are not candidates.',
+        'That leaves batch-a and batch-b (100). The scheduler picks the smallest sacrifice that makes room. Here batch-a alone is enough.',
+      ],
+      keyIdea: 'The rule of preemption: only as much as needed to make room, starting from the lowest Pods.',
+      flows: [{from: 'sched', to: 'lowA', label: 'Candidate', type: 'watch'}],
+      focus: ['lowA', 'lowB'],
+      status: {lowA: 'warn', web: 'ok', sys: 'ok'},
+      badges: {lowA: 'Victim'},
+    },
+    {
+      short: 'PDB',
+      kind: '주의',
+      title: 'Disruption budgets are honored only best-effort',
+      text: [
+        'The batch app has a PDB (PodDisruptionBudget, a limit on how many Pods may go down at once) that says "keep at least one alive". Removing batch-a leaves batch-b, so the budget holds.',
+        'The scheduler prefers victims that do not violate a PDB, but if there is no other way, it preempts even if that violates the PDB.',
+      ],
+      keyIdea: 'A drain waits when a PDB refuses, but preemption honors PDBs only best-effort. Having a PDB does not make you safe from preemption.',
+      flows: [{from: 'sched', to: 'pdb', label: 'Check PDB', type: 'request'}],
+      focus: ['pdb'],
+      status: {pdb: 'ok'},
+      badges: {pdb: '1 left · allowed'},
+    },
+    {
+      short: 'Shutdown',
+      kind: '원리',
+      title: 'An evicted Pod still gets time to clean up',
+      text: [
+        'The scheduler evicts batch-a. batch-a does not vanish at once; it wraps up its work during its termination grace period and then exits.',
+        'Meanwhile payment waits with a marker that says "headed for node-1" (nominatedNodeName).',
+      ],
+      flows: [{from: 'sched', to: 'lowA', label: 'Evict', type: 'request'}],
+      focus: ['lowA'],
+      status: {lowA: 'warn'},
+      badges: {lowA: 'Terminating'},
+      values: {pay: 'Pending · for node-1', batch: 'Terminating'},
+    },
+    {
+      short: 'Room',
+      kind: '원리',
+      title: 'Once there is room, payment moves in',
+      text: [
+        'batch-a exits and frees room. The scheduler places payment on node-1, and payment runs.',
+        'The controller recreates the evicted batch-a, but there is no room for it, so it waits in Pending.',
+      ],
+      changes: ['+ payment running', '- batch-a evicted → new batch-a Pending'],
+      flows: [{from: 'sched', to: 'paid', label: 'Place on node-1', type: 'request', bend: 0.18}],
+      focus: ['paid'],
+      status: {lowA: 'gone', paid: 'ok', newpod: 'off'},
+      badges: {lowA: null},
+      values: {pay: {text: 'Running', tone: 'good'}, batch: {text: 'Pending', tone: 'bad'}, room: '0'},
+    },
+    {
+      short: 'Overuse',
+      kind: '주의',
+      title: 'If everyone is high, no one is',
+      text: [
+        'Hand out high priority too freely and unimportant jobs wearing a high grade will evict important ones.',
+        'To move a Pod up the queue without evicting others, set the PriorityClass preemptionPolicy to Never.',
+      ],
+      keyIdea: 'Keep grades few and name them by purpose. Also control who may use which grade.',
+      flows: [{from: 'pc', to: 'newpod', label: 'Never', type: 'request'}],
+      focus: ['pc'],
+    },
+    {
+      short: 'System',
+      kind: '원리',
+      title: 'System components get the highest built-in grades',
+      text: [
+        'Kubernetes has built-in grades system-cluster-critical and system-node-critical. Their values are higher than any grade users create.',
+        'System components like coredns use these grades, so user Pods cannot evict them through preemption.',
+      ],
+      flows: [{from: 'sched', to: 'sys', label: 'Cannot preempt', type: 'request'}],
+      focus: ['sys'],
+      badges: {sys: 'system grade'},
+    },
+    {
+      short: 'Recap',
+      kind: '정리',
+      title: 'Decide in advance who survives when room runs out',
+      text: [
+        'Preemption evicts only lower Pods, only as many as needed, with time for graceful shutdown. PDBs are honored best-effort only.',
+        'Evicted Pods wait in Pending, so if preemption happens often, suspect a capacity shortage before priority settings.',
+      ],
+      keyIdea: 'Priority is a promise, made in advance, about who survives when room runs out. If a Pod vanished, look for Preempted events in kubectl get events. If preemption is frequent, add capacity first.',
+      focus: ['sched', 'paid'],
+    },
+  ]}
+/>
+
+## Drain vs preemption
+
+| | Drain (emptying a node) | Preemption |
+| --- | --- | --- |
+| Who starts it | An operator | The scheduler |
+| Why | Node maintenance or upgrade | Making room for a higher-priority Pod |
+| If it would violate a PDB | Refuses and waits | Proceeds anyway if there is no other way |
+| Evicted Pods | Recreated on other nodes | Recreated by the controller, but Pending if no room |
+
+The details of drain and PDBs are in [Draining Nodes and Upgrading the Cluster](../k8s/node-drain.mdx).
+
+Further reading: [Pod priority and preemption](https://kubernetes.io/docs/concepts/scheduling-eviction/pod-priority-preemption/) · [Disruptions](https://kubernetes.io/docs/concepts/workloads/pods/disruptions/)
+
+Next lesson: [Pod Security Standards and securityContext](./pod-security.mdx)

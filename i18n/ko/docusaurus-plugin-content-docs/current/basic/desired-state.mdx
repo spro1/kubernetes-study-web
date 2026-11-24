@@ -1,0 +1,188 @@
+---
+id: desired-state
+title: 원하는 상태와 컨트롤 루프
+sidebar_label: 05 · 원하는 상태
+description: 원하는 상태를 적어 두면 컨트롤러가 현재 상태와 비교해 맞추는 원리와, 자원을 이어 주는 레이블·셀렉터를 애니메이션으로 따라간다
+hide_table_of_contents: true
+---
+
+# 원하는 상태와 컨트롤 루프
+
+쿠버네티스에는 "이것을 하라"고 지시하지 않는다. "이런 모습이어야 한다"고 적어 두면, 컨트롤러가 지금 모습과 끝없이 비교하며 맞춘다. 이 비교 순환과, 자원끼리 서로를 찾는 레이블·셀렉터를 따라가 본다. 부품 하나하나를 거쳐 파드가 뜨는 과정은 [파드가 뜨기까지](../k8s/pod-startup.mdx)에서 다룬다.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '약 10분', level: '기초'}}
+  groups={[
+    {label: 'API 서버에 기록된 매니페스트', x: 215, y: 40, w: 200, h: 350, tone: 'mgmt'},
+    {label: '파드 · app=web', x: 635, y: 125, w: 360, h: 245, tone: 'biz', from: 2},
+  ]}
+  nodes={[
+    {id: 'user', label: '사용자', sub: 'kubectl apply', icon: 'user', tone: 'ext', x: 75, y: 120, w: 130, show: true},
+    {id: 'spec', label: '원하는 상태', sub: 'spec', icon: 'book', tone: 'store', x: 315, y: 120, show: true},
+    {id: 'status', label: '현재 상태', sub: 'status', icon: 'chart', tone: 'store', x: 315, y: 330, show: true},
+    {id: 'ctrl', label: '컨트롤러', sub: '비교하고 맞춤', icon: 'gear', tone: 'cp', x: 500, y: 225},
+    {id: 'svc', label: '서비스 web', sub: 'app=web 선택', icon: 'target', tone: 'cp', x: 817, y: 65},
+    {id: 'p1', label: 'web-a', sub: 'app=web', icon: 'pod', tone: 'app', size: 'sm', x: 720, y: 190},
+    {id: 'p2', label: 'web-b', sub: 'app=web', icon: 'pod', tone: 'app', size: 'sm', x: 914, y: 190},
+    {id: 'p3', label: 'web-c', sub: 'app=web', icon: 'pod', tone: 'app', size: 'sm', x: 720, y: 320},
+    {id: 'p4', label: 'web-d', sub: 'app=web', icon: 'pod', tone: 'app', size: 'sm', x: 914, y: 320},
+  ]}
+  metrics={[
+    {id: 'want', label: '원하는 수 (spec)'},
+    {id: 'now', label: '현재 수 (status)'},
+    {id: 'judge', label: '컨트롤러 판단'},
+    {id: 'target', label: '서비스 대상'},
+  ]}
+  learn={[
+    {text: '명령형과 선언형의 차이', at: 0},
+    {text: 'spec과 status를 나란히 보는 이유', at: 1},
+    {text: '컨트롤 루프가 "비교 → 조치"를 반복한다는 것', at: 2},
+    {text: '목표를 못 이루면 오류 대신 대기한다는 것', at: 4},
+    {text: '자원끼리 이름 대신 레이블로 이어진다는 것', at: 5},
+  ]}
+  steps={[
+    {
+      short: '선언',
+      kind: '시작',
+      title: '지시하지 않고, 원하는 모습을 적는다',
+      text: [
+        '명령형은 "컨테이너를 실행해라"처럼 할 일을 지시한다. 지시한 그 순간에만 의미가 있어서, 나중에 하나가 죽으면 누군가 다시 명령해야 한다.',
+        '선언형은 "web 파드가 항상 3개여야 한다"처럼 결과만 적는다. 쿠버네티스는 선언형이다. 사용자는 kubectl apply로 이 문장을 제출할 뿐이다.',
+      ],
+      keyIdea: '온도 조절기와 같다. 사람은 "24도"만 정하고, 냉방을 언제 켤지는 조절기가 정한다.',
+      flows: [{from: 'user', to: 'spec', label: '3개여야 한다', type: 'request'}],
+      focus: ['spec'],
+      badges: {spec: 'replicas: 3'},
+      values: {want: '3', now: '0'},
+    },
+    {
+      short: '두 칸',
+      kind: '원리',
+      title: '매니페스트에는 spec과 status가 따로 있다',
+      text: [
+        '사용자가 쓰는 칸은 spec(원하는 상태)이고, status(현재 상태)는 쿠버네티스가 채운다. 사용자는 status를 쓰지 않는다.',
+        '컨트롤러는 두 칸을 지켜본다(watch). 지금은 원하는 수 3개, 현재 수 0개로 서로 다르다.',
+      ],
+      keyIdea: 'spec과 status가 다르면 "아직 목표에 못 미친 상태"다. 차이가 오래 이어지면 무언가 막혀 있다는 뜻이다.',
+      flows: [
+        {from: 'spec', to: 'ctrl', label: '원하는 3개', type: 'watch'},
+        {from: 'status', to: 'ctrl', label: '현재 0개', type: 'watch'},
+      ],
+      focus: ['ctrl'],
+      values: {judge: '다르다'},
+    },
+    {
+      short: '조치',
+      kind: '원리',
+      title: '다르면 컨트롤러가 조치한다',
+      text: [
+        '컨트롤러는 "3개여야 하는데 0개"라는 차이를 보고 파드 3개를 만들어 달라고 한다. 모자라면 만들고, 많으면 지우고, 다르면 바꾼다.',
+        '이 비교와 조치의 순환을 컨트롤 루프(control loop)라고 한다. 컨트롤러 여러 개가 각자 맡은 대상에 대해 이 순환을 끝없이 돈다.',
+      ],
+      changes: ['파드 web-a · web-b · web-c 생성 요청'],
+      flows: [
+        {from: 'ctrl', to: 'p1', label: '파드 생성', type: 'request'},
+        {from: 'ctrl', to: 'p3', type: 'request'},
+      ],
+      focus: ['ctrl', 'p1', 'p2', 'p3'],
+      status: {p1: 'warn', p2: 'warn', p3: 'warn'},
+      values: {judge: '파드 3개 만들기'},
+    },
+    {
+      short: '일치',
+      kind: '원리',
+      title: '같아지면 아무것도 하지 않는다',
+      text: [
+        '파드가 실행되면 그 결과가 status에 기록된다. 이제 원하는 수와 현재 수가 3개로 같다.',
+        '같으면 컨트롤러는 아무것도 하지 않고 계속 지켜보기만 한다. 나중에 파드 하나가 사라지면 다시 차이가 생기고, 같은 순환으로 새 파드를 만든다.',
+      ],
+      keyIdea: '스스로 복구하는 힘은 이 순환에서 나온다. 무엇이 어떻게 되살리는지는 "파드가 죽으면" 레슨에서 본다.',
+      flows: [{from: 'p3', to: 'status', label: '3개 실행 중', type: 'response'}],
+      focus: ['status'],
+      status: {p1: 'ok', p2: 'ok', p3: 'ok'},
+      badges: {status: 'ready 3'},
+      values: {now: {text: '3', tone: 'good'}, judge: '같다 → 대기'},
+    },
+    {
+      short: '못 맞춤',
+      kind: '주의',
+      title: '목표를 이룰 수 없으면 오류 대신 기다린다',
+      text: [
+        '사용자가 원하는 수를 4개로 바꿨다. 컨트롤러는 네 번째 파드를 만들지만, 노드에 남은 자원이 모자라 놓을 자리가 없다.',
+        '이때 쿠버네티스는 실패로 끝내지 않는다. 파드는 Pending(대기)으로 남고, 자리가 날 때까지 계속 맞추려고 시도한다.',
+      ],
+      keyIdea: '제출은 "목표를 적었다"는 뜻이지 "끝났다"는 뜻이 아니다. 오류 없이 오래 머무는 대기 상태가 생긴다.',
+      changes: ['~ spec.replicas 3 → 4', '+ 파드 web-d (Pending)'],
+      flows: [
+        {from: 'user', to: 'spec', label: '4개로 수정', type: 'request'},
+        {from: 'ctrl', to: 'p4', label: '파드 생성', type: 'request', bend: -0.05},
+      ],
+      focus: ['p4'],
+      status: {p4: 'warn'},
+      badges: {spec: 'replicas: 4', p4: 'Pending'},
+      values: {want: '4', now: {text: '3', tone: 'bad'}, judge: '다르다 → 계속 시도'},
+    },
+    {
+      short: '셀렉터',
+      kind: '원리',
+      title: '자원끼리는 레이블로 서로를 찾는다',
+      text: [
+        '레이블(label)은 자원에 붙이는 "키: 값" 이름표이고, 셀렉터(selector)는 "이런 레이블을 가진 것"이라는 조건이다. 서비스 web의 셀렉터는 app=web이다.',
+        '서비스는 이름이 아니라 app=web 레이블로 파드를 고른다. 레이블이 app=api인 파드가 있었다면 대상이 아니다. 아직 준비되지 않은 web-d에는 요청을 보내지 않는다.',
+      ],
+      keyIdea: '디플로이먼트가 자기 파드를 알아보는 것도, 서비스가 요청 보낼 파드를 고르는 것도 모두 레이블과 셀렉터다.',
+      flows: [
+        {from: 'svc', to: 'p1', label: 'app=web', type: 'request'},
+        {from: 'svc', to: 'p2', type: 'request'},
+        {from: 'svc', to: 'p3', type: 'request', bend: -0.2},
+      ],
+      focus: ['svc'],
+      values: {target: {text: '3개', tone: 'good'}},
+    },
+    {
+      short: '오타',
+      kind: '문제',
+      title: '레이블 오타는 오류 없이 연결만 끊는다',
+      text: [
+        '누군가 서비스의 셀렉터를 app=wep으로 잘못 고쳤다. 한 글자라도 다르면 맞는 파드가 없다.',
+        '그런데 쿠버네티스는 이것을 오류로 알리지 않는다. 대상이 0개인 서비스가 "정상"으로 저장되고, 요청만 어디에도 닿지 못한다.',
+      ],
+      keyIdea: '파드는 모두 멀쩡하다. 연결만 끊겼다. 그래서 상태 표시만 보고는 원인을 찾기 어렵다.',
+      changes: ['~ selector app=web → app=wep'],
+      flows: [{from: 'svc', to: 'p1', label: '맞는 파드 없음', type: 'request'}],
+      focus: ['svc'],
+      status: {svc: 'error'},
+      badges: {svc: 'app=wep'},
+      values: {target: {text: '0개', tone: 'bad'}},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '적어 둔 문장이 계속 유효하다',
+      text: [
+        '사용자는 spec에 원하는 모습을 적고, 컨트롤러는 status와 비교해 차이를 메운다. 같아지면 쉬고, 달라지면 다시 움직인다.',
+        '자원끼리는 레이블과 셀렉터로 연결된다. 오타 하나로 대상이 0개가 되어도 오류가 나지 않는다.',
+      ],
+      keyIdea: '원하는 상태를 적으면 컨트롤러가 현재 상태를 계속 맞춘다. kubectl get에서 READY 3/4처럼 원하는 값과 현재 값을 비교하고, 서비스 엔드포인트가 비어 있으면 셀렉터부터 의심한다.',
+      focus: ['spec', 'status'],
+    },
+  ]}
+/>
+
+## 오해와 사실
+
+| 흔한 오해 | 실제로는 |
+| --- | --- |
+| apply가 성공하면 파드가 다 떴다 | 원하는 상태가 기록됐을 뿐이다. 실제 상태가 따라오기까지 시간이 걸린다 |
+| 자원이 모자라면 오류가 난다 | 오류 없이 Pending으로 대기하며 자리가 날 때까지 계속 시도한다 |
+| status도 사용자가 고친다 | status는 쿠버네티스가 채운다. 사용자는 spec만 쓴다 |
+| 서비스는 파드 이름으로 대상을 찾는다 | 레이블 셀렉터로 찾는다. 레이블이 맞는 새 파드는 자동으로 대상에 들어온다 |
+| 셀렉터가 틀리면 저장이 거절된다 | 대상 0개인 채로 정상 저장된다 |
+
+컨트롤 루프가 실제로 파드를 되살리는 장면은 [파드가 죽으면 (자가 치유)](../k8s/self-healing.mdx)에서 이어진다.
+
+더 읽을거리: [컨트롤러 (쿠버네티스 문서)](https://kubernetes.io/ko/docs/concepts/architecture/controller/) · [레이블과 셀렉터](https://kubernetes.io/ko/docs/concepts/overview/working-with-objects/labels/) · [파드가 뜨기까지](../k8s/pod-startup.mdx) · [파드가 죽으면](../k8s/self-healing.mdx)
+
+다음 레슨: [워크로드 종류](./workload-types.mdx)

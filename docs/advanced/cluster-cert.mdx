@@ -1,0 +1,204 @@
+---
+id: cluster-cert
+title: Cluster Certificate Expiry
+sidebar_label: 05 · Cluster Certificate Expiry
+description: See how control plane components verify each other with certificates, how expiry creeps up silently and cuts connections at one moment, and how renewal, restart and expiry monitoring work, step by step with animation
+hide_table_of_contents: true
+---
+
+# Cluster Certificate Expiry
+
+A cluster that ran fine for over a year suddenly stops answering `kubectl` one morning. A classic cause is certificate expiry. Let's follow how expiry creeps up silently and how to recover.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~10 min', level: 'Advanced'}}
+  groups={[
+    {label: 'Control plane', x: 210, y: 40, w: 470, h: 385, tone: 'mgmt'},
+    {label: 'Worker node', x: 730, y: 120, w: 240, h: 160, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'user', label: 'Admin', sub: 'kubectl', icon: 'user', tone: 'ext', x: 90, y: 200, show: true},
+    {id: 'api', label: 'API server', sub: 'entry for all requests', icon: 'gate', tone: 'cp', x: 330, y: 200, show: true},
+    {id: 'cm', label: 'Controllers', sub: 'incl. scheduler', icon: 'gear', tone: 'cp', x: 570, y: 115, show: true},
+    {id: 'etcd', label: 'etcd', sub: 'state store', icon: 'db', tone: 'store', x: 330, y: 360, show: true},
+    {id: 'pki', label: 'Cert files', sub: 'certs and keys', icon: 'shield', tone: 'store', x: 570, y: 300},
+    {id: 'kubelet', label: 'kubelet', sub: 'node agent', icon: 'agent', tone: 'node', x: 850, y: 200, show: true},
+    {id: 'alarm', label: 'Expiry alert', sub: 'metrics · alerts', icon: 'bell', tone: 'ext', x: 850, y: 60},
+  ]}
+  metrics={[
+    {id: 'left', label: 'Validity left (example)'},
+    {id: 'access', label: 'kubectl access'},
+    {id: 'node', label: 'Node status'},
+  ]}
+  learn={[
+    {text: 'Components verify each other with certificates', at: 0},
+    {text: 'Why expiry hits at the exact moment, without warning', at: 2},
+    {text: 'Which expired certificate causes which symptom', at: 4},
+    {text: 'Why you must restart after renewing', at: 6},
+  ]}
+  steps={[
+    {
+      short: 'Verify',
+      kind: '시작',
+      title: 'Components verify each other with certificates',
+      text: [
+        'A certificate is a digital ID that proves "I am who I say". The API server, etcd, kubelet and the admin access file (kubeconfig) all use certificates.',
+        'When an admin uses kubectl, when kubelet reports status and when the API server writes to etcd, both sides check IDs first.',
+      ],
+      flows: [
+        {from: 'user', to: 'api', label: 'Present cert', type: 'request'},
+        {from: 'kubelet', to: 'api', label: 'Status report', type: 'request'},
+        {from: 'api', to: 'etcd', label: 'Write', type: 'request'},
+      ],
+      focus: ['api'],
+      status: {api: 'ok', etcd: 'ok', kubelet: 'ok'},
+      values: {left: '365 days', access: 'OK', node: 'Ready'},
+    },
+    {
+      short: 'Issue',
+      kind: '원리',
+      title: 'Certificates are created at install time',
+      text: [
+        'During cluster install, the control plane phase creates a certificate for each component and stores it as a file. Components read these files at startup.',
+        'In a kubeadm cluster, component certificates are valid for one year by default. Each certificate has its own expiry date.',
+      ],
+      keyIdea: 'Installers like Kubespray often use kubeadm internally. Actual validity can vary with install settings, so check it on the cluster itself.',
+      changes: ['API server · etcd · kubelet · kubeconfig certs issued'],
+      flows: [
+        {from: 'pki', to: 'api', label: 'Read at start', type: 'request'},
+        {from: 'pki', to: 'cm', label: 'Read at start', type: 'request'},
+      ],
+      focus: ['pki'],
+      badges: {pki: 'Valid 1 year'},
+    },
+    {
+      short: 'Silence',
+      kind: '주의',
+      title: 'Nothing happens as expiry approaches',
+      text: [
+        'A month before expiry, even a day before, the cluster is perfectly healthy. No warnings pile up in logs and responses do not slow down.',
+        'Certificate expiry happens at the exact moment, with no advance warning. That is why it strikes suddenly on systems that ran well for a long time.',
+      ],
+      keyIdea: 'Upgrading Kubernetes also renews control plane certificates. Clusters not upgraded for over a year are the most at risk.',
+      flows: [
+        {from: 'user', to: 'api', type: 'request'},
+        {from: 'kubelet', to: 'api', type: 'request'},
+      ],
+      focus: ['pki'],
+      status: {pki: 'warn'},
+      badges: {pki: '1 day to expiry'},
+      values: {left: '1 day'},
+    },
+    {
+      short: 'Expired',
+      kind: '장애',
+      title: 'After the expiry moment, connections are refused',
+      text: [
+        'When the API server certificate and the admin kubeconfig expire, kubectl fails with a "certificate has expired (x509)" error.',
+        'Admin tools and dashboards that use the same certificate cannot reach the cluster either. The servers are up, but nobody can get in.',
+      ],
+      flows: [
+        {from: 'user', to: 'api', label: 'x509 expired', type: 'request'},
+        {from: 'api', to: 'user', label: 'Refused', type: 'response'},
+      ],
+      focus: ['api', 'user'],
+      status: {api: 'error', pki: 'error'},
+      badges: {pki: 'Expired'},
+      values: {left: {text: '0 days', tone: 'bad'}, access: {text: 'Failed', tone: 'bad'}},
+    },
+    {
+      short: 'Spread',
+      kind: '장애',
+      title: 'Expiry spreads to other connections',
+      text: [
+        'If the etcd certificate expires, the API server cannot reach storage and cluster management stops. If a kubelet certificate expires, that node becomes NotReady.',
+        'Containers already running do not stop at once, but you cannot create new Pods or revive failed ones.',
+      ],
+      keyIdea: 'The symptoms vary but the cause is one. If several things stopped at the same moment, suspect certificate expiry first.',
+      flows: [
+        {from: 'api', to: 'etcd', label: 'Access failed', type: 'request'},
+        {from: 'kubelet', to: 'api', label: 'Report failed', type: 'request'},
+      ],
+      focus: ['etcd', 'kubelet'],
+      status: {etcd: 'error', kubelet: 'error'},
+      values: {node: {text: 'NotReady', tone: 'bad'}},
+    },
+    {
+      short: 'Renew',
+      kind: '원리',
+      title: 'Issue new certificates',
+      text: [
+        'First check which certificates expire when. On a kubeadm cluster, list them with kubeadm certs check-expiration.',
+        'Then issue new ones with kubeadm certs renew. Only the certificate files are new; the components still hold the old certificates.',
+      ],
+      changes: ['~ cert files reissued (validity restarts)'],
+      flows: [{from: 'user', to: 'pki', label: 'Renew', type: 'request'}],
+      focus: ['pki'],
+      status: {pki: 'ok'},
+      badges: {pki: 'New cert'},
+      values: {left: '365 days'},
+    },
+    {
+      short: 'Restart',
+      kind: '주의',
+      title: 'Restart components so they read the new certificates',
+      text: [
+        'Components load certificates at startup, so even after the files change they use the old ones until restarted.',
+        'Restart the API server, controller manager, scheduler and etcd, and hand out a new admin kubeconfig that contains the new certificate.',
+      ],
+      keyIdea: 'Most "I renewed but nothing changed" cases are a missed restart. Renewal and restart are one task.',
+      changes: ['~ control plane components restarted', '~ admin kubeconfig replaced'],
+      flows: [
+        {from: 'pki', to: 'api', label: 'Reload', type: 'request'},
+        {from: 'pki', to: 'etcd', label: 'Reload', type: 'request'},
+        {from: 'user', to: 'api', label: 'Connect', type: 'request'},
+      ],
+      focus: ['api', 'etcd'],
+      status: {api: 'ok', etcd: 'ok', kubelet: 'ok'},
+      values: {access: {text: 'OK', tone: 'good'}, node: {text: 'Ready', tone: 'good'}},
+    },
+    {
+      short: 'Monitor',
+      kind: '원리',
+      title: 'Track expiry dates with metrics and alerts',
+      text: [
+        'Expiry comes without warning, so instead of relying on memory, collect expiry dates as metrics and alert when one gets close.',
+        'Renewal itself can be automated too. For certificates used by applications, a certificate manager such as cert-manager replaces them before they expire.',
+      ],
+      flows: [
+        {from: 'pki', to: 'alarm', label: 'Expiry date', type: 'watch'},
+        {from: 'alarm', to: 'user', label: 'Alert 30 days out', type: 'response', bend: 0.12},
+      ],
+      focus: ['alarm'],
+      badges: {alarm: '0 expiring'},
+    },
+    {
+      short: 'Recap',
+      kind: '정리',
+      title: 'Watch values that turn into problems over time',
+      text: [
+        'Certificates underpin every connection in the cluster, and when they expire those connections break all at once.',
+        'Regular upgrades, expiry monitoring and restart-after-renewal together prevent the "suddenly one day" outage.',
+      ],
+      keyIdea: 'Certificates underpin every connection and break all at once when they expire. Keep checking expiry with kubeadm certs check-expiration and metrics, and restart components after renewing.',
+      focus: ['pki', 'alarm'],
+    },
+  ]}
+/>
+
+## Working back from the symptom
+
+| Symptom | Certificate to suspect | What to check |
+| --- | --- | --- |
+| kubectl fails with an x509 or expiry error | API server certificate, admin kubeconfig | Expiry list (`kubeadm certs check-expiration` on kubeadm clusters) |
+| API server is up but every read and change fails | etcd certificate | etcd connection errors in the API server log |
+| Only one node turns NotReady | That node's kubelet certificate | The node's kubelet log |
+| Renewed, but the symptom remains | Components still hold the old certificate | Whether control plane components were restarted |
+
+Upgrade order and node replacement continue in [Draining Nodes and Upgrading the Cluster](../k8s/node-drain.mdx).
+
+Further reading: [Certificate management with kubeadm](https://kubernetes.io/docs/tasks/administer-cluster/kubeadm/kubeadm-certs/) · [PKI certificates and requirements](https://kubernetes.io/docs/setup/best-practices/certificates/) · [cert-manager](https://cert-manager.io/docs/)
+
+Next lesson: [A Packet from Pod to Pod](./packet-path.mdx)

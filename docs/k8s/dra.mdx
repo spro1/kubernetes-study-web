@@ -1,0 +1,194 @@
+---
+id: dra
+title: Requesting GPUs by Criteria (DRA)
+sidebar_label: 14 · GPUs by Criteria (DRA)
+description: Follow Dynamic Resource Allocation (DRA), which requests a GPU as "a device matching these criteria" instead of "this many", through the driver, scheduler, and kubelet until the device is attached and released.
+hide_table_of_contents: true
+---
+
+# Requesting GPUs by Criteria (DRA)
+
+Until now, Kubernetes could only request GPUs by count. **Dynamic Resource Allocation (DRA)** lets you request them **by criteria**, such as "one GPU with at least 40 GB of memory". The core API became GA in Kubernetes 1.34. Follow how a request turns into a device.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~10 min', level: 'Advanced'}}
+  groups={[
+    {label: 'Control plane', x: 200, y: 160, w: 450, h: 270, tone: 'mgmt'},
+    {label: 'GPU node · node-2', x: 680, y: 110, w: 305, h: 320, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'user', label: 'User', sub: 'Pod + criteria', icon: 'user', tone: 'ext', x: 90, y: 230, show: true},
+    {id: 'claim', label: 'Device claim', sub: 'ResourceClaim', icon: 'ticket', tone: 'store', x: 320, y: 70, w: 160},
+    {id: 'class', label: 'Device class', sub: 'DeviceClass', icon: 'book', tone: 'store', x: 560, y: 70, w: 150},
+    {id: 'api', label: 'API server', sub: 'entry point', icon: 'gate', tone: 'cp', x: 320, y: 230, show: true},
+    {id: 'sched', label: 'Scheduler', sub: 'picks device+node', icon: 'target', tone: 'cp', x: 545, y: 230, w: 160, show: true},
+    {id: 'slice', label: 'Device list', sub: 'ResourceSlice', icon: 'db', tone: 'store', x: 430, y: 370, w: 160},
+    {id: 'kubelet', label: 'kubelet', sub: 'node-2', icon: 'agent', tone: 'node', x: 760, y: 185, w: 140, show: true},
+    {id: 'driver', label: 'DRA driver', sub: 'from vendor', icon: 'gear', tone: 'node', x: 760, y: 345, w: 150},
+    {id: 'pod', label: 'train', sub: 'Pod', icon: 'pod', tone: 'app', size: 'sm', w: 100, x: 920, y: 185},
+    {id: 'gpu0', label: 'gpu-0', sub: '24GB', icon: 'disk', tone: 'node', size: 'sm', w: 100, x: 920, y: 295, show: true},
+    {id: 'gpu1', label: 'gpu-1', sub: '80GB', icon: 'disk', tone: 'node', size: 'sm', w: 100, x: 920, y: 385, show: true},
+  ]}
+  metrics={[
+    {id: 'req', label: 'Request'},
+    {id: 'alloc', label: 'Allocated device'},
+    {id: 'state', label: 'Pod status'},
+  ]}
+  learn={[
+    {text: 'The limits of requesting by count', at: 0},
+    {text: 'Drivers publish the list of devices', at: 1},
+    {text: 'Criteria go in a ResourceClaim', at: 3},
+    {text: 'The scheduler is what picks the device', at: 5},
+    {text: 'The device is released when the Pod ends', at: 7},
+  ]}
+  steps={[
+    {
+      short: 'Old way',
+      kind: '시작',
+      title: 'Until now you could only say "N GPUs"',
+      text: [
+        'Previously a Pod only stated a count, like nvidia.com/gpu: 1. node-2 has gpu-0 with 24 GB and gpu-1 with 80 GB, but the Pod cannot choose which one it gets.',
+        'A large model needs 80 GB; with bad luck it gets the 24 GB card and the job fails.',
+      ],
+      keyIdea: 'A count alone cannot express "at least 40 GB of memory", "two GPUs on the same server", or "part of a GPU". DRA was created to remove this limit.',
+      flows: [{from: 'user', to: 'api', label: 'GPU ×1', type: 'request'}],
+      focus: ['api', 'gpu0', 'gpu1'],
+      values: {req: '1 GPU', alloc: 'cannot choose', state: '—'},
+    },
+    {
+      short: 'Device list',
+      kind: '원리',
+      title: 'The driver publishes the node’s devices',
+      text: [
+        'The DRA driver running on each node (provided by the device vendor) lists which devices the node has and their attributes (memory, model, and so on), and publishes it to the API server.',
+        'That list is a ResourceSlice. The cluster now knows which GPUs are on which node, down to their attributes.',
+      ],
+      flows: [
+        {from: 'gpu1', to: 'driver', type: 'response'},
+        {from: 'driver', to: 'slice', label: 'publish devices', type: 'request'},
+      ],
+      focus: ['driver', 'slice'],
+      badges: {slice: '2 GPUs'},
+      values: {req: '—', alloc: '—'},
+    },
+    {
+      short: 'Device class',
+      kind: '원리',
+      title: 'A DeviceClass defines the broad category',
+      text: [
+        'An admin (or the driver install) creates a DeviceClass for a broad category, such as "GPUs handled by this driver".',
+        'Users pick this class, then add detailed criteria within it.',
+      ],
+      keyIdea: 'Think of the DeviceClass as a menu section, and the claim’s criteria as the special requests you add when ordering.',
+      focus: ['class'],
+      badges: {class: 'gpu.example.com'},
+    },
+    {
+      short: 'Claim',
+      kind: '원리',
+      title: 'Submit a claim with criteria alongside the Pod',
+      text: [
+        'When creating the Pod, the user writes in a ResourceClaimTemplate: "one device of class gpu.example.com with at least 40 GB of memory".',
+        'When the Pod is created, the template produces a ResourceClaim just for this Pod. No device is chosen yet.',
+      ],
+      flows: [
+        {from: 'user', to: 'api', label: 'create Pod', type: 'request'},
+        {from: 'user', to: 'claim', label: 'memory ≥ 40GB', type: 'request', bend: -0.12},
+      ],
+      focus: ['claim'],
+      badges: {claim: 'unallocated'},
+      values: {req: '1 GPU ≥ 40GB', state: 'Pending'},
+    },
+    {
+      short: 'Match',
+      kind: '원리',
+      title: 'The scheduler finds a device that matches',
+      text: [
+        'The scheduler reads the claim’s criteria and the DeviceClass, then searches the device list. gpu-0 (24 GB) is ruled out; gpu-1 (80 GB) passes.',
+        'If no device anywhere in the cluster matches, the Pod has nowhere to go and stays Pending.',
+      ],
+      keyIdea: 'Choosing the device happens inside the scheduler together with choosing the node. That is why a Pod can be "Pending even though GPUs exist" when none match.',
+      flows: [
+        {from: 'slice', to: 'sched', label: 'device list', type: 'response'},
+        {from: 'claim', to: 'sched', label: 'criteria', type: 'response'},
+        {from: 'class', to: 'sched', type: 'response'},
+      ],
+      focus: ['sched'],
+      status: {gpu0: 'off', gpu1: 'ok'},
+      badges: {gpu1: 'matches'},
+    },
+    {
+      short: 'Allocate',
+      kind: '원리',
+      title: 'The chosen device is written to the claim',
+      text: [
+        'The scheduler records that "gpu-1 on node-2" is allocated to this claim, and places the Pod on node-2.',
+        'Thanks to this record, gpu-1 is never allocated to another Pod at the same time.',
+      ],
+      flows: [{from: 'sched', to: 'claim', label: 'allocated: gpu-1', type: 'request'}],
+      focus: ['claim', 'sched'],
+      badges: {claim: 'allocated', gpu1: 'allocated'},
+      values: {alloc: 'node-2 · gpu-1'},
+    },
+    {
+      short: 'Prepare',
+      kind: '원리',
+      title: 'The node prepares the device and runs the Pod',
+      text: [
+        'The kubelet on node-2 asks the DRA driver to prepare the allocated gpu-1 for this Pod.',
+        'Once it is ready, the container starts with gpu-1 attached.',
+      ],
+      flows: [
+        {from: 'kubelet', to: 'driver', label: 'prepare device', type: 'request'},
+        {from: 'driver', to: 'gpu1', type: 'request'},
+        {from: 'kubelet', to: 'pod', label: 'run', type: 'request'},
+      ],
+      focus: ['kubelet', 'driver', 'pod'],
+      status: {pod: 'ok'},
+      badges: {pod: 'gpu-1'},
+      values: {state: {text: 'Running', tone: 'good'}},
+    },
+    {
+      short: 'Release',
+      kind: '원리',
+      title: 'When the Pod ends, the device is returned',
+      text: [
+        'When training finishes and the Pod is deleted, the ResourceClaim created from the template is deleted too.',
+        'gpu-1 is deallocated and available for the next request.',
+      ],
+      flows: [{from: 'kubelet', to: 'driver', label: 'unprepare', type: 'request'}],
+      focus: ['gpu1'],
+      status: {pod: 'gone', gpu0: null, gpu1: null, claim: 'off'},
+      badges: {pod: null, claim: 'deleted', gpu1: null},
+      values: {alloc: '—', state: 'Completed'},
+    },
+    {
+      short: 'Recap',
+      kind: '정리',
+      title: 'From "how many" to "which device, under what criteria"',
+      text: [
+        'The driver publishes devices, the user submits a claim with criteria, the scheduler picks and records a matching device, and the kubelet and driver prepare it on the node.',
+        'Before DRA, device plugins only allowed a count like nvidia.com/gpu. Sharing modes such as dedicated, MIG, or time-slicing were set on the node side.',
+      ],
+      keyIdea: 'With DRA, a GPU request is "class + criteria", not a count. If a Pod is waiting, kubectl describe resourceclaim shows which criteria do not match.',
+      status: {claim: null},
+      badges: {claim: null},
+      focus: ['sched'],
+    },
+  ]}
+/>
+
+## Device plugins vs DRA
+
+| | Before (device plugin) | DRA |
+| --- | --- | --- |
+| How you request | Count only (`nvidia.com/gpu: 1`) | Class + criteria (e.g. at least 40 GB of memory) |
+| Device info | Node only reports "how many" | Driver publishes each device with its attributes |
+| Who picks | The node’s device plugin, any device | The scheduler, picking a matching device and recording it |
+| Status in Kubernetes | Still widely used | Core API GA in 1.34; extra features graduate in later versions |
+
+Further reading: [Dynamic Resource Allocation](https://kubernetes.io/docs/concepts/scheduling-eviction/dynamic-resource-allocation/) · [Device Plugins](https://kubernetes.io/docs/concepts/extend-kubernetes/compute-storage-net/device-plugins/) · [Schedule GPUs](https://kubernetes.io/docs/tasks/manage-gpus/scheduling-gpus/)
+
+This is the last lesson in this track. Go back to the [lesson list](../index.mdx) and continue with another track.

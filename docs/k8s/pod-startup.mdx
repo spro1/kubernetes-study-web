@@ -1,0 +1,197 @@
+---
+id: pod-startup
+title: How a Pod Starts
+sidebar_label: 01 · How a Pod Starts
+description: Follow a single kubectl apply through the API server, etcd, controllers, scheduler, and kubelet until it becomes a running Pod, step by animated step.
+hide_table_of_contents: true
+---
+
+# How a Pod Starts
+
+After you run a single `kubectl apply`, what happens inside the cluster before a container is actually running? Follow it one step at a time.
+
+<StepDiagram
+  width={1000}
+  meta={{duration: '~10 min', level: 'Beginner'}}
+  groups={[
+    {label: 'Control plane', x: 190, y: 30, w: 440, h: 390, tone: 'mgmt'},
+    {label: 'Worker node · node-2', x: 650, y: 130, w: 180, h: 295, tone: 'biz', from: 3},
+  ]}
+  nodes={[
+    {id: 'user', label: 'User', sub: 'kubectl', icon: 'user', tone: 'ext', x: 85, y: 215, show: true},
+    {id: 'api', label: 'API server', sub: 'entry for all requests', icon: 'gate', tone: 'cp', x: 290, y: 215},
+    {id: 'etcd', label: 'etcd', sub: 'cluster state store', icon: 'db', tone: 'store', x: 290, y: 355},
+    {id: 'cm', label: 'Controllers', sub: 'Deployment·RS', icon: 'gear', tone: 'cp', x: 530, y: 105},
+    {id: 'sched', label: 'Scheduler', sub: 'picks a node', icon: 'target', tone: 'cp', x: 530, y: 255},
+    {id: 'kubelet', label: 'kubelet', sub: 'node agent', icon: 'agent', tone: 'node', x: 740, y: 190},
+    {id: 'runtime', label: 'Runtime', sub: 'containerd', icon: 'box', tone: 'node', x: 740, y: 295},
+    {id: 'pod', label: 'nginx', sub: 'Pod', icon: 'pod', tone: 'app', size: 'sm', x: 740, y: 390},
+    {id: 'registry', label: 'Registry', sub: 'e.g. Harbor', icon: 'registry', tone: 'ext', x: 915, y: 185},
+  ]}
+  metrics={[
+    {id: 'state', label: 'Pod status'},
+    {id: 'node', label: 'Assigned node'},
+    {id: 'time', label: 'Elapsed (example)'},
+  ]}
+  learn={[
+    {text: 'Why the API server is the entry point for every request', at: 0},
+    {text: 'Why "created" is not the same as "running"', at: 1},
+    {text: 'How controllers and the scheduler work by watching', at: 3},
+    {text: 'Where Pending and ImagePullBackOff come from', at: 5},
+    {text: 'Where "Running" in kubectl get pods comes from', at: 7},
+  ]}
+  steps={[
+    {
+      short: 'Submit',
+      kind: '시작',
+      title: 'Submit the desired state to the API server',
+      text: [
+        'With kubectl apply, the user sends a Deployment that says "run 3 nginx Pods".',
+        'The API server first checks who sent it (authentication), whether they are allowed to (authorization), and whether it is well-formed (validation).',
+      ],
+      keyIdea: 'Every Kubernetes component talks only through the API server. Users and internal parts alike, no exceptions.',
+      flows: [{from: 'user', to: 'api', label: 'kubectl apply', type: 'request'}],
+      focus: ['api'],
+      values: {state: 'none', time: '~10 ms'},
+    },
+    {
+      short: 'Store',
+      kind: '원리',
+      title: 'Store it in etcd and return "created" right away',
+      text: [
+        'The Deployment that passed the checks is saved to etcd, and "created" goes straight back to the user.',
+        'But at this point not a single container exists. Only the desired state has been recorded.',
+      ],
+      keyIdea: '"Created" means "recorded". Several steps remain before anything actually runs.',
+      changes: ['Deployment stored in etcd'],
+      flows: [
+        {from: 'api', to: 'etcd', label: 'save', type: 'request'},
+        {from: 'api', to: 'user', label: 'created', type: 'response'},
+      ],
+      focus: ['etcd'],
+      badges: {etcd: 'Deployment'},
+      values: {time: '~20 ms'},
+    },
+    {
+      short: 'Create Pods',
+      kind: '원리',
+      title: 'A controller asks for Pods to be created',
+      text: [
+        'The controller keeps watching the API server and spots the new Deployment.',
+        'Through a ReplicaSet, it asks for as many Pod objects as replicas. Which node they go on is not decided yet.',
+      ],
+      changes: ['3 Pod objects created (no node yet)'],
+      flows: [
+        {from: 'api', to: 'cm', label: 'new Deployment seen', type: 'watch'},
+        {from: 'cm', to: 'api', label: 'create Pod ×3', type: 'request'},
+      ],
+      focus: ['cm'],
+      badges: {etcd: 'Pod ×3'},
+      values: {state: 'Pending', time: '~50 ms'},
+    },
+    {
+      short: 'Pick node',
+      kind: '원리',
+      title: 'The scheduler picks a node for each Pod',
+      text: [
+        'The scheduler watches for Pods without a node, weighs each node’s free CPU, memory, and placement rules, and picks a suitable one.',
+        'It writes the choice back to the API server (binding). If no node fits, the Pod stays Pending right here.',
+      ],
+      keyIdea: 'The scheduler only chooses the node; it does not run anything. Running is the job of that node’s kubelet.',
+      changes: ['Pod assigned to node-2'],
+      flows: [
+        {from: 'api', to: 'sched', label: 'unassigned Pod seen', type: 'watch'},
+        {from: 'sched', to: 'api', label: 'bind → node-2', type: 'request', bend: 0.12},
+      ],
+      focus: ['sched'],
+      values: {node: 'node-2', time: '~100 ms'},
+    },
+    {
+      short: 'Start',
+      kind: '원리',
+      title: 'The kubelet hands off container startup',
+      text: [
+        'The kubelet on node-2 watches for "Pods assigned to my node" and spots the new one.',
+        'It then asks the container runtime to create and start the container.',
+      ],
+      flows: [
+        {from: 'api', to: 'kubelet', label: 'my-node Pod seen', type: 'watch', bend: -0.12},
+        {from: 'kubelet', to: 'runtime', label: 'start', type: 'request'},
+      ],
+      focus: ['kubelet', 'runtime'],
+      values: {state: 'ContainerCreating'},
+    },
+    {
+      short: 'Image',
+      kind: '주의',
+      title: 'Pull the image',
+      text: [
+        'If the node does not have the image, the runtime pulls it from the registry. This is usually the slowest step.',
+        'If the image name is wrong or the registry is unreachable, ImagePullBackOff happens here.',
+      ],
+      keyIdea: 'In an air-gapped network, external registries are unreachable, so images must be pushed to an internal registry (such as Harbor) in advance.',
+      flows: [
+        {from: 'runtime', to: 'registry', label: 'request image', type: 'request'},
+        {from: 'registry', to: 'runtime', type: 'response'},
+      ],
+      focus: ['registry'],
+      badges: {registry: 'nginx:1.27'},
+      values: {time: 'seconds to minutes'},
+    },
+    {
+      short: 'Run',
+      kind: '원리',
+      title: 'The container starts',
+      text: [
+        'Once the image is ready, the runtime creates and starts the container. Only now does nginx begin running inside the Pod.',
+        'It must pass its readiness probe before it can receive traffic.',
+      ],
+      flows: [{from: 'runtime', to: 'pod', label: 'run', type: 'request'}],
+      focus: ['pod'],
+      status: {pod: 'ok'},
+      badges: {pod: 'Running'},
+      values: {state: 'Running'},
+    },
+    {
+      short: 'Report',
+      kind: '원리',
+      title: 'The kubelet reports status',
+      text: [
+        'The kubelet reports the Pod status to the API server, and it is recorded in etcd.',
+        'The "Running" you see in kubectl get pods or a dashboard is read from exactly this record.',
+      ],
+      keyIdea: 'The status kubectl shows is not a direct look at the container; it is the record the kubelet reported.',
+      changes: ['Pod status Running · Ready recorded'],
+      flows: [
+        {from: 'kubelet', to: 'api', label: 'Running', type: 'response', bend: 0.12},
+        {from: 'api', to: 'etcd', label: 'record', type: 'request'},
+      ],
+      focus: ['kubelet', 'etcd'],
+      badges: {etcd: 'Running ×3'},
+      values: {state: 'Running · Ready'},
+    },
+    {
+      short: 'Recap',
+      kind: '정리',
+      title: 'Nobody gives direct orders',
+      text: [
+        'None of these components commanded each other directly. Each wrote to the API server and watched those records to do its own part.',
+        'That is why any one part can pause and come back, then pick up where it left off.',
+      ],
+      keyIdea: 'Pod creation runs API server record → scheduling → image → run. If it is stuck for long, kubectl describe pod Events show which step it stopped at.',
+      focus: ['api'],
+    },
+  ]}
+/>
+
+## Status and where it stopped
+
+| Status in kubectl get | Step it stopped at | Common causes |
+| --- | --- | --- |
+| Pending | 4. Pick node | Not enough node resources, no node matches the placement rules |
+| ImagePullBackOff | 6. Image | Typo in image name or tag, registry auth or access failure |
+| CrashLoopBackOff | After 7. Run | Container keeps exiting right after start (config or code error) |
+
+Further reading: [Kubernetes Overview](https://kubernetes.io/docs/concepts/overview/) · [Pod Lifecycle](https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/) · [Debug Pods](https://kubernetes.io/docs/tasks/debug/debug-application/debug-pods/)
+
+Next lesson: [How a Request Reaches a Pod](./traffic.mdx)

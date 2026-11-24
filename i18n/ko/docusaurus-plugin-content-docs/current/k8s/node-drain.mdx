@@ -1,0 +1,200 @@
+---
+id: node-drain
+title: 노드 비우기와 클러스터 업그레이드
+sidebar_label: 13 · 노드 비우기와 업그레이드
+description: 컨트롤 플레인을 먼저 올리고 워커 노드를 한 대씩 cordon·drain·uncordon 하는 동안 PodDisruptionBudget이 서비스 중단을 막는 원리를 애니메이션으로 따라간다
+hide_table_of_contents: true
+---
+
+# 노드 비우기와 클러스터 업그레이드
+
+1.33 클러스터를 1.34로 올린다. 워커 노드 세 대에 web 파드 세 개가 흩어져 있고, "web은 최소 2개는 살아 있어야 한다"는 약속이 걸려 있다. 노드를 하나씩 비우고 올리는 동안 이 약속이 어떻게 지켜지는지 따라가 본다.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '약 10분', level: '중급'}}
+  groups={[
+    {label: '워커 노드 3대', x: 310, y: 30, w: 597, h: 391, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'admin', label: '운영자', sub: 'kubectl', icon: 'user', tone: 'ext', x: 110, y: 95, show: true},
+    {id: 'cp', label: '컨트롤 플레인', sub: 'API 서버 포함', icon: 'wheel', tone: 'cp', x: 110, y: 235, w: 160, show: true},
+    {id: 'pdb', label: 'PDB', sub: 'web 최소 2개', icon: 'shield', tone: 'store', x: 110, y: 375, show: true},
+    {id: 'w1', label: 'worker-1', sub: '1.33', icon: 'server', tone: 'node', x: 410, y: 105, show: true},
+    {id: 'w2', label: 'worker-2', sub: '1.33', icon: 'server', tone: 'node', x: 410, y: 235, show: true},
+    {id: 'w3', label: 'worker-3', sub: '1.33', icon: 'server', tone: 'node', x: 410, y: 365, show: true},
+    {id: 'webA', label: 'web-a', sub: 'worker-1', icon: 'pod', tone: 'app', size: 'sm', x: 630, y: 105, show: true},
+    {id: 'webB', label: 'web-b', sub: 'worker-2', icon: 'pod', tone: 'app', size: 'sm', x: 630, y: 235, show: true},
+    {id: 'webC', label: 'web-c', sub: 'worker-3', icon: 'pod', tone: 'app', size: 'sm', x: 630, y: 365, show: true},
+    {id: 'webD', label: 'web-d', sub: 'worker-2', icon: 'pod', tone: 'app', size: 'sm', x: 830, y: 235},
+  ]}
+  metrics={[
+    {id: 'ver', label: '버전'},
+    {id: 'node', label: '작업 중인 노드'},
+    {id: 'ready', label: 'web Ready 파드'},
+  ]}
+  learn={[
+    {text: '컨트롤 플레인을 먼저 올리는 이유', at: 1},
+    {text: 'cordon과 drain의 차이', at: 3},
+    {text: 'drain은 파드를 지우고 다시 만든다는 것', at: 4},
+    {text: 'PDB가 drain을 기다리게 하는 원리', at: 6},
+  ]}
+  steps={[
+    {
+      short: '시작',
+      kind: '시작',
+      title: '1.33 클러스터를 1.34로 올린다',
+      text: [
+        '워커 노드 세 대에 web 파드가 하나씩 돌고 있다. web에는 PodDisruptionBudget(PDB, 정비 중 동시에 내려가도 되는 파드 수의 한도)이 "최소 2개 유지(minAvailable: 2)"로 걸려 있다.',
+        '쿠버네티스는 부 버전을 한 단계씩만 올린다. 1.33에서 1.35로 가려면 1.34를 거쳐야 한다.',
+      ],
+      flows: [{from: 'admin', to: 'cp', label: '1.34로', type: 'request'}],
+      focus: ['cp'],
+      status: {webA: 'ok', webB: 'ok', webC: 'ok'},
+      badges: {cp: '1.33'},
+      values: {ver: '1.33', ready: '3'},
+    },
+    {
+      short: '제어부',
+      kind: '원리',
+      title: '컨트롤 플레인을 먼저 올린다',
+      text: [
+        '노드의 kubelet은 API 서버보다 새 버전일 수 없다. 그래서 컨트롤 플레인을 먼저 올리고 워커 노드는 나중에 올린다.',
+        '반대로 kubelet은 API 서버보다 몇 단계 낮은 버전까지 허용된다. 덕분에 워커 노드를 한 대씩 천천히 올릴 시간이 생긴다.',
+      ],
+      keyIdea: '컨트롤 플레인 노드가 여러 대라면 이것도 한 대씩 올린다. 그동안 나머지가 API 요청을 받는다.',
+      focus: ['cp'],
+      badges: {cp: '1.34'},
+      values: {ver: '제어부 1.34 · 워커 1.33'},
+    },
+    {
+      short: 'cordon',
+      kind: '원리',
+      title: 'worker-1에 새 파드가 오지 못하게 막는다',
+      text: [
+        '운영자가 kubectl cordon worker-1을 실행한다. 노드 상태가 Ready,SchedulingDisabled로 바뀐다.',
+        '이제 스케줄러는 새 파드를 worker-1에 두지 않는다. 이미 돌고 있는 web-a는 아직 그대로다.',
+      ],
+      flows: [
+        {from: 'admin', to: 'cp', label: 'cordon', type: 'request'},
+        {from: 'cp', to: 'w1', label: '배치 금지', type: 'request'},
+      ],
+      focus: ['w1'],
+      status: {w1: 'warn'},
+      badges: {w1: '배치 금지'},
+      values: {node: 'worker-1'},
+    },
+    {
+      short: 'drain',
+      kind: '원리',
+      title: 'drain은 파드를 내보내기 전에 PDB에 묻는다',
+      text: [
+        'kubectl drain worker-1을 실행하면 그 노드의 파드를 하나씩 내보내(축출) 달라고 요청한다. 노드마다 하나씩 있어야 하는 데몬셋 파드는 내보내지 않는다.',
+        '축출 요청마다 PDB를 확인한다. 지금 Ready인 web은 3개이고 하나를 빼도 2개가 남으니 허용된다.',
+      ],
+      flows: [
+        {from: 'admin', to: 'cp', label: 'drain', type: 'request'},
+        {from: 'cp', to: 'pdb', label: '빼도 되나?', type: 'request'},
+        {from: 'pdb', to: 'cp', label: '허용 3→2', type: 'response'},
+      ],
+      focus: ['pdb'],
+      status: {webA: 'gone'},
+      values: {ready: '2'},
+    },
+    {
+      short: '재생성',
+      kind: '원리',
+      title: '내보낸 파드는 다른 노드에서 새로 만들어진다',
+      text: [
+        'web-a는 지워지고, Deployment가 모자란 하나를 채우려고 새 파드 web-d를 만든다. worker-1은 배치 금지이므로 스케줄러가 worker-2를 고른다.',
+        'web-d가 준비되면 Ready 파드는 다시 3개가 된다. 이 노드에 emptyDir(임시 볼륨)로 남긴 데이터는 함께 사라진다.',
+      ],
+      keyIdea: 'drain은 "옮기기"가 아니라 "지우고 다른 곳에서 새로 만들기"다. 복제본이 하나뿐이면 그 사이 잠시 멈추고, Deployment가 없는 단독 파드는 다시 만들어지지 않는다.',
+      flows: [{from: 'w2', to: 'webD', label: '다시 생성', type: 'request', bend: -0.2}],
+      focus: ['webD'],
+      status: {webD: 'ok'},
+      badges: {webD: '새 파드'},
+      values: {ready: '3'},
+    },
+    {
+      short: '되살림',
+      kind: '원리',
+      title: '노드를 올리고 다시 배치를 허용한다',
+      text: [
+        '비워진 worker-1을 1.34로 올린다. 끝나면 kubectl uncordon worker-1로 배치 금지를 푼다.',
+        '이제 worker-1도 새 파드를 받을 수 있다. 이미 다른 노드로 간 파드가 저절로 돌아오지는 않는다.',
+      ],
+      flows: [
+        {from: 'admin', to: 'w1', label: '업그레이드', type: 'request'},
+        {from: 'admin', to: 'cp', label: 'uncordon', type: 'request'},
+      ],
+      focus: ['w1'],
+      status: {w1: 'ok'},
+      badges: {w1: '1.34', webD: null},
+      values: {node: 'worker-1 완료'},
+    },
+    {
+      short: 'PDB 대기',
+      kind: '주의',
+      title: '다음 노드에서는 PDB가 drain을 기다리게 한다',
+      text: [
+        'worker-2를 cordon하고 drain한다. worker-2에는 web-b와 web-d 두 개가 있다. web-b를 빼면 Ready가 2개라 허용된다.',
+        '그런데 web-d까지 빼면 1개만 남는다. PDB가 거절하고, drain은 web-b를 대신할 새 파드가 다른 노드에서 Ready가 될 때까지 기다린다.',
+      ],
+      keyIdea: 'PDB는 drain을 영원히 멈출 수도 있다. 복제본이 2개인데 minAvailable: 2라면 어떤 파드도 내보낼 수 없다. 업그레이드가 한 노드에서 멈춰 있다면 PDB부터 의심한다.',
+      flows: [
+        {from: 'admin', to: 'cp', label: 'drain', type: 'request'},
+        {from: 'cp', to: 'pdb', label: '하나 더?', type: 'request'},
+        {from: 'pdb', to: 'cp', label: '거절 · 대기', type: 'response'},
+      ],
+      focus: ['pdb', 'w2'],
+      status: {w2: 'warn', webB: 'gone'},
+      badges: {w2: '배치 금지'},
+      values: {node: 'worker-2', ready: {text: '2 (최소치)', tone: 'bad'}},
+    },
+    {
+      short: '이어감',
+      kind: '원리',
+      title: '새 파드가 준비되면 drain이 이어진다',
+      text: [
+        'web-b를 대신할 파드가 업그레이드를 마친 worker-1에서 만들어지고 Ready가 된다. Ready가 다시 3개다.',
+        '이제 PDB가 web-d 축출을 허용한다. worker-2가 비면 올리고 uncordon하고, worker-3도 같은 순서를 밟는다.',
+      ],
+      flows: [
+        {from: 'w1', to: 'webA', label: '다시 생성', type: 'request'},
+        {from: 'pdb', to: 'cp', label: '허용', type: 'response'},
+      ],
+      focus: ['webA', 'pdb'],
+      status: {webA: 'ok'},
+      badges: {webA: '새 파드'},
+      values: {ready: {text: '3', tone: 'good'}},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '컨트롤 플레인 먼저, 워커는 한 대씩',
+      text: [
+        '업그레이드는 컨트롤 플레인을 먼저 올리고, 워커 노드를 한 대씩 cordon → drain → 업그레이드 → uncordon 하는 일의 반복이다.',
+        'drain은 PDB를 지키므로 서비스가 한꺼번에 내려가지 않는다. 대신 남은 노드에 파드를 받을 여유가 없거나 PDB가 너무 빡빡하면 거기서 멈춘다.',
+      ],
+      keyIdea: '업그레이드는 노드를 한 대씩 비우고 올리는 반복이다. drain이 멈추면 kubectl get pdb -A로 ALLOWED DISRUPTIONS가 0인 PDB부터 찾는다.',
+      status: {w2: 'ok', w3: 'ok'},
+      badges: {w2: '1.34', w3: '1.34', webA: null},
+      values: {ver: {text: '1.34', tone: 'good'}, node: '모두 완료'},
+    },
+  ]}
+/>
+
+## 업그레이드에 대한 흔한 오해
+
+| 오해 | 실제 |
+| --- | --- |
+| 최신 버전으로 한 번에 올리면 된다 | 부 버전은 한 단계씩만 올린다 |
+| drain은 파드를 무중단으로 옮긴다 | 지우고 다른 곳에서 새로 만든다. 복제본이 하나면 중단이 생긴다 |
+| PDB를 걸면 노드 고장에도 안전하다 | PDB는 drain 같은 정비 작업에만 효력이 있다 |
+| 엔진 업그레이드가 성공하면 애플리케이션도 문제없다 | 새 버전에서 제거된 API를 쓰는 배포는 다음 배포 때 실패한다 |
+
+더 읽을거리: [노드를 안전하게 드레인하기](https://kubernetes.io/docs/tasks/administer-cluster/safely-drain-node/) · [중단(disruption)](https://kubernetes.io/ko/docs/concepts/workloads/pods/disruptions/) · [kubeadm 클러스터 업그레이드](https://kubernetes.io/docs/tasks/administer-cluster/kubeadm/kubeadm-upgrade/)
+
+다음 레슨: [조건으로 GPU 받기 (DRA)](./dra.mdx)

@@ -1,0 +1,181 @@
+---
+id: supply-chain
+title: 이미지와 공급망 보안
+sidebar_label: 10 · 이미지와 공급망 보안
+description: 이미지가 빌드·취약점 검사·서명을 거쳐 레지스트리에 오르고, 배포 때 어드미션에서 서명을 확인받기까지와 다이제스트 고정·SBOM의 역할을 애니메이션으로 따라간다
+hide_table_of_contents: true
+---
+
+# 이미지와 공급망 보안
+
+소프트웨어 공급망은 소스 → 의존 패키지 → 빌드 → 이미지 → 배포에 이르는 경로 전체다. 이 중 어디 하나가 오염되면 정상 절차를 그대로 밟아 악성 코드가 배포된다. 이미지 하나가 이 길을 지나는 동안 어디에 어떤 확인 장치가 붙는지 따라가 본다.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '약 10분', level: '고급'}}
+  nodes={[
+    {id: 'src', label: '소스·의존성', sub: '베이스 이미지', icon: 'git', tone: 'ext', x: 85, y: 110, show: true},
+    {id: 'build', label: '빌드', sub: '이미지 만들기', icon: 'hammer', tone: 'cp', x: 355, y: 110, show: true},
+    {id: 'scan', label: '취약점 검사', sub: '예: Trivy', icon: 'shield', tone: 'cp', x: 625, y: 110},
+    {id: 'sign', label: '서명', sub: '만든 주체 증명', icon: 'ticket', tone: 'cp', x: 895, y: 110},
+    {id: 'sbom', label: 'SBOM', sub: '구성 목록', icon: 'book', tone: 'store', x: 85, y: 290},
+    {id: 'deploy', label: '배포 요청', sub: '매니페스트', icon: 'gear', tone: 'ext', x: 355, y: 290},
+    {id: 'adm', label: '어드미션', sub: '서명·정책 확인', icon: 'gate', tone: 'cp', x: 625, y: 290},
+    {id: 'registry', label: '레지스트리', sub: '예: Harbor', icon: 'registry', tone: 'store', x: 895, y: 290},
+    {id: 'pod', label: 'web', sub: '파드', icon: 'pod', tone: 'app', size: 'sm', x: 625, y: 405},
+  ]}
+  metrics={[
+    {id: 'scan', label: '취약점 검사'},
+    {id: 'sig', label: '서명'},
+    {id: 'ref', label: '배포가 가리키는 것'},
+  ]}
+  learn={[
+    {text: '공급망 공격이 노리는 지점', at: 0},
+    {text: 'SBOM·취약점 검사·서명이 각각 확인하는 것', at: 3},
+    {text: '태그 대신 다이제스트로 고정하는 이유', at: 6},
+    {text: '배포 때 서명을 확인해야 서명이 의미가 있는 이유', at: 7},
+  ]}
+  steps={[
+    {
+      short: '출발',
+      kind: '시작',
+      title: '소스와 의존 패키지가 빌드로 들어간다',
+      text: [
+        '이미지는 베이스 이미지 위에 소스 코드와 의존 라이브러리를 얹어 만든다. 오염된 베이스 이미지, 악성 라이브러리, 장악된 빌드 서버가 모두 공급망 공격의 입구다.',
+        '그래서 확인 장치는 빌드부터 배포까지 길 곳곳에 붙는다.',
+      ],
+      flows: [{from: 'src', to: 'build', label: '소스+패키지', type: 'request'}],
+      focus: ['src', 'build'],
+      values: {scan: '아직', sig: '없음', ref: '-'},
+    },
+    {
+      short: 'SBOM',
+      kind: '원리',
+      title: '빌드하면서 구성 목록(SBOM)을 만든다',
+      text: [
+        'SBOM(소프트웨어 구성 목록)은 이미지 안에 어떤 패키지가 어떤 버전으로 들어 있는지 적은 목록이다. SPDX·CycloneDX가 표준 형식이다.',
+        '목록일 뿐 안전하다는 증명은 아니다. 대신 새 취약점이 발표되면 "우리 이미지 중 어디에 그 패키지가 있나"를 바로 찾게 해 준다.',
+      ],
+      changes: ['+ SBOM 생성 (SPDX 또는 CycloneDX)'],
+      flows: [{from: 'build', to: 'sbom', label: '목록 생성', type: 'request'}],
+      focus: ['sbom'],
+    },
+    {
+      short: '검사',
+      kind: '원리',
+      title: '이미지 속 패키지를 알려진 취약점 목록과 대조한다',
+      text: [
+        '취약점 검사는 이미지의 구성 요소를 CVE(공개 취약점 번호) 데이터베이스와 대조한다. Trivy가 대표 도구이고, 결과는 심각도(Critical·High·Medium·Low)별 건수로 정리된다.',
+        'Harbor는 Trivy가 함께 설치되어 있으면 레지스트리에 올라간 이미지도 검사할 수 있다.',
+      ],
+      flows: [{from: 'build', to: 'scan', label: '이미지', type: 'request'}],
+      focus: ['scan'],
+      status: {scan: 'warn'},
+      values: {scan: '결과 확인 중'},
+    },
+    {
+      short: '결과 읽기',
+      kind: '주의',
+      title: '통과가 안전을 뜻하지는 않는다',
+      text: [
+        '검사는 알려진 결함만 찾는다. 오늘 깨끗해도 내일 새 취약점이 공개되면 다시 검사해야 한다. 그때 SBOM이 영향받는 이미지를 빨리 찾게 해 준다.',
+        '결과는 심각도, 고친 버전이 있는지, 실제 실행 경로에 있는지, 바깥에 노출되는지 순서로 본다. 해결은 대부분 베이스 이미지나 라이브러리를 새 버전으로 바꿔 다시 빌드하는 것이다.',
+      ],
+      keyIdea: '수백 건이 나와도 같은 무게가 아니다. 수정 버전이 있고 노출된 서비스의 것부터 처리한다.',
+      flows: [{from: 'scan', to: 'build', label: '다시 빌드', type: 'response'}],
+      focus: ['scan', 'build'],
+      status: {scan: 'ok'},
+      values: {scan: {text: '통과 (알려진 것 기준)', tone: 'good'}},
+    },
+    {
+      short: '서명',
+      kind: '원리',
+      title: '서명하고 레지스트리에 올린다',
+      text: [
+        '서명은 "이 이미지를 정말 우리 빌드가 만들었고 중간에 바뀌지 않았다"를 확인하게 해 준다. 빌드 주체가 서명해 이미지와 함께 레지스트리에 올린다.',
+        '업계 체계인 SLSA는 여기서 더 나아가 누가, 어디서, 어떤 입력으로 빌드했는지의 증명(provenance, 출처 기록)을 남기는 것을 핵심으로 본다.',
+      ],
+      changes: ['+ 이미지 서명', '+ 레지스트리에 이미지 올림'],
+      flows: [
+        {from: 'scan', to: 'sign', label: '통과본', type: 'request'},
+        {from: 'sign', to: 'registry', label: '이미지+서명', type: 'request'},
+      ],
+      focus: ['sign', 'registry'],
+      badges: {registry: 'app:1.4.2'},
+      values: {sig: {text: '서명됨', tone: 'good'}},
+    },
+    {
+      short: '태그 함정',
+      kind: '문제',
+      title: '태그는 다른 이미지를 가리키게 바뀔 수 있다',
+      text: [
+        'app:latest 같은 가변 태그는 같은 이름에 새 이미지를 덮어쓸 수 있다. 덮어쓴 뒤 새 노드에 뜬 파드만 다른 버전을 받아, 같은 Deployment인데 파드마다 버전이 달라진다.',
+        '매니페스트는 바뀌지 않았으니 이력상으로는 아무 일도 없었던 것처럼 보이고, 되돌리기도 할 수 없다. 레지스트리에서 이미지를 바꿔치기하는 공격도 같은 틈을 노린다.',
+      ],
+      flows: [{from: 'build', to: 'registry', label: '같은 태그로', type: 'request'}],
+      focus: ['registry'],
+      status: {registry: 'warn'},
+      badges: {registry: 'latest 덮어씀'},
+      values: {ref: {text: 'app:latest', tone: 'bad'}},
+    },
+    {
+      short: '다이제스트',
+      kind: '원리',
+      title: '태그 대신 다이제스트로 고정한다',
+      text: [
+        '다이제스트(digest)는 이미지 내용에서 계산한 값이라 내용이 다르면 반드시 다르다. app@sha256:... 형태로 배포하면 누가 같은 태그를 덮어써도 영향받지 않는다.',
+        '사람이 읽기 쉬운 버전 태그와 커밋 해시 태그를 함께 달아 두고, 배포 매니페스트에는 다이제스트를 쓰는 방식이 흔하다.',
+      ],
+      changes: ['~ image: app:latest → app@sha256:...'],
+      flows: [{from: 'deploy', to: 'adm', label: '@sha256', type: 'request'}],
+      focus: ['deploy'],
+      status: {registry: null},
+      badges: {registry: null},
+      values: {ref: {text: 'app@sha256:...', tone: 'good'}},
+    },
+    {
+      short: '배포 확인',
+      kind: '원리',
+      title: '배포 때 어드미션이 서명과 출처를 확인한다',
+      text: [
+        '쿠버네티스는 기본으로 이미지 서명을 확인하지 않는다. 배포 요청이 들어오면 어드미션 정책(요청을 검사하는 확장 관문)이 레지스트리에서 서명을 확인하고, 서명이 없거나 맞지 않으면 거절하게 해야 한다.',
+        '서명은 이 확인 정책이 있어야 의미가 있다. 정책을 통과한 이미지만 파드로 실행된다.',
+      ],
+      keyIdea: '서명만 하고 배포 때 확인하지 않으면, 바꿔치기된 이미지도 아무 문제 없이 실행된다.',
+      flows: [
+        {from: 'adm', to: 'registry', label: '서명 확인', type: 'request'},
+        {from: 'registry', to: 'adm', label: '일치', type: 'response'},
+        {from: 'adm', to: 'pod', label: '허용', type: 'request'},
+      ],
+      focus: ['adm', 'pod'],
+      status: {adm: 'ok', pod: 'ok'},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '길 곳곳에서 하나씩 확인한다',
+      text: [
+        'SBOM은 무엇이 들어 있는지, 취약점 검사는 알려진 결함이 있는지, 서명은 누가 만들고 바뀌지 않았는지, 다이제스트는 정확히 어느 이미지인지를 확인했다.',
+        '폐쇄망도 반입하는 이미지와 패키지의 결함은 막지 못한다. 그래서 반입 시점의 검사와 SBOM이 더 중요하다.',
+      ],
+      keyIdea: 'SBOM·취약점 검사·서명·다이제스트는 각각 다른 질문에 답한다. 실행 중인 이미지는 태그가 아니라 다이제스트로 확인하고(kubectl get pod -o jsonpath로 imageID 조회), 수정 버전이 있는 높은 심각도 취약점부터 고친다.',
+      focus: ['sbom', 'scan', 'sign', 'adm'],
+    },
+  ]}
+/>
+
+## 장치별로 확인하는 것과 한계
+
+| 장치 | 무엇을 확인하나 | 한계 |
+| --- | --- | --- |
+| 취약점 검사 | 이미지 패키지에 알려진 취약점(CVE)이 있는지 | 알려지지 않은 결함은 못 찾는다. 새 취약점이 공개되면 다시 검사해야 한다 |
+| SBOM | 이미지 안의 전체 구성 목록 | 목록일 뿐 안전 증명이 아니다 |
+| 서명 | 우리 빌드가 만들었고 중간에 바뀌지 않았는지 | 배포 때 확인하는 정책이 있어야 의미가 있다 |
+| 다이제스트 고정 | 정확히 어느 이미지를 배포하는지 | 사람이 읽기 어렵다. 버전 태그를 함께 단다 |
+
+예: Harbor 같은 이미지 저장소는 Trivy를 스캐너로 붙여 저장된 이미지의 취약점 검사를 실행하고, 결과(CVE 식별자·패키지명·설치 버전·수정 버전·심각도)를 보여 준다. 로컬에서는 `trivy image <이미지>`로 같은 검사를 해 볼 수 있다.
+
+더 읽을거리: [이미지](https://kubernetes.io/ko/docs/concepts/containers/images/) · [Harbor 문서](https://goharbor.io/docs/) · [Sigstore 문서](https://docs.sigstore.dev/) · [Trivy](https://trivy.dev/)
+
+다음 레슨: [감사 로그](./audit-log.mdx)

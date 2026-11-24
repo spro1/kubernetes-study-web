@@ -1,0 +1,180 @@
+---
+id: service-models
+title: Who Owns What (IaaS · PaaS · SaaS)
+sidebar_label: 01 · Who Owns What
+description: Follow in animation how the line of responsibility between your team and the cloud provider moves layer by layer as one web service goes from on-premises to IaaS, PaaS and SaaS
+hide_table_of_contents: true
+---
+
+# Who Owns What (IaaS · PaaS · SaaS)
+
+A web service that ran in the company server room is moving to the cloud. Depending on how you move it, what your team must handle changes a lot. Split the service into six layers and follow where the line of responsibility moves.
+
+<StepDiagram
+  width={1000}
+  meta={{duration: '~8 min', level: 'Beginner'}}
+  nodes={[
+    {id: 'team', label: 'Our team', sub: 'Service operator', icon: 'user', tone: 'ext', x: 110, y: 90, show: true},
+    {id: 'vendor', label: 'Provider', sub: 'Cloud company', icon: 'cloud', tone: 'cp', x: 110, y: 370},
+    {id: 'app', label: 'App', sub: 'Our code', icon: 'box', tone: 'app', x: 480, y: 90, show: true},
+    {id: 'data', label: 'Data', sub: 'Customer info · config', icon: 'db', tone: 'store', x: 800, y: 90, show: true},
+    {id: 'runtime', label: 'Runtime', sub: 'Language · middleware', icon: 'layers', tone: 'node', x: 480, y: 230, show: true},
+    {id: 'os', label: 'OS', sub: 'Linux, etc.', icon: 'gear', tone: 'node', x: 800, y: 230, show: true},
+    {id: 'virt', label: 'Virtualization', sub: 'Virtual machines', icon: 'split', tone: 'node', x: 800, y: 370, show: true},
+    {id: 'hw', label: 'Hardware', sub: 'Servers · network', icon: 'server', tone: 'node', x: 480, y: 370, show: true},
+  ]}
+  metrics={[
+    {id: 'model', label: 'Operating model'},
+    {id: 'mine', label: 'Layers we manage'},
+    {id: 'chores', label: 'Our main work'},
+  ]}
+  learn={[
+    {text: 'How to split a service into six layers, from hardware to data', at: 1},
+    {text: 'Which layers IaaS, PaaS and SaaS each hand over', at: 6},
+    {text: 'Even with IaaS, OS patching is on you', at: 4},
+    {text: 'In every model, data and access rights are your responsibility', at: 7},
+  ]}
+  steps={[
+    {
+      short: 'Server room',
+      kind: '시작',
+      title: 'On-premises, every layer is yours',
+      text: [
+        'On-premises means the company runs servers it bought itself in its own server room or data center. The web service runs this way today.',
+        'Our team handles all six layers, from buying servers and installing the OS to deploying the app and backing up data.',
+      ],
+      flows: [{from: 'team', to: 'app', label: 'All by us', type: 'request'}],
+      badges: {app: 'Us', data: 'Us', runtime: 'Us', os: 'Us', virt: 'Us', hw: 'Us'},
+      values: {model: 'On-premises', mine: '6 / 6', chores: 'Everything, from buying gear'},
+    },
+    {
+      short: 'Layers',
+      kind: '원리',
+      title: 'A service runs on six stacked layers',
+      text: [
+        'At the bottom is hardware (servers, network, power, cooling). Virtualization splits one machine into several VMs, and on top come the OS, the runtime (execution environment and middleware), and the app.',
+        'Data is the customer information and configuration the app handles. If a lower layer stops, everything above it stops.',
+      ],
+      flows: [
+        {from: 'hw', to: 'virt', label: 'Runs on top', type: 'request'},
+        {from: 'virt', to: 'os', type: 'request'},
+      ],
+      focus: ['hw', 'virt', 'os'],
+    },
+    {
+      short: 'Burden',
+      kind: '주의',
+      title: 'Running a server room means buying ahead',
+      text: [
+        'If you expect more users, you must buy and install servers in advance. Ordering, delivery and installation take time, so you are too slow for sudden spikes, and spare gear sits idle.',
+        'Spending big up front to buy assets is called capital expenditure (CapEx). The cloud turns it into an operating expense (OpEx) where you pay for what you use.',
+      ],
+      flows: [{from: 'team', to: 'hw', label: 'Buy gear', type: 'request'}],
+      focus: ['hw'],
+      status: {hw: 'warn'},
+      values: {chores: {text: 'Buying · replacing gear', tone: 'bad'}},
+    },
+    {
+      short: 'IaaS',
+      kind: '원리',
+      title: 'IaaS: rent the hardware and virtualization',
+      text: [
+        'With IaaS (Infrastructure as a Service), the provider handles hardware and virtualization, and you rent virtual machines. When you need a server, you create one in minutes from the console or API.',
+        'From the OS up, you still install and manage everything. It is the easiest way to move server-room servers over almost as they are.',
+      ],
+      flows: [
+        {from: 'vendor', to: 'hw', label: 'Provider runs', type: 'response'},
+        {from: 'vendor', to: 'virt', type: 'response', bend: -0.15},
+      ],
+      focus: ['virt', 'hw'],
+      status: {hw: null},
+      badges: {virt: 'Provider', hw: 'Provider'},
+      values: {model: 'IaaS', mine: '4 / 6', chores: 'OS and up'},
+    },
+    {
+      short: 'OS patch',
+      kind: '주의',
+      title: 'Even with IaaS, OS security patches are yours',
+      text: [
+        'Renting a VM does not mean the provider patches its OS for you. If you put off security patches, the vulnerabilities stay.',
+        'Firewall rules, disk backups and app settings are also yours to decide. The provider is responsible only up to the floor the VM runs on.',
+      ],
+      flows: [{from: 'team', to: 'os', label: 'OS patch', type: 'request'}],
+      focus: ['os'],
+      status: {os: 'warn'},
+    },
+    {
+      short: 'PaaS',
+      kind: '원리',
+      title: 'PaaS: upload only code and data',
+      text: [
+        'With PaaS (Platform as a Service), the provider also handles the OS and runtime. You upload code and pick settings. Managed databases and app platforms belong here.',
+        'You no longer worry about OS patches or runtime upgrades, but you can only choose among the languages and versions the provider supports.',
+      ],
+      flows: [
+        {from: 'vendor', to: 'runtime', label: 'Provider runs', type: 'response'},
+        {from: 'vendor', to: 'os', type: 'response'},
+      ],
+      focus: ['runtime', 'os'],
+      status: {os: null},
+      badges: {runtime: 'Provider', os: 'Provider'},
+      values: {model: 'PaaS', mine: '2 / 6', chores: 'Code · data · settings'},
+    },
+    {
+      short: 'SaaS',
+      kind: '원리',
+      title: 'SaaS: use finished software',
+      text: [
+        'With SaaS (Software as a Service), the provider builds and runs the app too. Like webmail or collaboration tools, you sign up and use it right away.',
+        'Our team builds no software. But who uses it (accounts), what they can see (permissions), and what data goes in are still ours to decide.',
+      ],
+      flows: [
+        {from: 'vendor', to: 'app', label: 'Runs the app', type: 'response'},
+        {from: 'team', to: 'data', label: 'Accounts · perms', type: 'request', bend: 0.08},
+      ],
+      focus: ['app', 'data'],
+      badges: {app: 'Provider'},
+      values: {model: 'SaaS', mine: '1 / 6', chores: 'Accounts · perms · data'},
+    },
+    {
+      short: 'Data',
+      kind: '주의',
+      title: 'Data and access settings stay your responsibility',
+      text: [
+        'If you accidentally open storage to "anyone can read" and customer data leaks, that is not a provider outage. It is our configuration problem. Splitting responsibility like this is called the shared responsibility model.',
+        'The provider protects the cloud itself (buildings, equipment, virtualization). The user protects what they put in the cloud (data, accounts, settings).',
+      ],
+      flows: [{from: 'team', to: 'data', label: 'Who can see', type: 'request', bend: 0.08}],
+      focus: ['data'],
+      status: {data: 'error'},
+      badges: {data: 'Us'},
+      values: {chores: {text: 'Access misconfig = our fault', tone: 'bad'}},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Hand over more, choose less',
+      text: [
+        'Going from on-premises → IaaS → PaaS → SaaS, the layers you manage drop from 6 → 4 → 2 → 1. But so does your freedom to pick OS versions and detailed settings.',
+        'Kubernetes sits on this line too. Install it on your own servers and you own the nodes and control plane. Use managed Kubernetes (for example EKS, GKE, AKS) and the provider runs the control plane while you own workloads and permissions.',
+      ],
+      keyIdea: 'From IaaS → PaaS → SaaS, the provider takes more layers. But data exposure, accounts and permissions are yours in every model.',
+      focus: ['team', 'data'],
+      status: {data: 'ok'},
+      values: {chores: 'Depends on model'},
+    },
+  ]}
+/>
+
+## Responsibility by model at a glance
+
+| Model | We manage | Provider manages | Examples (AWS · Azure · GCP) |
+| --- | --- | --- | --- |
+| On-premises | Everything from hardware to data | Nothing | Company server room or data center |
+| IaaS | OS, runtime, app, data | Hardware, virtualization | EC2 · Virtual Machines · Compute Engine |
+| PaaS | App, data | Hardware, virtualization, OS, runtime | Elastic Beanstalk · App Service · App Engine |
+| SaaS | Data, accounts, permissions | Everything up to the app | Business services like Microsoft 365 and Google Workspace |
+
+Further reading: [The NIST Definition of Cloud Computing (SP 800-145)](https://csrc.nist.gov/pubs/sp/800/145/final) · [Shared Responsibility Model (AWS)](https://aws.amazon.com/compliance/shared-responsibility-model/) · [From One Server to Containers](../basic/server-to-container.mdx)
+
+Next lesson: [How a Request Travels Inside a VPC](./vpc-request.mdx)

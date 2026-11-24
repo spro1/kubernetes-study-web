@@ -1,0 +1,202 @@
+---
+id: etcd-quorum
+title: Control Plane HA and etcd Quorum
+sidebar_label: 04 · Control Plane and etcd Quorum
+description: See how etcd on three control plane nodes completes writes by majority agreement, why it survives one failure but stops writing after two, and why an even count gains nothing, step by step with animation
+hide_table_of_contents: true
+---
+
+# Control Plane HA and etcd Quorum
+
+Production clusters run an odd number of control plane (master) nodes, such as three, behind a single shared address. Let's follow etcd's majority agreement (quorum) to see why three, and what stops when some of them go down.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~10 min', level: 'Advanced'}}
+  groups={[
+    {label: '3 control plane nodes', x: 515, y: 30, w: 460, h: 385, tone: 'mgmt'},
+  ]}
+  nodes={[
+    {id: 'user', label: 'User', sub: 'kubectl', icon: 'user', tone: 'ext', x: 85, y: 100, show: true},
+    {id: 'worker', label: 'Worker node', sub: 'running Pods', icon: 'server', tone: 'node', x: 85, y: 360, show: true},
+    {id: 'lb', label: 'Shared address', sub: 'LB / virtual IP', icon: 'split', tone: 'cp', x: 330, y: 230, show: true},
+    {id: 'cp1', label: 'Master 1', sub: 'API server + etcd', icon: 'db', tone: 'cp', x: 620, y: 105, show: true},
+    {id: 'cp2', label: 'Master 2', sub: 'API server + etcd', icon: 'db', tone: 'cp', x: 870, y: 230, show: true},
+    {id: 'cp3', label: 'Master 3', sub: 'API server + etcd', icon: 'db', tone: 'cp', x: 620, y: 355, show: true},
+  ]}
+  metrics={[
+    {id: 'alive', label: 'etcd alive'},
+    {id: 'quorum', label: 'Quorum (majority)'},
+    {id: 'write', label: 'Writes'},
+    {id: 'read', label: 'Reads · running Pods'},
+  ]}
+  learn={[
+    {text: 'Why run several control plane nodes', at: 0},
+    {text: 'Why a write needs a majority to finish', at: 2},
+    {text: 'One failure vs two failures', at: 4},
+    {text: 'Why an even count gains nothing', at: 7},
+  ]}
+  steps={[
+    {
+      short: '3 nodes',
+      kind: '시작',
+      title: 'Three masters behind one shared address',
+      text: [
+        'With a single control plane node, the moment it goes down you cannot create Pods, revive failed Pods or change settings.',
+        'So you run several masters with a shared address (a load balancer or virtual IP) in front. A common setup is three control plane nodes behind keepalived and HAProxy.',
+      ],
+      flows: [
+        {from: 'user', to: 'lb', label: 'Request', type: 'request'},
+        {from: 'worker', to: 'lb', label: 'Status report', type: 'request'},
+        {from: 'lb', to: 'cp2', type: 'request'},
+      ],
+      focus: ['lb'],
+      status: {cp1: 'ok', cp2: 'ok', cp3: 'ok', worker: 'ok'},
+      values: {alive: '3 / 3', quorum: '2', write: {text: 'Allowed', tone: 'good'}, read: {text: 'Normal', tone: 'good'}},
+    },
+    {
+      short: 'Leader',
+      kind: '원리',
+      title: 'One of the three etcd members becomes leader',
+      text: [
+        'The three etcd members hold the same data. One becomes the leader: it takes writes, orders them and passes them on to the followers.',
+        'Whichever master\'s API server receives a request, the write always goes through the leader.',
+      ],
+      keyIdea: 'If the leader fails, the remaining members elect a new one by majority. No human picks the leader.',
+      flows: [
+        {from: 'cp1', to: 'cp2', label: 'Replicate', type: 'watch'},
+        {from: 'cp1', to: 'cp3', label: 'Replicate', type: 'watch'},
+      ],
+      focus: ['cp1'],
+      badges: {cp1: 'Leader', cp2: 'Follower', cp3: 'Follower'},
+    },
+    {
+      short: 'Majority',
+      kind: '원리',
+      title: 'A write finishes once a majority records it',
+      text: [
+        'When the user creates a Deployment, the leader sends the change to the followers. Once a majority, two of three, records it, the write is complete.',
+        'A majority is required so that a split etcd cannot have two sides each claiming a different truth. Only one side can hold a majority.',
+      ],
+      keyIdea: 'Every change completes only after it is written to etcd. That is why slow etcd disks slow down every API response.',
+      flows: [
+        {from: 'lb', to: 'cp1', label: 'Create', type: 'request'},
+        {from: 'cp1', to: 'cp2', label: 'Record', type: 'request'},
+        {from: 'cp1', to: 'cp3', label: 'Record', type: 'request'},
+      ],
+      focus: ['cp1', 'cp2', 'cp3'],
+    },
+    {
+      short: '1 down',
+      kind: '장애',
+      title: 'Writes continue with one node down',
+      text: [
+        'Master 3 goes down. The shared address sends requests only to live masters.',
+        'The remaining two are still a majority, so the leader completes writes with Master 2\'s agreement alone. Users barely notice.',
+      ],
+      flows: [
+        {from: 'user', to: 'lb', label: 'Create', type: 'request'},
+        {from: 'lb', to: 'cp1', type: 'request'},
+        {from: 'cp1', to: 'cp2', label: 'Record', type: 'request'},
+      ],
+      focus: ['cp3'],
+      status: {cp3: 'off'},
+      badges: {cp3: 'Down'},
+      values: {alive: '2 / 3', write: {text: 'Allowed', tone: 'good'}},
+    },
+    {
+      short: '2 down',
+      kind: '장애',
+      title: 'Writes stop with two nodes down',
+      text: [
+        'Master 2 goes down too. The one left is short of a majority (2) and loses quorum.',
+        'etcd without quorum refuses writes. kubectl reads may work, but every create, update and delete fails.',
+      ],
+      flows: [
+        {from: 'user', to: 'lb', label: 'Create', type: 'request'},
+        {from: 'lb', to: 'cp1', type: 'request'},
+        {from: 'lb', to: 'user', label: 'Failed', type: 'response'},
+      ],
+      focus: ['cp1', 'cp2'],
+      status: {cp2: 'off', cp1: 'error'},
+      badges: {cp2: 'Down', cp1: 'No quorum'},
+      values: {alive: '1 / 3', write: {text: 'Refused', tone: 'bad'}},
+    },
+    {
+      short: 'Still',
+      kind: '주의',
+      title: 'Reads may work, and running Pods keep running',
+      text: [
+        'Even without quorum, reads may still work. That leads to a strange state where "you can see the list but cannot change anything".',
+        'Containers already running are still managed by the kubelet on each worker, so they keep working for a while. New changes, such as reviving a failed Pod, are not applied.',
+      ],
+      keyIdea: 'If reads work but every create, update and delete fails, check the control plane nodes first.',
+      flows: [
+        {from: 'user', to: 'lb', label: 'Read', type: 'request'},
+        {from: 'lb', to: 'user', label: 'List', type: 'response'},
+      ],
+      focus: ['worker'],
+      values: {read: {text: 'Reads OK · Pods running', tone: 'good'}},
+    },
+    {
+      short: 'Recover',
+      kind: '원리',
+      title: 'When a master returns, the majority is restored',
+      text: [
+        'When Master 2 comes back, it receives the missed entries from the leader and catches up. Two etcd members are alive again, so writes resume.',
+        'In case a member cannot be revived, etcd takes regular snapshots (a full copy of the data at a point in time).',
+      ],
+      flows: [
+        {from: 'cp1', to: 'cp2', label: 'Missed entries', type: 'request'},
+        {from: 'lb', to: 'user', label: 'Created', type: 'response'},
+      ],
+      focus: ['cp2'],
+      status: {cp2: 'ok', cp1: 'ok'},
+      badges: {cp2: 'Follower', cp1: 'Leader'},
+      values: {alive: '2 / 3', write: {text: 'Resumed', tone: 'good'}},
+    },
+    {
+      short: 'Even',
+      kind: '주의',
+      title: 'An even count does not tolerate more failures',
+      text: [
+        'With four, the majority is three, so you survive only one failure, same as three. With two, the majority is two, so one failure stops writes. That is no better than one node.',
+        'Going even only adds more members to agree with. That is why control planes use odd counts like three or five.',
+      ],
+      flows: [
+        {from: 'cp1', to: 'cp2', label: 'Agree', type: 'watch'},
+        {from: 'cp1', to: 'cp3', label: 'Agree', type: 'watch'},
+      ],
+      focus: ['cp1', 'cp2', 'cp3'],
+      status: {cp3: 'ok'},
+      badges: {cp3: 'Follower'},
+      values: {alive: '3 / 3'},
+    },
+    {
+      short: 'Recap',
+      kind: '정리',
+      title: 'You can change things only while a majority is alive',
+      text: [
+        'etcd completes a write once a majority records it. Three members survive one failure, five survive two. Lose more and writes stop.',
+        'Even when writes stop, reads and running Pods hold for a while. So the outage looks like "only some things fail".',
+      ],
+      keyIdea: 'etcd can write only while a majority is alive. Run an odd count like three or five. If reads work but changes fail, check control plane nodes and etcd member health first.',
+      focus: ['cp1', 'cp2', 'cp3'],
+    },
+  ]}
+/>
+
+## etcd members and tolerated failures
+
+| etcd members | Quorum (majority) | Failures tolerated |
+| --- | --- | --- |
+| 1 | 1 | 0 |
+| 2 | 2 | **0** |
+| 3 | 2 | 1 |
+| 4 | 3 | **1** |
+| 5 | 3 | 2 |
+
+Further reading: [Kubernetes components](https://kubernetes.io/docs/concepts/overview/components/) · [Creating highly available clusters with kubeadm](https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/high-availability/) · [Operating etcd clusters](https://kubernetes.io/docs/tasks/administer-cluster/configure-upgrade-etcd/)
+
+Next lesson: [Cluster Certificate Expiry](./cluster-cert.mdx)

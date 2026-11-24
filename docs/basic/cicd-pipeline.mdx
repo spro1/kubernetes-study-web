@@ -1,0 +1,187 @@
+---
+id: cicd-pipeline
+title: How a Pipeline Runs
+sidebar_label: 08 · Pipeline Order
+description: Follow in animation the general flow of a CI/CD pipeline, from trigger through build, test and artifact to deploys to dev, staging and production, stopping right where something fails
+hide_table_of_contents: true
+---
+
+# How a Pipeline Runs
+
+CI/CD means defining the build → test → deploy process for a code change in advance and running it automatically. Follow one generic pipeline, not tied to any product, from start to finish. Syncing deploys to Git in Kubernetes is covered in [Helm and GitOps](../intermediate/gitops-sync.mdx).
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~10 min', level: 'Beginner'}}
+  groups={[
+    {label: 'Pipeline · stages run in order', x: 230, y: 25, w: 440, h: 135, tone: 'mgmt'},
+    {label: 'Deploy environments', x: 230, y: 265, w: 710, h: 135, tone: 'biz', from: 4},
+  ]}
+  nodes={[
+    {id: 'dev', label: 'Developer', sub: 'Starts a run', icon: 'user', tone: 'ext', x: 85, y: 100, w: 140, show: true},
+    {id: 'repo', label: 'Source repo', sub: 'Branch · commit', icon: 'git', tone: 'store', x: 85, y: 340, w: 140, show: true},
+    {id: 'build', label: 'Build', sub: 'Make the image', icon: 'hammer', tone: 'cp', x: 330, y: 100},
+    {id: 'test', label: 'Test', sub: 'Anything broken?', icon: 'shield', tone: 'cp', x: 570, y: 100},
+    {id: 'reg', label: 'Registry', sub: 'Image store', icon: 'registry', tone: 'store', x: 840, y: 100},
+    {id: 'envDev', label: 'Dev', sub: 'dev', icon: 'cloud', tone: 'node', x: 330, y: 340},
+    {id: 'envStg', label: 'Staging', sub: 'stg · qa', icon: 'cloud', tone: 'node', x: 570, y: 340},
+    {id: 'envProd', label: 'Production', sub: 'prod', icon: 'cloud', tone: 'node', x: 840, y: 340},
+  ]}
+  metrics={[
+    {id: 'stage', label: 'Current stage'},
+    {id: 'image', label: 'Image tag'},
+    {id: 'prod', label: 'Prod version'},
+  ]}
+  learn={[
+    {text: 'What starts a pipeline (triggers)', at: 0},
+    {text: 'What build and test each leave behind', at: 2},
+    {text: 'Why to use an immutable tag instead of latest', at: 3},
+    {text: 'Why the same artifact is promoted through each environment', at: 5},
+    {text: 'If an earlier stage fails, later stages do not run', at: 7},
+  ]}
+  steps={[
+    {
+      short: 'Trigger',
+      kind: '시작',
+      title: 'Something wakes the pipeline up',
+      text: [
+        'What starts a pipeline is called a trigger. Options include a manual run (someone clicks a button), a code change (a commit is pushed or merged), a schedule (at set times), and an external call (another system calls an API).',
+        'Here, assume a developer runs it by hand or it is set to run when something is merged into main.',
+      ],
+      keyIdea: 'A pipeline chains build, test and deploy in a fixed order. The procedure is the same every time, and each run is recorded.',
+      flows: [
+        {from: 'dev', to: 'build', label: 'Manual run', type: 'request'},
+        {from: 'repo', to: 'build', label: 'Merged', type: 'watch'},
+      ],
+      focus: ['build'],
+      values: {stage: 'Idle → start', image: 'None', prod: '1.4.1'},
+    },
+    {
+      short: 'Build',
+      kind: '원리',
+      title: 'Stage 1: get the source and build an image',
+      text: [
+        'The build fetches the source for the chosen branch or commit, pulls in libraries, bundles them, and builds a container image following the steps in the Dockerfile.',
+        'The same input should give the same output, so builds run in a clean, isolated environment every time, not on someone\'s PC.',
+      ],
+      flows: [{from: 'repo', to: 'build', label: 'Source', type: 'response'}],
+      focus: ['build'],
+      status: {build: 'ok'},
+      values: {stage: 'Stage 1 · build'},
+    },
+    {
+      short: 'Test',
+      kind: '원리',
+      title: 'Stage 2: make sure nothing broke',
+      text: [
+        'The next stage runs only if the previous one succeeded. The test stage runs unit tests (one piece of code), integration tests (several parts wired together) and E2E tests (from the UI all the way through).',
+        'Having many unit tests and few E2E tests is called the test pyramid. Jobs in the same stage can run in parallel.',
+      ],
+      flows: [{from: 'build', to: 'test', label: 'Next stage', type: 'request'}],
+      focus: ['test'],
+      status: {test: 'ok'},
+      badges: {test: 'Passed'},
+      values: {stage: 'Stage 2 · test'},
+    },
+    {
+      short: 'Artifact',
+      kind: '원리',
+      title: 'Tag the output and store it',
+      text: [
+        'The deployable output of a build is called an artifact. In container environments it is usually an image, tagged and pushed to an image registry.',
+        'The latest tag keeps pointing to different things, which makes it hard to tell which build is running in production. Use tags that never change, like 1.4.2 or a commit hash.',
+      ],
+      flows: [{from: 'build', to: 'reg', label: 'push 1.4.2', type: 'request', bend: -0.15}],
+      focus: ['reg'],
+      status: {reg: 'ok'},
+      badges: {test: null, reg: '1.4.2'},
+      values: {image: '1.4.2'},
+    },
+    {
+      short: 'Deploy dev',
+      kind: '원리',
+      title: 'Stage 3: deploy to dev first',
+      text: [
+        'Deploying puts the built image into a runtime environment as the new version. In Kubernetes, you apply a manifest with the desired state and Kubernetes replaces the Pods.',
+        'The dev environment is where developers deploy often, so it is fine if it breaks a lot.',
+      ],
+      flows: [{from: 'reg', to: 'envDev', label: 'Deploy 1.4.2', type: 'request'}],
+      focus: ['envDev'],
+      status: {envDev: 'ok'},
+      badges: {envDev: '1.4.2'},
+      values: {stage: 'Stage 3 · dev deploy'},
+    },
+    {
+      short: 'Deploy stg',
+      kind: '원리',
+      title: 'Deploy the same image to staging',
+      text: [
+        'Staging (stg, qa) is set up as close to production as possible for checks before release. There is no rebuild. The same 1.4.2 image from dev goes up.',
+        'Environments may be split by cluster, or by namespace within one cluster.',
+      ],
+      keyIdea: 'Only by deploying the same artifact to each environment can you say "what we verified in staging" is "what went to production".',
+      flows: [{from: 'reg', to: 'envStg', label: 'Deploy 1.4.2', type: 'request'}],
+      focus: ['envStg'],
+      status: {envStg: 'ok'},
+      badges: {envStg: '1.4.2'},
+      values: {stage: 'Staging deploy'},
+    },
+    {
+      short: 'Go to prod',
+      kind: '주의',
+      title: 'Production release can be manual or automatic',
+      text: [
+        'If a person decides and triggers the production release, it is Continuous Delivery. If passing tests takes it all the way to production automatically, it is Continuous Deployment.',
+        'Places with strict change control, like finance and the public sector, often require approval before production. Here a person triggers it.',
+      ],
+      flows: [
+        {from: 'reg', to: 'envProd', label: 'Run by a person', type: 'request'},
+      ],
+      focus: ['envProd'],
+      status: {envProd: 'ok'},
+      badges: {envProd: '1.4.2'},
+      values: {stage: 'Prod deploy', prod: {text: '1.4.2', tone: 'good'}},
+    },
+    {
+      short: 'Failure',
+      kind: '장애',
+      title: 'The next change stops at test',
+      text: [
+        'The pipeline runs again for the next change. The build succeeds, but tests fail. When a stage fails, later stages do not run.',
+        'So the 1.4.3 image is neither stored nor deployed anywhere. Production stays on 1.4.2. Look for the cause in the test stage logs.',
+      ],
+      keyIdea: 'When one job in a stage fails, whether the others stop at once or run to the end depends on the tool.',
+      flows: [{from: 'build', to: 'test', label: 'Check 1.4.3', type: 'request'}],
+      focus: ['test'],
+      status: {test: 'error', reg: null, envDev: null, envStg: null, envProd: null},
+      badges: {test: 'Failed', reg: null, envDev: null, envStg: null, envProd: '1.4.2'},
+      values: {stage: {text: 'Stopped at stage 2', tone: 'bad'}, image: '1.4.3 (not stored)', prod: {text: 'Stays 1.4.2', tone: 'good'}},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'The same procedure runs the same way every time',
+      text: [
+        'A trigger wakes the pipeline, then build → test → store artifact → deploy to dev, staging and production run in order. If any stage fails, it stops there.',
+        'What automation changes is not output quality itself, but that the same procedure runs the same way every time and leaves a record.',
+      ],
+      keyIdea: 'A pipeline goes trigger → build → test → artifact → per-environment deploy in a fixed order and stops where something fails. When there is a problem, start with the stage that stopped and its logs.',
+      focus: ['build', 'test', 'reg'],
+    },
+  ]}
+/>
+
+## Common approaches in Kubernetes
+
+| Concept | Generic pipeline | In Kubernetes |
+| --- | --- | --- |
+| Trigger | Manual, code change, schedule, external call | A repo webhook runs CI, and a GitOps tool watches Git changes and syncs the cluster (for example Argo CD) |
+| Stages and jobs | Stages run in order, jobs in a stage run in parallel | Whether the rest stop when one job fails depends on tool settings |
+| Artifact | Store the image with its tag in a registry | Push the image to a registry (for example Harbor) and write its tag or digest in the manifest |
+| Production approval | Many places require approval | Use a manual approval stage or merge request approval as the gate |
+| Rollback | You need earlier deploy records to roll back | Roll back to a previous revision with `kubectl rollout undo`, or with GitOps revert the Git commit |
+
+Further reading: [Deployment rollback](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/) · [Argo CD](https://argo-cd.readthedocs.io/) · [Tekton](https://tekton.dev/docs/) · [Helm and GitOps](../intermediate/gitops-sync.mdx)
+
+Next lesson: [Health checks — alive, and ready for requests?](../intermediate/probes.mdx)

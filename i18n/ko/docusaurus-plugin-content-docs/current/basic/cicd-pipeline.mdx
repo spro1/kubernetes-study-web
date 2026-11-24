@@ -1,0 +1,187 @@
+---
+id: cicd-pipeline
+title: 파이프라인이 도는 순서
+sidebar_label: 08 · 파이프라인 순서
+description: 트리거에서 빌드·테스트·아티팩트를 거쳐 개발·검증·운영 환경에 차례로 배포되고, 실패하면 그 자리에서 멈추는 CI/CD 파이프라인의 일반 흐름을 애니메이션으로 따라간다
+hide_table_of_contents: true
+---
+
+# 파이프라인이 도는 순서
+
+CI/CD는 코드 변경이 서비스에 반영되기까지의 빌드 → 테스트 → 배포 과정을 미리 정해 두고 자동으로 실행하는 방식이다. 특정 제품이 아닌 일반적인 파이프라인 하나가 처음부터 끝까지 도는 순서를 따라가 본다. 쿠버네티스에서 Git을 기준으로 배포를 맞추는 방식은 [Helm과 GitOps](../intermediate/gitops-sync.mdx)에서 다룬다.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '약 10분', level: '기초'}}
+  groups={[
+    {label: '파이프라인 · 단계는 순서대로', x: 230, y: 25, w: 440, h: 135, tone: 'mgmt'},
+    {label: '배포 환경', x: 230, y: 265, w: 710, h: 135, tone: 'biz', from: 4},
+  ]}
+  nodes={[
+    {id: 'dev', label: '개발자', sub: '실행 요청', icon: 'user', tone: 'ext', x: 85, y: 100, w: 140, show: true},
+    {id: 'repo', label: '소스 저장소', sub: '브랜치·커밋', icon: 'git', tone: 'store', x: 85, y: 340, w: 140, show: true},
+    {id: 'build', label: '빌드', sub: '이미지 만들기', icon: 'hammer', tone: 'cp', x: 330, y: 100},
+    {id: 'test', label: '테스트', sub: '망가졌나 확인', icon: 'shield', tone: 'cp', x: 570, y: 100},
+    {id: 'reg', label: '레지스트리', sub: '이미지 저장소', icon: 'registry', tone: 'store', x: 840, y: 100},
+    {id: 'envDev', label: '개발', sub: 'dev', icon: 'cloud', tone: 'node', x: 330, y: 340},
+    {id: 'envStg', label: '검증', sub: 'stg · qa', icon: 'cloud', tone: 'node', x: 570, y: 340},
+    {id: 'envProd', label: '운영', sub: 'prod', icon: 'cloud', tone: 'node', x: 840, y: 340},
+  ]}
+  metrics={[
+    {id: 'stage', label: '현재 단계'},
+    {id: 'image', label: '이미지 태그'},
+    {id: 'prod', label: '운영 버전'},
+  ]}
+  learn={[
+    {text: '무엇이 파이프라인을 실행시키는지 (트리거)', at: 0},
+    {text: '빌드·테스트가 각각 무엇을 남기는지', at: 2},
+    {text: 'latest 대신 바뀌지 않는 태그를 쓰는 이유', at: 3},
+    {text: '같은 결과물을 환경마다 차례로 올리는 이유', at: 5},
+    {text: '앞 단계가 실패하면 뒤가 실행되지 않는다는 것', at: 7},
+  ]}
+  steps={[
+    {
+      short: '트리거',
+      kind: '시작',
+      title: '무언가가 파이프라인을 깨운다',
+      text: [
+        '파이프라인을 실행시키는 계기를 트리거(trigger)라고 한다. 사람이 실행 버튼을 누르는 수동 실행, 커밋이 올라오거나 머지될 때 도는 코드 변경, 정해진 시각마다 도는 예약 실행, 다른 시스템이 API로 부르는 외부 호출이 있다.',
+        '여기서는 개발자가 직접 실행하거나, main에 머지되면 실행되도록 정해 두었다고 하자.',
+      ],
+      keyIdea: '파이프라인은 빌드·테스트·배포를 정해진 순서로 엮은 실행 흐름이다. 절차가 매번 같고, 실행 기록이 남는다.',
+      flows: [
+        {from: 'dev', to: 'build', label: '수동 실행', type: 'request'},
+        {from: 'repo', to: 'build', label: '머지됨', type: 'watch'},
+      ],
+      focus: ['build'],
+      values: {stage: '대기 → 시작', image: '없음', prod: '1.4.1'},
+    },
+    {
+      short: '빌드',
+      kind: '원리',
+      title: '1단계: 소스를 받아 이미지를 만든다',
+      text: [
+        '빌드는 지정한 브랜치·커밋의 소스를 내려받고 라이브러리를 받아 묶은 뒤 Dockerfile에 적힌 순서대로 컨테이너 이미지를 만든다.',
+        '같은 입력이면 같은 결과가 나와야 하므로 개인 PC 대신 매번 깨끗한 격리 환경에서 실행하는 것이 원칙이다.',
+      ],
+      flows: [{from: 'repo', to: 'build', label: '소스', type: 'response'}],
+      focus: ['build'],
+      status: {build: 'ok'},
+      values: {stage: '1단계 · 빌드'},
+    },
+    {
+      short: '테스트',
+      kind: '원리',
+      title: '2단계: 망가지지 않았는지 확인한다',
+      text: [
+        '앞 단계가 성공해야 다음 단계로 넘어간다. 테스트 단계에서는 단위 테스트(코드 조각 하나), 통합 테스트(부품 여러 개를 이어서), E2E 테스트(화면부터 끝까지)를 돌린다.',
+        '단위 테스트를 많이, E2E 테스트를 적게 두는 구성을 테스트 피라미드라고 한다. 같은 단계 안의 작업은 동시에 돌릴 수 있다.',
+      ],
+      flows: [{from: 'build', to: 'test', label: '다음 단계', type: 'request'}],
+      focus: ['test'],
+      status: {test: 'ok'},
+      badges: {test: '통과'},
+      values: {stage: '2단계 · 테스트'},
+    },
+    {
+      short: '아티팩트',
+      kind: '원리',
+      title: '결과물에 태그를 붙여 보관한다',
+      text: [
+        '빌드가 만든 배포 가능한 결과물을 아티팩트(artifact)라고 한다. 컨테이너 환경에서는 이미지가 대표적이고, 태그를 붙여 이미지 저장소에 올린다.',
+        'latest 태그는 가리키는 대상이 계속 바뀌어, 지금 운영에 올라간 것이 어느 빌드인지 추적하기 어렵다. 1.4.2나 커밋 해시처럼 바뀌지 않는 태그를 쓴다.',
+      ],
+      flows: [{from: 'build', to: 'reg', label: 'push 1.4.2', type: 'request', bend: -0.15}],
+      focus: ['reg'],
+      status: {reg: 'ok'},
+      badges: {test: null, reg: '1.4.2'},
+      values: {image: '1.4.2'},
+    },
+    {
+      short: '개발 배포',
+      kind: '원리',
+      title: '3단계: 먼저 개발 환경에 올린다',
+      text: [
+        '배포는 만든 이미지를 실행 환경에 올려 새 버전으로 바꾸는 단계다. 쿠버네티스에서는 원하는 상태를 적은 매니페스트를 적용하면 쿠버네티스가 파드를 교체한다.',
+        '개발 환경(dev)은 개발자가 수시로 올려 보는 곳이라 자주 깨져도 된다.',
+      ],
+      flows: [{from: 'reg', to: 'envDev', label: '배포 1.4.2', type: 'request'}],
+      focus: ['envDev'],
+      status: {envDev: 'ok'},
+      badges: {envDev: '1.4.2'},
+      values: {stage: '3단계 · 개발 배포'},
+    },
+    {
+      short: '검증 배포',
+      kind: '원리',
+      title: '같은 이미지를 검증 환경에 올린다',
+      text: [
+        '검증 환경(stg·qa)은 운영과 최대한 비슷하게 꾸며 출시 전에 확인하는 곳이다. 다시 빌드하지 않고, 개발에 올렸던 같은 1.4.2 이미지를 올린다.',
+        '환경은 클러스터 단위로 나누기도 하고, 한 클러스터 안에서 네임스페이스 단위로 나누기도 한다.',
+      ],
+      keyIdea: '환경마다 같은 아티팩트를 올려야 "검증에서 확인한 것"과 "운영에 올라간 것"이 같다고 말할 수 있다.',
+      flows: [{from: 'reg', to: 'envStg', label: '배포 1.4.2', type: 'request'}],
+      focus: ['envStg'],
+      status: {envStg: 'ok'},
+      badges: {envStg: '1.4.2'},
+      values: {stage: '검증 배포'},
+    },
+    {
+      short: '운영 반영',
+      kind: '주의',
+      title: '운영 반영은 사람이 누를 수도, 자동일 수도 있다',
+      text: [
+        '운영 반영 직전에 사람이 판단해 실행하면 지속적 전달(Continuous Delivery), 테스트를 통과하면 운영까지 자동으로 가면 지속적 배포(Continuous Deployment)다.',
+        '금융·공공처럼 변경 통제가 엄격한 곳은 운영 반영 전에 승인 절차를 두는 경우가 많다. 여기서는 사람이 실행했다.',
+      ],
+      flows: [
+        {from: 'reg', to: 'envProd', label: '사람이 실행', type: 'request'},
+      ],
+      focus: ['envProd'],
+      status: {envProd: 'ok'},
+      badges: {envProd: '1.4.2'},
+      values: {stage: '운영 배포', prod: {text: '1.4.2', tone: 'good'}},
+    },
+    {
+      short: '실패',
+      kind: '장애',
+      title: '다음 변경은 테스트에서 멈춘다',
+      text: [
+        '다음 변경으로 파이프라인이 다시 돌았다. 빌드는 성공했지만 테스트가 실패했다. 앞 단계가 실패하면 뒤 단계로 넘어가지 않는다.',
+        '그래서 1.4.3 이미지는 보관되지도, 어느 환경에 배포되지도 않는다. 운영은 1.4.2 그대로다. 실패 원인은 테스트 단계의 로그에서 찾는다.',
+      ],
+      keyIdea: '같은 단계 작업 하나가 실패했을 때 나머지를 바로 멈출지, 끝까지 실행할지는 도구마다 다르다.',
+      flows: [{from: 'build', to: 'test', label: '1.4.3 검사', type: 'request'}],
+      focus: ['test'],
+      status: {test: 'error', reg: null, envDev: null, envStg: null, envProd: null},
+      badges: {test: '실패', reg: null, envDev: null, envStg: null, envProd: '1.4.2'},
+      values: {stage: {text: '2단계에서 멈춤', tone: 'bad'}, image: '1.4.3 (보관 안 됨)', prod: {text: '1.4.2 유지', tone: 'good'}},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '같은 절차가 매번 같은 방식으로 돈다',
+      text: [
+        '트리거가 파이프라인을 깨우면, 빌드 → 테스트 → 아티팩트 보관 → 개발·검증·운영 배포가 차례로 실행된다. 어느 단계든 실패하면 거기서 멈춘다.',
+        '자동화로 달라지는 것은 결과물의 품질 자체가 아니라 같은 절차가 매번 같게 실행되고 그 기록이 남는다는 점이다.',
+      ],
+      keyIdea: '파이프라인은 트리거 → 빌드 → 테스트 → 아티팩트 → 환경별 배포를 정해진 순서로 밟고, 실패하면 그 자리에서 멈춘다. 문제가 나면 멈춘 단계와 그 단계의 로그부터 본다.',
+      focus: ['build', 'test', 'reg'],
+    },
+  ]}
+/>
+
+## 쿠버네티스에서 흔히 쓰는 방식
+
+| 개념 | 일반적인 파이프라인 | 쿠버네티스 환경에서 |
+| --- | --- | --- |
+| 트리거 | 수동·코드 변경·예약·외부 호출 | 저장소 웹훅으로 CI가 돌고, GitOps 도구가 Git 변경을 감시해 클러스터를 맞춘다(예: Argo CD) |
+| 단계와 작업 | 단계는 순서대로, 같은 단계 작업은 동시에 | 작업 하나가 실패했을 때 나머지를 멈출지는 도구 설정에 따라 다르다 |
+| 아티팩트 | 이미지를 태그와 함께 레지스트리에 보관 | 이미지를 레지스트리(예: Harbor)에 올리고, 매니페스트에는 그 태그나 다이제스트를 적는다 |
+| 운영 반영 승인 | 승인 절차를 두는 곳이 많다 | 수동 승인 단계나 머지 리퀘스트 승인을 관문으로 둔다 |
+| 롤백 | 이전 배포 기록이 있어야 되돌릴 수 있다 | `kubectl rollout undo`로 이전 리비전으로 되돌리거나, GitOps라면 Git 커밋을 되돌린다 |
+
+더 읽을거리: [디플로이먼트 롤백](https://kubernetes.io/ko/docs/concepts/workloads/controllers/deployment/) · [Argo CD](https://argo-cd.readthedocs.io/) · [Tekton](https://tekton.dev/docs/) · [Helm과 GitOps](../intermediate/gitops-sync.mdx)
+
+다음 레슨: [헬스 체크 — 살아 있나, 받을 준비가 됐나](../intermediate/probes.mdx)

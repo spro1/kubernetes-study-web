@@ -1,0 +1,196 @@
+---
+id: volume-binding
+title: When Volumes Attach, and Failures
+sidebar_label: 07 · When Volumes Attach, and Failures
+description: Follow binding modes that decide when a volume is created, how local volumes and network storage differ when a node fails, the RWO multi-node trap, and volume expansion and snapshots, step by step with animation
+hide_table_of_contents: true
+---
+
+# When Volumes Attach, and Failures
+
+The basic flow of requesting with a PVC and receiving a PV is in [How Storage Gets Attached (PVC·PV)](../k8s/storage-volume.mdx). This lesson goes further: **when and where a volume is created**, and **what happens to data when a node fails**.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~10 min', level: 'Advanced'}}
+  groups={[
+    {label: 'node-1', x: 470, y: 30, w: 220, h: 280, tone: 'biz'},
+    {label: 'node-2', x: 760, y: 30, w: 220, h: 280, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'pvc', label: 'PVC', sub: 'data · 10Gi', icon: 'ticket', tone: 'store', x: 95, y: 100, show: true},
+    {id: 'sc', label: 'StorageClass', sub: 'binding mode', icon: 'layers', tone: 'cp', x: 95, y: 330, show: true},
+    {id: 'sched', label: 'Scheduler', sub: 'picks Pod node', icon: 'target', tone: 'cp', x: 340, y: 100, show: true},
+    {id: 'pod1', label: 'db', sub: 'node-1', icon: 'pod', tone: 'app', size: 'sm', x: 580, y: 235},
+    {id: 'local1', label: 'Local disk', sub: 'node-1', icon: 'disk', tone: 'store', x: 580, y: 105, show: true},
+    {id: 'pod2', label: 'db', sub: 'node-2', icon: 'pod', tone: 'app', size: 'sm', x: 870, y: 235},
+    {id: 'local2', label: 'Local disk', sub: 'node-2', icon: 'disk', tone: 'store', x: 870, y: 105, show: true},
+    {id: 'snap', label: 'Snapshot', sub: 'point-in-time copy', icon: 'archive', tone: 'store', x: 880, y: 390},
+    {id: 'net', label: 'Storage', sub: 'NFS, SAN, etc.', icon: 'db', tone: 'store', x: 640, y: 390},
+  ]}
+  metrics={[
+    {id: 'pvc', label: 'PVC status'},
+    {id: 'pod', label: 'Pod status'},
+    {id: 'where', label: 'Data location'},
+  ]}
+  learn={[
+    {text: 'Immediate vs WaitForFirstConsumer', at: 1},
+    {text: 'Pending while waiting for a Pod is normal', at: 2},
+    {text: 'Local volume vs network storage on node failure', at: 3},
+    {text: 'Why RWO means "one node"', at: 5},
+    {text: 'Expansion only grows; snapshots are not backups', at: 7},
+  ]}
+  steps={[
+    {
+      short: 'When?',
+      kind: '시작',
+      title: 'The StorageClass decides when to create the volume',
+      text: [
+        'The db app requested a 10Gi PVC. When the actual volume is created is set by the StorageClass binding mode (volumeBindingMode).',
+        'There are two choices: Immediate creates it as soon as the PVC exists, and WaitForFirstConsumer creates it when a Pod using that PVC is placed on a node.',
+      ],
+      flows: [{from: 'pvc', to: 'sc', label: 'When to create?', type: 'request'}],
+      focus: ['sc'],
+      values: {pvc: 'Pending', pod: 'None', where: '-'},
+    },
+    {
+      short: 'Too early',
+      kind: '문제',
+      title: 'Immediate creates it without knowing the Pod\'s node',
+      text: [
+        'Immediate creates the volume before deciding where the Pod goes. For node-bound storage like a local disk, it may land on any node.',
+        'If the volume is created on a node other than the one the Pod lands on, the Pod can never attach it and never starts.',
+      ],
+      keyIdea: 'Immediate suits network storage that every node can reach.',
+      flows: [
+        {from: 'sc', to: 'local2', label: 'Create now', type: 'request', bend: 0.16},
+        {from: 'sched', to: 'pod1', label: 'Place on node-1', type: 'request'},
+      ],
+      focus: ['local2', 'pod1'],
+      status: {local2: 'warn', pod1: 'error'},
+      badges: {local2: 'Volume here'},
+      values: {pvc: 'Bound', pod: {text: 'Cannot start', tone: 'bad'}, where: 'node-2 disk'},
+    },
+    {
+      short: 'Wait',
+      kind: '원리',
+      title: 'WaitForFirstConsumer creates it after the Pod is placed',
+      text: [
+        'In this mode a new PVC stays Pending until a Pod appears. Events show a message meaning "waiting for first consumer". This is normal.',
+        'Once the Pod exists and the scheduler picks node-1, the volume is created on node-1\'s disk. The Pod and the volume end up on the same node.',
+      ],
+      keyIdea: 'Use WaitForFirstConsumer for location-sensitive storage like local disks. Local Path Provisioner (e.g. Rancher local-path) is this kind of local disk setup.',
+      flows: [
+        {from: 'sched', to: 'pod1', label: 'Place on node-1', type: 'request'},
+        {from: 'sc', to: 'local1', label: 'Create here', type: 'request'},
+      ],
+      focus: ['pod1', 'local1'],
+      status: {local2: null, pod1: 'ok', local1: 'ok'},
+      badges: {local2: null, local1: 'Volume here'},
+      values: {pvc: 'Bound', pod: {text: 'Running', tone: 'good'}, where: 'node-1 disk'},
+    },
+    {
+      short: 'Node down',
+      kind: '장애',
+      title: 'A local volume shares its node\'s fate',
+      text: [
+        'node-1 fails. The data lives only on node-1\'s disk, so moving the db Pod to node-2 leaves no volume to attach.',
+        'The Pod cannot start until node-1 returns. If the disk is damaged too, the data is lost.',
+      ],
+      keyIdea: 'A database on local volumes needs its own replication, with replicas spread across nodes.',
+      flows: [{from: 'pod1', to: 'pod2', label: 'Cannot move', type: 'request'}],
+      focus: ['local1', 'pod2'],
+      status: {pod1: 'error', local1: 'error', pod2: 'off'},
+      values: {pod: {text: 'Cannot start', tone: 'bad'}},
+    },
+    {
+      short: 'Reattach',
+      kind: '원리',
+      title: 'Network storage is reattached to another node',
+      text: [
+        'Had the same db used network storage, you detach the volume from node-1 and attach it to node-2. The data stays on the storage system.',
+        'But an RWO volume is not attached to a new node until detachment from node-1 is confirmed. So the Pod may sit in ContainerCreating for minutes.',
+      ],
+      keyIdea: 'Kubernetes cannot tell whether the node is truly dead or just cut off from the network. This wait is not a bug; it prevents data corruption.',
+      changes: ['~ volume attach node-1 → node-2'],
+      flows: [{from: 'net', to: 'pod2', label: 'Reattach', type: 'request'}],
+      focus: ['net', 'pod2'],
+      status: {local1: null, pod2: 'warn'},
+      badges: {local1: null, net: 'Volume here'},
+      values: {pod: 'ContainerCreating', where: 'Storage system'},
+    },
+    {
+      short: 'RWO',
+      kind: '주의',
+      title: 'RWO means "one node", not "one Pod"',
+      text: [
+        'After recovery, db replicas go from 1 to 2, and only the Pod on node-2 sits in ContainerCreating. The RWO (ReadWriteOnce) volume is already attached to node-1.',
+        'Pods on the same node can share an RWO volume. To use it from several nodes, you need storage that supports RWX (ReadWriteMany).',
+      ],
+      keyIdea: 'To limit it to a single Pod, use RWOP (ReadWriteOncePod). If you request an access mode the StorageClass does not support, the PVC stays Pending.',
+      flows: [
+        {from: 'net', to: 'pod1', label: 'Attached', type: 'request'},
+        {from: 'net', to: 'pod2', label: 'Waiting', type: 'request'},
+      ],
+      focus: ['pod2'],
+      status: {pod1: 'ok', pod2: 'warn'},
+      values: {pod: '1 Running · 1 waiting'},
+    },
+    {
+      short: 'Expand',
+      kind: '원리',
+      title: 'Capacity can only grow',
+      text: [
+        'If the StorageClass has allowVolumeExpansion: true, you can grow the volume by changing the PVC size from 10Gi to 20Gi.',
+        'Shrinking is not supported. Depending on the driver, the Pod may need a restart before the file system grows too.',
+      ],
+      changes: ['~ PVC size 10Gi → 20Gi'],
+      flows: [{from: 'pvc', to: 'net', label: '10Gi → 20Gi', type: 'request'}],
+      focus: ['pvc', 'net'],
+      status: {pod2: null},
+      badges: {net: '20Gi'},
+      values: {pod: 'Running'},
+    },
+    {
+      short: 'Snapshot',
+      kind: '주의',
+      title: 'Snapshots are fast but do not replace backups',
+      text: [
+        'A snapshot captures a volume\'s state at a point in time, inside the storage system. It needs VolumeSnapshot and VolumeSnapshotClass resources plus the snapshot controller.',
+        'It usually lives on the same system, so if that system fails the snapshot can be lost too. To be safe, keep backups somewhere else.',
+      ],
+      keyIdea: 'Installing a CSI driver is not enough: without the snapshot controller and a VolumeSnapshotClass, snapshots do not work. Check kubectl get volumesnapshotclass first.',
+      flows: [{from: 'net', to: 'snap', label: 'Point-in-time copy', type: 'request'}],
+      focus: ['snap'],
+      status: {snap: 'ok'},
+      badges: {snap: 'Same system'},
+    },
+    {
+      short: 'Recap',
+      kind: '정리',
+      title: 'They look the same day to day, but differ in failures',
+      text: [
+        'Binding mode decides when the volume is created. Storage type decides whether a Pod can move on node failure. Access mode decides how many nodes can attach it.',
+        'Some Pending and ContainerCreating states are normal waits. Event messages tell a wait apart from a failure.',
+      ],
+      keyIdea: 'Binding mode, storage type and access mode decide behavior in a failure. If a PVC is Pending, check the events in kubectl describe pvc to tell a normal wait from a failure.',
+      focus: ['sc', 'net'],
+    },
+  ]}
+/>
+
+## Myths and facts
+
+| Myth | Fact |
+| --- | --- |
+| A Pending PVC means something is broken | With WaitForFirstConsumer it is normal until a Pod appears |
+| Local volumes are fast, so always better | On node failure, the Pod cannot move to another node |
+| When a node dies, the volume attaches elsewhere at once | RWO waits for confirmation it was detached from the old node |
+| RWO means only one Pod can use it | It means one node. Several Pods on that node can share it |
+| You can shrink volume size later | It can only grow |
+| With snapshots you do not need backups | Snapshots live on the same system and can be lost with it |
+
+Further reading: [Persistent volumes](https://kubernetes.io/docs/concepts/storage/persistent-volumes/) · [Storage classes](https://kubernetes.io/docs/concepts/storage/storage-classes/) · [Volume snapshots](https://kubernetes.io/docs/concepts/storage/volume-snapshots/)
+
+Next lesson: [Priority and Preemption](./priority-preemption.mdx)

@@ -1,0 +1,165 @@
+---
+id: traffic
+title: How a Request Reaches a Pod
+sidebar_label: 02 · How a Request Reaches a Pod
+description: Follow, step by step, the path a browser request takes through a load balancer, Ingress, Service, and EndpointSlice to a pod, and how unready pods are removed from the targets
+hide_table_of_contents: true
+---
+
+# How a Request Reaches a Pod
+
+When a user opens `shop.example.com`, let's follow how that request arrives at a pod inside the cluster, and which one.
+
+<StepDiagram
+  width={1000}
+  meta={{duration: '~10 min', level: 'Beginner'}}
+  groups={[
+    {label: 'Kubernetes cluster', x: 300, y: 30, w: 685, h: 395, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'user', label: 'Browser', sub: 'shop.example.com', icon: 'browser', tone: 'ext', x: 120, y: 100, w: 160, show: true},
+    {id: 'lb', label: 'Load balancer', sub: 'External entry', icon: 'split', tone: 'ext', x: 120, y: 305, w: 160},
+    {id: 'ing', label: 'Ingress', sub: 'Controller', icon: 'route', tone: 'node', x: 430, y: 305},
+    {id: 'rule', label: 'Ingress rule', sub: 'shop → shop-svc', icon: 'book', tone: 'store', x: 430, y: 110, w: 160},
+    {id: 'svc', label: 'Service', sub: 'shop-svc', icon: 'target', tone: 'cp', x: 680, y: 305},
+    {id: 'eps', label: 'Endpoints', sub: 'Ready pod list', icon: 'db', tone: 'store', x: 680, y: 110, w: 150},
+    {id: 'pa', label: 'shop-a', sub: '10.0.1.11', icon: 'pod', tone: 'app', size: 'sm', w: 110, x: 905, y: 215, show: true},
+    {id: 'pb', label: 'shop-b', sub: '10.0.2.12', icon: 'pod', tone: 'app', size: 'sm', w: 110, x: 905, y: 300, show: true},
+    {id: 'pc', label: 'shop-c', sub: '10.0.3.13', icon: 'pod', tone: 'app', size: 'sm', w: 110, x: 905, y: 385, show: true},
+  ]}
+  metrics={[
+    {id: 'host', label: 'Request host'},
+    {id: 'svc', label: 'Target Service'},
+    {id: 'pod', label: 'Serving pod'},
+    {id: 'ready', label: 'Ready pods'},
+  ]}
+  learn={[
+    {text: 'Where requests from outside the cluster come in', at: 1},
+    {text: 'Ingress rules vs. the Ingress controller', at: 2},
+    {text: 'Why a Service acts as a stable address', at: 3},
+    {text: 'How traffic avoids pods that are not ready', at: 6},
+  ]}
+  steps={[
+    {
+      short: 'Start',
+      kind: '시작',
+      title: 'Three pods, each with its own address',
+      text: [
+        'Three shop application pods run on different nodes. Each pod has an internal IP, but the IP changes every time a pod is recreated.',
+        'So users cannot connect to pod IPs directly. A stable entry point is needed.',
+      ],
+      keyIdea: 'Pods can disappear and reappear at any time. The request path is made of parts that connect changing pods to an unchanging name.',
+      status: {pa: 'ok', pb: 'ok', pc: 'ok'},
+      values: {ready: '3 / 3'},
+    },
+    {
+      short: 'Entry',
+      kind: '원리',
+      title: 'The domain points to a load balancer',
+      text: [
+        'When the browser looks up shop.example.com, DNS returns the load balancer address. The request arrives at this load balancer first.',
+        'The load balancer passes the request to the Ingress controller inside the cluster.',
+      ],
+      flows: [
+        {from: 'user', to: 'lb', label: 'GET /', type: 'request'},
+        {from: 'lb', to: 'ing', label: 'HTTP forward', type: 'request'},
+      ],
+      focus: ['lb'],
+      values: {host: 'shop.example.com'},
+    },
+    {
+      short: 'Ingress',
+      kind: '원리',
+      title: 'The Ingress controller checks the rule table',
+      text: [
+        'An Ingress rule is a table that says "requests to this host and path go to this Service". Rules alone do nothing.',
+        'The Ingress controller (for example, NGINX) actually receives requests and routes them by the rules. It watches for rule changes and applies them to its own config.',
+      ],
+      keyIdea: 'The Ingress rule is the "table". The Ingress controller is the "usher" at the door holding that table.',
+      flows: [{from: 'rule', to: 'ing', label: 'host·path rules', type: 'watch'}],
+      focus: ['ing', 'rule'],
+      values: {svc: 'shop-svc'},
+    },
+    {
+      short: 'Service',
+      kind: '원리',
+      title: 'It forwards to a stable address called a Service',
+      text: [
+        'The Ingress controller sends the request to the Service (shop-svc), not to a pod.',
+        'A Service is a virtual front desk whose name and address never change. The Service keeps track of which pods are behind it.',
+      ],
+      flows: [{from: 'ing', to: 'svc', label: 'shop-svc:80', type: 'request'}],
+      focus: ['svc'],
+    },
+    {
+      short: 'Targets',
+      kind: '원리',
+      title: 'It checks which pods can take requests now',
+      text: [
+        'A Service picks target pods by label. Only the addresses of Ready pods go into the endpoint (EndpointSlice) list.',
+        'This list updates automatically whenever pods come and go.',
+      ],
+      flows: [{from: 'eps', to: 'svc', label: '3 Ready', type: 'watch'}],
+      focus: ['eps'],
+      badges: {eps: '3'},
+    },
+    {
+      short: 'Pick pod',
+      kind: '원리',
+      title: 'It sends to one pod from the list',
+      text: [
+        'A networking component on the node (kube-proxy, or a network plugin such as Cilium) picks one pod from the list and forwards the request. Multiple requests are spread across the pods.',
+        'Pod shop-b handles the request and sends back a response.',
+      ],
+      flows: [
+        {from: 'svc', to: 'pb', label: 'forward', type: 'request'},
+        {from: 'pb', to: 'ing', label: '200 OK', type: 'response', bend: 0.18},
+      ],
+      focus: ['pb'],
+      values: {pod: 'shop-b'},
+    },
+    {
+      short: 'Pod issue',
+      kind: '주의',
+      title: 'Pods that are not ready drop out of the list',
+      text: [
+        'The readiness probe of shop-c failed. The container is alive but not ready to take requests.',
+        'shop-c is removed from the endpoint list, and new requests go only to shop-a and shop-b. When the probe passes again, it returns to the list.',
+      ],
+      keyIdea: 'A readiness probe asks "can it take customers now", not "is it alive". So a briefly busy pod can step aside without being killed.',
+      changes: ['shop-c NotReady → removed from endpoints'],
+      flows: [
+        {from: 'eps', to: 'svc', label: '2 Ready', type: 'watch'},
+        {from: 'svc', to: 'pa', label: 'forward', type: 'request'},
+      ],
+      focus: ['pc', 'eps'],
+      status: {pc: 'warn'},
+      badges: {pc: 'NotReady', eps: '2'},
+      values: {pod: 'shop-a', ready: {text: '2 / 3', tone: 'bad'}},
+    },
+    {
+      short: 'Recap',
+      kind: '정리',
+      title: 'The name is fixed, the targets keep changing',
+      text: [
+        'From outside there is just one address, shop.example.com. Inside, Ingress → Service → endpoint list keeps tracking pods as they change.',
+        'When you cannot connect, check in this order to find where it broke.',
+      ],
+      keyIdea: 'A request goes load balancer → Ingress → Service → Ready pod. If you cannot connect, use kubectl get ingress,svc,endpointslices to find the break in that order.',
+      focus: ['ing', 'svc', 'eps'],
+    },
+  ]}
+/>
+
+## What to check when you cannot connect
+
+| Order | What to check | Common causes |
+| --- | --- | --- |
+| 1 | Does the domain point to the load balancer address? | DNS not registered, load balancer address changed |
+| 2 | Are the Ingress rule host and path correct? | Typo, rule conflict with another Ingress |
+| 3 | Do the Service labels and ports match? | Label mismatch leaves 0 target pods |
+| 4 | Is at least one pod Ready? | Readiness probe failing, all pods restarting |
+
+Further reading: [Ingress](https://kubernetes.io/docs/concepts/services-networking/ingress/) · [Service](https://kubernetes.io/docs/concepts/services-networking/service/) · [EndpointSlices](https://kubernetes.io/docs/concepts/services-networking/endpoint-slices/)
+
+Next lesson: [Zero-Downtime Deploys (Rolling Update)](./rolling-update.mdx)

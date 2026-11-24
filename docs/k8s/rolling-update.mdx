@@ -1,0 +1,185 @@
+---
+id: rolling-update
+title: Zero-Downtime Deploys (Rolling Update)
+sidebar_label: 03 · Zero-Downtime Deploys
+description: Follow, step by step, how a Deployment creates a new ReplicaSet and replaces pods one at a time without interrupting the service, and how rollback works
+hide_table_of_contents: true
+---
+
+# Zero-Downtime Deploys (Rolling Update)
+
+Three pods running nginx 1.26 move to 1.27. During the change, user requests are never interrupted. Let's see how.
+
+<StepDiagram
+  width={1000}
+  meta={{duration: '~10 min', level: 'Intermediate'}}
+  groups={[
+    {label: 'v1 pods · nginx:1.26', x: 450, y: 30, w: 200, h: 190, tone: 'plain'},
+    {label: 'v2 pods · nginx:1.27', x: 450, y: 245, w: 200, h: 180, tone: 'biz', from: 2},
+  ]}
+  nodes={[
+    {id: 'user', label: 'User', sub: 'Changes image', icon: 'user', tone: 'ext', x: 95, y: 95},
+    {id: 'deploy', label: 'Deployment', sub: 'Desired state', icon: 'gear', tone: 'cp', x: 95, y: 265, w: 150, show: true},
+    {id: 'rs1', label: 'RS v1', sub: 'nginx:1.26', icon: 'layers', tone: 'store', x: 310, y: 125, show: true},
+    {id: 'rs2', label: 'RS v2', sub: 'nginx:1.27', icon: 'layers', tone: 'store', x: 310, y: 335},
+    {id: 'v1a', label: 'v1-a', sub: 'nginx:1.26', icon: 'pod', tone: 'app', size: 'sm', x: 550, y: 75, show: true},
+    {id: 'v1b', label: 'v1-b', sub: 'nginx:1.26', icon: 'pod', tone: 'app', size: 'sm', x: 550, y: 128, show: true},
+    {id: 'v1c', label: 'v1-c', sub: 'nginx:1.26', icon: 'pod', tone: 'app', size: 'sm', x: 550, y: 181, show: true},
+    {id: 'v2a', label: 'v2-a', sub: 'nginx:1.27', icon: 'pod', tone: 'app', size: 'sm', x: 550, y: 290},
+    {id: 'v2b', label: 'v2-b', sub: 'nginx:1.27', icon: 'pod', tone: 'app', size: 'sm', x: 550, y: 343},
+    {id: 'v2c', label: 'v2-c', sub: 'nginx:1.27', icon: 'pod', tone: 'app', size: 'sm', x: 550, y: 396},
+    {id: 'svc', label: 'Service', sub: 'Routes to Ready pods', icon: 'target', tone: 'cp', x: 820, y: 240, w: 150, show: true},
+    {id: 'client', label: 'User traffic', sub: 'Must not drop', icon: 'browser', tone: 'ext', x: 820, y: 70, w: 150, show: true},
+  ]}
+  metrics={[
+    {id: 'v1', label: 'v1 pods'},
+    {id: 'v2', label: 'v2 pods'},
+    {id: 'ready', label: 'Pods serving'},
+  ]}
+  learn={[
+    {text: 'How Deployment, ReplicaSet, and pods relate', at: 2},
+    {text: 'Why old pods shrink only after new pods are Ready', at: 4},
+    {text: 'How maxSurge and maxUnavailable set the pace', at: 5},
+    {text: 'Why rollback (rollout undo) is fast', at: 6},
+  ]}
+  steps={[
+    {
+      short: 'Start',
+      kind: '시작',
+      title: 'Three v1 pods are serving requests',
+      text: [
+        'The Deployment holds the desired state "3 pods of nginx:1.26". ReplicaSet v1 manages the 3 actual pods.',
+        'The Service spreads requests across the three Ready pods.',
+      ],
+      flows: [
+        {from: 'client', to: 'svc', type: 'request'},
+        {from: 'svc', to: 'v1a', type: 'request'},
+        {from: 'svc', to: 'v1b', type: 'request'},
+        {from: 'svc', to: 'v1c', type: 'request'},
+      ],
+      status: {v1a: 'ok', v1b: 'ok', v1c: 'ok'},
+      badges: {rs1: '3'},
+      values: {v1: '3', v2: '0', ready: '3'},
+    },
+    {
+      short: 'Submit',
+      kind: '원리',
+      title: 'Change the image to 1.27',
+      text: [
+        'The user changes the Deployment image to nginx:1.27. Using kubectl set image or editing YAML and running kubectl apply does the same thing.',
+        'The Deployment notices the pod template changed and starts a rolling update.',
+      ],
+      keyIdea: 'With 3 pods, the defaults (maxSurge 25%, maxUnavailable 25%) work out to "1 extra allowed, 0 may be missing". So it adds one, then removes one.',
+      flows: [{from: 'user', to: 'deploy', label: 'image: 1.27', type: 'request'}],
+      focus: ['deploy'],
+    },
+    {
+      short: 'Create v2',
+      kind: '원리',
+      title: 'A new ReplicaSet creates one pod',
+      text: [
+        'The Deployment creates ReplicaSet v2 from the new template and sets its count to 1. ReplicaSet v2 creates pod v2-a.',
+        'v2-a is pulling its image and starting. It is not Ready yet, so it gets no requests.',
+      ],
+      changes: ['ReplicaSet v2 created (1)', 'v2-a starting'],
+      flows: [
+        {from: 'deploy', to: 'rs2', label: 'v2 ×1', type: 'request'},
+        {from: 'rs2', to: 'v2a', label: 'create', type: 'request'},
+      ],
+      focus: ['rs2', 'v2a'],
+      status: {v2a: 'warn'},
+      badges: {rs2: '1'},
+      values: {v2: '1 (starting)'},
+    },
+    {
+      short: 'v2 ready',
+      kind: '원리',
+      title: 'Once v2-a is Ready, it starts taking requests',
+      text: [
+        'v2-a passes its readiness probe and joins the Service targets. Now four pods serve requests: three v1 and one v2.',
+        'For a short time both versions respond, so the new version must work alongside the old one.',
+      ],
+      flows: [
+        {from: 'client', to: 'svc', type: 'request'},
+        {from: 'svc', to: 'v2a', label: 'request', type: 'request'},
+      ],
+      focus: ['v2a'],
+      status: {v2a: 'ok'},
+      values: {v2: '1', ready: '4'},
+    },
+    {
+      short: 'Shrink v1',
+      kind: '원리',
+      title: 'Only then is one v1 pod removed',
+      text: [
+        'With one more Ready pod, the Deployment scales ReplicaSet v1 from 3 to 2. v1-a terminates.',
+        'A terminating pod first leaves the Service targets, then finishes in-flight requests and shuts down.',
+      ],
+      keyIdea: 'Order is key. Old pods never shrink before a new pod is ready. So the number of serving pods never drops below 3.',
+      flows: [{from: 'deploy', to: 'rs1', label: 'v1 3→2', type: 'request'}],
+      focus: ['rs1'],
+      status: {v1a: 'gone'},
+      badges: {rs1: '2'},
+      values: {v1: '2', ready: '3'},
+    },
+    {
+      short: 'Repeat',
+      kind: '원리',
+      title: 'Add one, remove one, repeat',
+      text: [
+        'The same process runs twice more. When v2-b is Ready, v1-b goes. When v2-c is Ready, v1-c goes.',
+        'At the end, ReplicaSet v2 has 3 pods and v1 has 0. Throughout, at least 3 pods were serving.',
+      ],
+      keyIdea: 'A larger maxSurge creates more at once and finishes sooner. A larger maxUnavailable removes more at once and finishes sooner. The cost is extra spare resources, or briefly lower capacity.',
+      changes: ['3 v2 pods Ready', 'All v1 pods terminated'],
+      flows: [
+        {from: 'client', to: 'svc', type: 'request'},
+        {from: 'svc', to: 'v2a', type: 'request'},
+        {from: 'svc', to: 'v2b', type: 'request'},
+        {from: 'svc', to: 'v2c', type: 'request'},
+      ],
+      status: {v2b: 'ok', v2c: 'ok', v1b: 'gone', v1c: 'gone'},
+      badges: {rs1: '0', rs2: '3'},
+      values: {v1: '0', v2: '3', ready: '3'},
+    },
+    {
+      short: 'Rollback',
+      kind: '주의',
+      title: 'If something breaks, go back to the old ReplicaSet',
+      text: [
+        'ReplicaSet v1 is not deleted. It stays at count 0. If the new version has a problem, kubectl rollout undo scales v1 back up.',
+        'Rollback also replaces pods one by one in the same rolling way. If v2 pods never become Ready, the rollout stops there and v1 pods keep serving.',
+      ],
+      keyIdea: 'The previous template is still there, so you can roll back right away without rebuilding the image.',
+      flows: [
+        {from: 'user', to: 'deploy', label: 'rollout undo', type: 'request'},
+        {from: 'deploy', to: 'rs1', label: 'scale v1 up', type: 'request'},
+      ],
+      focus: ['rs1', 'deploy'],
+      badges: {rs1: '0 · kept'},
+    },
+    {
+      short: 'Recap',
+      kind: '정리',
+      title: 'There are always Ready pods during the change',
+      text: [
+        'The Deployment repeated: grow the new ReplicaSet by one, confirm Ready, shrink the old ReplicaSet by one.',
+        'This only works if the readiness probe is accurate. Too loose, and unready pods get requests. Too strict, and the rollout stalls.',
+      ],
+      keyIdea: 'A rolling update removes old pods only as fast as new pods become Ready. Watch progress with kubectl rollout status. If it stalls, check the events of the new pods that are not Ready.',
+      focus: ['deploy', 'svc'],
+    },
+  ]}
+/>
+
+## Rolling update settings at a glance
+
+| Setting | Meaning | If increased |
+| --- | --- | --- |
+| `maxSurge` | How many pods may briefly exist above the desired count | Finishes faster, but needs more spare resources |
+| `maxUnavailable` | How many pods may briefly be missing below the desired count | Finishes faster, but capacity drops for a while |
+| `readinessProbe` | Checks whether a new pod may receive requests | Without it, pods get requests as soon as they start, which can cause errors |
+
+Further reading: [Deployments](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/) · [Performing a Rolling Update](https://kubernetes.io/docs/tutorials/kubernetes-basics/update/update-intro/)
+
+Next lesson: [Scaling with Load (HPA)](./autoscaling.mdx)

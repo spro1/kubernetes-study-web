@@ -1,0 +1,180 @@
+---
+id: server-to-container
+title: From One Server to Containers
+sidebar_label: 03 · From One Server to Containers
+description: Follow step by step from a physical server's four resources and processes to virtual machines, containers that share a kernel, and on-premises versus cloud
+hide_table_of_contents: true
+---
+
+# From One Server to Containers
+
+Build it up one step at a time: how one physical server is split into virtual machines, and how containers run on top of them. This is the background you need to read a Kubernetes node's CPU and memory graphs and its specs.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~8 min', level: 'Beginner'}}
+  nodes={[
+    {id: 'hw', label: 'Physical server', sub: 'Hardware · Linux', icon: 'server', tone: 'node', x: 90, y: 225, show: true},
+    {id: 'proc', label: 'Process', sub: 'PID · exit code', icon: 'gear', tone: 'app', x: 360, y: 380},
+    {id: 'hv', label: 'Hypervisor', sub: 'Splits resources', icon: 'layers', tone: 'cp', x: 360, y: 225},
+    {id: 'vm1', label: 'VM 1', sub: 'Its own OS', icon: 'server', tone: 'node', x: 600, y: 110},
+    {id: 'vm2', label: 'VM 2', sub: 'Its own OS', icon: 'server', tone: 'node', x: 600, y: 340},
+    {id: 'ct1', label: 'Container', sub: 'web', icon: 'box', tone: 'app', size: 'sm', x: 870, y: 280},
+    {id: 'ct2', label: 'Container', sub: 'api', icon: 'box', tone: 'app', size: 'sm', x: 870, y: 400},
+    {id: 'cloud', label: 'Cloud', sub: 'OpenStack, etc.', icon: 'cloud', tone: 'ext', x: 870, y: 110},
+  ]}
+  metrics={[
+    {id: 'unit', label: 'Unit of execution'},
+    {id: 'os', label: 'Operating system'},
+    {id: 'res', label: 'Resources'},
+  ]}
+  learn={[
+    {text: 'What CPU, memory, disk and network each do', at: 1},
+    {text: 'Too little CPU means slow, too little memory means killed', at: 1},
+    {text: 'Each virtual machine has a whole OS of its own', at: 3},
+    {text: 'A container is an isolated process sharing the kernel', at: 5},
+    {text: 'On-premises vs public vs private cloud', at: 7},
+  ]}
+  steps={[
+    {
+      short: 'One server',
+      kind: '시작',
+      title: 'A server is a computer that takes requests and does work',
+      text: [
+        'A server is not a special machine. It is the name of a role. Production servers must stay on 24/7, so they are machines with redundant power, cooling and parts, mounted in data center racks.',
+        'A server is made of hardware, an operating system (usually Linux) and applications. Applications do not touch the hardware directly. They go through the operating system.',
+      ],
+      flows: [{from: 'hw', to: 'proc', label: 'Run program', type: 'request'}],
+      focus: ['hw'],
+      values: {unit: 'Program', os: 'One per server'},
+    },
+    {
+      short: 'Four resources',
+      kind: '원리',
+      title: 'The OS hands out four resources',
+      text: [
+        'CPU computes. Memory is the workbench that holds data in use. Disk stores things long term. Network talks to other computers.',
+        'Shortages look different. Too little CPU makes things slow. Too little memory can get a program killed. Disks often fill up with logs and cause outages.',
+      ],
+      keyIdea: 'A CPU shortage usually shows up as "slow". A memory shortage shows up as "dead".',
+      flows: [{from: 'hw', to: 'proc', label: 'CPU · memory', type: 'request'}],
+      focus: ['hw', 'proc'],
+      badges: {hw: '4 resources'},
+    },
+    {
+      short: 'Process',
+      kind: '원리',
+      title: 'A running program is a process',
+      text: [
+        'A process is one running program. The OS tracks each process by a number (PID). A process that keeps waiting for requests, like a web server, is called a daemon.',
+        'A process leaves an exit code when it ends. 0 means success, anything else means something went wrong. This idea carries straight over to container status later.',
+      ],
+      flows: [{from: 'proc', to: 'hw', label: 'Exit code 0', type: 'response'}],
+      focus: ['proc'],
+      badges: {hw: null},
+      values: {unit: 'Process'},
+    },
+    {
+      short: 'Virtualize',
+      kind: '원리',
+      title: 'A hypervisor splits one server into many',
+      text: [
+        'One program on one physical server leaves resources unused. Virtualization splits a physical server in software so it works like several servers.',
+        'The hypervisor hands the physical server\'s resources to virtual machines (VMs) and isolates them from each other. Each VM has its own operating system.',
+      ],
+      flows: [
+        {from: 'hw', to: 'hv', label: 'All resources', type: 'request'},
+        {from: 'hv', to: 'vm1', label: 'Allocate', type: 'request'},
+        {from: 'hv', to: 'vm2', label: 'Allocate', type: 'request'},
+      ],
+      focus: ['hv'],
+      status: {proc: 'gone'},
+      values: {unit: 'Virtual machine', os: 'One per VM'},
+    },
+    {
+      short: 'Sizes · units',
+      kind: '주의',
+      title: 'VMs come in fixed sizes',
+      text: [
+        'A predefined combination of CPU and memory for a VM is called an instance type, such as "4 vCPU · 16 GiB". A vCPU is a virtual CPU carved out of physical cores in software.',
+        'GiB (powers of 1024) and GB (powers of 1000) are different units. In Kubernetes, 512Mi and 512M are different values too, and CPU is written as 1000m per core.',
+      ],
+      flows: [{from: 'hv', to: 'vm1', label: '4 vCPU·16GiB', type: 'request'}],
+      focus: ['vm1'],
+      badges: {vm1: '4 vCPU · 16 GiB'},
+    },
+    {
+      short: 'Containers',
+      kind: '원리',
+      title: 'Containers share the core of the OS',
+      text: [
+        'A VM carries a whole operating system, so it is heavy. A container shares the server\'s OS core (the kernel) and only carries its own programs and libraries.',
+        'So containers start in seconds and many more fit on one server. A container is really an isolated process, so containers on the same server do not affect each other\'s libraries.',
+      ],
+      keyIdea: 'VMs each get their own OS. Containers share the kernel.',
+      flows: [
+        {from: 'ct1', to: 'vm2', label: 'Shared kernel', type: 'request'},
+        {from: 'ct2', to: 'vm2', label: 'Shared kernel', type: 'request'},
+      ],
+      focus: ['ct1', 'ct2'],
+      status: {ct1: 'ok', ct2: 'ok'},
+      badges: {vm1: null},
+      values: {unit: 'Container', os: 'Shared kernel'},
+    },
+    {
+      short: 'Out of memory',
+      kind: '주의',
+      title: 'A container over its memory limit is killed',
+      text: [
+        'The web container\'s memory use grows past its limit. In Kubernetes, a container that exceeds its memory limit is killed. "Memory shortage means death" holds for containers too.',
+        'The api container next to it is isolated and keeps running. The killed container leaves an exit code, and Kubernetes restarts it.',
+      ],
+      flows: [{from: 'vm2', to: 'ct1', label: 'Killed', type: 'response'}],
+      focus: ['ct1'],
+      status: {ct1: 'error'},
+      badges: {ct1: 'Over memory'},
+      values: {res: {text: 'web over memory limit', tone: 'bad'}},
+    },
+    {
+      short: 'Where to run',
+      kind: '원리',
+      title: 'Buy servers or rent them?',
+      text: [
+        'On-premises means the company buys servers and keeps them in its own data center. Public cloud means renting servers from providers like AWS, Azure or GCP. Private cloud means building a cloud platform in-house and running it like a cloud.',
+        'A cloud platform pools many physical servers and creates VMs, networks and storage on demand. OpenStack is widely used for in-house builds. Public sector and financial institutions often choose on-premises or private cloud with an air-gapped network.',
+      ],
+      flows: [{from: 'cloud', to: 'vm1', label: 'Provide VM', type: 'request'}],
+      focus: ['cloud'],
+      status: {ct1: 'ok'},
+      badges: {ct1: 'Restarted'},
+      values: {res: {text: 'Healthy', tone: 'good'}},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Physical server → VM → container',
+      text: [
+        'A hypervisor splits a physical server\'s four resources into VMs, and containers run on a VM\'s OS while sharing its kernel. Underneath, a container is an isolated process.',
+        'A Kubernetes node is just such a server (usually a VM). Its size is set by the instance type, and kubectl top nodes shows CPU and memory use per node.',
+      ],
+      keyIdea: 'A node is a server, and a container is an isolated process sharing the kernel. Too little CPU means slow; too little memory means an OOMKilled container. Also tell the memory units Gi and G apart.',
+      focus: ['hw', 'vm2'],
+      badges: {ct1: null},
+    },
+  ]}
+/>
+
+## Physical server vs VM vs container
+
+| Type | What it has on its own | Traits |
+| --- | --- | --- |
+| Physical server | All hardware and the OS | One program per server leaves resources unused |
+| Virtual machine | Its own OS | The hypervisor allocates and isolates resources. Heavy, since it carries a whole OS |
+| Container | Only programs and libraries | Shares the kernel. Starts in seconds, and many more fit on one server |
+
+Where a container's source (the image) comes from is the next lesson. How a container actually starts on a node is in [How a Pod Starts](../k8s/pod-startup.mdx).
+
+Further reading: [Containers (Kubernetes docs)](https://kubernetes.io/docs/concepts/containers/) · [Nodes](https://kubernetes.io/docs/concepts/architecture/nodes/) · [Resource Management for Pods and Containers](https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/)
+
+Next lesson: [How an Image Is Built and Run](./container-image.mdx)

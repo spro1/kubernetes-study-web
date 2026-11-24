@@ -1,0 +1,181 @@
+---
+id: supply-chain
+title: Image and Supply Chain Security
+sidebar_label: 10 · Image and Supply Chain Security
+description: Follow an image through build, vulnerability scanning and signing into a registry, then signature verification at admission on deploy, plus the roles of digest pinning and SBOMs, step by step with animation
+hide_table_of_contents: true
+---
+
+# Image and Supply Chain Security
+
+The software supply chain is the whole path from source → dependencies → build → image → deploy. If any one point is compromised, malicious code ships through the normal process. Let's follow one image along this path and see where each check is placed.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~10 min', level: 'Advanced'}}
+  nodes={[
+    {id: 'src', label: 'Source · deps', sub: 'base image', icon: 'git', tone: 'ext', x: 85, y: 110, show: true},
+    {id: 'build', label: 'Build', sub: 'makes the image', icon: 'hammer', tone: 'cp', x: 355, y: 110, show: true},
+    {id: 'scan', label: 'Vuln scan', sub: 'e.g. Trivy', icon: 'shield', tone: 'cp', x: 625, y: 110},
+    {id: 'sign', label: 'Signing', sub: 'proves the builder', icon: 'ticket', tone: 'cp', x: 895, y: 110},
+    {id: 'sbom', label: 'SBOM', sub: 'component list', icon: 'book', tone: 'store', x: 85, y: 290},
+    {id: 'deploy', label: 'Deploy request', sub: 'manifest', icon: 'gear', tone: 'ext', x: 355, y: 290},
+    {id: 'adm', label: 'Admission', sub: 'checks sig · policy', icon: 'gate', tone: 'cp', x: 625, y: 290},
+    {id: 'registry', label: 'Registry', sub: 'e.g. Harbor', icon: 'registry', tone: 'store', x: 895, y: 290},
+    {id: 'pod', label: 'web', sub: 'Pod', icon: 'pod', tone: 'app', size: 'sm', x: 625, y: 405},
+  ]}
+  metrics={[
+    {id: 'scan', label: 'Vuln scan'},
+    {id: 'sig', label: 'Signature'},
+    {id: 'ref', label: 'Deploy points to'},
+  ]}
+  learn={[
+    {text: 'Where supply chain attacks strike', at: 0},
+    {text: 'What SBOM, scanning and signing each verify', at: 3},
+    {text: 'Why pin by digest instead of tag', at: 6},
+    {text: 'Why signatures matter only if checked at deploy', at: 7},
+  ]}
+  steps={[
+    {
+      short: 'Start',
+      kind: '시작',
+      title: 'Source and dependencies go into the build',
+      text: [
+        'An image is built by layering source code and dependency libraries on a base image. A tainted base image, a malicious library and a hijacked build server are all entry points for supply chain attacks.',
+        'So checks are placed all along the path, from build to deploy.',
+      ],
+      flows: [{from: 'src', to: 'build', label: 'Source + deps', type: 'request'}],
+      focus: ['src', 'build'],
+      values: {scan: 'Not yet', sig: 'None', ref: '-'},
+    },
+    {
+      short: 'SBOM',
+      kind: '원리',
+      title: 'The build produces a component list (SBOM)',
+      text: [
+        'An SBOM (Software Bill of Materials) lists which packages, at which versions, are in the image. SPDX and CycloneDX are the standard formats.',
+        'It is only a list, not proof of safety. But when a new vulnerability is announced, it lets you find at once "which of our images contain that package".',
+      ],
+      changes: ['+ SBOM generated (SPDX or CycloneDX)'],
+      flows: [{from: 'build', to: 'sbom', label: 'Generate list', type: 'request'}],
+      focus: ['sbom'],
+    },
+    {
+      short: 'Scan',
+      kind: '원리',
+      title: 'Packages in the image are matched against known vulnerabilities',
+      text: [
+        'Vulnerability scanning matches the image\'s components against the CVE (public vulnerability ID) database. Trivy is a leading tool, and results are counted by severity (Critical, High, Medium, Low).',
+        'Harbor can also scan images pushed to the registry when Trivy is installed alongside it.',
+      ],
+      flows: [{from: 'build', to: 'scan', label: 'Image', type: 'request'}],
+      focus: ['scan'],
+      status: {scan: 'warn'},
+      values: {scan: 'Reviewing results'},
+    },
+    {
+      short: 'Read results',
+      kind: '주의',
+      title: 'Passing does not mean safe',
+      text: [
+        'Scanning finds only known flaws. Clean today, but if a new vulnerability is published tomorrow, you must scan again. The SBOM helps you quickly find the affected images.',
+        'Read results in this order: severity, whether a fixed version exists, whether it is on an actual execution path, and whether it is exposed. The fix is usually rebuilding with a newer base image or library.',
+      ],
+      keyIdea: 'Hundreds of findings do not weigh the same. Start with those that have a fixed version and sit in exposed services.',
+      flows: [{from: 'scan', to: 'build', label: 'Rebuild', type: 'response'}],
+      focus: ['scan', 'build'],
+      status: {scan: 'ok'},
+      values: {scan: {text: 'Passed (known issues)', tone: 'good'}},
+    },
+    {
+      short: 'Sign',
+      kind: '원리',
+      title: 'Sign and push to the registry',
+      text: [
+        'A signature lets you verify "our build really made this image and it was not changed on the way". The builder signs it and pushes it with the image to the registry.',
+        'The industry framework SLSA goes further: its core is recording provenance, a proof of who built it, where, and from which inputs.',
+      ],
+      changes: ['+ image signed', '+ image pushed to registry'],
+      flows: [
+        {from: 'scan', to: 'sign', label: 'Passed image', type: 'request'},
+        {from: 'sign', to: 'registry', label: 'Image + sig', type: 'request'},
+      ],
+      focus: ['sign', 'registry'],
+      badges: {registry: 'app:1.4.2'},
+      values: {sig: {text: 'Signed', tone: 'good'}},
+    },
+    {
+      short: 'Tag trap',
+      kind: '문제',
+      title: 'A tag can be changed to point at a different image',
+      text: [
+        'A mutable tag like app:latest can be overwritten with a new image under the same name. After that, only Pods started on new nodes get the other version, so one Deployment ends up with different versions per Pod.',
+        'The manifest did not change, so history shows nothing happened, and you cannot roll back. Attacks that swap images in a registry exploit the same gap.',
+      ],
+      flows: [{from: 'build', to: 'registry', label: 'Same tag', type: 'request'}],
+      focus: ['registry'],
+      status: {registry: 'warn'},
+      badges: {registry: 'latest overwritten'},
+      values: {ref: {text: 'app:latest', tone: 'bad'}},
+    },
+    {
+      short: 'Digest',
+      kind: '원리',
+      title: 'Pin by digest instead of tag',
+      text: [
+        'A digest is computed from the image content, so different content always yields a different digest. Deploy as app@sha256:... and nobody overwriting the tag can affect you.',
+        'A common practice is to add a readable version tag and a commit hash tag, and use the digest in deploy manifests.',
+      ],
+      changes: ['~ image: app:latest → app@sha256:...'],
+      flows: [{from: 'deploy', to: 'adm', label: '@sha256', type: 'request'}],
+      focus: ['deploy'],
+      status: {registry: null},
+      badges: {registry: null},
+      values: {ref: {text: 'app@sha256:...', tone: 'good'}},
+    },
+    {
+      short: 'Verify',
+      kind: '원리',
+      title: 'At deploy, admission verifies signature and provenance',
+      text: [
+        'Kubernetes does not verify image signatures by default. You need an admission policy (an extension gate that inspects requests) that checks the signature in the registry when a deploy request comes in, and rejects missing or mismatched signatures.',
+        'A signature means something only with this check in place. Only images that pass the policy run as Pods.',
+      ],
+      keyIdea: 'If you sign but never verify at deploy, a swapped image runs without any problem.',
+      flows: [
+        {from: 'adm', to: 'registry', label: 'Check sig', type: 'request'},
+        {from: 'registry', to: 'adm', label: 'Match', type: 'response'},
+        {from: 'adm', to: 'pod', label: 'Allow', type: 'request'},
+      ],
+      focus: ['adm', 'pod'],
+      status: {adm: 'ok', pod: 'ok'},
+    },
+    {
+      short: 'Recap',
+      kind: '정리',
+      title: 'Check one thing at a time along the path',
+      text: [
+        'The SBOM tells what is inside, scanning finds known flaws, the signature proves who built it and that it is unchanged, and the digest pins exactly which image.',
+        'Even an air-gapped network cannot stop flaws in the images and packages brought in. That makes scanning and SBOMs at import time even more important.',
+      ],
+      keyIdea: 'SBOM, scanning, signing and digests each answer a different question. Identify running images by digest, not tag (get imageID with kubectl get pod -o jsonpath), and fix high-severity vulnerabilities with a fixed version first.',
+      focus: ['sbom', 'scan', 'sign', 'adm'],
+    },
+  ]}
+/>
+
+## What each check verifies, and its limits
+
+| Check | What it verifies | Limit |
+| --- | --- | --- |
+| Vulnerability scan | Whether image packages have known vulnerabilities (CVEs) | Cannot find unknown flaws. Rescan when new vulnerabilities are published |
+| SBOM | The full component list of the image | Only a list, not proof of safety |
+| Signature | That our build made it and it was not changed | Meaningful only with a policy that verifies at deploy |
+| Digest pinning | Exactly which image is deployed | Hard for humans to read. Add a version tag too |
+
+Example: an image registry like Harbor can attach Trivy as a scanner to scan stored images and show the results (CVE ID, package name, installed version, fixed version, severity). Locally you can run the same scan with `trivy image <image>`.
+
+Further reading: [Images](https://kubernetes.io/docs/concepts/containers/images/) · [Harbor docs](https://goharbor.io/docs/) · [Sigstore docs](https://docs.sigstore.dev/) · [Trivy](https://trivy.dev/)
+
+Next lesson: [Audit Logs](./audit-log.mdx)

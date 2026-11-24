@@ -1,0 +1,180 @@
+---
+id: priority-preemption
+title: 우선순위와 선점
+sidebar_label: 08 · 우선순위와 선점
+description: 자리가 없을 때 우선순위가 높은 파드가 낮은 파드를 밀어내는 선점의 순서, 밀려난 파드의 정상 종료와 Pending, PDB를 최선으로만 존중하는 이유, 시스템 우선순위 클래스를 애니메이션으로 따라간다
+hide_table_of_contents: true
+---
+
+# 우선순위와 선점
+
+노드가 가득 차서 자리가 없으면 새 파드는 보통 Pending으로 기다린다([파드를 어느 노드에 둘까](../k8s/scheduling.mdx)). 그런데 기다리면 안 되는 중요한 파드라면 어떻게 될까. 자원이 모자랄 때 **누구를 먼저 살릴지** 정하는 우선순위와 선점을 따라가 본다.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '약 10분', level: '고급'}}
+  groups={[
+    {label: 'node-1 · 가득 참', x: 480, y: 40, w: 480, h: 390, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'newpod', label: 'payment', sub: '우선순위 높음', icon: 'pod', tone: 'app', x: 95, y: 110, show: true},
+    {id: 'pc', label: '우선순위', sub: 'PriorityClass', icon: 'layers', tone: 'cp', x: 95, y: 330, show: true},
+    {id: 'sched', label: '스케줄러', sub: '파드 둘 노드', icon: 'target', tone: 'cp', x: 340, y: 110, show: true},
+    {id: 'pdb', label: 'PDB', sub: 'batch 최소 1개', icon: 'shield', tone: 'cp', x: 340, y: 330},
+    {id: 'lowA', label: 'batch-a', sub: '낮음 · 100', icon: 'pod', tone: 'app', size: 'sm', x: 580, y: 130, show: true},
+    {id: 'lowB', label: 'batch-b', sub: '낮음 · 100', icon: 'pod', tone: 'app', size: 'sm', x: 790, y: 130, show: true},
+    {id: 'web', label: 'web', sub: '동급 · 100000', icon: 'pod', tone: 'app', size: 'sm', w: 128, x: 580, y: 260, show: true},
+    {id: 'sys', label: 'coredns', sub: '시스템 최상위', icon: 'pod', tone: 'app', size: 'sm', x: 790, y: 260, show: true},
+    {id: 'paid', label: 'payment', sub: '실행 중', icon: 'pod', tone: 'app', size: 'sm', x: 685, y: 375},
+  ]}
+  metrics={[
+    {id: 'pay', label: 'payment'},
+    {id: 'batch', label: 'batch-a'},
+    {id: 'room', label: 'node-1 빈자리'},
+  ]}
+  learn={[
+    {text: '우선순위는 숫자이고 클수록 먼저라는 것', at: 0},
+    {text: '선점 대상은 나보다 낮은 파드뿐이라는 것', at: 2},
+    {text: '선점은 PDB를 최선으로만 지킨다는 것', at: 3},
+    {text: '밀려난 파드가 정상 종료 후 Pending이 되는 과정', at: 5},
+    {text: '시스템 구성요소가 가장 높은 우선순위를 갖는 이유', at: 7},
+  ]}
+  steps={[
+    {
+      short: '도착',
+      kind: '시작',
+      title: '가득 찬 노드에 중요한 파드가 온다',
+      text: [
+        'node-1은 requests 기준으로 자리가 꽉 찼다. 여기에 결제 처리 파드 payment가 새로 들어오려 한다.',
+        'payment는 PriorityClass(우선순위 등급) business-critical을 쓴다. 이 등급의 값은 100000이고, 값이 클수록 먼저다.',
+      ],
+      keyIdea: 'PriorityClass는 이름에 숫자를 붙여 둔 등급표다. 파드는 등급 이름만 적고, 실제 비교는 숫자로 한다.',
+      flows: [
+        {from: 'pc', to: 'newpod', label: 'value 100000', type: 'request'},
+        {from: 'newpod', to: 'sched', label: '배치 요청', type: 'request'},
+      ],
+      focus: ['newpod', 'pc'],
+      values: {pay: 'Pending', batch: 'Running', room: '0'},
+    },
+    {
+      short: '자리 없음',
+      kind: '원리',
+      title: '들어갈 노드가 없다',
+      text: [
+        '스케줄러가 노드를 걸러 보니 payment의 requests를 받아 줄 노드가 하나도 없다. 보통이라면 여기서 Pending으로 기다린다.',
+        '하지만 payment는 우선순위가 높다. 스케줄러는 "낮은 파드를 빼면 자리가 생기는 노드"가 있는지 찾아본다. 이것이 선점(preemption)이다.',
+      ],
+      flows: [{from: 'sched', to: 'newpod', label: '자리 없음', type: 'response'}],
+      focus: ['sched'],
+      status: {newpod: 'warn'},
+    },
+    {
+      short: '대상 고름',
+      kind: '원리',
+      title: '나보다 낮은 파드만 밀어낼 수 있다',
+      text: [
+        '선점 대상은 payment보다 우선순위가 낮은 파드뿐이다. 값이 같은 web(100000)과 시스템 구성요소 coredns는 대상이 아니다.',
+        '남은 후보는 batch-a와 batch-b(100)다. 스케줄러는 자리를 만들 수 있는 가장 적은 희생을 고른다. 여기서는 batch-a 하나면 된다.',
+      ],
+      keyIdea: '선점은 "자리를 만드는 데 꼭 필요한 만큼만, 가장 낮은 파드부터"가 원칙이다.',
+      flows: [{from: 'sched', to: 'lowA', label: '후보', type: 'watch'}],
+      focus: ['lowA', 'lowB'],
+      status: {lowA: 'warn', web: 'ok', sys: 'ok'},
+      badges: {lowA: '대상'},
+    },
+    {
+      short: 'PDB',
+      kind: '주의',
+      title: '중단 예산은 최선으로만 지킨다',
+      text: [
+        'batch 앱에는 "최소 1개는 살아 있어야 한다"는 PDB(PodDisruptionBudget, 동시에 내려가도 되는 파드 수의 한도)가 있다. batch-a를 빼도 batch-b가 남으니 예산을 지킨다.',
+        '스케줄러는 PDB를 어기지 않는 대상을 먼저 고르지만, 다른 방법이 없으면 PDB를 어기고서라도 선점한다.',
+      ],
+      keyIdea: '드레인은 PDB가 거절하면 기다리지만, 선점은 PDB를 최선으로만 존중한다. PDB가 있다고 선점에서 안전한 것은 아니다.',
+      flows: [{from: 'sched', to: 'pdb', label: 'PDB 확인', type: 'request'}],
+      focus: ['pdb'],
+      status: {pdb: 'ok'},
+      badges: {pdb: '1개 남음 · 허용'},
+    },
+    {
+      short: '정상 종료',
+      kind: '원리',
+      title: '밀려나는 파드도 정리할 시간을 받는다',
+      text: [
+        '스케줄러가 batch-a를 축출한다. batch-a는 바로 사라지지 않고 정해진 종료 유예 시간 동안 하던 일을 정리하고 내려간다.',
+        '그동안 payment는 "node-1에 들어갈 예정"이라는 표시(nominatedNodeName)를 달고 기다린다.',
+      ],
+      flows: [{from: 'sched', to: 'lowA', label: '축출', type: 'request'}],
+      focus: ['lowA'],
+      status: {lowA: 'warn'},
+      badges: {lowA: '종료 중'},
+      values: {pay: 'Pending · node-1 예정', batch: 'Terminating'},
+    },
+    {
+      short: '자리 생김',
+      kind: '원리',
+      title: '자리가 나면 payment가 들어간다',
+      text: [
+        'batch-a가 내려가 자리가 생기자 스케줄러가 payment를 node-1에 배치하고, payment가 실행된다.',
+        '쫓겨난 batch-a는 컨트롤러가 다시 만들지만 들어갈 자리가 없어 Pending으로 기다린다.',
+      ],
+      changes: ['+ payment 실행', '- batch-a 축출 → 새 batch-a Pending'],
+      flows: [{from: 'sched', to: 'paid', label: 'node-1 배치', type: 'request', bend: 0.18}],
+      focus: ['paid'],
+      status: {lowA: 'gone', paid: 'ok', newpod: 'off'},
+      badges: {lowA: null},
+      values: {pay: {text: 'Running', tone: 'good'}, batch: {text: 'Pending', tone: 'bad'}, room: '0'},
+    },
+    {
+      short: '남발',
+      kind: '주의',
+      title: '모두가 높으면 아무도 높지 않다',
+      text: [
+        '우선순위를 남발하면 중요하지 않은 작업이 높은 등급을 달고 중요한 작업을 밀어내는 사고가 난다.',
+        '대기 순서만 앞당기고 남을 밀어내지는 않게 하려면 PriorityClass의 preemptionPolicy를 Never로 둔다.',
+      ],
+      keyIdea: '등급은 적게, 이름은 쓰임이 드러나게 만든다. 누가 어떤 등급을 쓸 수 있는지도 관리해야 한다.',
+      flows: [{from: 'pc', to: 'newpod', label: 'Never', type: 'request'}],
+      focus: ['pc'],
+    },
+    {
+      short: '시스템',
+      kind: '원리',
+      title: '시스템 구성요소는 가장 높은 기본 등급을 갖는다',
+      text: [
+        '쿠버네티스에는 system-cluster-critical과 system-node-critical이라는 기본 등급이 있다. 사용자가 만드는 등급보다 값이 크다.',
+        'coredns 같은 시스템 구성요소가 이 등급을 쓰므로, 사용자 파드가 선점으로 이들을 밀어낼 수는 없다.',
+      ],
+      flows: [{from: 'sched', to: 'sys', label: '선점 불가', type: 'request'}],
+      focus: ['sys'],
+      badges: {sys: 'system 등급'},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '자리가 모자랄 때 누구를 살릴지 미리 정한다',
+      text: [
+        '선점은 나보다 낮은 파드를, 필요한 만큼만, 정상 종료 시간을 주고 밀어낸다. PDB는 최선으로만 지킨다.',
+        '밀려난 파드는 Pending으로 기다리므로, 선점이 잦다면 우선순위보다 용량 부족을 먼저 의심한다.',
+      ],
+      keyIdea: '우선순위는 자리가 모자랄 때 누구를 살릴지 미리 정해 둔 약속이다. 파드가 사라졌다면 kubectl get events에서 Preempted 이벤트를 찾고, 선점이 잦으면 용량부터 늘린다.',
+      focus: ['sched', 'paid'],
+    },
+  ]}
+/>
+
+## 드레인과 선점 비교
+
+| 구분 | 드레인(노드 비우기) | 선점 |
+| --- | --- | --- |
+| 누가 시작하나 | 운영자 | 스케줄러 |
+| 왜 하나 | 노드 정비·업그레이드 | 우선순위 높은 파드의 자리 만들기 |
+| PDB를 어기면 | 거절하고 기다린다 | 다른 방법이 없으면 어기고 진행한다 |
+| 밀려난 파드 | 다른 노드에서 새로 만들어진다 | 컨트롤러가 다시 만들지만 자리가 없으면 Pending |
+
+드레인과 PDB의 자세한 흐름은 [노드 비우기와 클러스터 업그레이드](../k8s/node-drain.mdx)에서 본다.
+
+더 읽을거리: [파드 우선순위와 선점](https://kubernetes.io/ko/docs/concepts/scheduling-eviction/pod-priority-preemption/) · [중단(disruption)](https://kubernetes.io/docs/concepts/workloads/pods/disruptions/)
+
+다음 레슨: [파드 보안 기준과 securityContext](./pod-security.mdx)

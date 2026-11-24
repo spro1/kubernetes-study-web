@@ -1,0 +1,180 @@
+---
+id: requests-limits
+title: Requests and limits
+sidebar_label: 02 · Requests and limits
+description: Follow an animation of how the scheduler places pods by requests, how limits stop a running container by slowing CPU (throttling) or killing on memory (OOMKilled), and what happens when requests are left empty
+hide_table_of_contents: true
+---
+
+# Requests and limits
+
+Each container declares resources as two values: "I need at least this much" (requests) and "I can never use more than this" (limits). Here we follow how each value is used at placement time and at run time. The detailed way the scheduler filters and picks nodes is in [Which Node Gets the Pod (Scheduling)](../k8s/scheduling.mdx).
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~10 min', level: 'Intermediate'}}
+  groups={[
+    {label: 'worker-2', x: 345, y: 45, w: 520, h: 375, tone: 'biz', from: 1},
+  ]}
+  nodes={[
+    {id: 'spec', label: 'Pod spec', sub: 'requests·limits', icon: 'book', tone: 'ext', x: 120, y: 110, show: true},
+    {id: 'sched', label: 'Scheduler', sub: 'uses request totals', icon: 'target', tone: 'cp', x: 120, y: 330, show: true},
+    {id: 'kubelet', label: 'kubelet', sub: 'enforces limits', icon: 'agent', tone: 'node', x: 450, y: 230},
+    {id: 'web', label: 'web', sub: 'Burstable', icon: 'pod', tone: 'app', size: 'sm', w: 120, x: 760, y: 110},
+    {id: 'pay', label: 'pay', sub: 'Guaranteed', icon: 'pod', tone: 'app', size: 'sm', w: 120, x: 760, y: 230},
+    {id: 'temp', label: 'temp', sub: 'BestEffort', icon: 'pod', tone: 'app', size: 'sm', w: 120, x: 760, y: 350},
+  ]}
+  metrics={[
+    {id: 'alloc', label: 'CPU allocated (example)'},
+    {id: 'cpu', label: 'web CPU / limit'},
+    {id: 'mem', label: 'web memory / limit'},
+    {id: 'state', label: 'web status'},
+  ]}
+  learn={[
+    {text: 'Requests are a reservation; limits are a hard line', at: 0},
+    {text: 'The scheduler looks at request totals, not usage', at: 1},
+    {text: 'Hitting the CPU limit slows you down; hitting the memory limit kills you', at: 4},
+    {text: 'What happens with empty requests, and QoS classes', at: 6},
+  ]}
+  steps={[
+    {
+      short: 'Two values',
+      kind: '시작',
+      title: 'Each container declares requests and limits',
+      text: [
+        'The web pod declares requests of CPU 250m (a quarter core) and memory 256Mi, and limits of CPU 500m and memory 512Mi.',
+        'Think of a restaurant: requests are the booked party size, and limits are the most people that fit at the table.',
+      ],
+      keyIdea: 'Requests mean "I need at least this much". Limits mean "I can never use more than this".',
+      flows: [{from: 'spec', to: 'sched', label: 'place me', type: 'request'}],
+      focus: ['spec'],
+      values: {cpu: '250m requested', mem: '256Mi requested', state: 'none'},
+    },
+    {
+      short: 'Placement',
+      kind: '원리',
+      title: 'The scheduler counts room using request totals',
+      text: [
+        'The scheduler subtracts the request totals of pods already on the node from its allocatable amount, then checks whether the new pod\'s requests fit.',
+        'It does not look at actual CPU usage. So even if the usage graph looks idle, a pod stays Pending when request totals are full.',
+      ],
+      keyIdea: 'A restaurant decides whether to seat guests by the total bookings, not by who actually showed up.',
+      flows: [{from: 'sched', to: 'kubelet', label: 'assign worker-2', type: 'request'}],
+      focus: ['sched'],
+      values: {alloc: '70% → 76%'},
+    },
+    {
+      short: 'Running',
+      kind: '원리',
+      title: 'At run time, the node enforces limits',
+      text: [
+        'The kubelet on worker-2 runs web. The requested amount is reserved, and it can use more than that in normal times.',
+        'But it cannot go past the limit. A limit is the line the node enforces at run time.',
+      ],
+      flows: [{from: 'kubelet', to: 'web', label: 'run', type: 'request'}],
+      focus: ['kubelet', 'web'],
+      status: {web: 'ok'},
+      badges: {web: 'Running'},
+      values: {cpu: '120m / 500m', mem: '200Mi / 512Mi', state: 'Running'},
+    },
+    {
+      short: 'CPU over',
+      kind: '주의',
+      title: 'Trying to exceed the CPU limit slows it down',
+      text: [
+        'A burst of requests makes web want more CPU. The node slows it down so it cannot pass the 500m limit (throttling).',
+        'The container does not die and keeps running, but responses get slow. Nothing shows up in the status column.',
+      ],
+      keyIdea: 'CPU is a shareable resource, so the outcome is only slowness.',
+      flows: [{from: 'kubelet', to: 'web', label: 'throttle', type: 'request'}],
+      focus: ['web'],
+      status: {web: 'warn'},
+      badges: {web: 'throttled'},
+      values: {cpu: {text: '500m / 500m', tone: 'bad'}, state: 'Running · slow'},
+    },
+    {
+      short: 'Memory over',
+      kind: '장애',
+      title: 'Exceeding the memory limit kills the container',
+      text: [
+        'Now web\'s memory goes past 512Mi. Memory already in use cannot be taken back, so the container is killed.',
+        'The status shows OOMKilled (Out Of Memory) with exit code 137, and the restart count goes up. If it repeats, you get CrashLoopBackOff.',
+      ],
+      keyIdea: 'If the limit is too small, OOMKilled restarts keep repeating. Set memory more conservatively than CPU.',
+      flows: [{from: 'kubelet', to: 'web', label: 'kill', type: 'request'}],
+      focus: ['web'],
+      status: {web: 'error'},
+      badges: {web: 'OOMKilled'},
+      values: {cpu: '120m / 500m', mem: {text: 'over 512Mi', tone: 'bad'}, state: {text: 'OOMKilled', tone: 'bad'}},
+    },
+    {
+      short: 'No requests',
+      kind: '문제',
+      title: 'A pod with no requests arrives',
+      text: [
+        'The temp pod declares neither requests nor limits. The scheduler places it without knowing its needs, and in a namespace with a resource quota, creation is rejected outright.',
+        'Without requests, the HPA (autoscaler) cannot compute utilization either, because utilization is measured against requests.',
+      ],
+      flows: [{from: 'kubelet', to: 'temp', label: 'needs unknown', type: 'request'}],
+      focus: ['temp'],
+      status: {web: 'ok', temp: 'warn'},
+      badges: {web: null, temp: 'no requests'},
+      values: {mem: '300Mi / 512Mi', state: 'Running'},
+    },
+    {
+      short: 'Eviction',
+      kind: '장애',
+      title: 'When node memory runs short, BestEffort goes first',
+      text: [
+        'temp uses a lot of memory and the node runs short. The kubelet must push some pods out (eviction).',
+        'The order follows the QoS class. BestEffort (temp), with nothing declared, goes first. Guaranteed (pay), with requests equal to limits, goes last.',
+      ],
+      keyIdea: 'The QoS class is set automatically from how requests and limits are declared. The more important the service, the more clearly you declare both.',
+      changes: ['- Evict temp (Evicted)'],
+      flows: [{from: 'kubelet', to: 'temp', label: 'evict', type: 'request'}],
+      focus: ['temp', 'pay'],
+      status: {temp: 'error', pay: 'ok'},
+      badges: {temp: 'Evicted', pay: 'last out'},
+    },
+    {
+      short: 'Tuning',
+      kind: '원리',
+      title: 'Tune requests to actual usage',
+      text: [
+        'Set requests too high and pods fail to place even when there is room, wasting resources. Set them too low and pods crowd one node, slowing or killing each other.',
+        'They need not be exact at first, but never leave them empty. Monitor actual usage and update the pod spec.',
+      ],
+      changes: ['~ web memory limit 512Mi → adjust to actual usage'],
+      flows: [{from: 'spec', to: 'sched', label: 'with new values', type: 'request'}],
+      focus: ['spec'],
+      status: {temp: 'gone'},
+      badges: {temp: null, pay: null},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Requests drive placement; limits drive run time',
+      text: [
+        'The scheduler places by request totals, and the node enforces limits at run time. Going over CPU slows you down; going over memory kills you.',
+        'Empty requests throw off placement, autoscaling and eviction order alike.',
+      ],
+      keyIdea: 'Requests govern placement; limits govern run time. The CPU limit means slowdown, the memory limit means OOMKilled. Read usage (kubectl top) and allocation (Allocated resources in kubectl describe node) separately.',
+      focus: ['sched', 'kubelet'],
+    },
+  ]}
+/>
+
+## Myths and facts
+
+| Myth | Fact |
+| --- | --- |
+| Low usage means there is room for a pod | The scheduler only looks at request totals. When allocation is full, it is `Pending` regardless of usage |
+| Going over the limit kills the container, CPU or memory | CPU is only slowed (throttling); only memory is killed (`OOMKilled`) |
+| Requests can be left empty | Placement goes wrong, creation is rejected in namespaces with quotas, and the HPA cannot compute utilization |
+| HPA CPU 80% means 80% of the limit | It is measured against requests |
+| Generous requests are safer | Pods fail to place even with room, and resources are wasted |
+
+Further reading: [Resource management for Pods and containers](https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/) · [Kubernetes scheduler](https://kubernetes.io/docs/concepts/scheduling-eviction/kube-scheduler/) · [Configure Quality of Service for Pods](https://kubernetes.io/docs/tasks/configure-pod-container/quality-service-pod/) · [Which Node Gets the Pod (Scheduling)](../k8s/scheduling.mdx)
+
+Next lesson: [Reading status in three layers and the troubleshooting order](./troubleshoot-status.mdx)

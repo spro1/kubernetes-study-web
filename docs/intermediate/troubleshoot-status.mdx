@@ -1,0 +1,179 @@
+---
+id: troubleshoot-status
+title: Reading status in three layers and the troubleshooting order
+sidebar_label: 03 · Reading status
+description: Follow an animation that unpacks the STATUS column of kubectl get pods into pod phase, container state and reason, and shows whether to check events or logs first for Pending, ImagePullBackOff and CrashLoopBackOff
+hide_table_of_contents: true
+---
+
+# Reading status in three layers and the troubleshooting order
+
+The single "status" column in the pod list mixes three different layers of information. Here we unpack it and follow where to look first, events or logs, in each situation. Which stage of pod startup gets stuck is covered in [How a Pod Starts](../k8s/pod-startup.mdx).
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~10 min', level: 'Intermediate'}}
+  groups={[
+    {label: 'Three layers', x: 255, y: 30, w: 210, h: 395, tone: 'plain'},
+  ]}
+  nodes={[
+    {id: 'list', label: 'Pod list', sub: 'STATUS·READY', icon: 'browser', tone: 'ext', x: 100, y: 225, show: true},
+    {id: 'phase', label: 'Pod phase', sub: 'phase', icon: 'layers', tone: 'cp', x: 360, y: 105, show: true},
+    {id: 'cstate', label: 'Container', sub: 'state', icon: 'box', tone: 'node', x: 360, y: 235, show: true},
+    {id: 'reason', label: 'Reason', sub: 'reason', icon: 'alert', tone: 'app', x: 360, y: 365, show: true},
+    {id: 'events', label: 'Events', sub: 'Kubernetes records', icon: 'bell', tone: 'store', x: 640, y: 120},
+    {id: 'logs', label: 'Logs', sub: 'written by the app', icon: 'book', tone: 'store', x: 640, y: 340},
+    {id: 'node', label: 'Node', sub: 'Ready·pressure', icon: 'server', tone: 'node', x: 880, y: 230},
+  ]}
+  metrics={[
+    {id: 'phase', label: 'Pod phase'},
+    {id: 'cstate', label: 'Container state'},
+    {id: 'reason', label: 'Reason'},
+    {id: 'ready', label: 'READY'},
+  ]}
+  learn={[
+    {text: 'Why the status column mixes phase names and reason names', at: 0},
+    {text: 'A Running pod can still be short on READY', at: 2},
+    {text: 'Pre-run problems: events first; post-run failures: logs first', at: 5},
+    {text: 'When many pods fail at once, look at the node', at: 6},
+  ]}
+  steps={[
+    {
+      short: 'One column',
+      kind: '시작',
+      title: 'One status column mixes three layers',
+      text: [
+        'Status has three layers: where the whole pod is (phase), what each container is doing (state), and why (reason).',
+        'kubectl get pods merges the three and shows only the most specific value. That is why phase names and reason names appear mixed in the column.',
+      ],
+      keyIdea: 'Even if the column shows ImagePullBackOff, the pod phase is Pending and the container is Waiting.',
+      flows: [
+        {from: 'list', to: 'phase', type: 'request'},
+        {from: 'list', to: 'cstate', type: 'request'},
+        {from: 'list', to: 'reason', type: 'request'},
+      ],
+      focus: ['list'],
+    },
+    {
+      short: 'Pod phase',
+      kind: '원리',
+      title: 'The pod phase says where it is in its life',
+      text: [
+        'There are five: Pending (waiting for placement or preparing), Running (containers running), Succeeded (exited normally), Failed (exited with failure), and Unknown (lost contact with the node).',
+        'A short Pending is normal; a long one is a problem. Running does not mean "service healthy" either, only that a process is running.',
+      ],
+      flows: [{from: 'list', to: 'phase', label: 'phase', type: 'request'}],
+      focus: ['phase'],
+      values: {phase: 'Running'},
+    },
+    {
+      short: 'READY',
+      kind: '원리',
+      title: 'Read the container state together with READY',
+      text: [
+        'A container is Waiting (not yet running, or waiting to restart), Running, or Terminated (exited, with an exit code).',
+        'READY 1/2 on a pod means 1 of 2 containers passed the readiness probe. A Service sends no requests to a pod that is not ready.',
+      ],
+      keyIdea: 'In a namespace with a service mesh, an extra sidecar container is injected, so even a single-container app shows 2/2.',
+      flows: [{from: 'list', to: 'cstate', label: 'READY', type: 'request'}],
+      focus: ['cstate'],
+      values: {cstate: 'Running', reason: '-', ready: {text: '1/2', tone: 'bad'}},
+    },
+    {
+      short: 'Pending',
+      kind: '장애',
+      title: 'Stuck in Pending? Check events first',
+      text: [
+        'The pod could not be placed on a node. No container has ever run, so the logs are empty.',
+        'Events show FailedScheduling. For Insufficient cpu or memory, check requests, quotas and node headroom. For an untolerated taint, check placement rules.',
+      ],
+      flows: [{from: 'phase', to: 'events', label: 'events first', type: 'request'}],
+      focus: ['phase', 'events'],
+      status: {phase: 'warn', events: 'warn'},
+      badges: {events: 'FailedScheduling'},
+      values: {phase: {text: 'Pending', tone: 'bad'}, cstate: 'none yet', reason: '-', ready: {text: '0/1', tone: 'bad'}},
+    },
+    {
+      short: 'Image',
+      kind: '장애',
+      title: 'ImagePullBackOff: the answer is in events too',
+      text: [
+        'The pod was placed but the image could not be pulled. The pod is Pending, the container Waiting, and the reason ImagePullBackOff.',
+        'In the event message, not found points to the image name or tag, unauthorized to credentials, and timeout or no such host to the registry address or network.',
+      ],
+      keyIdea: 'BackOff does not mean giving up. It is retrying at growing intervals. Fix the cause and it can recover on its own.',
+      flows: [{from: 'reason', to: 'events', label: 'events first', type: 'request'}],
+      focus: ['reason', 'events'],
+      status: {phase: null, reason: 'warn'},
+      badges: {events: 'Failed to pull', reason: 'ImagePull'},
+      values: {phase: {text: 'Pending', tone: 'bad'}, cstate: 'Waiting', reason: {text: 'ImagePullBackOff', tone: 'bad'}},
+    },
+    {
+      short: 'Crash loop',
+      kind: '장애',
+      title: 'CrashLoopBackOff: start with the previous container\'s logs',
+      text: [
+        'The container started, but the program keeps exiting right away. The pod is Running, the container Waiting, and the reason CrashLoopBackOff.',
+        'The current container has just started and has few logs. The cause is in the logs of the container that exited before it (kubectl logs --previous).',
+      ],
+      keyIdea: 'Also check Last State in describe. OOMKilled or exit code 137 points to the memory limit; Liveness probe failed in events points to the probe settings.',
+      flows: [
+        {from: 'reason', to: 'logs', label: 'previous logs', type: 'request'},
+        {from: 'cstate', to: 'events', label: 'Last State', type: 'request'},
+      ],
+      focus: ['reason', 'logs'],
+      status: {events: null, reason: 'error', logs: 'warn'},
+      badges: {events: null, reason: 'CrashLoop', logs: '--previous'},
+      values: {phase: 'Running', cstate: 'Waiting', reason: {text: 'CrashLoopBackOff', tone: 'bad'}, ready: {text: '0/1', tone: 'bad'}},
+    },
+    {
+      short: 'Check node',
+      kind: '주의',
+      title: 'When many pods fail at once, look at the node',
+      text: [
+        'If the pod phase is Unknown, or pods on the same node fail together, the problem is on the node, not one pod.',
+        'Check the node status and node events: is it NotReady, and are there pressure conditions like MemoryPressure or DiskPressure?',
+      ],
+      keyIdea: 'First decide whether it is one pod or many pods on the same node. That narrows the scope fast.',
+      flows: [
+        {from: 'phase', to: 'node', label: 'node status', type: 'request', bend: 0.15},
+        {from: 'node', to: 'events', label: 'node events', type: 'response'},
+      ],
+      focus: ['node'],
+      status: {reason: null, logs: null, node: 'error'},
+      badges: {reason: null, logs: null, node: 'NotReady'},
+      values: {phase: {text: 'Unknown', tone: 'bad'}, cstate: '-', reason: '-', ready: '-'},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Narrow down: status → events → logs → node',
+      text: [
+        'Problems before running or in the runtime environment (Pending, ImagePullBackOff, Evicted) are answered in events left by Kubernetes. Programs that run and then fail are answered in logs left by the app.',
+        'By default, events disappear after about an hour, and logs mostly disappear when the container is recreated. Check as soon as you spot a problem.',
+      ],
+      keyIdea: 'The STATUS column is one value merging three layers. Once you read the reason, go to the matching place: events for placement and image problems (kubectl describe pod), the previous logs for crash loops (kubectl logs --previous), and the node for many pods failing at once (kubectl describe node).',
+      focus: ['events', 'logs'],
+      status: {node: null},
+      badges: {node: null},
+    },
+  ]}
+/>
+
+## Where to look first
+
+| What the status column shows | Unpacked (phase / container / reason) | Look first at | What to check |
+| --- | --- | --- | --- |
+| `Pending` | Pending / none yet / FailedScheduling | Events | `Insufficient cpu`·`memory`: requests, quotas, node headroom; taint: placement rules |
+| `ImagePullBackOff` | Pending / Waiting / ImagePullBackOff | Events | `not found`: name and tag; `unauthorized`: credentials; `timeout`: registry address and network |
+| `CrashLoopBackOff` | Running / Waiting / CrashLoopBackOff | Previous container logs | App error messages, reason and exit code in Last State |
+| `OOMKilled` | Running / Terminated / OOMKilled | Memory usage | Compare the memory limit with actual usage |
+| `CreateContainerConfigError` | Pending / Waiting / CreateContainerConfigError | Events | Whether the referenced ConfigMap or Secret exists and the key names match |
+| `Unknown`, many pods failing at once | Unknown / - / - | Node status | NotReady, pressure conditions |
+
+See events with `kubectl describe pod <name>` and the previous container's logs with `kubectl logs <name> --previous`. Logs exist only on pods, so when you spot a problem on a Deployment, drill down to its pods. See all events in a namespace with `kubectl get events --sort-by=.lastTimestamp`.
+
+Further reading: [Debug pods](https://kubernetes.io/docs/tasks/debug/debug-application/debug-pods/) · [kubectl cheat sheet](https://kubernetes.io/docs/reference/kubectl/cheatsheet/) · [Pod lifecycle](https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/) · [When a Pod Dies (Self-Healing)](../k8s/self-healing.mdx)
+
+Next lesson: [Graceful shutdown — going down without losing requests](./graceful-shutdown.mdx)

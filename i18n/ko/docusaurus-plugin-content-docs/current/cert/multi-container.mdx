@@ -1,0 +1,203 @@
+---
+id: multi-container
+title: 멀티 컨테이너 파드 — init과 사이드카 (CKAD)
+sidebar_label: 05 · 멀티 컨테이너 파드
+description: init 컨테이너가 순서대로 끝난 뒤 사이드카와 앱 컨테이너가 시작되고, 같은 파드 안 컨테이너가 localhost와 emptyDir을 함께 쓰는 과정을 애니메이션으로 따라간다
+hide_table_of_contents: true
+---
+
+# 멀티 컨테이너 파드 — init과 사이드카 (CKAD)
+
+CKAD 출제 영역 중 Application Design and Build(20%)의 "멀티 컨테이너 파드 패턴(사이드카, init 등)"과 "영구·임시 볼륨"에 해당한다. 한 파드 안의 여러 컨테이너가 어떤 순서로 시작하고, 무엇을 함께 쓰는지 따라가 본다. 서비스 메시 프록시처럼 자동으로 들어가는 사이드카는 [서비스 메시 ① 사이드카와 상호 인증](../feature/mesh-sidecar.mdx)에서 따로 본다.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '약 10분', level: '중급'}}
+  groups={[
+    {label: '파드 web', x: 225, y: 30, w: 470, h: 410, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'kubelet', label: 'kubelet', sub: '노드 관리자', icon: 'agent', tone: 'node', x: 85, y: 110, show: true},
+    {id: 'init1', label: 'init 1', sub: 'DB 대기', icon: 'box', tone: 'app', x: 325, y: 110, show: true},
+    {id: 'init2', label: 'init 2', sub: '설정 받기', icon: 'box', tone: 'app', x: 595, y: 110, show: true},
+    {id: 'side', label: 'log-agent', sub: '사이드카', icon: 'layers', tone: 'app', x: 325, y: 250, show: true},
+    {id: 'app', label: 'web', sub: '앱 컨테이너', icon: 'pod', tone: 'app', x: 595, y: 250, show: true},
+    {id: 'vol', label: 'emptyDir', sub: '공유 볼륨', icon: 'disk', tone: 'store', x: 460, y: 380, show: true},
+    {id: 'db', label: 'DB', sub: '서비스', icon: 'db', tone: 'ext', x: 870, y: 110},
+    {id: 'cfg', label: '설정 서버', sub: '설정 파일', icon: 'server', tone: 'ext', x: 870, y: 250},
+    {id: 'logs', label: '로그 보관처', sub: '로그 수집', icon: 'archive', tone: 'ext', x: 870, y: 385},
+  ]}
+  metrics={[
+    {id: 'phase', label: '파드 단계'},
+    {id: 'init', label: 'init 완료'},
+    {id: 'running', label: '실행 중 컨테이너'},
+  ]}
+  learn={[
+    {text: 'init 컨테이너가 하나씩 차례로 끝나야 하는 이유', at: 1},
+    {text: 'Init:CrashLoopBackOff가 생기는 지점', at: 2},
+    {text: '네이티브 사이드카(restartPolicy: Always)의 시작 순서', at: 4},
+    {text: '같은 파드 안 컨테이너가 나눠 쓰는 것: 네트워크와 볼륨', at: 6},
+  ]}
+  steps={[
+    {
+      short: '명세',
+      kind: '시작',
+      title: '컨테이너 넷이 든 파드 하나',
+      text: [
+        'web 파드의 initContainers 목록에는 init 1(DB 대기), init 2(설정 받기), log-agent(로그 수집 사이드카)가 순서대로 있고, containers 목록에는 앱 컨테이너 web이 있다.',
+        '노드의 kubelet은 이 목록 순서대로 컨테이너를 띄운다. 첫 번째로 init 1을 시작한다.',
+      ],
+      keyIdea: '여러 컨테이너는 함께 있어야만 의미가 있을 때 한 파드에 넣는다. 따로 배포·확장할 수 있으면 파드를 나눈다.',
+      flows: [{from: 'kubelet', to: 'init1', label: '1번 시작', type: 'request'}],
+      focus: ['kubelet', 'init1'],
+      values: {phase: 'Pending', init: '0/2', running: 'init 1'},
+    },
+    {
+      short: '순서대로',
+      kind: '원리',
+      title: 'init 컨테이너는 하나씩, 끝나야 다음으로 간다',
+      text: [
+        'init 1은 DB 서비스에 접속이 될 때까지 기다리다가, 접속되면 성공(종료 코드 0)으로 끝난다.',
+        'init 컨테이너는 동시에 뜨지 않는다. 앞의 것이 성공으로 끝나야 kubelet이 다음 것을 시작한다.',
+      ],
+      keyIdea: 'init 컨테이너가 도는 동안 파드는 Pending 단계에 머문다. 앱 컨테이너는 아직 하나도 시작되지 않았다.',
+      flows: [
+        {from: 'init1', to: 'db', label: '접속 확인', type: 'request', bend: -0.15},
+        {from: 'kubelet', to: 'init2', label: '2번 시작', type: 'request', bend: -0.15},
+      ],
+      focus: ['init1', 'init2'],
+      status: {init1: 'off'},
+      badges: {init1: '완료'},
+      values: {init: '1/2', running: 'init 2'},
+    },
+    {
+      short: '실패',
+      kind: '문제',
+      title: 'init 2가 실패하면 앱은 시작되지 않는다',
+      text: [
+        '설정 서버 주소가 틀려 init 2가 오류로 끝난다. 파드의 재시작 정책이 Always나 OnFailure이면 kubelet은 점점 긴 간격을 두고 init 2를 다시 실행한다.',
+        '실패가 반복되면 파드 상태가 Init:CrashLoopBackOff로 보인다. 앱 컨테이너 web은 한 번도 시작되지 않았으니 web의 로그를 봐도 아무것도 없다.',
+      ],
+      keyIdea: '원인은 실패한 init 컨테이너의 로그에 있다. kubectl logs web -c init-2처럼 컨테이너 이름을 지정해 본다.',
+      flows: [
+        {from: 'init2', to: 'cfg', label: '주소 오류', type: 'request'},
+        {from: 'kubelet', to: 'init2', label: '재시작', type: 'request', bend: -0.15},
+      ],
+      focus: ['init2'],
+      status: {init2: 'error'},
+      badges: {init2: 'Init:CrashLoopBackOff'},
+      values: {phase: {text: 'Pending', tone: 'bad'}, init: {text: '1/2', tone: 'bad'}},
+    },
+    {
+      short: '설정 쓰기',
+      kind: '원리',
+      title: '고친 init 2가 설정 파일을 공유 볼륨에 쓴다',
+      text: [
+        '주소를 고치자 init 2가 설정 서버에서 파일을 받아 emptyDir 볼륨에 쓰고 끝난다.',
+        'emptyDir은 파드가 노드에 배정될 때 빈 폴더로 만들어지는 임시 볼륨이다. 이 볼륨을 마운트한 컨테이너끼리 파일을 주고받을 수 있다.',
+      ],
+      changes: ['~ init 2 설정 서버 주소 수정', '+ emptyDir에 app.yaml 기록'],
+      flows: [
+        {from: 'cfg', to: 'init2', label: '설정 파일', type: 'response'},
+        {from: 'init2', to: 'vol', label: 'app.yaml', type: 'request', bend: 0.2},
+      ],
+      focus: ['init2', 'vol'],
+      status: {init2: 'off'},
+      badges: {init2: '완료'},
+      values: {phase: 'Pending', init: {text: '2/2', tone: 'good'}, running: '없음'},
+    },
+    {
+      short: '사이드카',
+      kind: '원리',
+      title: '네이티브 사이드카는 시작한 뒤 끝나지 않는다',
+      text: [
+        'log-agent는 initContainers 안에 있지만 restartPolicy: Always가 붙어 있다. 이것이 네이티브 사이드카다. 보통 init 컨테이너처럼 끝나기를 기다리지 않고, 시작되면 다음 순서로 넘어간다.',
+        '사이드카는 앱이 도는 동안 계속 실행되고, 죽으면 kubelet이 다시 띄운다. 쿠버네티스 1.29부터 기본으로 켜졌고 1.33에서 정식 기능이 됐다.',
+      ],
+      keyIdea: '사이드카를 initContainers에 두면 앱보다 먼저 시작된다는 순서가 보장된다. containers 목록에 함께 두면 시작 순서를 보장하지 않는다.',
+      changes: ['+ initContainers: log-agent', '+ restartPolicy: Always'],
+      flows: [{from: 'kubelet', to: 'side', label: '3번 시작', type: 'request'}],
+      focus: ['side'],
+      status: {side: 'ok'},
+      badges: {side: '계속 실행'},
+      values: {running: 'log-agent'},
+    },
+    {
+      short: '앱 시작',
+      kind: '원리',
+      title: '이제야 앱 컨테이너가 시작된다',
+      text: [
+        'initContainers 목록이 모두 끝나거나(일반 init) 시작되면(사이드카) kubelet이 containers 목록의 web을 시작한다. 파드 단계가 Running이 된다.',
+        'web은 init 2가 emptyDir에 써 둔 설정 파일을 같은 볼륨에서 읽어 시작한다.',
+      ],
+      flows: [
+        {from: 'kubelet', to: 'app', label: '앱 시작', type: 'request'},
+        {from: 'vol', to: 'app', label: '설정 읽기', type: 'response'},
+      ],
+      focus: ['app'],
+      status: {app: 'ok'},
+      badges: {app: 'Running'},
+      values: {phase: {text: 'Running', tone: 'good'}, running: 'log-agent · web'},
+    },
+    {
+      short: '함께 쓰기',
+      kind: '원리',
+      title: '같은 파드는 네트워크와 볼륨을 나눠 쓴다',
+      text: [
+        '같은 파드의 컨테이너는 IP 주소 하나를 함께 쓴다. 그래서 서로 localhost로 부를 수 있고, 같은 포트를 두 컨테이너가 동시에 열 수는 없다.',
+        'web이 emptyDir에 로그 파일을 쓰면 log-agent가 같은 볼륨에서 읽어 로그 보관처로 보낸다. 두 컨테이너 모두 그 볼륨을 마운트해야 한다.',
+      ],
+      keyIdea: '볼륨은 파드 단위로 선언하고, 컨테이너마다 volumeMounts로 붙인다. 한쪽에만 적으면 파일이 보이지 않는다.',
+      flows: [
+        {from: 'side', to: 'app', label: 'localhost', type: 'request'},
+        {from: 'app', to: 'vol', label: '로그 쓰기', type: 'request', bend: 0.15},
+        {from: 'side', to: 'logs', label: '로그 전송', type: 'request'},
+      ],
+      focus: ['side', 'app', 'vol'],
+    },
+    {
+      short: '종료 순서',
+      kind: '주의',
+      title: '끝날 때는 앱이 먼저, 사이드카는 나중에 멈춘다',
+      text: [
+        '파드를 지우면 앱 컨테이너가 먼저 멈추고, 그다음 사이드카가 시작 순서의 역순으로 멈춘다. 그래서 log-agent는 web의 마지막 로그까지 보낼 수 있다.',
+        '잡(Job)의 파드라면 앱 컨테이너가 끝났을 때 계속 도는 사이드카가 완료를 막지 않는다. emptyDir은 파드가 지워질 때 안의 파일과 함께 사라진다.',
+      ],
+      keyIdea: 'emptyDir은 컨테이너가 재시작돼도 남지만 파드가 지워지면 없어진다. 오래 보관할 데이터는 영구 볼륨에 둔다.',
+      flows: [
+        {from: 'kubelet', to: 'app', label: '먼저 종료', type: 'request'},
+        {from: 'kubelet', to: 'side', label: '나중 종료', type: 'request'},
+      ],
+      focus: ['app', 'side'],
+      status: {app: 'gone', side: 'off', vol: 'gone'},
+      badges: {app: null, side: null},
+      values: {phase: '종료 중', running: '없음'},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '준비는 init, 보조는 사이드카, 공유는 localhost와 볼륨',
+      text: [
+        'init 컨테이너는 목록 순서대로 하나씩 끝나야 하고, 하나라도 실패하면 앱은 시작되지 않는다. 네이티브 사이드카는 initContainers에 restartPolicy: Always로 두어 앱보다 먼저 시작하고 늦게 멈춘다.',
+        '같은 파드의 컨테이너는 IP를 함께 써서 localhost로 닿고, emptyDir 같은 볼륨으로 파일을 주고받는다.',
+      ],
+      keyIdea: 'init 컨테이너는 차례로 끝나야 하고, 사이드카와 앱은 localhost와 emptyDir을 함께 쓴다. 시작이 안 되면 Init:0/2 같은 STATUS를 읽고 kubectl logs <파드> -c <컨테이너>로 컨테이너별 로그를 본다.',
+      focus: ['init1', 'init2', 'side', 'app'],
+    },
+  ]}
+/>
+
+## 시험에서 자주 묻는 것
+
+| 상황 | 해야 할 일·명령 | 함정 |
+| --- | --- | --- |
+| 파드가 `Init:CrashLoopBackOff` | `kubectl describe pod web`으로 어느 init이 실패했는지 보고 `kubectl logs web -c <init 이름>` | 앱 컨테이너는 시작 전이라 로그가 없다 |
+| 앱보다 먼저 DB를 기다려야 한다 | `initContainers`에 대기용 컨테이너를 넣는다 | `containers`에 넣으면 앱과 동시에 시작된다 |
+| 로그 수집 사이드카 추가 | `emptyDir` 볼륨을 선언하고 두 컨테이너 모두 `volumeMounts`로 붙인다 | 한쪽에만 마운트하면 파일이 보이지 않는다 |
+| 사이드카가 앱보다 먼저 떠야 한다 | `initContainers`에 넣고 `restartPolicy: Always` | `containers`에 넣으면 시작 순서를 보장하지 않는다 |
+| 두 컨테이너가 같은 포트를 연다 | 한쪽 포트를 바꾼다 | 같은 파드는 IP 하나를 함께 써서 포트가 겹친다 |
+
+더 읽을거리: [CNCF 자격증 출제 범위](https://github.com/cncf/curriculum) · [초기화 컨테이너](https://kubernetes.io/ko/docs/concepts/workloads/pods/init-containers/) · [사이드카 컨테이너](https://kubernetes.io/docs/concepts/workloads/pods/sidecar-containers/) · [볼륨](https://kubernetes.io/ko/docs/concepts/storage/volumes/) · [서비스 메시 ① 사이드카와 상호 인증](../feature/mesh-sidecar.mdx)
+
+다음 레슨: [런타임 보안 — 이상 행동 잡기 (CKS)](./runtime-security.mdx)

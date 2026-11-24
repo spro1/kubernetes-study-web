@@ -1,0 +1,191 @@
+---
+id: network-policy
+title: Blocking and Allowing Traffic (NetworkPolicy)
+sidebar_label: 09 · Blocking and Allowing Traffic
+description: Follow how wide-open Pod traffic is locked down with a default-deny policy, how labels open only frontend→backend and backend→db, and why blocked requests show up as timeouts.
+hide_table_of_contents: true
+---
+
+# Blocking and Allowing Traffic (NetworkPolicy)
+
+The `shop` namespace has frontend, backend, and db Pods. At first anyone can connect to db. Let's change it so that "frontend can only call backend, and only backend can call db".
+
+<StepDiagram
+  width={1000}
+  meta={{duration: '~10 min', level: 'Intermediate'}}
+  groups={[
+    {label: 'Namespace shop', x: 370, y: 39, w: 470, h: 337, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'admin', label: 'Admin', sub: 'writes YAML', icon: 'user', tone: 'ext', x: 90, y: 80, show: true},
+    {id: 'pol', label: 'Policy', sub: 'NetworkPolicy', icon: 'book', tone: 'store', x: 90, y: 230},
+    {id: 'cilium', label: 'Cilium', sub: 'enforces rules', icon: 'shield', tone: 'node', x: 90, y: 380},
+    {id: 'fe', label: 'frontend', sub: 'app=frontend', icon: 'pod', tone: 'app', x: 470, y: 110, show: true},
+    {id: 'be', label: 'backend', sub: 'app=backend', icon: 'pod', tone: 'app', x: 470, y: 320, show: true},
+    {id: 'db', label: 'db', sub: 'app=db', icon: 'db', tone: 'app', x: 740, y: 320, show: true},
+    {id: 'other', label: 'debug', sub: 'Pod in ops', icon: 'pod', tone: 'ext', x: 925, y: 110, w: 120, show: true},
+  ]}
+  metrics={[
+    {id: 'febe', label: 'frontend → backend'},
+    {id: 'bedb', label: 'backend → db'},
+    {id: 'xdb', label: 'others → db'},
+  ]}
+  learn={[
+    {text: 'Why all Pods can talk to each other without a policy', at: 0},
+    {text: 'The network plugin is what actually enforces policies', at: 2},
+    {text: 'How labels select what is allowed', at: 4},
+    {text: 'Why blocked requests look like timeouts', at: 6},
+  ]}
+  steps={[
+    {
+      short: 'All open',
+      kind: '시작',
+      title: 'Without a policy, every Pod can reach every other',
+      text: [
+        'By default Kubernetes allows all Pod-to-Pod traffic. Even the debug Pod in another namespace (ops) can connect straight to db.',
+        'A namespace is a boundary for names and permissions, not for traffic. Blocking traffic takes a NetworkPolicy.',
+      ],
+      flows: [
+        {from: 'fe', to: 'be', type: 'request'},
+        {from: 'be', to: 'db', type: 'request'},
+        {from: 'other', to: 'db', type: 'request'},
+      ],
+      status: {fe: 'ok', be: 'ok', db: 'ok', other: 'ok'},
+      values: {febe: 'allowed', bedb: 'allowed', xdb: 'allowed'},
+    },
+    {
+      short: 'Default deny',
+      kind: '원리',
+      title: 'Apply a default-deny policy to the whole namespace',
+      text: [
+        'The admin creates a default-deny policy. An empty Pod selector means "every Pod in shop", and it blocks both incoming (Ingress) and outgoing (Egress) traffic.',
+        'Policies have no "deny" rules. Pods selected by a policy switch to allow-list mode, where only listed traffic passes, and the list starts empty.',
+      ],
+      keyIdea: 'The safe order is: apply default deny first, then open each needed path with an allow policy.',
+      flows: [{from: 'admin', to: 'pol', label: 'default-deny', type: 'request'}],
+      focus: ['pol'],
+      badges: {pol: 'default-deny'},
+    },
+    {
+      short: 'Enforce',
+      kind: '원리',
+      title: 'Cilium is what actually enforces the policy',
+      text: [
+        'A policy is just a rule document. Traffic is only blocked when the network plugin (CNI) watches policies and filters packets on each node. This lesson assumes Cilium does that job.',
+        'Cilium inspects Pod traffic with small programs loaded into the Linux kernel (eBPF).',
+      ],
+      keyIdea: 'With a network plugin that does not support policies, creating one has no effect and raises no error.',
+      flows: [
+        {from: 'pol', to: 'cilium', label: 'watch policies', type: 'watch'},
+        {from: 'cilium', to: 'fe', label: 'apply rules', type: 'request'},
+        {from: 'cilium', to: 'be', label: 'apply rules', type: 'request'},
+      ],
+      focus: ['cilium'],
+    },
+    {
+      short: 'All blocked',
+      kind: '문제',
+      title: 'Traffic that used to work now times out',
+      text: [
+        'When frontend calls backend, no response comes back. Cilium silently drops the packets, so the caller waits until its timeout instead of getting a "refused".',
+        'Because egress is blocked too, DNS lookups (port 53) fail as well and "name not found" errors appear. That is why an allow-dns policy usually goes alongside.',
+      ],
+      keyIdea: 'The moment you first apply a policy, traffic that used to work can break. Before applying, make sure you know that anything not in the rules will be blocked.',
+      flows: [{from: 'fe', to: 'be', label: 'timeout', type: 'request'}],
+      focus: ['fe', 'be'],
+      status: {fe: 'warn', be: 'error', db: 'error'},
+      badges: {be: 'blocked'},
+      values: {febe: {text: 'blocked', tone: 'bad'}, bedb: {text: 'blocked', tone: 'bad'}, xdb: {text: 'blocked', tone: 'bad'}},
+    },
+    {
+      short: 'First allow',
+      kind: '원리',
+      title: 'Open only frontend → backend, by label',
+      text: [
+        'Allow traffic into backend from "Pods labelled app=frontend". Since default deny also blocks egress, open frontend’s outgoing path to backend as well.',
+        'Selection is by label, not Pod name, so a newly started frontend Pod with the same label is allowed automatically.',
+      ],
+      changes: ['+ allow-frontend (backend Ingress)', '+ frontend Egress → backend'],
+      flows: [
+        {from: 'admin', to: 'pol', label: 'allow rule', type: 'request'},
+        {from: 'fe', to: 'be', label: 'allowed', type: 'request'},
+      ],
+      focus: ['fe', 'be'],
+      status: {fe: 'ok', be: 'ok'},
+      badges: {pol: '+ allow-frontend', be: null},
+      values: {febe: {text: 'allowed', tone: 'good'}},
+    },
+    {
+      short: 'Protect db',
+      kind: '원리',
+      title: 'db only accepts port 5432 from backend',
+      text: [
+        'Add a policy on the db Pod that "only allows port 5432 traffic from app=backend". Open backend’s outgoing path to db too.',
+        'When several policies select one Pod, the allowed traffic is the union of what each policy allows.',
+      ],
+      changes: ['+ db-allow-backend (db Ingress :5432)', '+ backend Egress → db'],
+      flows: [
+        {from: 'admin', to: 'pol', label: 'allow rule', type: 'request'},
+        {from: 'be', to: 'db', label: ':5432 allowed', type: 'request'},
+      ],
+      focus: ['db'],
+      status: {db: 'ok'},
+      badges: {pol: '+ db-allow-backend'},
+      values: {bedb: {text: 'allowed', tone: 'good'}},
+    },
+    {
+      short: 'Verify',
+      kind: '문제',
+      title: 'Requests outside the allow list just hang',
+      text: [
+        'When the debug Pod and frontend try to reach db, both wait with no answer and fail on timeout. Only backend is on db’s allow list.',
+        'To the app this easily looks like "the server is slow" or "down". The db Pod is Running and the Service is fine, which makes the cause hard to find.',
+      ],
+      keyIdea: 'NetworkPolicy filters at the IP and port level (L4). Blocking specific URL paths is a job for a service mesh or gateway.',
+      flows: [
+        {from: 'other', to: 'db', label: 'timeout', type: 'request'},
+        {from: 'fe', to: 'db', label: 'timeout', type: 'request'},
+      ],
+      focus: ['db', 'other'],
+      status: {other: 'error'},
+      badges: {other: 'no response'},
+      values: {xdb: {text: 'blocked (timeout)', tone: 'bad'}},
+    },
+    {
+      short: 'Inspect',
+      kind: '주의',
+      title: 'Blocked traffic is not recorded on the policy',
+      text: [
+        'A NetworkPolicy object only holds rules; it does not record which traffic was actually blocked. To see drops, use a CNI tool such as Cilium’s Hubble.',
+        'When traffic breaks, use kubectl describe networkpolicy to see what is allowed for Ingress and Egress, and compare the policy’s Pod selector with the target Pod’s labels side by side.',
+      ],
+      flows: [{from: 'pol', to: 'admin', label: 'policy details', type: 'response'}],
+      focus: ['pol', 'admin'],
+      badges: {other: null},
+    },
+    {
+      short: 'Recap',
+      kind: '정리',
+      title: 'Block first, then open only the paths you need by label',
+      text: [
+        'No policy means allow-all; once selected by a policy, a Pod uses an allow list. We applied default deny, then opened only frontend → backend → db by label.',
+        'The policy is the document; Cilium does the enforcing. Blocked requests show up as timeouts, not errors.',
+      ],
+      keyIdea: 'NetworkPolicy opens labelled paths on top of a default deny. Before applying a policy, check which Pods its selector matches with kubectl get pods -l.',
+      focus: ['pol', 'cilium'],
+      status: {other: 'warn'},
+    },
+  ]}
+/>
+
+## Symptoms and where to look
+
+| Symptom | Suspect | Where to look |
+| --- | --- | --- |
+| Traffic that worked suddenly times out | A new policy now selects the target Pod | `POD-SELECTOR` in `kubectl get networkpolicy` vs the target Pod’s labels |
+| Every external call fails with "name not found" | Egress is blocked and DNS (port 53) was not opened | Egress rules in `kubectl describe networkpolicy` |
+| The policy has no effect at all | No Pod matches the selector, or the network plugin does not support policies | Compare the policy’s Pod selector with the Pod labels |
+
+Further reading: [Network Policies](https://kubernetes.io/docs/concepts/services-networking/network-policies/) · [Cilium docs](https://docs.cilium.io/)
+
+Next lesson: [Who Can Do What (RBAC)](./rbac.mdx)

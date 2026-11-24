@@ -1,0 +1,197 @@
+---
+id: pod-startup
+title: 파드가 뜨기까지
+sidebar_label: 01 · 파드가 뜨기까지
+description: kubectl apply 한 줄이 API 서버·etcd·컨트롤러·스케줄러·kubelet을 거쳐 실행 중인 파드가 되기까지를 단계별 애니메이션으로 따라간다
+hide_table_of_contents: true
+---
+
+# 파드가 뜨기까지
+
+`kubectl apply` 한 줄을 실행한 뒤 실제로 컨테이너가 돌기까지, 클러스터 안에서 어떤 일이 일어나는지 한 단계씩 따라가 본다.
+
+<StepDiagram
+  width={1000}
+  meta={{duration: '약 10분', level: '기초'}}
+  groups={[
+    {label: '컨트롤 플레인', x: 190, y: 30, w: 440, h: 390, tone: 'mgmt'},
+    {label: '워커 노드 · node-2', x: 650, y: 130, w: 180, h: 295, tone: 'biz', from: 3},
+  ]}
+  nodes={[
+    {id: 'user', label: '사용자', sub: 'kubectl', icon: 'user', tone: 'ext', x: 85, y: 215, show: true},
+    {id: 'api', label: 'API 서버', sub: '모든 요청의 입구', icon: 'gate', tone: 'cp', x: 290, y: 215},
+    {id: 'etcd', label: 'etcd', sub: '클러스터 상태 저장소', icon: 'db', tone: 'store', x: 290, y: 355},
+    {id: 'cm', label: '컨트롤러', sub: 'Deployment·RS', icon: 'gear', tone: 'cp', x: 530, y: 105},
+    {id: 'sched', label: '스케줄러', sub: '파드 둘 노드 고르기', icon: 'target', tone: 'cp', x: 530, y: 255},
+    {id: 'kubelet', label: 'kubelet', sub: '노드 관리자', icon: 'agent', tone: 'node', x: 740, y: 190},
+    {id: 'runtime', label: '런타임', sub: 'containerd', icon: 'box', tone: 'node', x: 740, y: 295},
+    {id: 'pod', label: 'nginx', sub: 'Pod', icon: 'pod', tone: 'app', size: 'sm', x: 740, y: 390},
+    {id: 'registry', label: '이미지 저장소', sub: '예: Harbor', icon: 'registry', tone: 'ext', x: 915, y: 185},
+  ]}
+  metrics={[
+    {id: 'state', label: '파드 상태'},
+    {id: 'node', label: '배정된 노드'},
+    {id: 'time', label: '경과 시간(예시)'},
+  ]}
+  learn={[
+    {text: 'API 서버가 모든 요청의 입구인 이유', at: 0},
+    {text: '"생성됨"과 "실행 중"이 다른 이유', at: 1},
+    {text: '컨트롤러·스케줄러가 지켜보기(watch)로 일하는 방식', at: 3},
+    {text: 'Pending·ImagePullBackOff가 생기는 지점', at: 5},
+    {text: 'kubectl get pods의 "Running"이 어디서 오는지', at: 7},
+  ]}
+  steps={[
+    {
+      short: '제출',
+      kind: '시작',
+      title: '원하는 상태를 API 서버에 제출한다',
+      text: [
+        '사용자가 kubectl apply로 "nginx 파드 3개를 띄워 줘"라는 Deployment를 보낸다.',
+        'API 서버는 먼저 누가 보냈는지(인증), 그럴 권한이 있는지(인가), 형식이 맞는지(검증)를 확인한다.',
+      ],
+      keyIdea: '쿠버네티스의 모든 구성요소는 API 서버를 통해서만 이야기한다. 사용자도, 내부 부품도 예외가 없다.',
+      flows: [{from: 'user', to: 'api', label: 'kubectl apply', type: 'request'}],
+      focus: ['api'],
+      values: {state: '없음', time: '~10 ms'},
+    },
+    {
+      short: '기록',
+      kind: '원리',
+      title: 'etcd에 기록하고 바로 "created"를 돌려준다',
+      text: [
+        '검사를 통과한 Deployment는 etcd에 저장되고, 사용자에게는 곧바로 "created"가 돌아간다.',
+        '하지만 이 시점에 컨테이너는 하나도 없다. 원하는 상태가 기록되었을 뿐이다.',
+      ],
+      keyIdea: '"생성됨"은 "기록됨"이라는 뜻이다. 실제로 실행되기까지는 아직 여러 단계가 남아 있다.',
+      changes: ['etcd에 Deployment 기록'],
+      flows: [
+        {from: 'api', to: 'etcd', label: '저장', type: 'request'},
+        {from: 'api', to: 'user', label: 'created', type: 'response'},
+      ],
+      focus: ['etcd'],
+      badges: {etcd: 'Deployment'},
+      values: {time: '~20 ms'},
+    },
+    {
+      short: '파드 생성',
+      kind: '원리',
+      title: '컨트롤러가 파드를 만들어 달라고 한다',
+      text: [
+        '컨트롤러는 API 서버를 계속 지켜보고(watch) 있다가 새 Deployment를 발견한다.',
+        'ReplicaSet을 거쳐 replicas 수만큼 파드 객체를 만들어 달라고 요청한다. 아직 어느 노드에 둘지 정해지지 않았다.',
+      ],
+      changes: ['파드 객체 3개 생성 (노드 미배정)'],
+      flows: [
+        {from: 'api', to: 'cm', label: '새 Deployment 감지', type: 'watch'},
+        {from: 'cm', to: 'api', label: '파드 ×3 생성', type: 'request'},
+      ],
+      focus: ['cm'],
+      badges: {etcd: 'Pod ×3'},
+      values: {state: 'Pending', time: '~50 ms'},
+    },
+    {
+      short: '노드 선택',
+      kind: '원리',
+      title: '스케줄러가 파드를 둘 노드를 고른다',
+      text: [
+        '스케줄러는 노드가 비어 있는 파드를 지켜보다가, 각 노드의 남은 CPU·메모리와 배치 조건을 따져 알맞은 노드를 고른다.',
+        '고른 결과를 API 서버에 적는다(바인딩). 맞는 노드가 없으면 파드는 여기서 계속 Pending으로 남는다.',
+      ],
+      keyIdea: '스케줄러는 노드를 고르기만 하고 실행은 하지 않는다. 실행은 그 노드의 kubelet이 맡는다.',
+      changes: ['파드에 node-2 배정'],
+      flows: [
+        {from: 'api', to: 'sched', label: '미배정 파드 감지', type: 'watch'},
+        {from: 'sched', to: 'api', label: 'bind → node-2', type: 'request', bend: 0.12},
+      ],
+      focus: ['sched'],
+      values: {node: 'node-2', time: '~100 ms'},
+    },
+    {
+      short: '실행 지시',
+      kind: '원리',
+      title: 'kubelet이 컨테이너 실행을 맡긴다',
+      text: [
+        'node-2의 kubelet은 "내 노드에 배정된 파드"를 지켜보다가 새 파드를 발견한다.',
+        '그리고 컨테이너 런타임에게 컨테이너를 만들어 실행하라고 맡긴다.',
+      ],
+      flows: [
+        {from: 'api', to: 'kubelet', label: '내 노드 파드 감지', type: 'watch', bend: -0.12},
+        {from: 'kubelet', to: 'runtime', label: '시작', type: 'request'},
+      ],
+      focus: ['kubelet', 'runtime'],
+      values: {state: 'ContainerCreating'},
+    },
+    {
+      short: '이미지',
+      kind: '주의',
+      title: '이미지를 내려받는다',
+      text: [
+        '노드에 이미지가 없으면 런타임이 이미지 저장소에서 내려받는다. 보통 가장 오래 걸리는 단계다.',
+        '이미지 이름이 틀렸거나 저장소에 접근할 수 없으면 여기서 ImagePullBackOff가 난다.',
+      ],
+      keyIdea: '폐쇄망에서는 외부 저장소에 닿지 못한다. 그래서 사내 저장소(Harbor 등)에 이미지를 미리 올려 두어야 한다.',
+      flows: [
+        {from: 'runtime', to: 'registry', label: '이미지 요청', type: 'request'},
+        {from: 'registry', to: 'runtime', type: 'response'},
+      ],
+      focus: ['registry'],
+      badges: {registry: 'nginx:1.27'},
+      values: {time: '수 초~수 분'},
+    },
+    {
+      short: '컨테이너 실행',
+      kind: '원리',
+      title: '컨테이너가 시작된다',
+      text: [
+        '이미지가 준비되면 런타임이 컨테이너를 만들고 실행한다. 이제야 파드 안에서 nginx가 돌기 시작한다.',
+        '준비 상태 검사(readiness probe)를 통과해야 트래픽을 받을 수 있다.',
+      ],
+      flows: [{from: 'runtime', to: 'pod', label: '실행', type: 'request'}],
+      focus: ['pod'],
+      status: {pod: 'ok'},
+      badges: {pod: 'Running'},
+      values: {state: 'Running'},
+    },
+    {
+      short: '상태 보고',
+      kind: '원리',
+      title: 'kubelet이 상태를 보고한다',
+      text: [
+        'kubelet이 파드 상태를 API 서버에 보고하고, 그 내용이 etcd에 기록된다.',
+        'kubectl get pods나 대시보드에 보이는 "Running"은 이 기록을 읽어 온 것이다.',
+      ],
+      keyIdea: 'kubectl이 보여 주는 상태는 실제 컨테이너를 직접 들여다본 것이 아니라, kubelet이 보고한 기록이다.',
+      changes: ['파드 상태 Running · Ready 기록'],
+      flows: [
+        {from: 'kubelet', to: 'api', label: 'Running', type: 'response', bend: 0.12},
+        {from: 'api', to: 'etcd', label: '기록', type: 'request'},
+      ],
+      focus: ['kubelet', 'etcd'],
+      badges: {etcd: 'Running ×3'},
+      values: {state: 'Running · Ready'},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '아무도 직접 명령하지 않는다',
+      text: [
+        '지금까지 본 구성요소들은 서로에게 직접 명령하지 않았다. 모두 API 서버에 기록하고, 그 기록을 지켜보며 자기 몫의 일을 했다.',
+        '그래서 어느 한 부품이 잠시 멈췄다 돌아와도 밀린 일을 이어서 처리할 수 있다.',
+      ],
+      keyIdea: '파드 생성은 API 서버 기록 → 스케줄링 → 이미지 → 실행 순으로 이어진다. 오래 멈춰 있으면 kubectl describe pod의 Events로 어느 단계에서 멈췄는지 본다.',
+      focus: ['api'],
+    },
+  ]}
+/>
+
+## kubectl 상태와 멈춘 단계
+
+| kubectl get 으로 보이는 상태 | 멈춘 단계 | 흔한 원인 |
+| --- | --- | --- |
+| Pending | 4. 노드 선택 | 노드 자원 부족, 배치 조건이 맞는 노드 없음 |
+| ImagePullBackOff | 6. 이미지 | 이미지 이름·태그 오타, 저장소 인증·접근 실패 |
+| CrashLoopBackOff | 7. 컨테이너 실행 이후 | 컨테이너가 시작 직후 계속 종료됨 (설정·코드 오류) |
+
+더 읽을거리: [쿠버네티스 개요](https://kubernetes.io/ko/docs/concepts/overview/) · [파드 라이프사이클](https://kubernetes.io/ko/docs/concepts/workloads/pods/pod-lifecycle/) · [파드 디버깅](https://kubernetes.io/docs/tasks/debug/debug-application/debug-pods/)
+
+다음 레슨: [요청이 파드에 닿기까지](./traffic.mdx)

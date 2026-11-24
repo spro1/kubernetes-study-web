@@ -1,0 +1,185 @@
+---
+id: entry-compare
+title: Three Entry Points Compared (Ingress · Mesh Gateway · Gateway API)
+sidebar_label: 06 · Entry Points Compared
+description: Send the same external request through Ingress, a service mesh gateway with a VirtualService, and the Gateway API's Gateway and HTTPRoute, and compare who handles what on each path
+hide_table_of_contents: true
+---
+
+# Three Entry Points Compared (Ingress · Mesh Gateway · Gateway API)
+
+A Kubernetes cluster has three main ways to accept external requests. Send one request down each path in turn and compare **who handles what on each path**.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~12 min', level: 'Intermediate'}}
+  groups={[
+    {label: 'Kubernetes cluster', x: 210, y: 28, w: 770, h: 415, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'user', label: 'External req', sub: 'shop/api', icon: 'browser', tone: 'ext', x: 100, y: 245, show: true},
+    {id: 'ing', label: 'Ingress', sub: 'One rule sheet', icon: 'split', tone: 'cp', x: 490, y: 100},
+    {id: 'mgw', label: 'Mesh entry', sub: 'Istio Gateway', icon: 'gate', tone: 'cp', x: 360, y: 245, w: 160},
+    {id: 'vs', label: 'Virtual service', sub: 'VirtualService', icon: 'route', tone: 'cp', x: 615, y: 245, w: 170},
+    {id: 'gw', label: 'Gateway', sub: 'Gateway API', icon: 'gate', tone: 'cp', x: 360, y: 378, w: 160},
+    {id: 'route', label: 'HTTPRoute', sub: 'Route rules', icon: 'route', tone: 'cp', x: 615, y: 378},
+    {id: 'svc', label: 'Service', sub: 'api', icon: 'target', tone: 'cp', x: 890, y: 245, w: 130, show: true},
+  ]}
+  metrics={[
+    {id: 'path', label: 'Current path'},
+    {id: 'who', label: 'Resource that routes'},
+    {id: 'form', label: 'API group'},
+  ]}
+  learn={[
+    {text: 'All three paths end at a Service', at: 0},
+    {text: 'Ingress puts the entry and the routes on one sheet', at: 1},
+    {text: 'A mesh gateway must be paired with a VirtualService', at: 4},
+    {text: 'The Gateway API splits entry and routes between different owners', at: 6},
+    {text: 'The two resources named Gateway are different resources', at: 7},
+  ]}
+  steps={[
+    {
+      short: 'Start',
+      kind: '시작',
+      title: 'Same request, same destination',
+      text: [
+        'A request for shop.example.com/api arrives from outside. Whichever path it takes, it ends at the api Service.',
+        'What differs is which resource decides "which Service gets this request" along the way. Follow the three paths in turn.',
+      ],
+      focus: ['user', 'svc'],
+    },
+    {
+      short: 'Ingress',
+      kind: '원리',
+      title: 'Ingress — entry and routes on one sheet',
+      text: [
+        'One Ingress holds the host, the path, and the target Service. The implementation that its ingress class points to reads and applies the rules.',
+        'It is the oldest and most widely used approach. Implementations include ingress-nginx, Traefik, Istio, and more.',
+      ],
+      flows: [
+        {from: 'user', to: 'ing', type: 'request'},
+        {from: 'ing', to: 'svc', type: 'request'},
+      ],
+      focus: ['ing'],
+      values: {path: 'Ingress', who: 'Ingress', form: 'networking.k8s.io'},
+    },
+    {
+      short: 'Limits',
+      kind: '주의',
+      title: 'Few standard fields, so vendor settings pile on',
+      text: [
+        'Ingress has few standard fields. Settings like timeouts and request size limits go into annotations (extra settings attached to a resource) that differ per implementation.',
+        'If the implementation changes, those annotations can be ignored without any error. Check them carefully when you switch controllers.',
+      ],
+      flows: [{from: 'ing', to: 'svc', type: 'request'}],
+      focus: ['ing'],
+      badges: {ing: 'Annotations'},
+    },
+    {
+      short: 'Mesh entry',
+      kind: '원리',
+      title: 'Mesh gateway — the door and the routing rules are separate',
+      text: [
+        'A service mesh gateway is the door for requests from outside the mesh. It sets the hosts, ports, and TLS settings to accept. It does not decide where traffic goes.',
+        'The VirtualService decides that. It lists which Service gets traffic and in what ratio, and it can split by version using subsets from a traffic policy.',
+      ],
+      flows: [
+        {from: 'user', to: 'mgw', type: 'request'},
+        {from: 'mgw', to: 'vs', type: 'request'},
+        {from: 'vs', to: 'svc', type: 'request'},
+      ],
+      focus: ['mgw', 'vs'],
+      badges: {ing: null},
+      values: {path: 'Mesh gateway', who: 'VirtualService', form: 'networking.istio.io'},
+    },
+    {
+      short: 'Broken link',
+      kind: '주의',
+      title: 'A gateway without a VirtualService goes nowhere',
+      text: [
+        'If you create only the gateway and no VirtualService, requests get through the door but have nowhere to go. Run kubectl get virtualservice to check for a VirtualService that lists that gateway under gateways.',
+        'If the target namespace lacks the istio-injection=enabled label, mesh resources have no effect on traffic. The mesh path needs the most setup.',
+      ],
+      flows: [{from: 'user', to: 'mgw', label: 'No route', type: 'request'}],
+      focus: ['mgw'],
+      status: {mgw: 'warn'},
+      badges: {mgw: '0 VirtualServices'},
+      values: {who: {text: 'Not linked', tone: 'bad'}},
+    },
+    {
+      short: 'GW API',
+      kind: '원리',
+      title: 'Gateway API — entry and routes as separate standard resources',
+      text: [
+        'The Gateway API is the Kubernetes standard that succeeds Ingress. A Gateway opens the entry with listeners (protocol, port, host), and an HTTPRoute picks the Service with route rules.',
+        'An HTTPS listener references a certificate Secret, and HTTPRoute rules are evaluated top to bottom. The GatewayClass decides which implementation handles it.',
+      ],
+      flows: [
+        {from: 'user', to: 'gw', type: 'request'},
+        {from: 'gw', to: 'route', type: 'request'},
+        {from: 'route', to: 'svc', type: 'request'},
+      ],
+      focus: ['gw', 'route'],
+      status: {mgw: null},
+      badges: {mgw: null},
+      values: {path: 'Gateway API', who: 'HTTPRoute', form: 'gateway.networking.k8s.io'},
+    },
+    {
+      short: 'Split roles',
+      kind: '원리',
+      title: 'Platform owns the entry, apps own the routes',
+      text: [
+        'The platform team owns the GatewayClass and Gateway. App teams own only the HTTPRoutes for their own Services. GatewayClass is cluster-scoped, so usually only cluster admins create it.',
+        'The Gateway\'s allowedRoutes policy decides which namespaces\' routes it accepts. Routes created outside the allowed scope do not attach to the Gateway.',
+      ],
+      keyIdea: 'With Ingress, one person edits one sheet. The Gateway API splits ownership so the entry stays open, but not just anyone can attach a route.',
+      flows: [{from: 'route', to: 'gw', type: 'watch'}],
+      focus: ['gw', 'route'],
+      badges: {gw: 'allowedRoutes'},
+    },
+    {
+      short: 'Name clash',
+      kind: '주의',
+      title: 'Two kinds of Gateway, two different resources',
+      text: [
+        'The service mesh gateway is an Istio-specific resource. The Gateway API Gateway is a standard Kubernetes resource. They are in different API groups, so it is easy to lose track of which one kubectl get gateway shows. Query by full name, such as gateways.networking.istio.io.',
+        'Ingress and the Gateway API are also separate resource families. To move from Ingress to the Gateway API, you can use a conversion tool such as ingress2gateway.',
+      ],
+      focus: ['mgw', 'gw'],
+      badges: {gw: 'Standard', mgw: 'Istio'},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Three paths, different routing resources',
+      text: [
+        'Ingress keeps routing rules on one sheet. The mesh path splits them between a gateway and a VirtualService. The Gateway API splits them between a Gateway and an HTTPRoute. All three end at a Service.',
+        'Typically, plain external exposure uses Ingress or the Gateway API, and fine-grained traffic control such as per-version ratios uses mesh resources. For new setups, the standard Gateway API is a strong choice.',
+      ],
+      keyIdea: 'All three paths end at a Service. Only the routing resource differs. Both Istio and the standard have a resource named Gateway, so tell them apart by API group.',
+      flows: [
+        {from: 'user', to: 'ing', type: 'request'},
+        {from: 'user', to: 'mgw', type: 'request'},
+        {from: 'user', to: 'gw', type: 'request'},
+      ],
+      focus: ['ing', 'mgw', 'gw'],
+      badges: {gw: null, mgw: null},
+      values: {path: 'All three', who: 'Varies by path', form: '2 standard · 1 Istio'},
+    },
+  ]}
+/>
+
+## Try it yourself
+
+```bash
+kubectl describe ingress -n shop                                  # Ingress: hosts, paths, and backends
+kubectl get gateways.networking.istio.io,virtualservices -n shop  # Mesh path: gateway and VirtualService pair
+kubectl get namespace shop --show-labels                          # Is istio-injection=enabled set?
+kubectl get gatewayclass                                          # Gateway API controller
+kubectl get gateways.gateway.networking.k8s.io,httproutes -n shop # Standard Gateway and routes
+```
+
+Further reading: [Ingress](https://kubernetes.io/docs/concepts/services-networking/ingress/) · [Gateway API](https://kubernetes.io/docs/concepts/services-networking/gateway/) · [Gateway API docs](https://gateway-api.sigs.k8s.io/) · [Istio traffic management](https://istio.io/latest/docs/concepts/traffic-management/)
+
+Next lesson: [Namespaces and Resource Quotas](./namespace-quota.mdx)

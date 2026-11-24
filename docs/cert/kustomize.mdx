@@ -1,0 +1,185 @@
+---
+id: kustomize
+title: Per-environment deploys with Kustomize (CKA·CKAD)
+sidebar_label: 03 · Kustomize per environment
+description: Follow an animation of applying per-environment overlays for dev and prod on top of shared manifests (base) to change name prefixes, replicas and image tags, previewing with kubectl kustomize and deploying with kubectl apply -k
+hide_table_of_contents: true
+---
+
+# Per-environment deploys with Kustomize (CKA·CKAD)
+
+This relates to "Use Helm and Kustomize to install cluster components" in the CKA Cluster Architecture, Installation and Configuration (25%) domain, and to "Kustomize" in the CKAD Application Deployment (20%) domain. We deploy the same web app with 1 replica in dev and 3 in prod, writing only the differences instead of copying files.
+
+Helm charts, values, revisions and GitOps sync are covered in [Helm and GitOps](../intermediate/gitops-sync.mdx). Here we focus on Kustomize's overlay approach.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~10 min', level: 'Intermediate'}}
+  groups={[
+    {label: 'overlays/', x: 230, y: 45, w: 200, h: 345, tone: 'plain'},
+  ]}
+  nodes={[
+    {id: 'base', label: 'base', sub: 'shared manifests', icon: 'book', tone: 'store', x: 100, y: 225, show: true},
+    {id: 'dev', label: 'dev', sub: 'dev differences', icon: 'layers', tone: 'store', x: 330, y: 120, show: true},
+    {id: 'prod', label: 'prod', sub: 'prod differences', icon: 'layers', tone: 'store', x: 330, y: 330, show: true},
+    {id: 'kust', label: 'kustomize', sub: 'built into kubectl', icon: 'gear', tone: 'cp', x: 560, y: 225},
+    {id: 'out', label: 'Output YAML', sub: 'merged result', icon: 'book', tone: 'app', x: 600, y: 395},
+    {id: 'devEnv', label: 'Dev env', sub: 'namespace dev', icon: 'server', tone: 'node', x: 850, y: 120},
+    {id: 'prodEnv', label: 'Prod env', sub: 'namespace prod', icon: 'server', tone: 'node', x: 850, y: 330},
+  ]}
+  metrics={[
+    {id: 'files', label: 'Files maintained'},
+    {id: 'prod', label: 'Prod web'},
+    {id: 'cmd', label: 'Command just run'},
+  ]}
+  learn={[
+    {text: 'Why split base and overlays', at: 1},
+    {text: 'Writing only differences with namePrefix, patches and images', at: 3},
+    {text: 'kubectl kustomize vs. kubectl apply -k', at: 5},
+    {text: 'How it differs from Helm', at: 7},
+  ]}
+  steps={[
+    {
+      short: 'Copies',
+      kind: '시작',
+      title: 'The same app must deploy a bit differently per environment',
+      text: [
+        'You want 1 web pod in dev and 3 in prod, with slightly different image tags and names.',
+        'Copy the manifests (Kubernetes config files) whole for each environment, and every shared fix must be made in every copy. Sooner or later they drift apart.',
+      ],
+      flows: [
+        {from: 'base', to: 'dev', label: 'full copy', type: 'request'},
+        {from: 'base', to: 'prod', label: 'full copy', type: 'request'},
+      ],
+      focus: ['dev', 'prod'],
+      status: {dev: 'warn', prod: 'warn'},
+      values: {files: {text: '2 full copies', tone: 'bad'}, cmd: '-'},
+    },
+    {
+      short: 'base',
+      kind: '원리',
+      title: 'Keep the shared parts in a single base',
+      text: [
+        'Put deployment.yaml, service.yaml and kustomization.yaml in the base folder. List the files this folder uses under resources in kustomization.yaml.',
+        'Kustomize reads kustomization.yaml and gathers the listed files. It ships built into the Kubernetes CLI (kubectl).',
+      ],
+      changes: ['resources: deployment.yaml, service.yaml'],
+      flows: [{from: 'base', to: 'kust', label: 'resources', type: 'request'}],
+      focus: ['base', 'kust'],
+      status: {dev: null, prod: null},
+      values: {files: '1 base'},
+    },
+    {
+      short: 'overlay',
+      kind: '원리',
+      title: 'Each environment writes only differences in an overlay folder',
+      text: [
+        'overlays/dev/kustomization.yaml lists ../../base under resources to pull in base as is. That is where the name overlay comes from.',
+        'On top of that, namePrefix: dev- puts dev- in front of every resource name, and namespace: dev sets the namespace.',
+      ],
+      changes: ['resources: ../../base', '+ namePrefix: dev-', '+ namespace: dev'],
+      flows: [{from: 'dev', to: 'base', label: '../../base', type: 'request'}],
+      focus: ['dev'],
+      badges: {dev: 'dev-web'},
+    },
+    {
+      short: 'Patch',
+      kind: '원리',
+      title: 'Prod changes only the replicas with a patch',
+      text: [
+        'overlays/prod holds a small patch file with only the fields to change. For example, it writes only replicas: 3 for Deployment web, and lists that file under patches.',
+        'Kustomize layers this fragment over the base Deployment. Not a single character of the base file changes.',
+      ],
+      changes: ['+ patches: replicas-patch.yaml', '~ replicas 1 → 3 (prod only)'],
+      flows: [{from: 'prod', to: 'base', label: '../../base', type: 'request'}],
+      focus: ['prod'],
+      badges: {prod: 'replicas 3'},
+      values: {prod: '3 pods'},
+    },
+    {
+      short: 'Image tag',
+      kind: '원리',
+      title: 'Change image tags with the images field',
+      text: [
+        'To ship a new version to prod, write name: web, newTag: 1.2.0 under images. Every image with that name in the manifests gets the new tag.',
+        'Only overlays/prod/kustomization.yaml changes. base stays the same, so dev keeps using the original tag.',
+      ],
+      changes: ['+ images: name web, newTag 1.2.0'],
+      flows: [{from: 'prod', to: 'kust', label: 'newTag', type: 'request'}],
+      focus: ['prod', 'kust'],
+      values: {prod: '3 · web:1.2.0'},
+    },
+    {
+      short: 'Preview',
+      kind: '원리',
+      title: 'Check the merged result first with kubectl kustomize',
+      text: [
+        'kubectl kustomize overlays/prod prints the final YAML that merges base and overlay. It sends nothing to the cluster.',
+        'Check here that the name prefix, replicas: 3 and the image tag came out as expected.',
+      ],
+      flows: [
+        {from: 'prod', to: 'kust', label: 'merge', type: 'request'},
+        {from: 'kust', to: 'out', label: 'print', type: 'response'},
+      ],
+      focus: ['out'],
+      status: {out: 'ok'},
+      values: {cmd: 'kubectl kustomize'},
+    },
+    {
+      short: 'apply -k',
+      kind: '원리',
+      title: 'Deploy per environment with kubectl apply -k',
+      text: [
+        'kubectl apply -k overlays/prod builds the same result and applies it to the cluster right away. Where -f points to a file, -k points to a folder that holds kustomization.yaml.',
+        'For dev, kubectl apply -k overlays/dev creates resources from the same base that differ only in names and counts.',
+      ],
+      flows: [
+        {from: 'kust', to: 'prodEnv', label: 'apply -k', type: 'request'},
+        {from: 'kust', to: 'devEnv', label: 'apply -k', type: 'request'},
+      ],
+      focus: ['prodEnv', 'devEnv'],
+      status: {prodEnv: 'ok', devEnv: 'ok'},
+      values: {prod: {text: '3 Ready', tone: 'good'}, cmd: 'kubectl apply -k'},
+    },
+    {
+      short: 'vs. Helm',
+      kind: '주의',
+      title: 'Kustomize keeps no install history',
+      text: [
+        'Helm fills a template with values and records install history as releases and revisions, so helm rollback can revert. Kustomize only layers over a base and has no history of its own.',
+        'To revert, take the previous kustomization.yaml from Git and run apply -k again. Helm is common for installing third-party tools, Kustomize for a team\'s own per-environment settings, and they are often used together.',
+      ],
+      flows: [{from: 'prod', to: 'kust', label: 'prev commit', type: 'request'}],
+      focus: ['kust'],
+      values: {cmd: 'git checkout → apply -k'},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'One base, only differences per environment',
+      text: [
+        'Keep shared manifests in base, and in each overlays/<env> kustomization.yaml write only the differences with namePrefix, namespace, patches and images.',
+        'Preview with kubectl kustomize and apply with kubectl apply -k. Git handles history and rollback.',
+      ],
+      keyIdea: 'base holds shared settings; an overlay holds only what differs in that environment. Preview with kubectl kustomize, check the diff with kubectl diff -k, then apply with kubectl apply -k.',
+      focus: ['base', 'dev', 'prod'],
+      values: {files: {text: '1 base + 2 diffs', tone: 'good'}},
+    },
+  ]}
+/>
+
+## Common exam questions
+
+| Situation | What to do / command | Trap |
+| --- | --- | --- |
+| Apply an overlay | `kubectl apply -k overlays/prod` | Use `-k`, not `-f`. Pass the folder holding kustomization.yaml, not a file |
+| Check the result before applying | `kubectl kustomize overlays/prod` | This only prints; it does not apply to the cluster |
+| Pull base into an overlay | A relative path like `../../base` under `resources:` | Paths are relative to the folder holding kustomization.yaml |
+| Change only the image tag | `name` and `newTag` under `images:` | Editing base deployment.yaml directly changes other environments too |
+| Change only some fields, like replicas | List a patch file with only those fields under `patches:` | The patch kind and name must match the base resource to merge |
+| Delete what Kustomize deployed | `kubectl delete -k overlays/prod` | There is no separate `uninstall` or `rollback` command like Helm |
+
+Further reading: [CNCF certification curriculum](https://github.com/cncf/curriculum) · [Declarative management of Kubernetes objects using Kustomize](https://kubernetes.io/docs/tasks/manage-kubernetes-objects/kustomization/) · [Helm and GitOps](../intermediate/gitops-sync.mdx)
+
+Next lesson: [Blue/green and canary with core primitives (CKAD)](./deploy-strategies.mdx)

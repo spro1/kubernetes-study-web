@@ -1,0 +1,180 @@
+---
+id: autoscaling
+title: Scaling with Load (HPA)
+sidebar_label: 04 · Scaling with Load
+description: Follow metric collection, the HPA's desired-replica calculation, the Deployment change, scheduling, and the point where Pods get stuck in Pending for lack of node capacity, step by step.
+hide_table_of_contents: true
+---
+
+# Scaling with Load (HPA)
+
+A service that normally runs fine on two Pods suddenly gets a flood of requests. Follow how the HPA (Horizontal Pod Autoscaler) notices and adds Pods.
+
+<StepDiagram
+  width={1000}
+  meta={{duration: '~10 min', level: 'Intermediate'}}
+  groups={[
+    {label: 'node-1', x: 30, y: 210, w: 220, h: 215, tone: 'biz'},
+    {label: 'node-2', x: 275, y: 210, w: 220, h: 215, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'client', label: 'User traffic', sub: 'requests', icon: 'browser', tone: 'ext', x: 260, y: 75, w: 150, show: true},
+    {id: 'p1', label: 'web-1', sub: 'CPU', icon: 'pod', tone: 'app', size: 'sm', x: 140, y: 280, show: true},
+    {id: 'p2', label: 'web-2', sub: 'CPU', icon: 'pod', tone: 'app', size: 'sm', x: 140, y: 360, show: true},
+    {id: 'p3', label: 'web-3', sub: 'new Pod', icon: 'pod', tone: 'app', size: 'sm', x: 385, y: 280},
+    {id: 'p4', label: 'web-4', sub: 'new Pod', icon: 'pod', tone: 'app', size: 'sm', x: 790, y: 395},
+    {id: 'ms', label: 'metrics-server', sub: 'collects usage', icon: 'chart', tone: 'cp', x: 620, y: 75, w: 175},
+    {id: 'hpa', label: 'HPA', sub: 'target CPU 60%', icon: 'scale', tone: 'cp', x: 870, y: 75, show: true},
+    {id: 'deploy', label: 'Deployment', sub: 'replicas', icon: 'gear', tone: 'cp', x: 870, y: 245, w: 150},
+    {id: 'sched', label: 'Scheduler', sub: 'picks a node', icon: 'target', tone: 'cp', x: 620, y: 245},
+  ]}
+  metrics={[
+    {id: 'cpu', label: 'Avg CPU usage'},
+    {id: 'now', label: 'Current Pods'},
+    {id: 'want', label: 'Desired Pods'},
+  ]}
+  learn={[
+    {text: 'Where usage is measured and how it reaches the HPA', at: 2},
+    {text: 'How the HPA calculates the desired Pod count', at: 3},
+    {text: 'The HPA only changes the count; the scheduler does placement', at: 5},
+    {text: 'Scaling stops at Pending when nodes run out of room', at: 6},
+    {text: 'Why scale-in is deliberately slow', at: 7},
+  ]}
+  steps={[
+    {
+      short: 'Normal',
+      kind: '시작',
+      title: 'Two Pods are normally enough',
+      text: [
+        'Two web Pods share the requests. Average CPU usage is 40%.',
+        'The HPA has a rule: "keep average CPU near 60%, with at least 2 and at most 6 Pods."',
+      ],
+      flows: [
+        {from: 'client', to: 'p1', type: 'request'},
+        {from: 'client', to: 'p2', type: 'request', bend: -0.2},
+      ],
+      status: {p1: 'ok', p2: 'ok'},
+      values: {cpu: '40%', now: '2', want: '2'},
+    },
+    {
+      short: 'Load spike',
+      kind: '문제',
+      title: 'Requests pile up and CPU spikes',
+      text: [
+        'A sale event suddenly increases traffic. Both Pods hit 90% CPU and responses start to slow down.',
+        'Nobody has changed the count yet. Before the HPA can react, usage has to be measured.',
+      ],
+      flows: [
+        {from: 'client', to: 'p1', label: 'traffic surge', type: 'request'},
+        {from: 'client', to: 'p2', type: 'request', bend: -0.2},
+      ],
+      status: {p1: 'warn', p2: 'warn'},
+      badges: {p1: '90%', p2: '90%'},
+      values: {cpu: {text: '90%', tone: 'bad'}},
+    },
+    {
+      short: 'Collect',
+      kind: '원리',
+      title: 'Usage is collected from each Pod',
+      text: [
+        'The kubelet on each node measures per-Pod CPU and memory, and metrics-server collects these values periodically.',
+        'The HPA never asks Pods directly. It reads these aggregated values.',
+      ],
+      flows: [
+        {from: 'p1', to: 'ms', label: 'usage', type: 'response'},
+        {from: 'p2', to: 'ms', type: 'response'},
+      ],
+      focus: ['ms'],
+    },
+    {
+      short: 'Calculate',
+      kind: '원리',
+      title: 'The HPA calculates how many Pods are needed',
+      text: [
+        'Periodically (every 15 seconds by default) the HPA fetches the average usage and compares it with the target.',
+        'Desired Pods = ceil(current Pods × current usage ÷ target usage) = ceil(2 × 90 ÷ 60) = 3.',
+      ],
+      keyIdea: 'The HPA only calculates "how many are needed". Because it works with ratios, heavier load means a bigger jump at once.',
+      flows: [
+        {from: 'hpa', to: 'ms', label: 'avg usage?', type: 'request'},
+        {from: 'ms', to: 'hpa', label: '90%', type: 'response'},
+      ],
+      focus: ['hpa'],
+      values: {want: '3'},
+    },
+    {
+      short: 'Set count',
+      kind: '원리',
+      title: 'The Deployment replicas becomes 3',
+      text: [
+        'All the HPA does is rewrite the Deployment replicas from 2 to 3.',
+        'The Deployment then creates one more Pod. This new Pod is not placed on any node yet.',
+      ],
+      flows: [{from: 'hpa', to: 'deploy', label: 'replicas 2→3', type: 'request'}],
+      focus: ['deploy', 'p3'],
+      status: {p3: 'warn'},
+      badges: {p3: 'Pending'},
+      values: {now: '3 (1 pending)'},
+    },
+    {
+      short: 'Place',
+      kind: '원리',
+      title: 'The scheduler places it on a node with room',
+      text: [
+        'The scheduler sees space on node-2 and places web-3 there. Once it starts and becomes Ready, it shares the requests.',
+        'With three Pods sharing the load, average CPU drops to around 60%.',
+      ],
+      flows: [
+        {from: 'sched', to: 'p3', label: 'place on node-2', type: 'request'},
+        {from: 'client', to: 'p3', type: 'request'},
+      ],
+      focus: ['sched', 'p3'],
+      status: {p1: 'ok', p2: 'ok', p3: 'ok'},
+      badges: {p1: null, p2: null, p3: null},
+      values: {cpu: {text: '60%', tone: 'good'}, now: '3'},
+    },
+    {
+      short: 'No room',
+      kind: '주의',
+      title: 'With no room on any node, it stops at Pending',
+      text: [
+        'Load grows further and the HPA calculates that 4 Pods are needed. But both nodes have less free CPU and memory than the new Pod requests.',
+        'The scheduler finds nowhere to put it, so web-4 stays Pending. It only clears when nodes are added or other Pods use less.',
+      ],
+      keyIdea: 'The HPA only adds Pods. Adding nodes is a separate job, done by a tool like Cluster Autoscaler or by hand.',
+      flows: [
+        {from: 'hpa', to: 'deploy', label: 'replicas 3→4', type: 'request'},
+        {from: 'sched', to: 'p4', label: 'no node fits', type: 'response'},
+      ],
+      focus: ['p4', 'sched'],
+      status: {p4: 'error'},
+      badges: {p4: 'Pending'},
+      values: {cpu: {text: '80%', tone: 'bad'}, want: '4', now: {text: '3 (1 pending)', tone: 'bad'}},
+    },
+    {
+      short: 'Scale in',
+      kind: '정리',
+      title: 'Scale out fast, scale in slowly',
+      text: [
+        'When the event ends and load drops, the HPA reduces the Pod count again. To avoid flapping on every brief dip, it only scales in after load stays low for a while (5 minutes by default).',
+        'This is the stabilizationWindowSeconds setting under scaleUp and scaleDown in the HPA behavior field.',
+      ],
+      keyIdea: 'kubectl get hpa shows current and desired Pods side by side. If they differ and a Pod is Pending, scaling is blocked by node capacity.',
+      focus: ['hpa'],
+      status: {p4: 'gone'},
+      values: {cpu: {text: '35%', tone: 'good'}, want: '2', now: '3 → 2'},
+    },
+  ]}
+/>
+
+## When the HPA does not behave as expected
+
+| Symptom | What to check |
+| --- | --- |
+| Usage shows as `<unknown>` | Whether metrics-server is running, and whether the Pods declare resource requests |
+| Desired Pods went up but the Pod is Pending | Free resources on nodes, namespace quota |
+| Load dropped but Pods stay | Whether the scale-in stabilization window has passed, the minimum replica count |
+
+Further reading: [Horizontal Pod Autoscaling](https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/) · [HPA Walkthrough](https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale-walkthrough/)
+
+Next lesson: [When a Pod Dies (Self-Healing)](./self-healing.mdx)

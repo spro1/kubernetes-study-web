@@ -1,0 +1,187 @@
+---
+id: mesh-sidecar
+title: Service Mesh ① Sidecars and Mutual Authentication
+sidebar_label: 03 · Sidecars and mTLS
+description: Animated walkthrough of what happens when you enable Istio sidecar injection on a namespace - each pod gets a sidecar proxy, and proxies verify each other with certificates from istiod and record metrics
+hide_table_of_contents: true
+---
+
+# Service Mesh ① Sidecars and Mutual Authentication
+
+This lesson uses Istio, a popular service mesh, as the example. Turn on one setting for a namespace, and without changing app code, traffic becomes **encrypted, identity-checked, and recorded**. Follow what happens behind the scenes.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~10 min', level: 'Intermediate'}}
+  groups={[
+    {label: 'shop namespace', x: 20, y: 165, w: 888, h: 140, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'web', label: 'web app', sub: 'Caller', icon: 'pod', tone: 'app', x: 120, y: 240, show: true},
+    {id: 'webpx', label: 'Proxy', sub: 'Envoy', icon: 'shield', tone: 'node', size: 'sm', x: 337, y: 240},
+    {id: 'apipx', label: 'Proxy', sub: 'Envoy', icon: 'shield', tone: 'node', size: 'sm', x: 591, y: 240},
+    {id: 'api', label: 'api app', sub: 'Receiver', icon: 'pod', tone: 'app', x: 808, y: 240, show: true},
+    {id: 'istiod', label: 'istiod', sub: 'Config · certs', icon: 'gear', tone: 'cp', x: 464, y: 75},
+    {id: 'ops', label: 'Operator', sub: 'kubectl · Kiali', icon: 'browser', tone: 'ext', x: 120, y: 385},
+    {id: 'kiali', label: 'Kiali', sub: 'Traffic graph', icon: 'chart', tone: 'store', x: 464, y: 385},
+    {id: 'legacy', label: 'Unmeshed pod', sub: 'No sidecar', icon: 'pod', tone: 'app', x: 808, y: 385},
+  ]}
+  metrics={[
+    {id: 'enc', label: 'Encryption'},
+    {id: 'who', label: 'Peer identity check'},
+    {id: 'obs', label: 'Observability'},
+  ]}
+  learn={[
+    {text: 'Istio injection is a per-namespace setting that applies to new pods', at: 1},
+    {text: 'All traffic passes through sidecar proxies', at: 3},
+    {text: 'The different roles of istiod (control plane) and proxies (data plane)', at: 4},
+    {text: 'How mTLS encrypts and verifies identity without app code changes', at: 5},
+    {text: 'The gap when talking to pods without a sidecar', at: 7},
+  ]}
+  steps={[
+    {
+      short: 'No mesh',
+      kind: '시작',
+      title: 'Without a mesh, apps talk directly',
+      text: [
+        'The web app in the shop namespace calls the api app. The request goes through the Service address straight to the target pod.',
+        'Encryption, checking that the peer is really api, and logging calls are all up to app code. Each app tends to do it differently.',
+      ],
+      flows: [{from: 'web', to: 'api', label: 'Plaintext', type: 'request'}],
+      values: {enc: {text: 'None (plaintext)', tone: 'bad'}, who: {text: 'App does it', tone: 'bad'}, obs: 'Per app'},
+    },
+    {
+      short: 'Enable',
+      kind: '원리',
+      title: 'Enable Istio injection on the namespace',
+      text: [
+        'Label the namespace with kubectl label namespace shop istio-injection=enabled. This turns on automatic injection of a sidecar (a helper container next to the app).',
+        'The setting applies to pods created from now on. Pods already running do not get a sidecar, so you must recreate them.',
+      ],
+      keyIdea: 'The mesh applies per namespace. In a namespace without the label, mesh resources have no effect on traffic.',
+      flows: [{from: 'ops', to: 'web', label: 'Enable', type: 'request'}],
+      focus: ['ops'],
+    },
+    {
+      short: 'Sidecar',
+      kind: '원리',
+      title: 'A proxy joins each new pod',
+      text: [
+        'When the pod is recreated, istiod, the Istio control plane, adds a proxy container (Envoy) to the pod spec. The app container and the proxy run together in one pod.',
+        'The app image and code stay the same. In the pod list, the container count goes up by one (for example, 1/1 → 2/2).',
+      ],
+      changes: ['+ Proxy container in web pod', '+ Proxy container in api pod'],
+      flows: [
+        {from: 'istiod', to: 'webpx', label: 'Inject', type: 'request'},
+        {from: 'istiod', to: 'apipx', label: 'Inject', type: 'request'},
+      ],
+      focus: ['webpx', 'apipx'],
+      status: {webpx: 'ok', apipx: 'ok'},
+    },
+    {
+      short: 'Via proxy',
+      kind: '원리',
+      title: 'All traffic passes through the sidecar proxies',
+      text: [
+        'The web app still just sends requests to the api address. The web-side proxy intercepts the request and passes it to the api-side proxy, which hands it to the api app.',
+        'Both inbound and outbound traffic pass through the proxies, so traffic rules go on the proxies, not in the app.',
+      ],
+      keyIdea: 'Each request passes through two proxies, so latency and resource use go up a little. A mesh is not free.',
+      flows: [
+        {from: 'web', to: 'webpx', type: 'request'},
+        {from: 'webpx', to: 'apipx', label: 'Proxy to proxy', type: 'request'},
+        {from: 'apipx', to: 'api', type: 'request'},
+      ],
+    },
+    {
+      short: 'Config push',
+      kind: '원리',
+      title: 'istiod hands out rules and certificates',
+      text: [
+        'istiod does not carry requests itself. It pushes rules such as VirtualServices and DestinationRules to every proxy, and issues each proxy a certificate that serves as its ID.',
+        'The layer that sets the rules is the control plane. The proxies that carry the actual requests are the data plane.',
+      ],
+      flows: [
+        {from: 'istiod', to: 'webpx', label: 'Config · certs', type: 'watch'},
+        {from: 'istiod', to: 'apipx', type: 'watch'},
+      ],
+      focus: ['istiod'],
+      badges: {istiod: 'Control plane'},
+    },
+    {
+      short: 'mTLS',
+      kind: '원리',
+      title: 'Proxies check each other\'s certificates and encrypt',
+      text: [
+        'When two proxies connect, each shows its certificate and checks the other\'s. This is mutual authentication (mTLS: encrypted traffic where both sides verify each other\'s certificates).',
+        'Once verified, the link between them is encrypted. The apps still send and receive plaintext, but the hop outside the pod is ciphertext.',
+      ],
+      keyIdea: 'This is a separate layer from incoming HTTPS (TLS) from outside. mTLS protects the hops between pods inside the cluster.',
+      flows: [
+        {from: 'webpx', to: 'apipx', label: 'mTLS', type: 'request'},
+        {from: 'apipx', to: 'webpx', type: 'response'},
+      ],
+      focus: ['webpx', 'apipx'],
+      badges: {istiod: null},
+      values: {enc: {text: 'Auto encryption', tone: 'good'}, who: {text: 'Verified by cert', tone: 'good'}},
+    },
+    {
+      short: 'Observe',
+      kind: '원리',
+      title: 'Proxy metrics draw the traffic graph',
+      text: [
+        'Every request passes a proxy, so proxies record request counts, latency, and failures. Kiali collects these metrics and draws the call relationships between Services.',
+        'Metrics are collected in Prometheus, and Kiali reads them. Without Prometheus, or without sidecars, the graph is empty.',
+      ],
+      keyIdea: 'You get traffic observability without creating any Gateway, VirtualService, or DestinationRule. Create mesh resources when you need to control traffic.',
+      flows: [
+        {from: 'webpx', to: 'kiali', label: 'Metrics', type: 'watch'},
+        {from: 'apipx', to: 'kiali', type: 'watch'},
+        {from: 'kiali', to: 'ops', label: 'Traffic graph', type: 'response'},
+      ],
+      focus: ['kiali', 'ops'],
+      values: {obs: {text: 'Traffic graph', tone: 'good'}},
+    },
+    {
+      short: 'Unmeshed',
+      kind: '주의',
+      title: 'Traffic with pods that lack a sidecar needs separate thought',
+      text: [
+        'Pods in another namespace without the injection label have no proxy. With no certificate, they cannot do mTLS and send plaintext requests.',
+        'By default Istio runs in PERMISSIVE mode, accepting both plaintext and mTLS. STRICT mode rejects plaintext requests. The mode is set with a PeerAuthentication resource. Check that no pods still call in plaintext before switching to STRICT.',
+      ],
+      keyIdea: 'Mesh metrics show detail only for meshed workloads. If the graph has gaps, first check whether a sidecar is attached.',
+      flows: [{from: 'legacy', to: 'apipx', label: 'Plaintext', type: 'request'}],
+      focus: ['legacy'],
+      status: {legacy: 'warn'},
+      values: {enc: {text: 'Plaintext if unmeshed', tone: 'bad'}},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Sidecars handle traffic; istiod handles the sidecars',
+      text: [
+        'Enable injection on a namespace and every pod gets a proxy, and all traffic passes through the proxies. istiod hands out rules and certificates, and proxies verify each other with mTLS and record metrics.',
+        'Encryption and observability start with injection alone. Add mesh resources such as Gateways, VirtualServices, and DestinationRules when you need to control traffic.',
+      ],
+      keyIdea: 'In a mesh, a proxy next to the app handles traffic. Turn injection on with a namespace label; it attaches to new pods. If rules do nothing or the graph is empty, first check that the pod\'s READY shows 2/2.',
+      focus: ['webpx', 'apipx', 'istiod'],
+      status: {legacy: null},
+    },
+  ]}
+/>
+
+## Try it yourself
+
+```bash
+kubectl label namespace shop istio-injection=enabled   # Enable automatic sidecar injection
+kubectl get namespace -L istio-injection               # Which namespaces have it on
+kubectl rollout restart deployment -n shop             # Recreate existing pods to attach sidecars
+kubectl get pods -n shop                               # READY 2/2 means the proxy is attached
+kubectl get peerauthentication -A                      # mTLS mode (PERMISSIVE, STRICT)
+```
+
+Further reading: [Istio concepts](https://istio.io/latest/docs/concepts/) · [Istio security (mTLS)](https://istio.io/latest/docs/concepts/security/) · [Istio observability](https://istio.io/latest/docs/concepts/observability/) · [Kiali](https://kiali.io/) · [Blocking and Allowing Traffic (NetworkPolicy)](../k8s/network-policy.mdx)
+
+Next lesson: [Service Mesh ② Splitting Traffic](./mesh-traffic.mdx)

@@ -1,0 +1,191 @@
+---
+id: deletion-finalizer
+title: 삭제는 생각보다 복잡하다
+sidebar_label: 02 · 삭제는 생각보다 복잡하다
+description: deletionTimestamp와 파이널라이저, 소유자 참조와 가비지 컬렉션이 삭제를 어떻게 바꾸는지, 네임스페이스가 Terminating에서 끝나지 않는 이유를 애니메이션으로 따라간다
+hide_table_of_contents: true
+---
+
+# 삭제는 생각보다 복잡하다
+
+쿠버네티스에서 "지운다"는 요청을 보내도 자원은 곧바로 사라지지 않는다. 정리할 일이 남았으면 기다리고, 딸린 자원은 다른 일꾼이 뒤따라 치운다. `kubectl get`에 `Terminating`이 오래 남는 이유를 따라가 본다.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '약 10분', level: '고급'}}
+  groups={[
+    {label: '네임스페이스 · shop', x: 310, y: 25, w: 440, h: 400, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'user', label: '사용자', sub: 'kubectl', icon: 'user', tone: 'ext', x: 90, y: 80, show: true},
+    {id: 'api', label: 'API 서버', sub: '삭제 요청 처리', icon: 'gate', tone: 'cp', x: 90, y: 225, show: true},
+    {id: 'gc', label: 'GC', sub: '가비지 컬렉터', icon: 'gear', tone: 'cp', x: 90, y: 370, show: true},
+    {id: 'deploy', label: '디플로이먼트', sub: 'web', icon: 'layers', tone: 'cp', x: 410, y: 100, show: true},
+    {id: 'rs', label: '레플리카셋', sub: 'web-7d9f8c6b5', icon: 'layers', tone: 'store', x: 410, y: 225, show: true},
+    {id: 'pod', label: 'web 파드', sub: '주인: RS', icon: 'pod', tone: 'app', size: 'sm', x: 410, y: 350, show: true},
+    {id: 'cr', label: 'Backup', sub: '도구가 만든 CR', icon: 'archive', tone: 'store', x: 650, y: 100, show: true},
+    {id: 'pvc', label: 'PVC', sub: 'data', icon: 'disk', tone: 'store', x: 650, y: 350, show: true},
+    {id: 'op', label: '오퍼레이터', sub: '백업 도구', icon: 'agent', tone: 'node', x: 890, y: 100, show: true},
+  ]}
+  metrics={[
+    {id: 'target', label: '삭제 대상'},
+    {id: 'state', label: '상태'},
+    {id: 'fin', label: '남은 파이널라이저'},
+  ]}
+  learn={[
+    {text: 'deletionTimestamp와 파이널라이저의 관계', at: 1},
+    {text: 'Terminating이 "기다리는 중"이라는 것', at: 2},
+    {text: '소유자 참조와 가비지 컬렉션', at: 4},
+    {text: '네임스페이스 삭제가 끝나지 않는 이유', at: 6},
+  ]}
+  steps={[
+    {
+      short: '삭제 요청',
+      kind: '시작',
+      title: '파드가 쓰고 있는 PVC를 지운다',
+      text: [
+        '사용자가 shop 네임스페이스의 PVC data를 지운다. 이 PVC는 지금 web 파드가 마운트해서 쓰고 있다.',
+        'API 서버는 삭제 요청을 받으면 먼저 그 자원에 파이널라이저가 붙어 있는지 본다.',
+      ],
+      flows: [{from: 'user', to: 'api', label: 'delete pvc', type: 'request'}],
+      focus: ['api'],
+      status: {pod: 'ok', cr: 'ok', op: 'ok'},
+      values: {target: 'PVC data', state: '삭제 요청', fin: '—'},
+    },
+    {
+      short: '삭제 표시',
+      kind: '원리',
+      title: '지우지 않고 삭제 시각만 찍어 둔다',
+      text: [
+        '파이널라이저(finalizer)는 "삭제 전에 정리할 일이 있으니 기다려 달라"는 표시다. PVC에는 kubernetes.io/pvc-protection이 붙어 있다.',
+        '목록에 이름이 하나라도 있으면 API 서버는 자원을 지우지 않고 deletionTimestamp(삭제 요청 시각)만 기록한다. kubectl get에는 Terminating으로 보인다.',
+      ],
+      changes: ['+ deletionTimestamp', '~ 상태 Terminating'],
+      flows: [{from: 'api', to: 'pvc', label: '삭제 표시', type: 'request', bend: 0.25}],
+      focus: ['pvc'],
+      status: {pvc: 'warn'},
+      badges: {pvc: 'Terminating'},
+      values: {state: {text: 'Terminating', tone: 'bad'}, fin: 'pvc-protection'},
+    },
+    {
+      short: '기다림',
+      kind: '원리',
+      title: '쓰는 파드가 없어질 때까지 기다린다',
+      text: [
+        'pvc-protection은 "이 PVC를 쓰는 파드가 없어지기를" 기다린다. 쓰는 중인 볼륨이 갑자기 사라지지 않게 막는 안전장치다.',
+        '그래서 web 파드가 살아 있는 동안 PVC는 Terminating에 머문다.',
+      ],
+      keyIdea: 'Terminating이 오래 간다고 지우는 중인 것이 아니다. 대개 파이널라이저가 정리를 기다리는 중이다.',
+      flows: [{from: 'pod', to: 'pvc', label: '사용 중', type: 'request'}],
+      focus: ['pod', 'pvc'],
+    },
+    {
+      short: '소유자',
+      kind: '원리',
+      title: '디플로이먼트를 지운다 — 주인과 딸린 자원',
+      text: [
+        '이번에는 디플로이먼트 web을 지운다. 파드에는 "주인은 이 레플리카셋"이라는 소유자 참조(ownerReferences)가, 레플리카셋에는 "주인은 이 디플로이먼트"라는 참조가 붙어 있다.',
+        'kubectl get pod -o yaml로 metadata.ownerReferences를 보면 이 관계를 확인할 수 있다.',
+      ],
+      flows: [
+        {from: 'user', to: 'api', label: 'delete web', type: 'request'},
+        {from: 'pod', to: 'rs', label: '주인', type: 'response'},
+        {from: 'rs', to: 'deploy', label: '주인', type: 'response'},
+      ],
+      focus: ['deploy', 'rs', 'pod'],
+      values: {target: '디플로이먼트 web', state: '삭제 요청', fin: '—'},
+    },
+    {
+      short: 'GC',
+      kind: '원리',
+      title: '주인을 먼저 지우고, 딸린 자원은 가비지 컬렉터가 치운다',
+      text: [
+        '기본 방식(백그라운드)에서는 디플로이먼트가 즉시 지워진다. 그 뒤 가비지 컬렉터(GC)가 주인 잃은 레플리카셋과 파드를 뒤에서 정리한다.',
+        '딸린 자원을 먼저 지우는 포그라운드, 주인만 지우고 딸린 자원은 남기는 고아(orphan) 방식도 고를 수 있다.',
+      ],
+      keyIdea: '포그라운드 삭제에서는 딸린 자원이 모두 지워질 때까지 주인이 Terminating으로 남는다.',
+      flows: [
+        {from: 'gc', to: 'rs', label: '정리', type: 'request'},
+        {from: 'gc', to: 'pod', label: '정리', type: 'request'},
+      ],
+      focus: ['gc'],
+      status: {deploy: 'gone', rs: 'gone', pod: 'gone'},
+      values: {state: {text: '삭제 완료', tone: 'good'}},
+    },
+    {
+      short: '해제',
+      kind: '원리',
+      title: '기다리던 조건이 풀리면 파이널라이저가 빠진다',
+      text: [
+        'web 파드가 사라지자 PVC를 쓰는 파드가 없어졌다. 담당 컨트롤러가 정리를 끝내고 목록에서 pvc-protection을 뺀다.',
+        '파이널라이저 목록이 비는 순간 API 서버가 PVC를 실제로 지운다.',
+      ],
+      changes: ['- pvc-protection', '- PVC data'],
+      flows: [{from: 'api', to: 'pvc', label: '최종 삭제', type: 'request', bend: 0.25}],
+      focus: ['pvc'],
+      status: {pvc: 'gone'},
+      badges: {pvc: null},
+      values: {target: 'PVC data', state: {text: '삭제 완료', tone: 'good'}, fin: '없음'},
+    },
+    {
+      short: '멈춤',
+      kind: '장애',
+      title: '도구를 먼저 지우면 네임스페이스가 끝나지 않는다',
+      text: [
+        '백업 도구(오퍼레이터)를 먼저 지운 뒤 shop 네임스페이스를 지웠다. 네임스페이스는 안쪽 자원이 모두 지워지기를 기다린다.',
+        '그런데 Backup 자원에는 그 도구가 붙인 파이널라이저가 있고, 치워 줄 컨트롤러가 이미 없다. Backup도, 네임스페이스도 영원히 Terminating에 머문다.',
+      ],
+      keyIdea: '네임스페이스 삭제가 끝나지 않는 대부분의 원인이 이것이다. 안쪽에 남은 자원의 finalizers를 보면 누구를 기다리는지 알 수 있다.',
+      flows: [
+        {from: 'user', to: 'api', label: 'delete ns', type: 'request'},
+        {from: 'api', to: 'cr', label: '삭제 표시', type: 'request'},
+      ],
+      focus: ['cr', 'op'],
+      status: {op: 'gone', cr: 'error'},
+      badges: {cr: 'Terminating'},
+      values: {target: '네임스페이스 shop', state: {text: 'Terminating', tone: 'bad'}, fin: '백업 도구 이름'},
+    },
+    {
+      short: '강제 제거',
+      kind: '주의',
+      title: '파이널라이저를 강제로 지우면 정리를 건너뛴다',
+      text: [
+        '파이널라이저를 손으로 지우면 Backup과 네임스페이스는 사라진다. 하지만 도구가 하려던 정리, 예를 들어 외부 저장소 정리는 건너뛴다.',
+        '그래서 외부에 자원이 남을 수 있다. 올바른 순서는 CR을 먼저 지우고 도구를 나중에 지우는 것이다.',
+      ],
+      flows: [
+        {from: 'user', to: 'api', label: '강제 제거', type: 'request'},
+        {from: 'api', to: 'cr', label: '최종 삭제', type: 'request'},
+      ],
+      focus: ['cr'],
+      status: {cr: 'gone'},
+      badges: {cr: '외부 정리 누락?'},
+      values: {state: '삭제됨 (정리 생략)', fin: '없음'},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '삭제는 표시 → 정리 → 실제 삭제 순서다',
+      text: [
+        '파이널라이저가 있으면 deletionTimestamp만 찍히고, 담당 컨트롤러가 정리를 끝내야 실제로 지워진다. 딸린 자원은 소유자 참조를 따라 가비지 컬렉터가 치운다.',
+        '담당 컨트롤러가 없으면 기다림은 끝나지 않는다. 그래서 지우는 순서가 중요하다.',
+      ],
+      keyIdea: '삭제는 표시 → 정리 → 실제 삭제 순서다. Terminating이 길면 metadata.finalizers와 deletionTimestamp를 보고 담당 컨트롤러가 살아 있는지 확인한다. 파이널라이저를 억지로 지우는 것은 마지막 수단이다.',
+      focus: ['api', 'gc'],
+    },
+  ]}
+/>
+
+## 흔한 파이널라이저와 멈추는 경우
+
+| 파이널라이저 | 무엇을 기다리나 | 오래 멈추는 경우 |
+| --- | --- | --- |
+| `kubernetes.io/pvc-protection` | 이 PVC를 쓰는 파드가 없어지기를 | 아직 PVC를 마운트한 파드가 살아 있다 |
+| `kubernetes.io/pv-protection` | 이 PV에 연결된 PVC가 없어지기를 | PVC가 남아 있다 |
+| 네임스페이스의 `kubernetes` | 네임스페이스 안 자원이 모두 지워지기를 | 안쪽 자원 중 하나가 파이널라이저로 멈췄다 |
+| 각 도구가 붙이는 이름 | 해당 도구가 외부 자원을 정리하기를 | 그 도구의 컨트롤러가 이미 제거되었거나 멈췄다 |
+
+더 읽을거리: [파이널라이저](https://kubernetes.io/docs/concepts/overview/working-with-objects/finalizers/) · [가비지 수집](https://kubernetes.io/ko/docs/concepts/architecture/garbage-collection/) · [소유자와 종속](https://kubernetes.io/docs/concepts/overview/working-with-objects/owners-dependents/)
+
+다음 레슨: [CRD와 오퍼레이터](./crd-operator.mdx)

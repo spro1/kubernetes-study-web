@@ -1,0 +1,194 @@
+---
+id: packet-path
+title: A Packet from Pod to Pod
+sidebar_label: 06 · A Packet from Pod to Pod
+description: Follow the Pod network model (every Pod gets an IP and talks without NAT), what CNI does, same-node and cross-node paths, overlays and MTU, and Service IP translation, step by step with animation
+hide_table_of_contents: true
+---
+
+# A Packet from Pod to Pod
+
+Services and DNS decide "where to send". This lesson covers what comes next. We follow a packet (a chunk of data on the network) through the actual devices it crosses, down inside the node, until it reaches another Pod. The path of outside requests is in [How a Request Reaches a Pod](../k8s/traffic.mdx), and name resolution is in [Finding Services by Name (Service·DNS)](../k8s/service-dns.mdx).
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~10 min', level: 'Advanced'}}
+  groups={[
+    {label: 'Node A · 10.0.0.11', x: 15, y: 30, w: 405, h: 310, tone: 'biz'},
+    {label: 'Node B · 10.0.0.12', x: 580, y: 30, w: 405, h: 310, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'web', label: 'web', sub: '10.244.1.5', icon: 'pod', tone: 'app', size: 'sm', x: 95, y: 105, show: true},
+    {id: 'cache', label: 'cache', sub: '10.244.1.6', icon: 'pod', tone: 'app', size: 'sm', x: 95, y: 260, show: true},
+    {id: 'rules', label: 'NAT rules', sub: 'kube-proxy', icon: 'split', tone: 'cp', x: 320, y: 105},
+    {id: 'netA', label: 'Node A network', sub: 'virtual devs · routes', icon: 'route', tone: 'node', x: 320, y: 260, show: true},
+    {id: 'cni', label: 'CNI', sub: 'e.g. Cilium', icon: 'gear', tone: 'cp', x: 680, y: 105},
+    {id: 'netB', label: 'Node B network', sub: 'virtual devs · routes', icon: 'route', tone: 'node', x: 680, y: 260, show: true},
+    {id: 'api', label: 'api', sub: '10.244.2.7', icon: 'pod', tone: 'app', size: 'sm', x: 900, y: 260},
+    {id: 'phys', label: 'Physical net', sub: 'knows node IPs only', icon: 'cloud', tone: 'ext', x: 500, y: 395, w: 160, show: true},
+  ]}
+  metrics={[
+    {id: 'src', label: 'Source IP'},
+    {id: 'dst', label: 'Destination IP'},
+    {id: 'path', label: 'Path'},
+  ]}
+  learn={[
+    {text: 'The rule: every Pod gets an IP, no NAT', at: 0},
+    {text: 'How CNI connects a Pod to the network', at: 1},
+    {text: 'Why packets are wrapped across nodes, and the MTU issue', at: 4},
+    {text: 'Where a Service IP becomes a Pod IP', at: 7},
+  ]}
+  steps={[
+    {
+      short: 'The rule',
+      kind: '시작',
+      title: 'Every Pod gets its own IP',
+      text: [
+        'Kubernetes sets only a few network rules. Every Pod gets a unique IP, and Pods talk to each other by IP without address translation (NAT), even across nodes.',
+        'NAT rewrites addresses in the middle of a connection. Thanks to this rule, a program in a Pod can trust that the peer sees its IP as is.',
+      ],
+      keyIdea: 'Kubernetes sets only the rules and leaves the implementation to a CNI plugin.',
+      flows: [{from: 'web', to: 'cache', label: '10.244.1.6', type: 'request'}],
+      focus: ['web', 'cache'],
+      values: {src: '10.244.1.5', dst: '10.244.1.6'},
+    },
+    {
+      short: 'CNI setup',
+      kind: '원리',
+      title: 'When a Pod is created, CNI wires up its network',
+      text: [
+        'When the api Pod lands on Node B, kubelet calls the CNI (Container Network Interface) plugin. The plugin creates a virtual device in the Pod\'s own network space and assigns one IP from the Pod range.',
+        'It then links the node side and the Pod side with a virtual cable and adds routes. It also sets up the way to other nodes\' Pod ranges.',
+      ],
+      keyIdea: 'CNI plugins like Cilium, Calico and Flannel do this work. A node shows NotReady until a CNI is installed.',
+      changes: ['10.244.2.7 assigned to api Pod', 'Pod route added on Node B'],
+      flows: [
+        {from: 'cni', to: 'api', label: 'Assign IP', type: 'request'},
+        {from: 'cni', to: 'netB', label: 'Add route', type: 'request'},
+      ],
+      focus: ['cni', 'api'],
+      status: {api: 'ok'},
+      badges: {api: '10.244.2.7'},
+    },
+    {
+      short: 'Same node',
+      kind: '원리',
+      title: 'Pods on the same node stay inside the node',
+      text: [
+        'A packet from web to cache travels the virtual cable out to Node A\'s network, then follows a route straight into cache\'s virtual cable.',
+        'The packet never leaves the node. The source and destination IPs do not change.',
+      ],
+      flows: [
+        {from: 'web', to: 'netA', type: 'request'},
+        {from: 'netA', to: 'cache', label: 'Direct', type: 'request'},
+      ],
+      focus: ['netA'],
+      values: {path: 'Inside Node A'},
+    },
+    {
+      short: 'Other node',
+      kind: '원리',
+      title: 'To reach another node, cross the physical network',
+      text: [
+        'Now web sends to api (10.244.2.7) on Node B. Node A checks its routing table and knows this range lives on Node B.',
+        'The issue is the physical network between nodes. It knows only node IPs, not Pod ranges like 10.244.x.x.',
+      ],
+      flows: [
+        {from: 'web', to: 'netA', label: '10.244.2.7', type: 'request'},
+        {from: 'netA', to: 'phys', label: 'Where to?', type: 'request'},
+      ],
+      focus: ['phys'],
+      status: {phys: 'warn'},
+      values: {dst: '10.244.2.7', path: 'Node A → ?'},
+    },
+    {
+      short: 'Wrap',
+      kind: '원리',
+      title: 'An overlay wraps the Pod packet inside a node packet',
+      text: [
+        'An overlay (VXLAN, Geneve and so on) puts the Pod packet inside another packet addressed Node A → Node B. The physical network only looks at the node IPs on the outer envelope.',
+        'Direct routing (BGP and the like) does not wrap. Instead, it tells physical routers "this Pod range goes to this node".',
+      ],
+      keyIdea: 'An overlay needs no change to the physical network. Direct routing is faster without wrapping, but needs coordination with the network team.',
+      flows: [
+        {from: 'netA', to: 'phys', label: 'Wrapped', type: 'request'},
+        {from: 'phys', to: 'netB', label: 'To Node B', type: 'request'},
+      ],
+      focus: ['phys'],
+      status: {phys: 'ok'},
+      badges: {phys: 'outer: 10.0.0.12'},
+      values: {path: 'Node A → B'},
+    },
+    {
+      short: 'Arrive',
+      kind: '원리',
+      title: 'Node B unwraps the envelope and hands it to the Pod',
+      text: [
+        'Node B strips the outer envelope, takes out the original packet and routes it into api\'s virtual cable.',
+        'The source of the packet api receives is still 10.244.1.5. No address was rewritten on the way, so api sees web\'s real IP.',
+      ],
+      flows: [{from: 'netB', to: 'api', label: 'Unwrapped', type: 'request'}],
+      focus: ['api'],
+      badges: {phys: null},
+      values: {src: '10.244.1.5', path: {text: 'Arrived', tone: 'good'}},
+    },
+    {
+      short: 'MTU',
+      kind: '주의',
+      title: 'Small requests work, but large responses get cut',
+      text: [
+        'Wrapping adds an envelope header, so the packet grows. If the maximum size per send (MTU) is 1500 on the physical network, the Pod-side MTU must be smaller.',
+        'If these do not match, small requests pass but large responses get cut. If login works but large list queries fail, suspect this.',
+      ],
+      flows: [
+        {from: 'api', to: 'netB', label: 'Big response', type: 'response'},
+        {from: 'netB', to: 'phys', label: 'Too large', type: 'response'},
+      ],
+      focus: ['phys'],
+      status: {phys: 'error'},
+      values: {path: {text: 'Large responses cut', tone: 'bad'}},
+    },
+    {
+      short: 'Service IP',
+      kind: '원리',
+      title: 'A Service IP becomes a Pod IP on the sending node',
+      text: [
+        'In practice web sends to the Service IP (10.96.12.34), not to the api Pod IP. This address is not attached to any device.',
+        'NAT rules on Node A (kube-proxy iptables or IPVS, or eBPF) intercept the packet and rewrite the destination to one ready Pod IP. From there it follows the Pod-to-Pod path above.',
+      ],
+      keyIdea: 'Instead of kube-proxy, a CNI (such as Cilium) can do this translation directly with eBPF. Which one is used is set at install time.',
+      flows: [
+        {from: 'web', to: 'rules', label: '10.96.12.34', type: 'request'},
+        {from: 'rules', to: 'netA', label: '→ 10.244.2.7', type: 'request'},
+      ],
+      focus: ['rules'],
+      status: {phys: 'ok'},
+      values: {dst: '10.96.12.34 → 10.244.2.7', path: 'Node A → B'},
+    },
+    {
+      short: 'Recap',
+      kind: '정리',
+      title: 'Each layer has its own job',
+      text: [
+        'CNI handles Pod IPs and delivery between nodes. NAT rules turn Service IPs into Pod IPs. Overlays or direct routing carry packets between nodes.',
+        'When traffic fails, check whether it works on the same node, fails only across nodes, or fails only via the Service IP. That shows which layer is broken.',
+      ],
+      keyIdea: 'Pod IPs, cross-node routes and Service translation are separate layers. Use kubectl get pod -o wide for Pod IPs and nodes, and kubectl get endpointslices for Service targets, to narrow down the broken layer.',
+      focus: ['netA', 'netB'],
+    },
+  ]}
+/>
+
+## Narrowing down the layer by symptom
+
+| Symptom | Layer to suspect | What to check |
+| --- | --- | --- |
+| A new node stays NotReady | CNI | Whether the CNI plugin is installed and running on that node |
+| Pods on the same node talk, but not across nodes | Cross-node routing | Overlay or direct routing setup, firewalls between nodes |
+| Small requests work, large responses get cut | Overlay MTU | Whether the Pod-side MTU is smaller than the physical MTU |
+| Works via Pod IP, fails via Service IP | NAT rules / Service | Whether the Service targets (endpoints) include ready Pods |
+
+Further reading: [Cluster networking](https://kubernetes.io/docs/concepts/cluster-administration/networking/) · [Service](https://kubernetes.io/docs/concepts/services-networking/service/) · [Virtual IPs and service proxies](https://kubernetes.io/docs/reference/networking/virtual-ips/)
+
+Next lesson: [When Volumes Attach, and Failures](./volume-binding.mdx)

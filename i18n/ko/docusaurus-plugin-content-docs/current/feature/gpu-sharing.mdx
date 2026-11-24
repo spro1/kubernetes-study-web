@@ -1,0 +1,195 @@
+---
+id: gpu-sharing
+title: GPU 나눠 쓰기
+sidebar_label: 08 · GPU 나눠 쓰기
+description: NVIDIA GPU Operator의 전용(Pass-through)·MIG·Time-Slicing 방식이 GPU를 어떻게 나눠 주고, 방식에 따라 볼 수 있는 GPU 지표가 어떻게 달라지는지 단계별 애니메이션으로 따라간다
+hide_table_of_contents: true
+---
+
+# GPU 나눠 쓰기
+
+GPU는 비싸서 놀리지 말고 나눠 써야 한다. 쿠버네티스에서 NVIDIA GPU Operator를 쓰면 GPU 한 장을 **통째로(Pass-through)**, **하드웨어 칸막이로(MIG)**, **시간을 쪼개(Time-Slicing)** 나눠 쓰게 한다. 방식마다 무엇이 나뉘고 지표에 무엇이 보이는지 따라가 본다.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '약 9분', level: '중급'}}
+  groups={[
+    {label: '업무 클러스터 · GPU 노드', x: 510, y: 20, w: 475, h: 420, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'user', label: '사용자', sub: '관리자·개발자', icon: 'user', tone: 'ext', x: 80, y: 225, w: 130, show: true},
+    {id: 'api', label: 'API 서버', sub: '설정·조회', icon: 'server', tone: 'cp', x: 340, y: 225, show: true},
+    {id: 'dash', label: 'GPU 대시보드', sub: 'Prometheus·Grafana', icon: 'chart', tone: 'cp', x: 340, y: 395, w: 160},
+    {id: 'operator', label: 'GPU Operator', sub: '장치 플러그인', icon: 'gear', tone: 'cp', x: 620, y: 95, w: 160},
+    {id: 'gpu', label: 'GPU 카드', sub: '한 장', icon: 'layers', tone: 'node', x: 620, y: 265, show: true},
+    {id: 'podA', label: '작업 A', sub: 'Pod', icon: 'pod', tone: 'app', size: 'sm', x: 880, y: 120},
+    {id: 'podB', label: '작업 B', sub: 'Pod', icon: 'pod', tone: 'app', size: 'sm', x: 880, y: 240},
+    {id: 'podC', label: '작업 C', sub: 'Pod', icon: 'pod', tone: 'app', size: 'sm', x: 880, y: 360},
+  ]}
+  metrics={[
+    {id: 'mode', label: '사용 방식'},
+    {id: 'share', label: 'GPU 한 장을 쓰는 작업'},
+    {id: 'iso', label: '작업 사이 격리'},
+    {id: 'view', label: '파드별 사용량'},
+  ]}
+  learn={[
+    {text: '전용(Pass-through)이 기본이고 한 작업이 한 장을 다 쓴다는 것', at: 0},
+    {text: '실제로 GPU를 나눠 주는 것은 GPU Operator라는 것', at: 1},
+    {text: 'MIG와 Time-Slicing의 격리 차이', at: 3},
+    {text: '분할 방식에 따라 대시보드에서 보이는 지표가 달라지는 이유', at: 7},
+  ]}
+  steps={[
+    {
+      short: '전용',
+      kind: '시작',
+      title: '기본은 한 작업이 GPU 한 장을 통째로 쓴다',
+      text: [
+        '쿠버네티스는 GPU를 "몇 장" 단위로 파드에 나눠 준다. 기본 방식인 전용(Pass-through)에서는 GPU 한 장을 작업 하나가 통째로 쓴다.',
+        '작업이 GPU의 일부만 써도 그 한 장은 다른 작업에 나눠 줄 수 없다. 작은 작업이 많을수록 GPU가 놀게 된다.',
+      ],
+      flows: [{from: 'gpu', to: 'podA', label: '통째로', type: 'request'}],
+      focus: ['gpu', 'podA'],
+      values: {mode: 'Pass-through', share: '1개', iso: '완전 분리', view: '보임'},
+    },
+    {
+      short: '구성요소',
+      kind: '원리',
+      title: '나눠 주는 쪽은 GPU Operator다',
+      text: [
+        '실제로 GPU를 나눠 주는 것은 GPU 제조사의 관리 구성요소인 GPU Operator다. 그 안의 장치 플러그인(Device Plugin)이 쿠버네티스에 GPU를 자원으로 알린다.',
+        'GPU Operator는 보통 Helm으로 설치한다. 드라이버를 컨테이너로 함께 깔거나 노드에 미리 설치된 드라이버를 쓴다. 결과는 노드의 allocatable에 nvidia.com/gpu 개수로 나타난다.',
+      ],
+      keyIdea: 'GPU Operator나 장치 플러그인이 없으면 노드에 nvidia.com/gpu 자원이 나타나지 않는다. GPU를 요청한 파드는 들어갈 노드가 없어 Pending으로 남는다.',
+      flows: [{from: 'operator', to: 'gpu', label: 'GPU 인식', type: 'watch'}],
+      focus: ['operator'],
+    },
+    {
+      short: 'MIG 설정',
+      kind: '원리',
+      title: 'MIG로 GPU 한 장에 하드웨어 칸막이를 친다',
+      text: [
+        'MIG(Multi-Instance GPU)는 GPU 한 장을 하드웨어 칸막이로 나눠 여러 개의 독립된 GPU처럼 쓰게 한다. 클러스터 관리자가 노드에 칸 구성(예: nvidia.com/mig.config 레이블)을 지정하면 GPU Operator의 MIG Manager가 장비에 반영한다.',
+        '칸을 모두 더해도 GPU 전체를 넘을 수 없고, 모델마다 쓸 수 있는 규격이 정해져 있다. MIG는 일부 모델에서만 지원된다(예: NVIDIA A100·A30·H100).',
+      ],
+      changes: ['~ 사용 방식: Pass-through → MIG'],
+      flows: [
+        {from: 'user', to: 'api', label: 'GPU 설정', type: 'request'},
+        {from: 'api', to: 'operator', label: 'MIG 규격', type: 'request'},
+        {from: 'operator', to: 'gpu', label: '칸 나누기', type: 'request'},
+      ],
+      focus: ['gpu', 'operator'],
+      badges: {gpu: 'MIG ×3'},
+      values: {mode: 'MIG'},
+    },
+    {
+      short: 'MIG 배정',
+      kind: '주의',
+      title: '칸마다 작업 하나씩, 서로 간섭하지 않는다',
+      text: [
+        '나뉜 칸은 각각 독립된 GPU처럼 작업 하나에 배정된다. 메모리와 연산이 분리되어 한 작업이 바빠도 옆 칸에 영향을 주지 않는다.',
+        '다만 MIG를 켜거나 칸 구성을 바꾸려면 GPU를 리셋해야 하고, 장비에 따라 노드 재부팅까지 필요하다. 그동안 그 노드의 GPU 작업은 멈춘다.',
+      ],
+      flows: [
+        {from: 'gpu', to: 'podA', label: '칸 1', type: 'request'},
+        {from: 'gpu', to: 'podB', label: '칸 2', type: 'request'},
+        {from: 'gpu', to: 'podC', label: '칸 3', type: 'request'},
+      ],
+      focus: ['podA', 'podB', 'podC'],
+      values: {share: '칸마다 1개', iso: {text: '칸끼리 분리', tone: 'good'}, view: '보임'},
+    },
+    {
+      short: '공유 설정',
+      kind: '원리',
+      title: 'Time-Slicing은 전용·MIG에 덧붙이는 공유 설정이다',
+      text: [
+        'Time-Slicing은 독립된 방식이 아니다. GPU Operator 설정(ConfigMap)에서 전용이나 MIG 위에 "공유 + 몇 개로 나눌지(replicas)" 형태로 적는다.',
+        '카드 하나에만 걸 수 없고, 노드 안에서 같은 종류의 GPU 전체에 한꺼번에 걸린다. 설정을 바꾸면 장치 플러그인이 다시 시작되므로 GPU 작업이 적은 시점에 바꾼다.',
+      ],
+      changes: ['~ 사용 방식: Pass-through + 공유 3개'],
+      flows: [
+        {from: 'user', to: 'api', label: '공유 설정', type: 'request'},
+        {from: 'api', to: 'operator', label: '나눌 개수', type: 'request'},
+        {from: 'operator', to: 'gpu', label: '공유 반영', type: 'request'},
+      ],
+      focus: ['gpu'],
+      badges: {gpu: '공유 ×3'},
+      values: {mode: 'Time-Slicing'},
+    },
+    {
+      short: '번갈아',
+      kind: '주의',
+      title: '여러 작업이 시간을 쪼개 번갈아 쓴다',
+      text: [
+        '세 작업이 GPU 한 장을 시간 단위로 번갈아 쓴다. 가벼운 실험이나 개발 환경처럼 GPU를 조금씩 쓰는 작업을 많이 올릴 때 알맞다.',
+        '하지만 메모리가 분리되지 않아 격리가 약하다. 한 작업이 메모리를 많이 쓰면 같은 GPU를 쓰는 다른 작업에 영향을 준다.',
+      ],
+      keyIdea: 'Time-Slicing은 "나눠서 가진다"가 아니라 "돌아가며 쓴다"다. 서로 영향을 주면 안 되는 작업은 MIG나 전용으로 분리한다.',
+      flows: [
+        {from: 'gpu', to: 'podA', type: 'request'},
+        {from: 'gpu', to: 'podB', label: '번갈아', type: 'request'},
+        {from: 'gpu', to: 'podC', type: 'request'},
+      ],
+      focus: ['podA', 'podB', 'podC'],
+      status: {podB: 'warn'},
+      badges: {podB: '메모리 공유'},
+      values: {share: '3개가 번갈아', iso: {text: '약함', tone: 'bad'}},
+    },
+    {
+      short: 'GPU 사용',
+      kind: '원리',
+      title: '워크로드에서 GPU 사용을 켜면 GPU가 할당된다',
+      text: [
+        '개발자는 파드 명세의 resources.limits에 nvidia.com/gpu: 1 처럼 GPU 개수를 적는다. 이 파드는 GPU를 필요한 자원으로 요청하고, 쿠버네티스는 GPU가 있는 노드에 배치한 뒤 장치 플러그인이 GPU를 붙인다.',
+        'GPU를 나누는 방식은 클러스터 전체 설정이라 클러스터 관리자가 정한다. 개발자는 자기 네임스페이스에서 GPU를 요청만 한다.',
+      ],
+      flows: [
+        {from: 'user', to: 'api', label: 'GPU 요청', type: 'request'},
+        {from: 'api', to: 'gpu', label: '파드 배치', type: 'request'},
+        {from: 'gpu', to: 'podC', label: '할당', type: 'request'},
+      ],
+      focus: ['podC'],
+      status: {podB: null},
+      badges: {podB: null},
+    },
+    {
+      short: '지표',
+      kind: '주의',
+      title: '나누는 방식에 따라 보이는 지표가 다르다',
+      text: [
+        'GPU Operator의 지표 수집기(DCGM Exporter)가 9400 포트로 사용량을 내보낸다. Prometheus가 이를 모으고 Grafana 같은 대시보드에서 사용률·메모리·온도·전력과 파드 할당 현황을 본다.',
+        '전용과 MIG는 파드별 사용량까지 보이지만, Time-Slicing으로 공유하는 GPU는 GPU 전체 값만 보이고 파드별로 나눠지지 않는다. MIG는 칸(GPU 인스턴스) 단위 지표가 따로 나온다.',
+      ],
+      keyIdea: '하드웨어 구성상의 한계라 설정으로 고칠 수 없다. 시간을 쪼개 쓰면 지금 사용량이 어느 작업의 것인지 구분할 수 없다.',
+      flows: [
+        {from: 'operator', to: 'dash', label: '지표 9400', type: 'response'},
+        {from: 'dash', to: 'user', type: 'response'},
+      ],
+      focus: ['dash', 'operator'],
+      values: {view: {text: '공유 시 GPU 전체만', tone: 'bad'}},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '격리와 보이는 범위를 보고 방식을 고른다',
+      text: [
+        '전용은 한 작업이 한 장을, MIG는 칸막이로 나눈 칸을 하나씩 쓰고, Time-Slicing은 그 위에서 시간을 쪼개 번갈아 쓴다. 뒤로 갈수록 많이 나눠 쓰지만 격리와 파드별 지표가 약해진다.',
+        '지금 어떤 방식인지는 노드 레이블과 allocatable의 GPU 자원 이름·개수로 확인한다. 지표가 비어 있으면 수집 실패인지, 그 방식에서 원래 나오지 않는 값인지부터 가린다.',
+      ],
+      keyIdea: '전용은 격리가 가장 강하고, MIG는 하드웨어로 나눠 격리와 지표를 지키며, Time-Slicing은 가장 많이 나누지만 격리와 파드별 지표를 잃는다. 작업 성격에 맞춰 고른다.',
+      focus: ['gpu', 'dash'],
+    },
+  ]}
+/>
+
+## 직접 확인해 보기
+
+```bash
+kubectl get pods -n gpu-operator                     # GPU Operator 구성요소 상태
+kubectl describe node <gpu-node> | grep -i nvidia    # GPU 자원 이름·개수, MIG 레이블
+kubectl get pods -A -o wide | grep -i gpu            # GPU 파드가 어느 노드에 떴는지
+```
+
+더 읽을거리: [GPU 스케줄링](https://kubernetes.io/ko/docs/tasks/manage-gpus/scheduling-gpus/) · [장치 플러그인](https://kubernetes.io/ko/docs/concepts/extend-kubernetes/compute-storage-net/device-plugins/) · [NVIDIA GPU Operator](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/index.html) · [조건으로 GPU 받기 (DRA)](../k8s/dra.mdx)
+
+다음 레슨: [파드 크기 자동 조정 (VPA)](./vpa.mdx)

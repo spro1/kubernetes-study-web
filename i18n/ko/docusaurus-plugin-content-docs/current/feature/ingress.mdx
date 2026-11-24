@@ -1,0 +1,197 @@
+---
+id: ingress
+title: 인그레스 규칙과 TLS
+sidebar_label: 02 · 인그레스 규칙과 TLS
+description: 인그레스의 호스트·경로 규칙, 규칙을 처리할 구현체를 고르는 인그레스 클래스, 시크릿 인증서로 HTTPS를 푸는 TLS 종료와 대표 실패를 애니메이션으로 따라간다
+hide_table_of_contents: true
+---
+
+# 인그레스 규칙과 TLS
+
+인그레스(Ingress) 규칙 한 장을 만든다. 그 규칙을 **누가 읽고**, HTTPS는 **어디서 풀리며**, 어떤 경우에 오류 없이 접속만 안 되는지 따라가 본다.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '약 10분', level: '기초'}}
+  groups={[
+    {label: '쿠버네티스 클러스터', x: 250, y: 30, w: 725, h: 410, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'user', label: '브라우저', sub: 'HTTPS 요청', icon: 'browser', tone: 'ext', x: 110, y: 245, show: true},
+    {id: 'ctrl', label: '컨트롤러', sub: '입구 구현체', icon: 'gate', tone: 'node', x: 430, y: 245},
+    {id: 'rule', label: 'Ingress', sub: '호스트·경로 규칙', icon: 'book', tone: 'store', x: 430, y: 105},
+    {id: 'cls', label: 'IngressClass', sub: '처리기 지정', icon: 'gear', tone: 'cp', x: 430, y: 375, w: 160},
+    {id: 'secret', label: 'TLS 시크릿', sub: '인증서·키', icon: 'shield', tone: 'store', x: 670, y: 375, w: 140},
+    {id: 'web', label: 'web', sub: '경로 /', icon: 'target', tone: 'cp', size: 'sm', w: 110, x: 895, y: 120, show: true},
+    {id: 'api', label: 'api', sub: '경로 /api', icon: 'target', tone: 'cp', size: 'sm', w: 110, x: 895, y: 245, show: true},
+    {id: 'cart', label: 'cart', sub: '서비스 없음', icon: 'target', tone: 'cp', size: 'sm', w: 110, x: 895, y: 370},
+  ]}
+  metrics={[
+    {id: 'path', label: '요청'},
+    {id: 'match', label: '맞은 규칙'},
+    {id: 'backend', label: '보낼 서비스'},
+    {id: 'tls', label: 'HTTPS'},
+  ]}
+  learn={[
+    {text: '인그레스는 규칙 문서이고, 요청은 컨트롤러가 받는다는 것', at: 1},
+    {text: '호스트·경로 규칙으로 서비스를 고르는 방식', at: 2},
+    {text: '인그레스 클래스가 처리할 구현체를 고른다는 것', at: 3},
+    {text: '시크릿의 인증서로 입구에서 HTTPS를 푸는 TLS 종료', at: 5},
+    {text: '백엔드 없음·규칙 겹침이 오류 없이 나타나는 모습', at: 7},
+  ]}
+  steps={[
+    {
+      short: '시작',
+      kind: '시작',
+      title: '바깥 요청 하나, 안쪽 서비스는 여럿',
+      text: [
+        '브라우저가 https://shop.example.com/api/orders 를 연다. 클러스터 안에는 화면을 주는 web과 데이터를 주는 api 서비스가 있다.',
+        '서비스마다 외부 주소를 따로 열지 않고, 입구 하나에서 도메인과 경로를 보고 요청을 나눠 보내고 싶다. 이 분기 규칙이 인그레스(Ingress)다.',
+      ],
+      flows: [{from: 'user', to: 'ctrl', label: 'HTTPS', type: 'request'}],
+      focus: ['user', 'ctrl'],
+      values: {path: 'shop.example.com/api/orders'},
+    },
+    {
+      short: '규칙',
+      kind: '원리',
+      title: '인그레스는 규칙 문서, 요청은 컨트롤러가 받는다',
+      text: [
+        '인그레스 자체는 요청을 처리하지 않는다. "shop.example.com의 / 는 web으로, /api 는 api로" 같은 규칙을 적은 문서일 뿐이다.',
+        '실제로 요청을 받아 규칙대로 넘기는 것은 클러스터에 설치된 컨트롤러(입구 구현체)다. 컨트롤러는 인그레스 규칙을 계속 지켜보고 반영한다.',
+      ],
+      keyIdea: 'kubectl apply로 인그레스를 만들어도 그것은 문서가 저장된 것일 뿐이다. 접속이 안 되면 규칙 쪽인지 컨트롤러 쪽인지 나눠 본다.',
+      flows: [{from: 'rule', to: 'ctrl', label: '규칙 반영', type: 'watch'}],
+      focus: ['rule'],
+    },
+    {
+      short: '경로 분기',
+      kind: '원리',
+      title: '호스트를 맞추고, 경로로 서비스를 고른다',
+      text: [
+        '컨트롤러는 먼저 호스트(shop.example.com)가 맞는 규칙을 찾고, 그다음 경로를 본다. 경로 방식이 Prefix(앞부분 일치)면 /api 는 /api/orders 도 잡는다.',
+        '/ 와 /api 가 둘 다 맞으면 더 긴 경로인 /api 가 이긴다. 그래서 /api/orders 는 api로, 나머지 요청은 web으로 간다.',
+      ],
+      flows: [
+        {from: 'user', to: 'ctrl', label: '/api/orders', type: 'request'},
+        {from: 'ctrl', to: 'api', label: '/api', type: 'request'},
+        {from: 'ctrl', to: 'web', label: '그 밖의 /', type: 'request'},
+      ],
+      focus: ['ctrl', 'api'],
+      values: {match: '/api (Prefix)', backend: 'api'},
+    },
+    {
+      short: '클래스',
+      kind: '원리',
+      title: '인그레스 클래스가 처리할 구현체를 고른다',
+      text: [
+        '한 클러스터에 입구 구현체가 여럿일 수 있다. 인그레스의 인그레스 클래스(ingressClassName) 항목이 "이 규칙은 어느 구현체가 처리하나"를 정한다.',
+        '구현체는 여러 가지다(예: ingress-nginx, Traefik, Istio). kubectl get ingressclass로 클러스터에 어떤 클래스가 있는지, 어느 것이 기본값인지 본다. 여기서는 Istio 입구가 처리한다.',
+      ],
+      flows: [{from: 'cls', to: 'ctrl', label: '처리 담당', type: 'watch'}],
+      focus: ['cls', 'ctrl'],
+      badges: {cls: 'Istio 입구'},
+    },
+    {
+      short: '처리기 없음',
+      kind: '주의',
+      title: '클래스가 가리키는 구현체가 없으면 아무 일도 없다',
+      text: [
+        '인그레스 클래스가 가리키는 구현체가 클러스터에 없으면, 규칙은 만들어져도 읽는 쪽이 없다. 주소가 붙지 않고 요청도 넘어가지 않는다.',
+        'kubectl get ingress에서 ADDRESS 칸이 비어 있다면 처리기를 먼저 의심한다. 클래스 이름 오타나 컨트롤러 파드가 죽은 경우도 같은 모습이다.',
+      ],
+      keyIdea: '규칙이 맞아도 처리기가 없으면 소용없다. 인그레스에 주소가 붙지 않는 것은 규칙 오류가 아니라 처리기 문제일 수 있다.',
+      flows: [{from: 'user', to: 'ctrl', label: '응답 없음', type: 'request'}],
+      focus: ['cls', 'ctrl'],
+      status: {ctrl: 'error'},
+      badges: {cls: null, ctrl: '처리기 없음'},
+      values: {match: {text: '읽는 쪽 없음', tone: 'bad'}, backend: '—'},
+    },
+    {
+      short: 'TLS',
+      kind: '원리',
+      title: '입구에서 시크릿의 인증서로 HTTPS를 푼다',
+      text: [
+        '인그레스의 tls 항목에 호스트와 시크릿(secret — 인증서처럼 민감한 값을 담는 자원) 이름을 적는다. 컨트롤러는 그 시크릿의 인증서와 키로 HTTPS 암호화를 푼다.',
+        '이것을 TLS 종료라고 한다. 암호화가 입구에서 풀리고, 풀린 요청이 규칙대로 서비스로 넘어간다. 인증서는 만료되므로 갱신이 운영 업무가 된다.',
+      ],
+      keyIdea: '시크릿은 kubernetes.io/tls 유형이어야 하고 인그레스와 같은 네임스페이스에 있어야 한다. 인증서 갱신은 cert-manager 같은 도구로 자동화하는 경우가 많다.',
+      flows: [
+        {from: 'secret', to: 'ctrl', label: '인증서', type: 'watch'},
+        {from: 'user', to: 'ctrl', label: 'HTTPS', type: 'request'},
+        {from: 'ctrl', to: 'api', label: '풀린 요청', type: 'request'},
+      ],
+      focus: ['secret', 'ctrl'],
+      status: {ctrl: 'ok'},
+      badges: {ctrl: null, secret: 'shop-tls'},
+      values: {tls: {text: '입구에서 종료', tone: 'good'}, match: '/api (Prefix)', backend: 'api'},
+    },
+    {
+      short: '백엔드 없음',
+      kind: '문제',
+      title: '없는 서비스를 가리켜도 인그레스는 만들어진다',
+      text: [
+        '/cart 규칙이 cart 서비스를 가리키는데 그 서비스가 없다. 인그레스는 오류 없이 만들어지고, 접속하는 순간에야 연결이 안 되는 모습으로 드러난다.',
+        '규칙이 가리키는 서비스는 같은 네임스페이스에 실제로 있어야 하고, 그 서비스가 파드를 물고 있어야 한다.',
+      ],
+      flows: [
+        {from: 'user', to: 'ctrl', label: '/cart', type: 'request'},
+        {from: 'ctrl', to: 'cart', label: '보낼 곳 없음', type: 'request'},
+      ],
+      focus: ['cart'],
+      status: {cart: 'error'},
+      badges: {secret: null},
+      values: {path: 'shop.example.com/cart', match: '/cart', backend: {text: 'cart (없음)', tone: 'bad'}},
+    },
+    {
+      short: '규칙 겹침',
+      kind: '문제',
+      title: '경로 규칙이 겹치면 한곳으로만 간다',
+      text: [
+        '/api 규칙을 Exact(정확히 일치)로 적었다면 /api/orders 는 /api 에 맞지 않는다. 그러면 / 규칙이 받아 web으로 보낸다.',
+        '경로마다 다른 곳으로 가야 하는데 한곳으로만 간다면, 규칙이 여러 줄로 들어가 있는지와 경로 방식(Prefix·Exact)과 범위가 겹치지 않는지 확인한다.',
+      ],
+      flows: [
+        {from: 'user', to: 'ctrl', label: '/api/orders', type: 'request'},
+        {from: 'ctrl', to: 'web', label: '/ 가 받음', type: 'request'},
+      ],
+      focus: ['rule', 'web'],
+      status: {cart: 'off', rule: 'warn'},
+      badges: {rule: 'Exact /api'},
+      values: {path: 'shop.example.com/api/orders', match: {text: '/ (의도와 다름)', tone: 'bad'}, backend: {text: 'web', tone: 'bad'}},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '규칙 · 클래스 · TLS 세 가지가 맞아야 열린다',
+      text: [
+        '인그레스는 호스트·경로 규칙, 그 규칙을 처리할 구현체를 고르는 인그레스 클래스, HTTPS를 풀 인증서 시크릿으로 이루어진다. 셋 중 하나만 어긋나도 오류 없이 접속만 안 될 수 있다.',
+        '인그레스 API는 더 이상 기능이 늘지 않는다. 더 풍부한 경로 규칙이 필요하면 게이트웨이 API를 함께 살펴본다.',
+      ],
+      keyIdea: '인그레스는 규칙 · 클래스 · TLS 시크릿이 모두 맞아야 열린다. 만들 때 오류가 나지 않는 실패가 많으니, 규칙이 가리키는 서비스와 그 엔드포인트까지 따라가 확인한다.',
+      flows: [
+        {from: 'ctrl', to: 'api', label: '/api', type: 'request'},
+        {from: 'ctrl', to: 'web', label: '/', type: 'request'},
+      ],
+      focus: ['rule', 'cls', 'secret'],
+      status: {rule: null},
+      badges: {rule: null},
+      values: {match: {text: '/api (Prefix)', tone: 'good'}, backend: {text: 'api', tone: 'good'}},
+    },
+  ]}
+/>
+
+## 직접 확인해 보기
+
+```bash
+kubectl get ingressclass                             # 쓸 수 있는 처리기와 기본 클래스
+kubectl get ingress shop -o wide                     # CLASS, HOSTS, ADDRESS
+kubectl describe ingress shop                        # 경로별 백엔드와 이벤트
+kubectl get endpointslices -l kubernetes.io/service-name=api   # 백엔드 서비스가 파드를 무는지
+kubectl get secret shop-tls -o jsonpath='{.type}'    # kubernetes.io/tls 인지
+```
+
+더 읽을거리: [인그레스](https://kubernetes.io/ko/docs/concepts/services-networking/ingress/) · [인그레스 컨트롤러](https://kubernetes.io/ko/docs/concepts/services-networking/ingress-controllers/) · [게이트웨이 API](https://kubernetes.io/docs/concepts/services-networking/gateway/)
+
+다음 레슨: [서비스 메시 ① 사이드카와 상호 인증](./mesh-sidecar.mdx)

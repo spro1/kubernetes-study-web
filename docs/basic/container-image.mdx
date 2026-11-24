@@ -1,0 +1,182 @@
+---
+id: container-image
+title: How an Image Is Built and Run
+sidebar_label: 04 · How an Image Is Built and Run
+description: Follow step by step as a Dockerfile becomes a layered image, gets a name and tag, is pushed to a registry and scanned for vulnerabilities, then runs as a container on a node and goes away
+hide_table_of_contents: true
+---
+
+# How an Image Is Built and Run
+
+Follow what an image, the source of a container, is made of, what name it carries, and where it is stored before it becomes a container. Running the build automatically in a pipeline is covered in [How a Pipeline Runs](./cicd-pipeline.mdx), and how a node's kubelet and runtime pull the image and start a Pod is covered in [How a Pod Starts](../k8s/pod-startup.mdx). Here we focus on the image itself.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~9 min', level: 'Beginner'}}
+  nodes={[
+    {id: 'dockerfile', label: 'Dockerfile', sub: 'Build recipe', icon: 'book', tone: 'ext', x: 90, y: 110, show: true},
+    {id: 'image', label: 'Image', sub: 'Read-only source', icon: 'layers', tone: 'store', x: 360, y: 110},
+    {id: 'registry', label: 'Harbor', sub: 'Registry', icon: 'registry', tone: 'store', x: 630, y: 110},
+    {id: 'scan', label: 'Vuln scan', sub: 'Trivy', icon: 'shield', tone: 'cp', x: 900, y: 110},
+    {id: 'node', label: 'Node', sub: 'Pulls the image', icon: 'server', tone: 'node', x: 630, y: 300},
+    {id: 'ct1', label: 'Container 1', sub: 'web', icon: 'box', tone: 'app', size: 'sm', w: 120, x: 380, y: 300},
+    {id: 'ct2', label: 'Container 2', sub: 'web', icon: 'box', tone: 'app', size: 'sm', w: 120, x: 380, y: 410},
+    {id: 'volume', label: 'Volume', sub: 'Outside storage', icon: 'disk', tone: 'store', x: 120, y: 355},
+  ]}
+  metrics={[
+    {id: 'tag', label: 'Image'},
+    {id: 'where', label: 'Image location'},
+    {id: 'vuln', label: 'Vuln scan'},
+    {id: 'ct', label: 'Running containers'},
+  ]}
+  learn={[
+    {text: 'Each Dockerfile line becomes one layer', at: 1},
+    {text: 'How to read an image name: registry, project, name, tag', at: 2},
+    {text: 'Why the latest tag is risky, and what a digest is', at: 3},
+    {text: '"Not scanned" is not the same as "0 vulnerabilities"', at: 4},
+    {text: 'Deleting a container deletes the data written inside it', at: 7},
+  ]}
+  steps={[
+    {
+      short: 'Recipe',
+      kind: '시작',
+      title: 'Build an image from a Dockerfile',
+      text: [
+        'A Dockerfile is a text file that says, line by line, how to build an image. FROM picks the base image, COPY adds files, and RUN runs commands such as installs.',
+        'It runs top to bottom, and most lines become one layer each. The resulting image is a read-only source that does not change.',
+      ],
+      flows: [{from: 'dockerfile', to: 'image', label: 'Build', type: 'request'}],
+      focus: ['image'],
+      badges: {image: '4 layers'},
+      values: {tag: 'web:1.4.2', where: 'Build machine'},
+    },
+    {
+      short: 'Layers',
+      kind: '원리',
+      title: 'Only changed layers are rebuilt',
+      text: [
+        'An image stacks layers: base OS files, the language runtime, libraries, then app code. Lower layers rarely change. The top app code layer changes often.',
+        'If you copy only the dependency list first and install it, editing source code does not rerun the install step. That is why builds get faster from the second one on.',
+      ],
+      keyIdea: 'If only app code changes, only the top layer is rebuilt. Lower layers are reused.',
+      changes: ['~ Only layer 4 (app code) rebuilt', 'Layers 1-3 reused as is'],
+      flows: [{from: 'dockerfile', to: 'image', label: 'Top layer only', type: 'request'}],
+      focus: ['image'],
+      values: {tag: 'web:1.4.3'},
+    },
+    {
+      short: 'Name · push',
+      kind: '원리',
+      title: 'Name it and push it to a registry',
+      text: [
+        'Read harbor.example.com/demo/web:1.4.3 as registry address, project (demo), name (web) and tag (1.4.3). Without a registry, the public registry (Docker Hub) is assumed. Without a tag, latest is assumed.',
+        'A registry is a store you push images to and pull them from. An air-gapped network cannot reach public registries, so every needed image goes into a private registry such as Harbor ahead of time.',
+      ],
+      flows: [{from: 'image', to: 'registry', label: 'push', type: 'request'}],
+      focus: ['registry'],
+      badges: {image: null, registry: 'demo/web:1.4.3'},
+      values: {where: 'Harbor · demo project'},
+    },
+    {
+      short: 'latest',
+      kind: '주의',
+      title: 'latest is just a label that moves',
+      text: [
+        'If someone pushes a new image with the same tag, the label moves to the new image. Today\'s web:latest and next week\'s web:latest can be different images, and each server runs whichever version it pulled at the time.',
+        'So production uses tags that pin a version, like 1.4.3. When you must point to "exactly this image", use the digest (sha256:...), a unique value computed from the content.',
+      ],
+      flows: [{from: 'image', to: 'registry', label: 'push :latest', type: 'request'}],
+      focus: ['registry'],
+      status: {registry: 'warn'},
+      badges: {registry: 'latest → new image'},
+      values: {tag: {text: 'web:latest (which one?)', tone: 'bad'}},
+    },
+    {
+      short: 'Vuln scan',
+      kind: '원리',
+      title: 'Find known flaws inside the image',
+      text: [
+        'A vulnerability scan compares the list of components in an image against a public flaw database (CVE). Trivy is a common tool, and results come as counts by severity: Critical, High, Medium, Low.',
+        'A finding does not mean you are under attack. The fix is usually to rebuild with a newer base image or library. You only get scan results if a scanner is connected to the registry (for example Harbor with Trivy).',
+      ],
+      flows: [
+        {from: 'registry', to: 'scan', label: 'Scan', type: 'request'},
+        {from: 'scan', to: 'registry', label: 'Counts by severity', type: 'response'},
+      ],
+      focus: ['scan'],
+      status: {registry: null},
+      badges: {registry: 'demo/web:1.4.3'},
+      values: {tag: 'web:1.4.3', vuln: 'Results by severity'},
+    },
+    {
+      short: 'Pull',
+      kind: '원리',
+      title: 'The node that runs it pulls the image',
+      text: [
+        'The server (node) that will run the container pulls the image from the registry. The node\'s container runtime (containerd, etc.) does this.',
+        'When several images share lower layers, those layers are pulled and stored only once. Layers already present are skipped.',
+      ],
+      flows: [{from: 'registry', to: 'node', label: 'pull', type: 'response'}],
+      focus: ['node'],
+      badges: {node: 'New layers only'},
+      values: {where: 'Harbor · node'},
+    },
+    {
+      short: 'Run',
+      kind: '원리',
+      title: 'One image, many containers',
+      text: [
+        'The image is the cookie cutter, and containers are the cookies. You can make any number of containers from one image. The CMD command runs every time a container starts (RUN runs only once, at build time).',
+        'Values that differ per environment (DB address, log level) are not baked into the image. They are passed in as environment variables at run time. One image, different values per environment.',
+      ],
+      flows: [
+        {from: 'node', to: 'ct1', label: 'Run', type: 'request'},
+        {from: 'node', to: 'ct2', label: 'Run', type: 'request'},
+      ],
+      focus: ['ct1', 'ct2'],
+      status: {ct1: 'ok', ct2: 'ok'},
+      badges: {node: null},
+      values: {ct: '2 (same image)'},
+    },
+    {
+      short: 'Life · data',
+      kind: '주의',
+      title: 'Delete a container and its files go too',
+      text: [
+        'A container lives only while its one main process runs, and leaves an exit code when it ends. The image is read-only, so changes made at run time pile up only in that container and vanish when it is deleted.',
+        'Data that must survive, such as databases or uploaded files, goes on a volume outside the container. Even if container 1 is deleted, a new container that attaches the same volume picks up the data.',
+      ],
+      flows: [{from: 'ct2', to: 'volume', label: 'Attach same vol', type: 'request'}],
+      focus: ['ct1', 'volume'],
+      status: {ct1: 'gone'},
+      values: {ct: {text: '1 (container 1 deleted)', tone: 'bad'}},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Recipe → source → store → run',
+      text: [
+        'A Dockerfile becomes a layered image, gets a name and tag, is pushed to a registry and scanned, and a node pulls it and runs it as a container. A container is a disposable unit you can delete and recreate any time.',
+        'The registry keeps the digest, size and tag list of each image, and if a scanner is attached it keeps the scan results too (for example Harbor).',
+      ],
+      keyIdea: 'Images are built in layers and become containers on nodes via a registry. A tag is a label that can move. A digest is the content\'s unique fingerprint. "Not scanned" and "0 vulnerabilities" are different states.',
+      focus: ['image', 'registry', 'node'],
+    },
+  ]}
+/>
+
+## Easily confused pairs
+
+| Pair | Difference |
+| --- | --- |
+| Image / container | An image is the read-only source. A container is that image running (a process) |
+| RUN / CMD | RUN runs once at build time. CMD runs every time a container starts |
+| Tag / digest | A tag is a label that can move. A digest is a fixed unique value computed from the content |
+| latest / 1.4.3 | latest does not automatically point to the newest. Production uses tags that pin a version |
+| Not scanned / 0 vulnerabilities | No result because there is no scanner is not the same as scanned and found none |
+| EXPOSE / actual exposure | EXPOSE only documents a port. It does not make the port reachable from outside |
+
+Further reading: [Images (Kubernetes docs)](https://kubernetes.io/docs/concepts/containers/images/) · [Docker Build](https://docs.docker.com/build/) · [Harbor](https://goharbor.io/docs/) · [How a Pod Starts](../k8s/pod-startup.mdx)
+
+Next lesson: [Desired State and the Control Loop](./desired-state.mdx)

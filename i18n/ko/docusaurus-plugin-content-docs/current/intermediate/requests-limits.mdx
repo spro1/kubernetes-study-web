@@ -1,0 +1,180 @@
+---
+id: requests-limits
+title: 요청값과 상한값
+sidebar_label: 02 · 요청값과 상한값
+description: 스케줄러는 요청값으로 배치하고, 실행 중에는 상한값이 CPU는 느리게(스로틀링), 메모리는 강제 종료(OOMKilled)로 막는 과정과 요청값을 비웠을 때 생기는 일을 애니메이션으로 따라간다
+hide_table_of_contents: true
+---
+
+# 요청값과 상한값
+
+컨테이너마다 자원을 "최소한 이만큼 필요하다(요청값)"와 "이 이상은 못 쓴다(상한값)" 두 값으로 적는다. 두 값이 배치할 때와 실행 중에 각각 어떻게 쓰이는지 따라가 본다. 스케줄러가 노드를 거르고 고르는 자세한 과정은 [파드를 어느 노드에 둘까 (스케줄링)](../k8s/scheduling.mdx)에서 다룬다.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '약 10분', level: '중급'}}
+  groups={[
+    {label: 'worker-2', x: 345, y: 45, w: 520, h: 375, tone: 'biz', from: 1},
+  ]}
+  nodes={[
+    {id: 'spec', label: '파드 정의', sub: 'requests·limits', icon: 'book', tone: 'ext', x: 120, y: 110, show: true},
+    {id: 'sched', label: '스케줄러', sub: '요청 합계로 판단', icon: 'target', tone: 'cp', x: 120, y: 330, show: true},
+    {id: 'kubelet', label: 'kubelet', sub: '상한 지키기', icon: 'agent', tone: 'node', x: 450, y: 230},
+    {id: 'web', label: 'web', sub: 'Burstable', icon: 'pod', tone: 'app', size: 'sm', w: 120, x: 760, y: 110},
+    {id: 'pay', label: 'pay', sub: 'Guaranteed', icon: 'pod', tone: 'app', size: 'sm', w: 120, x: 760, y: 230},
+    {id: 'temp', label: 'temp', sub: 'BestEffort', icon: 'pod', tone: 'app', size: 'sm', w: 120, x: 760, y: 350},
+  ]}
+  metrics={[
+    {id: 'alloc', label: 'CPU 할당률(예시)'},
+    {id: 'cpu', label: 'web CPU / 상한'},
+    {id: 'mem', label: 'web 메모리 / 상한'},
+    {id: 'state', label: 'web 상태'},
+  ]}
+  learn={[
+    {text: '요청값은 예약, 상한값은 넘을 수 없는 선이라는 것', at: 0},
+    {text: '스케줄러는 사용량이 아니라 요청값 합계를 본다는 것', at: 1},
+    {text: 'CPU 상한은 느려지고, 메모리 상한은 종료된다는 차이', at: 4},
+    {text: '요청값을 비우면 생기는 일과 QoS 클래스', at: 6},
+  ]}
+  steps={[
+    {
+      short: '두 값',
+      kind: '시작',
+      title: '컨테이너마다 요청값과 상한값을 적는다',
+      text: [
+        'web 파드는 요청값(requests)으로 CPU 250m(코어 4분의 1)·메모리 256Mi, 상한값(limits)으로 CPU 500m·메모리 512Mi를 적었다.',
+        '식당에 비유하면 요청값은 예약 인원이고, 상한값은 그 테이블에 앉을 수 있는 최대 인원이다.',
+      ],
+      keyIdea: '요청값은 "최소한 이만큼 필요하다", 상한값은 "이 이상은 쓸 수 없다"는 뜻이다.',
+      flows: [{from: 'spec', to: 'sched', label: '배치 요청', type: 'request'}],
+      focus: ['spec'],
+      values: {cpu: '250m 요청', mem: '256Mi 요청', state: '없음'},
+    },
+    {
+      short: '배치',
+      kind: '원리',
+      title: '스케줄러는 요청값 합계로 자리를 계산한다',
+      text: [
+        '스케줄러는 노드의 할당 가능량에서 이미 놓인 파드들의 요청값 합계를 빼고, 남은 자리에 새 파드의 요청값이 들어가는지 본다.',
+        '실제 CPU 사용률은 보지 않는다. 그래서 사용률 그래프가 한가해 보여도 요청값 합계가 차 있으면 파드는 Pending이 된다.',
+      ],
+      keyIdea: '식당은 실제로 온 손님 수 대신 예약 인원 합계를 보고 손님을 받을지 정한다.',
+      flows: [{from: 'sched', to: 'kubelet', label: 'worker-2 배정', type: 'request'}],
+      focus: ['sched'],
+      values: {alloc: '70% → 76%'},
+    },
+    {
+      short: '실행',
+      kind: '원리',
+      title: '실행 중에는 노드가 상한값을 지킨다',
+      text: [
+        'worker-2의 kubelet이 web을 실행한다. 요청값만큼은 자리가 예약되어 있고, 평소에는 그보다 더 쓸 수도 있다.',
+        '다만 상한값은 넘지 못한다. 상한값은 실행 중에 노드가 막는 선이다.',
+      ],
+      flows: [{from: 'kubelet', to: 'web', label: '실행', type: 'request'}],
+      focus: ['kubelet', 'web'],
+      status: {web: 'ok'},
+      badges: {web: 'Running'},
+      values: {cpu: '120m / 500m', mem: '200Mi / 512Mi', state: 'Running'},
+    },
+    {
+      short: 'CPU 초과',
+      kind: '주의',
+      title: 'CPU 상한을 넘으려 하면 느려진다',
+      text: [
+        '요청이 몰려 web이 CPU를 더 쓰려 한다. 노드는 상한 500m을 넘지 못하게 속도를 늦춘다(스로틀링).',
+        '컨테이너는 죽지 않고 계속 실행되지만 응답이 느려진다. 상태 칸에는 아무 표시도 남지 않는다.',
+      ],
+      keyIdea: 'CPU는 나눠 쓸 수 있는 자원이라 느려지는 것으로 끝난다.',
+      flows: [{from: 'kubelet', to: 'web', label: '속도 늦추기', type: 'request'}],
+      focus: ['web'],
+      status: {web: 'warn'},
+      badges: {web: '느려짐'},
+      values: {cpu: {text: '500m / 500m', tone: 'bad'}, state: 'Running · 느림'},
+    },
+    {
+      short: '메모리 초과',
+      kind: '장애',
+      title: '메모리 상한을 넘으면 강제 종료된다',
+      text: [
+        '이번에는 web의 메모리가 512Mi를 넘었다. 메모리는 이미 쓴 것을 돌려받을 방법이 없어, 컨테이너를 강제 종료한다.',
+        '상태에 OOMKilled(Out Of Memory)와 종료 코드 137이 남고 재시작 횟수가 올라간다. 반복되면 CrashLoopBackOff가 된다.',
+      ],
+      keyIdea: '상한값이 너무 작으면 OOMKilled로 재시작이 반복된다. 메모리는 CPU보다 보수적으로 잡는다.',
+      flows: [{from: 'kubelet', to: 'web', label: '강제 종료', type: 'request'}],
+      focus: ['web'],
+      status: {web: 'error'},
+      badges: {web: 'OOMKilled'},
+      values: {cpu: '120m / 500m', mem: {text: '512Mi 초과', tone: 'bad'}, state: {text: 'OOMKilled', tone: 'bad'}},
+    },
+    {
+      short: '요청값 없음',
+      kind: '문제',
+      title: '요청값을 적지 않은 파드가 들어온다',
+      text: [
+        'temp 파드는 요청값도 상한값도 적지 않았다. 스케줄러는 필요량을 모른 채 배치하고, 리소스 쿼터가 걸린 구획이라면 생성 자체가 거절된다.',
+        '요청값이 없으면 HPA(자동 확장)도 사용률을 계산하지 못한다. 사용률은 요청값을 기준으로 계산하기 때문이다.',
+      ],
+      flows: [{from: 'kubelet', to: 'temp', label: '필요량 모름', type: 'request'}],
+      focus: ['temp'],
+      status: {web: 'ok', temp: 'warn'},
+      badges: {web: null, temp: '요청값 없음'},
+      values: {mem: '300Mi / 512Mi', state: 'Running'},
+    },
+    {
+      short: '축출',
+      kind: '장애',
+      title: '노드 메모리가 모자라면 BestEffort부터 내보낸다',
+      text: [
+        'temp가 메모리를 많이 쓰면서 노드 메모리가 부족해졌다. kubelet은 일부 파드를 내보내야(축출) 한다.',
+        '순서는 QoS 클래스로 정해진다. 아무것도 적지 않은 BestEffort(temp)가 가장 먼저, 요청값과 상한값이 같은 Guaranteed(pay)가 가장 나중이다.',
+      ],
+      keyIdea: 'QoS 클래스는 요청값·상한값을 어떻게 적었는지로 자동 결정된다. 중요한 서비스일수록 두 값을 명확히 적는다.',
+      changes: ['- temp 축출 (Evicted)'],
+      flows: [{from: 'kubelet', to: 'temp', label: '축출', type: 'request'}],
+      focus: ['temp', 'pay'],
+      status: {temp: 'error', pay: 'ok'},
+      badges: {temp: 'Evicted', pay: '가장 나중'},
+    },
+    {
+      short: '맞추기',
+      kind: '원리',
+      title: '요청값은 실제 사용량을 보고 맞춘다',
+      text: [
+        '요청값을 실제보다 크게 잡으면 자리가 있는데도 파드가 배치되지 않고 자원이 낭비된다. 작게 잡으면 한 노드에 파드가 몰려 서로 느려지거나 종료된다.',
+        '처음부터 정확할 필요는 없지만 비워 두면 안 된다. 실제 사용량을 모니터링해 보고 파드 정의를 고친다.',
+      ],
+      changes: ['~ web 메모리 상한 512Mi → 실제 사용량 기준으로 조정'],
+      flows: [{from: 'spec', to: 'sched', label: '고친 값으로', type: 'request'}],
+      focus: ['spec'],
+      status: {temp: 'gone'},
+      badges: {temp: null, pay: null},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '요청값은 배치에, 상한값은 실행에 쓰인다',
+      text: [
+        '스케줄러는 요청값 합계로 자리를 정하고, 노드는 실행 중에 상한값을 지킨다. CPU를 넘으면 느려지고, 메모리를 넘으면 종료된다.',
+        '요청값을 비우면 배치·자동 확장·축출 순서가 모두 흔들린다.',
+      ],
+      keyIdea: '요청값은 배치를, 상한값은 실행을 다스린다. CPU 상한은 느려지게, 메모리 상한은 OOMKilled로 끝난다. 사용률(kubectl top)과 할당률(kubectl describe node의 Allocated resources)은 따로 본다.',
+      focus: ['sched', 'kubelet'],
+    },
+  ]}
+/>
+
+## 오해와 사실
+
+| 오해 | 사실 |
+| --- | --- |
+| 사용률이 낮으면 파드가 들어갈 자리가 있다 | 스케줄러는 요청값 합계만 본다. 할당률이 차면 사용률과 무관하게 `Pending`이다 |
+| 상한을 넘으면 CPU든 메모리든 종료된다 | CPU는 느려질 뿐(스로틀링)이고, 메모리만 강제 종료(`OOMKilled`)된다 |
+| 요청값은 비워 둬도 된다 | 배치 판단이 틀어지고, 쿼터가 있는 구획에서는 생성이 거절되며, HPA가 사용률을 계산하지 못한다 |
+| HPA CPU 80%는 상한값의 80%다 | 요청값 기준이다 |
+| 요청값은 넉넉할수록 안전하다 | 자리가 있는데도 배치되지 않고 자원이 낭비된다 |
+
+더 읽을거리: [파드 및 컨테이너 리소스 관리](https://kubernetes.io/ko/docs/concepts/configuration/manage-resources-containers/) · [쿠버네티스 스케줄러](https://kubernetes.io/ko/docs/concepts/scheduling-eviction/kube-scheduler/) · [파드에 대한 서비스 품질(QoS) 구성](https://kubernetes.io/ko/docs/tasks/configure-pod-container/quality-service-pod/) · [파드를 어느 노드에 둘까 (스케줄링)](../k8s/scheduling.mdx)
+
+다음 레슨: [상태를 세 단계로 읽고 문제 확인하기](./troubleshoot-status.mdx)

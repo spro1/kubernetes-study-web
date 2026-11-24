@@ -1,0 +1,209 @@
+---
+id: pod-security
+title: 파드 보안 기준과 securityContext
+sidebar_label: 09 · 파드 보안 기준
+description: 네임스페이스 레이블로 파드 보안 기준을 걸고, 특권 파드가 어드미션에서 거절되며, securityContext로 고친 파드가 통과하는 과정을 애니메이션으로 따라간다
+hide_table_of_contents: true
+---
+
+# 파드 보안 기준과 securityContext
+
+같은 파드라도 루트(관리자 계정)로 돌거나 노드의 권한을 빌려 쓰면, 컨테이너 하나가 뚫렸을 때 노드 전체가 위험해진다. 네임스페이스에 건 보안 기준이 위험한 파드를 어디서 막고, 개발자는 무엇을 고쳐야 통과하는지 따라가 본다.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '약 10분', level: '고급'}}
+  groups={[
+    {label: 'API 서버 안', x: 225, y: 35, w: 480, h: 135, tone: 'mgmt'},
+  ]}
+  nodes={[
+    {id: 'user', label: '개발자', sub: 'kubectl apply', icon: 'user', tone: 'ext', x: 85, y: 110, show: true},
+    {id: 'spec', label: '파드 명세', sub: 'YAML', icon: 'book', tone: 'ext', x: 85, y: 300},
+    {id: 'api', label: 'API 서버', sub: '인증·인가', icon: 'gate', tone: 'cp', x: 330, y: 110, show: true},
+    {id: 'psa', label: '어드미션', sub: '파드 보안 검사', icon: 'shield', tone: 'cp', x: 600, y: 110, show: true},
+    {id: 'ns', label: 'shop', sub: '보안 레이블', icon: 'ticket', tone: 'store', x: 870, y: 110, show: true},
+    {id: 'etcd', label: 'etcd', sub: '클러스터 저장소', icon: 'db', tone: 'store', x: 600, y: 300},
+    {id: 'kubelet', label: 'kubelet', sub: '컨테이너 실행', icon: 'agent', tone: 'node', x: 870, y: 290},
+    {id: 'pod', label: 'web', sub: '파드', icon: 'pod', tone: 'app', size: 'sm', x: 870, y: 405},
+  ]}
+  metrics={[
+    {id: 'enforce', label: '거절 기준(enforce)'},
+    {id: 'result', label: '제출 결과'},
+    {id: 'running', label: '실행 중인 파드'},
+  ]}
+  learn={[
+    {text: 'privileged·baseline·restricted 세 단계의 차이', at: 0},
+    {text: 'enforce·audit·warn 세 모드가 하는 일', at: 1},
+    {text: 'Deployment로 만들면 거절이 왜 눈에 덜 띄는지', at: 4},
+    {text: 'securityContext 네 항목이 막는 위협', at: 6},
+  ]}
+  steps={[
+    {
+      short: '세 단계',
+      kind: '시작',
+      title: '파드 보안 기준은 세 단계다',
+      text: [
+        '쿠버네티스에는 파드 보안 수준을 세 단계로 정한 파드 보안 기준(Pod Security Standards)이 있다. privileged는 제한 없음, baseline은 알려진 권한 상승을 막는 최소 기준, restricted는 강화된 기준이다.',
+        'API 서버 안의 어드미션(요청 내용이 정책에 맞는지 보는 관문)이 파드가 들어올 때마다 이 기준으로 검사한다.',
+      ],
+      keyIdea: 'privileged는 시스템 구성요소용이다. 일반 애플리케이션 네임스페이스는 baseline 이상을 목표로 한다.',
+      flows: [{from: 'psa', to: 'ns', label: '기준 읽기', type: 'watch'}],
+      focus: ['psa'],
+      values: {enforce: '없음', running: '0'},
+    },
+    {
+      short: '레이블',
+      kind: '원리',
+      title: '네임스페이스 레이블로 기준과 모드를 정한다',
+      text: [
+        '기준은 네임스페이스에 레이블로 붙인다. 모드는 셋이다. enforce는 위반하면 생성 거절, audit는 감사 로그에 기록, warn은 사용자에게 경고만 보낸다.',
+        'shop 네임스페이스에는 enforce: baseline, warn: restricted를 걸었다. baseline 위반은 막고, restricted 위반은 알려만 준다.',
+      ],
+      changes: ['+ pod-security.kubernetes.io/enforce: baseline', '+ pod-security.kubernetes.io/warn: restricted'],
+      flows: [{from: 'psa', to: 'ns', label: '레이블 확인', type: 'watch'}],
+      focus: ['ns'],
+      badges: {ns: 'enforce: baseline'},
+      values: {enforce: 'baseline'},
+    },
+    {
+      short: '특권 제출',
+      kind: '문제',
+      title: '특권 컨테이너를 가진 파드를 제출한다',
+      text: [
+        '개발자가 privileged: true(노드의 거의 모든 권한을 쓰는 특권 컨테이너)를 켠 파드를 shop에 만든다.',
+        '인증과 인가(RBAC)는 통과한다. 이 개발자는 shop에 파드를 만들 권한이 있기 때문이다. 검사는 다음 관문에서 걸린다.',
+      ],
+      keyIdea: '권한 검사는 "누가 만들 수 있나"를, 파드 보안 기준은 "어떤 파드를 만들 수 있나"를 본다. 서로 대신하지 않는다.',
+      flows: [
+        {from: 'user', to: 'api', label: 'privileged', type: 'request'},
+        {from: 'api', to: 'psa', label: '내용 검사', type: 'request'},
+      ],
+      focus: ['api', 'psa'],
+      status: {api: 'ok'},
+    },
+    {
+      short: '거절',
+      kind: '문제',
+      title: '어드미션에서 거절된다',
+      text: [
+        '특권 컨테이너는 baseline이 막는 대상이다. 어드미션이 요청을 거절하고, 사용자는 `forbidden:` 과 `PodSecurity "baseline:latest"` 가 들어 있는 거절 메시지를 받는다.',
+        'etcd에는 아무것도 기록되지 않는다. 파드는 처음부터 만들어지지 않았다.',
+      ],
+      keyIdea: '거절 메시지에는 어느 기준의 어느 항목을 어겼는지가 들어 있다. 메시지에 적힌 항목을 securityContext에서 고치면 된다.',
+      flows: [
+        {from: 'psa', to: 'api', label: '거절', type: 'response'},
+        {from: 'api', to: 'user', label: '403 거절', type: 'response'},
+      ],
+      focus: ['psa'],
+      status: {psa: 'error', api: null},
+      values: {result: {text: '거절됨', tone: 'bad'}},
+    },
+    {
+      short: '숨은 거절',
+      kind: '주의',
+      title: 'Deployment로 만들면 거절이 한 단계 뒤에서 일어난다',
+      text: [
+        'enforce는 파드에만 적용된다. 같은 내용을 Deployment로 제출하면 Deployment는 저장되고, 실제 파드를 만드는 단계에서 거절된다.',
+        '그래서 배포는 "성공"으로 보이는데 파드가 0개인 상태가 된다. 원인은 ReplicaSet의 이벤트에 남는다. warn과 audit는 Deployment 제출 때도 미리 알려 준다.',
+      ],
+      keyIdea: '"배포는 됐는데 파드가 없다"는 증상을 만나면 이벤트에서 보안 기준 거절부터 확인한다.',
+      flows: [
+        {from: 'user', to: 'api', label: 'Deployment', type: 'request'},
+        {from: 'api', to: 'etcd', label: '저장', type: 'request'},
+      ],
+      focus: ['etcd'],
+      status: {psa: 'warn'},
+      badges: {etcd: '파드 0개'},
+      values: {result: {text: '저장됐지만 파드 0개', tone: 'bad'}},
+    },
+    {
+      short: '경고 먼저',
+      kind: '원리',
+      title: 'warn·audit로 먼저 걸고, 확인한 뒤 enforce로 올린다',
+      text: [
+        '처음부터 enforce: restricted를 걸면 기존 애플리케이션이 한꺼번에 생성 거절될 수 있다. 그래서 warn·audit 모드로 먼저 걸어 둔다.',
+        'warn은 제출할 때 경고 문구로 돌아오고, audit는 감사 로그에 남는다. 위반 목록을 모아 이미지를 고친 뒤 enforce로 올리는 순서가 안전하다.',
+      ],
+      flows: [
+        {from: 'psa', to: 'api', label: '경고 붙임', type: 'response'},
+        {from: 'api', to: 'user', label: 'Warning', type: 'response'},
+      ],
+      focus: ['ns'],
+      status: {psa: null},
+      badges: {ns: 'warn: restricted'},
+    },
+    {
+      short: '명세 수정',
+      kind: '원리',
+      title: 'securityContext로 파드를 고친다',
+      text: [
+        'securityContext는 파드와 컨테이너가 어떤 권한으로 돌지 적는 설정이다. runAsNonRoot는 루트 실행 거부, allowPrivilegeEscalation: false는 실행 중 권한 상승 금지다.',
+        'capabilities drop ALL은 리눅스 커널 기능을 모두 빼고, readOnlyRootFilesystem은 컨테이너 파일 시스템을 읽기 전용으로 만든다. restricted는 여기에 seccomp(위험한 시스템 호출을 막는 필터)도 요구한다.',
+      ],
+      changes: [
+        '- privileged: true',
+        '+ runAsNonRoot: true',
+        '+ allowPrivilegeEscalation: false',
+        '+ capabilities.drop: ALL',
+        '+ readOnlyRootFilesystem: true',
+        '+ seccompProfile: RuntimeDefault',
+      ],
+      flows: [
+        {from: 'spec', to: 'user', label: '수정본', type: 'request'},
+        {from: 'user', to: 'api', label: '다시 제출', type: 'request'},
+        {from: 'api', to: 'psa', type: 'request'},
+      ],
+      focus: ['spec'],
+      badges: {etcd: null},
+      values: {result: '검사 중'},
+    },
+    {
+      short: '통과·실행',
+      kind: '주의',
+      title: '어드미션은 통과해도, 이미지가 맞아야 실행된다',
+      text: [
+        '고친 파드는 기준을 통과해 저장되고, kubelet이 컨테이너를 띄운다. 그런데 루트로 실행되도록 만든 이미지라면 runAsNonRoot 때문에 시작에 실패한다.',
+        '임시 파일을 쓰는 애플리케이션은 읽기 전용 파일 시스템에서 쓰기 가능한 임시 볼륨을 따로 붙여야 하고, 1024 미만 포트를 여는 프로그램은 커널 기능 하나를 다시 추가해야 한다.',
+      ],
+      keyIdea: '이 설정들은 이미지가 그렇게 실행되도록 만들어져 있어야 효과가 난다. 보안 기준 높이기는 이미지를 만드는 개발 쪽과 함께 하는 일이다.',
+      flows: [
+        {from: 'psa', to: 'etcd', label: '허용', type: 'request'},
+        {from: 'api', to: 'kubelet', label: '파드 배정', type: 'watch'},
+        {from: 'kubelet', to: 'pod', label: '비루트 실행', type: 'request'},
+      ],
+      focus: ['pod', 'kubelet'],
+      status: {psa: 'ok', pod: 'ok'},
+      badges: {pod: 'non-root'},
+      values: {result: {text: '통과', tone: 'good'}, running: {text: '1', tone: 'good'}},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '기준은 네임스페이스에, 고칠 곳은 파드 명세와 이미지에',
+      text: [
+        '네임스페이스 레이블이 기준과 모드를 정하고, 어드미션이 파드마다 검사해 위반을 거절하거나 경고했다.',
+        '통과하려면 securityContext로 권한을 줄이고, 이미지도 비루트·읽기 전용 환경에서 돌도록 만들어야 한다.',
+      ],
+      keyIdea: '기준은 네임스페이스 레이블로 걸고, 고칠 곳은 파드 명세와 이미지다. enforce로 바꾸기 전에 warn·audit 모드나 kubectl label --dry-run=server로 영향 범위를 먼저 확인한다.',
+      focus: ['ns', 'psa', 'pod'],
+    },
+  ]}
+/>
+
+## 기준별로 막는 것과 securityContext 항목
+
+| 항목 | 무엇을 막나 | 적용할 때 생기는 일 |
+| --- | --- | --- |
+| baseline | 특권 컨테이너, 노드 네트워크·프로세스 공유, 노드 경로 마운트 | 일반 애플리케이션은 대부분 그대로 통과한다 |
+| restricted | baseline + 루트 실행, 권한 상승, 커널 기능, seccomp 없음 | 루트로 만든 이미지는 거절되거나 시작에 실패한다 |
+| `runAsNonRoot` | 컨테이너 탈출 시 노드 루트 권한 획득 | 루트로 실행하도록 만든 이미지는 시작에 실패한다 |
+| `readOnlyRootFilesystem` | 실행 파일을 바꾸거나 도구를 심는 것 | 임시 파일용 쓰기 가능한 볼륨을 따로 붙여야 한다 |
+| `capabilities.drop` | 네트워크 설정·파일 소유권 변경 같은 특수 권한 남용 | 1024 미만 포트를 쓰면 기능 하나를 다시 추가해야 한다 |
+| `allowPrivilegeEscalation: false` | 실행 중 권한 상승 | 대부분 영향 없다 |
+
+API 서버의 세 관문(인증·인가·어드미션) 전체는 [API 요청 경로](./api-request-path.mdx)에서 따로 본다.
+
+더 읽을거리: [파드 보안 표준](https://kubernetes.io/docs/concepts/security/pod-security-standards/) · [파드 시큐리티 어드미션](https://kubernetes.io/docs/concepts/security/pod-security-admission/) · [파드와 컨테이너에 securityContext 설정](https://kubernetes.io/docs/tasks/configure-pod-container/security-context/)
+
+다음 레슨: [이미지와 공급망 보안](./supply-chain.mdx)

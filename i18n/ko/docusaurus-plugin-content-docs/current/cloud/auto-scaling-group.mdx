@@ -1,0 +1,188 @@
+---
+id: auto-scaling-group
+title: 가상 머신 자동 증감 (오토스케일링 그룹)
+sidebar_label: 04 · 가상 머신 자동 증감
+description: 시작 템플릿과 최소·희망·최대 수, 지표 경보로 늘어나는 과정, 새 가상 머신의 헬스 체크와 로드밸런서 등록, 비정상 교체, 축소와 쿨다운을 애니메이션으로 따라간다
+hide_table_of_contents: true
+---
+
+# 가상 머신 자동 증감 (오토스케일링 그룹)
+
+쇼핑몰이 가상 머신 두 대로 돌고 있다. 요청이 몰리면 가상 머신을 자동으로 늘리고, 고장 난 것은 바꾸고, 한가해지면 줄이는 장치가 오토스케일링 그룹이다. 같은 일을 파드 단위로 하는 HPA는 [부하에 맞춰 늘어나기 (HPA)](../k8s/autoscaling.mdx)에서 다룬다. 여기서는 그보다 한 층 아래, 서버(가상 머신) 수가 늘고 주는 흐름을 본다.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '약 9분', level: '기초'}}
+  groups={[
+    {label: '오토스케일링 그룹', x: 270, y: 190, w: 380, h: 245, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'user', label: '사용자', sub: '쇼핑 요청', icon: 'browser', tone: 'ext', x: 90, y: 90, show: true},
+    {id: 'lb', label: '로드밸런서', sub: '등록된 VM에 분배', icon: 'split', tone: 'cp', x: 90, y: 300, show: true},
+    {id: 'mon', label: '모니터링', sub: '경보 CPU 70%', icon: 'bell', tone: 'cp', x: 560, y: 90},
+    {id: 'asg', label: '스케일 그룹', sub: '희망 수 관리', icon: 'scale', tone: 'cp', x: 870, y: 90, show: true},
+    {id: 'tmpl', label: '시작 템플릿', sub: '이미지·유형', icon: 'book', tone: 'store', x: 870, y: 300},
+    {id: 'vm1', label: 'VM 1', sub: '가상 머신', icon: 'server', tone: 'app', size: 'sm', x: 360, y: 270, show: true},
+    {id: 'vm2', label: 'VM 2', sub: '가상 머신', icon: 'server', tone: 'app', size: 'sm', x: 560, y: 270, show: true},
+    {id: 'vm3', label: 'VM 3', sub: '새 VM', icon: 'server', tone: 'app', size: 'sm', x: 560, y: 380},
+    {id: 'vm4', label: 'VM 4', sub: '교체 VM', icon: 'server', tone: 'app', size: 'sm', x: 360, y: 380},
+  ]}
+  metrics={[
+    {id: 'cpu', label: '평균 CPU'},
+    {id: 'desired', label: '희망 수 (최소 2 · 최대 4)'},
+    {id: 'serving', label: '요청 받는 VM'},
+  ]}
+  learn={[
+    {text: '시작 템플릿과 최소·희망·최대 수가 하는 일', at: 1},
+    {text: '지표 경보가 희망 수를 바꾸는 과정', at: 3},
+    {text: '새 VM이 헬스 체크를 통과해야 요청을 받는다는 것', at: 5},
+    {text: '고장 난 VM을 그룹이 스스로 바꾼다는 것', at: 6},
+    {text: '줄일 때 쿨다운을 두는 이유', at: 7},
+  ]}
+  steps={[
+    {
+      short: '평소',
+      kind: '시작',
+      title: '가상 머신 두 대가 요청을 나눠 받는다',
+      text: [
+        '로드밸런서 뒤에서 VM 두 대가 요청을 받고 있다. 두 VM은 오토스케일링 그룹(auto scaling group)이라는 묶음에 속해 있다.',
+        '그룹에는 "최소 2대, 희망 2대, 최대 4대"가 적혀 있다. 그룹은 실제 VM 수를 언제나 희망 수에 맞추려 한다.',
+      ],
+      flows: [
+        {from: 'user', to: 'lb', type: 'request'},
+        {from: 'lb', to: 'vm1', type: 'request'},
+        {from: 'lb', to: 'vm2', type: 'request', bend: -0.15},
+      ],
+      status: {vm1: 'ok', vm2: 'ok'},
+      values: {cpu: '40%', desired: '2', serving: '2'},
+    },
+    {
+      short: '템플릿',
+      kind: '원리',
+      title: '새 VM은 시작 템플릿대로 만든다',
+      text: [
+        '시작 템플릿(launch template)은 VM의 설계도다. 어떤 이미지로 부팅할지, 인스턴스 유형(CPU·메모리 크기), 네트워크, 보안 그룹, 부팅 때 실행할 스크립트가 적혀 있다.',
+        '그룹이 VM을 새로 만들 때마다 이 설계도를 그대로 쓰므로, 늘어난 VM도 기존 VM과 똑같이 구성된다.',
+      ],
+      flows: [{from: 'tmpl', to: 'asg', label: '설계도', type: 'response'}],
+      focus: ['tmpl'],
+    },
+    {
+      short: '부하 증가',
+      kind: '문제',
+      title: '요청이 몰려 CPU가 치솟는다',
+      text: [
+        '행사가 시작돼 요청이 몰렸다. 두 VM의 CPU 사용률이 85%까지 오르고 응답이 느려진다.',
+        '모니터링 서비스가 각 VM의 CPU 사용률을 주기적으로 모은다.',
+      ],
+      flows: [
+        {from: 'vm1', to: 'mon', label: 'CPU 지표', type: 'response'},
+        {from: 'vm2', to: 'mon', type: 'response'},
+      ],
+      focus: ['mon'],
+      status: {vm1: 'warn', vm2: 'warn'},
+      values: {cpu: {text: '85%', tone: 'bad'}},
+    },
+    {
+      short: '경보',
+      kind: '원리',
+      title: '경보가 울려 희망 수가 3이 된다',
+      text: [
+        '"평균 CPU 70% 초과가 일정 시간 이어지면"이라는 경보 조건이 충족됐다. 경보에 연결된 확장 정책이 그룹의 희망 수를 2에서 3으로 올린다.',
+        '희망 수는 최대 4를 넘지 못한다. 목표 지표 값을 정해 두면 필요한 수를 알아서 계산하는 방식(대상 추적)도 있다.',
+      ],
+      keyIdea: '오토스케일링 그룹은 "몇 대가 있어야 하나(희망 수)"만 바꾸고, 그 수에 맞춰 VM을 만들거나 없앤다.',
+      flows: [{from: 'mon', to: 'asg', label: '경보', type: 'request'}],
+      focus: ['asg'],
+      values: {desired: '3'},
+    },
+    {
+      short: 'VM 부팅',
+      kind: '원리',
+      title: '그룹이 새 VM을 만들어 부팅한다',
+      text: [
+        '그룹이 시작 템플릿대로 VM 3을 만든다. 운영체제가 부팅하고 앱이 뜨기까지 보통 몇 분이 걸린다.',
+        '컨테이너 하나를 띄우는 데 수 초면 되는 것과 비교하면 훨씬 느리다. 그래서 VM 확장은 부하가 오기 조금 전에 시작하도록 경보를 잡는다.',
+      ],
+      flows: [{from: 'asg', to: 'vm3', label: '새 VM 생성', type: 'request'}],
+      focus: ['vm3'],
+      status: {vm3: 'warn'},
+      badges: {vm3: '부팅 중'},
+      values: {serving: '2 (1대 준비 중)'},
+    },
+    {
+      short: '등록',
+      kind: '원리',
+      title: '헬스 체크를 통과하면 로드밸런서에 등록된다',
+      text: [
+        'VM 3이 로드밸런서 대상에 등록되고, 로드밸런서는 헬스 체크로 앱이 실제로 응답하는지 확인한다. 통과해야 요청을 나눠 받기 시작한다.',
+        '세 대가 요청을 나누니 평균 CPU가 내려온다.',
+      ],
+      flows: [
+        {from: 'lb', to: 'vm3', label: '헬스 체크', type: 'watch', bend: 0.15},
+        {from: 'lb', to: 'vm1', type: 'request'},
+      ],
+      focus: ['vm3'],
+      status: {vm1: 'ok', vm2: 'ok', vm3: 'ok'},
+      badges: {vm3: null},
+      values: {cpu: {text: '57%', tone: 'good'}, serving: '3'},
+    },
+    {
+      short: '교체',
+      kind: '주의',
+      title: '고장 난 VM은 그룹이 스스로 바꾼다',
+      text: [
+        'VM 1의 앱이 멈춰 헬스 체크에 연속으로 실패한다. 그룹은 VM 1을 비정상으로 보고 종료한 뒤, 템플릿대로 VM 4를 새로 만든다.',
+        '희망 수 3은 그대로이므로 사람이 손대지 않아도 대수가 다시 맞춰진다. 단, VM 안에 저장해 둔 파일은 함께 사라지니 데이터는 VM 바깥 저장소에 둬야 한다.',
+      ],
+      flows: [
+        {from: 'lb', to: 'vm1', label: '헬스 체크 실패', type: 'watch'},
+        {from: 'tmpl', to: 'vm4', label: '교체 VM', type: 'request'},
+      ],
+      focus: ['vm1', 'vm4'],
+      status: {vm1: 'error', vm4: 'warn'},
+      badges: {vm1: '교체', vm4: '부팅 중'},
+      values: {serving: {text: '2 (1대 교체 중)', tone: 'bad'}},
+    },
+    {
+      short: '축소',
+      kind: '원리',
+      title: '한가해지면 줄이고, 쿨다운 동안 기다린다',
+      text: [
+        '행사가 끝나 CPU가 낮게 유지되자 희망 수가 3에서 2로 내려간다. 그룹은 한 대를 골라 로드밸런서에서 먼저 빼고, 처리 중이던 요청이 끝나면 종료한다.',
+        '조정 직후에는 쿨다운(대기 시간) 동안 다음 조정을 미룬다. 부하가 잠깐 출렁일 때마다 늘렸다 줄였다를 반복하지 않게 하려는 것이다.',
+      ],
+      flows: [{from: 'asg', to: 'vm3', label: '종료', type: 'request'}],
+      focus: ['asg', 'vm3'],
+      status: {vm1: 'gone', vm4: 'ok', vm3: 'off'},
+      badges: {vm1: null, vm4: null, vm3: '쿨다운'},
+      values: {cpu: {text: '30%', tone: 'good'}, desired: '2', serving: '2'},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '설계도, 대수의 범위, 경보, 헬스 체크',
+      text: [
+        '오토스케일링 그룹은 시작 템플릿으로 똑같은 VM을 찍어 내고, 경보가 바꾼 희망 수에 맞춰 늘리고 줄인다. 헬스 체크에 실패한 VM은 스스로 바꾼다.',
+        'HPA가 몇 초 만에 파드를 늘린다면, 이 그룹은 몇 분 걸려 서버를 늘린다. 쿠버네티스 노드를 자동으로 늘리는 기능도 결국 이런 가상 머신 증설 위에서 움직인다.',
+      ],
+      keyIdea: '오토스케일링 그룹은 시작 템플릿으로 VM을 찍어 내고, 최소·최대 범위 안에서 희망 수를 맞춘다. 새 VM은 부팅과 헬스 체크를 마칠 때까지 시간이 걸리므로 경보 기준에 여유를 둔다.',
+      focus: ['asg'],
+      status: {vm3: 'gone'},
+      badges: {vm3: null},
+    },
+  ]}
+/>
+
+## 오토스케일링 그룹 이름 (AWS · Azure · GCP)
+
+| 개념 | AWS | Azure | GCP |
+| --- | --- | --- | --- |
+| 자동 증감하는 VM 묶음 | Auto Scaling group | Virtual Machine Scale Sets | 관리형 인스턴스 그룹 (MIG) |
+| VM 설계도 | 시작 템플릿 (launch template) | 스케일 세트의 VM 모델 | 인스턴스 템플릿 |
+| 헬스 체크 실패 VM 교체 | 헬스 체크 기반 교체 | 자동 인스턴스 복구 | 자동 복구 (autohealing) |
+
+더 읽을거리: [Amazon EC2 Auto Scaling (AWS)](https://docs.aws.amazon.com/autoscaling/ec2/userguide/what-is-amazon-ec2-auto-scaling.html) · [노드 오토스케일링 (쿠버네티스 문서)](https://kubernetes.io/docs/concepts/cluster-administration/node-autoscaling/) · [부하에 맞춰 늘어나기 (HPA)](../k8s/autoscaling.mdx)
+
+다음 레슨: [API 요청 하나의 권한 검사 (IAM)](./iam-request.mdx)

@@ -1,0 +1,197 @@
+---
+id: mesh-traffic
+title: 서비스 메시 ② 트래픽 나누기
+sidebar_label: 04 · 트래픽 나누기
+description: 서비스 메시(Istio)의 트래픽 정책(서브셋)과 가상 서비스(비율·헤더 규칙)로 새 버전에 일부만 보내는 카나리 배포, 연결 제한, 재시도·타임아웃, 비율 되돌리기를 애니메이션으로 따라간다
+hide_table_of_contents: true
+---
+
+# 서비스 메시 ② 트래픽 나누기
+
+api 새 버전(v2)을 모두에게 바로 내보내지 않고 **10%에게만 먼저** 보낸다. Istio의 `트래픽 정책`(DestinationRule)과 `가상 서비스`(VirtualService)로 앱 코드를 고치지 않고 나누는 방법을 따라간다.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '약 10분', level: '중급'}}
+  nodes={[
+    {id: 'web', label: 'web 앱', sub: '부르는 쪽', icon: 'pod', tone: 'app', x: 100, y: 230, show: true},
+    {id: 'webpx', label: '프록시', sub: '여기서 분배', icon: 'split', tone: 'node', size: 'sm', x: 317, y: 230, show: true},
+    {id: 'istiod', label: 'istiod', sub: '규칙 전달', icon: 'gear', tone: 'cp', x: 560, y: 70, show: true},
+    {id: 'vs', label: '가상 서비스', sub: '어디로·몇 %', icon: 'route', tone: 'store', x: 330, y: 395},
+    {id: 'dr', label: '트래픽 정책', sub: '서브셋·연결', icon: 'book', tone: 'store', x: 610, y: 395},
+    {id: 'v1', label: 'api v1', sub: '기존 버전', icon: 'pod', tone: 'app', x: 870, y: 190, show: true},
+    {id: 'v2', label: 'api v2', sub: '새 버전', icon: 'pod', tone: 'app', x: 870, y: 350},
+  ]}
+  metrics={[
+    {id: 'p1', label: 'v1로 가는 몫'},
+    {id: 'p2', label: 'v2로 가는 몫'},
+    {id: 'scope', label: 'v2를 만나는 사람'},
+  ]}
+  learn={[
+    {text: '규칙이 없으면 파드 수대로 나뉜다는 것', at: 1},
+    {text: '트래픽 정책의 서브셋이 버전에 이름을 붙인다는 것', at: 2},
+    {text: '가상 서비스의 비율·헤더 규칙으로 카나리 배포를 하는 방법', at: 3},
+    {text: '연결 제한·재시도·타임아웃을 어디에 적는지', at: 5},
+    {text: '되돌리기가 비율 숫자만 바꾸는 일이라는 것', at: 7},
+  ]}
+  steps={[
+    {
+      short: '현재',
+      kind: '시작',
+      title: '지금은 모든 요청이 v1으로 간다',
+      text: [
+        'web 앱이 api 서비스를 부른다. 앞 레슨처럼 두 파드 모두 사이드카가 붙어 있고, 요청은 web 쪽 프록시를 지나 api v1에 닿는다.',
+        '서비스 메시에서는 요청을 보내는 쪽 프록시가 목적지를 고른다. 그래서 나누기 규칙도 이 프록시에서 적용된다.',
+      ],
+      flows: [
+        {from: 'web', to: 'webpx', type: 'request'},
+        {from: 'webpx', to: 'v1', label: '100%', type: 'request'},
+      ],
+      values: {p1: '100%', p2: '-', scope: '없음'},
+    },
+    {
+      short: 'v2 배포',
+      kind: '주의',
+      title: '규칙 없이 v2를 띄우면 파드 수대로 나뉜다',
+      text: [
+        'version: v2 레이블을 단 새 파드를 같은 api 서비스 뒤에 띄운다. 서비스는 레이블로 파드를 묶으므로 v1과 v2를 구분하지 않는다.',
+        '나누기 규칙이 없으면 프록시는 서비스 뒤 파드에 고르게 보낸다. 파드가 하나씩이면 요청의 절반쯤이 아직 검증 안 된 v2로 간다.',
+      ],
+      flows: [
+        {from: 'webpx', to: 'v1', label: '절반쯤', type: 'request'},
+        {from: 'webpx', to: 'v2', label: '절반쯤', type: 'request'},
+      ],
+      focus: ['v2'],
+      status: {v2: 'warn'},
+      values: {p1: '약 50%', p2: {text: '약 50%', tone: 'bad'}, scope: {text: '절반쯤', tone: 'bad'}},
+    },
+    {
+      short: '서브셋',
+      kind: '원리',
+      title: '트래픽 정책으로 버전마다 이름을 붙인다',
+      text: [
+        '트래픽 정책(DestinationRule — 목적지 쪽 규칙)에 "version: v1 파드는 서브셋 v1, version: v2 파드는 서브셋 v2"라고 적는다. YAML로 적어 kubectl apply로 만든다.',
+        '이름만 붙였으니 흐름은 아직 그대로다. kubectl get destinationrule -o yaml로 subsets에 v1·v2가 들어갔는지 본다.',
+      ],
+      keyIdea: '서브셋이 없으면 가상 서비스가 v1·v2를 따로 가리킬 방법이 없다.',
+      flows: [{from: 'dr', to: 'istiod', label: '서브셋 정의', type: 'request'}],
+      focus: ['dr'],
+      status: {v2: null},
+      badges: {dr: 'v1 · v2'},
+    },
+    {
+      short: '90 : 10',
+      kind: '원리',
+      title: '가상 서비스로 v1 90%, v2 10%를 정한다',
+      text: [
+        '가상 서비스(VirtualService — 요청을 어디로 몇 %씩 보낼지 정하는 규칙)에 "api로 가는 요청의 90%는 서브셋 v1, 10%는 서브셋 v2"라고 적는다. istiod가 이 규칙을 web 쪽 프록시에 내려 준다.',
+        '프록시는 요청마다 비율대로 목적지를 고른다. 새 버전에 조금만 먼저 보내 보는 이 방식을 카나리 배포라고 한다.',
+      ],
+      keyIdea: '비율은 파드 수와 상관없다. v2 파드가 하나뿐이어도 정해진 10%만 받는다.',
+      flows: [
+        {from: 'vs', to: 'istiod', label: '90 : 10', type: 'request'},
+        {from: 'webpx', to: 'v1', label: '90%', type: 'request'},
+        {from: 'webpx', to: 'v2', label: '10%', type: 'request'},
+      ],
+      focus: ['vs', 'webpx'],
+      badges: {vs: '90 : 10'},
+      values: {p1: {text: '90%', tone: 'good'}, p2: {text: '10%', tone: 'good'}, scope: {text: '요청의 10%', tone: 'good'}},
+    },
+    {
+      short: '헤더 조건',
+      kind: '원리',
+      title: '특정 헤더가 붙은 요청만 v2로 보낸다',
+      text: [
+        '비율보다 먼저 검사할 조건을 넣을 수 있다. 예를 들어 요청 헤더에 테스터 표시(end-user: qa 같은 값)가 있으면 무조건 v2, 나머지는 90 : 10을 따르게 한다.',
+        '가상 서비스의 규칙은 위에서부터 맞춰 보고 처음 맞는 규칙을 쓴다. 그래서 좁은 조건(헤더)을 위에, 넓은 조건(비율)을 아래에 둔다.',
+      ],
+      keyIdea: '헤더는 앱이 다음 호출에도 넘겨줘야 한다. 중간 서비스가 헤더를 버리면 그 뒤로는 조건이 맞지 않는다.',
+      flows: [
+        {from: 'web', to: 'webpx', label: '헤더 포함', type: 'request'},
+        {from: 'webpx', to: 'v2', label: '헤더 일치', type: 'request'},
+      ],
+      focus: ['webpx', 'v2'],
+      badges: {vs: '헤더 → v2'},
+      values: {scope: '테스터 + 10%'},
+    },
+    {
+      short: '연결 규칙',
+      kind: '원리',
+      title: '트래픽 정책이 도착한 뒤의 규칙을 정한다',
+      text: [
+        '트래픽 정책은 서브셋 말고도 목적지 쪽 규칙을 맡는다. 서브셋 안에서 파드를 고르는 부하 분산 방식(Load Balancing)과 TLS 설정을 여기서 정한다.',
+        '연결 수·대기 요청 수의 상한(연결 제한)과, 계속 실패하는 파드를 잠시 빼는 규칙(서킷 브레이커)도 트래픽 정책에 적는다. 몰리는 요청이 한 버전을 쓰러뜨리지 않게 막는 장치다.',
+      ],
+      keyIdea: '서킷 브레이커 기준을 너무 민감하게 잡으면 정상 파드까지 빠진다.',
+      flows: [
+        {from: 'dr', to: 'istiod', label: '연결 규칙', type: 'request'},
+        {from: 'webpx', to: 'v1', type: 'request'},
+        {from: 'webpx', to: 'v2', type: 'request'},
+      ],
+      focus: ['dr'],
+      badges: {dr: '분산·제한', vs: null},
+    },
+    {
+      short: '재시도',
+      kind: '주의',
+      title: '재시도·타임아웃은 가상 서비스에 적는다',
+      text: [
+        'v2가 느려졌다. 가상 서비스에 "실패하면 몇 번 다시 보낼지(재시도)"와 "얼마 안에 답이 없으면 끊을지(타임아웃)"를 적어 두면 프록시가 대신 처리한다.',
+        '재시도는 공짜가 아니다. 결제처럼 두 번 실행되면 안 되는 요청에 걸면 중복 처리가 생기고, 호출 사슬 여러 곳에서 재시도하면 느린 서비스에 요청이 몇 배로 몰린다.',
+      ],
+      keyIdea: '재시도는 사슬의 한 곳에서만, 간격을 늘려 가며 거는 것이 일반 원칙이다. 앞단 타임아웃이 뒷단보다 짧으면 뒷단이 끝나기 전에 앞단이 포기한다.',
+      flows: [
+        {from: 'vs', to: 'istiod', label: '재시도 규칙', type: 'request'},
+        {from: 'webpx', to: 'v2', label: '재시도', type: 'request'},
+      ],
+      focus: ['v2', 'vs'],
+      status: {v2: 'warn'},
+      badges: {dr: null},
+    },
+    {
+      short: '되돌리기',
+      kind: '문제',
+      title: 'v2에 문제가 생기면 비율을 되돌린다',
+      text: [
+        'v2에서 오류가 늘었다. kubectl edit virtualservice로 가상 서비스를 열어 비율(weight)을 100 : 0으로 고친다.',
+        '파드를 지우거나 다시 배포하지 않는다. 바뀐 규칙이 프록시에 내려가면 새 요청부터 모두 v1으로 가고, v2 파드는 남겨 둔 채 원인을 살핀다.',
+      ],
+      keyIdea: '롤링 업데이트의 되돌리기는 파드를 다시 바꾸지만, 메시의 되돌리기는 비율 숫자만 바꾼다.',
+      flows: [
+        {from: 'vs', to: 'istiod', label: '100 : 0', type: 'request'},
+        {from: 'webpx', to: 'v1', label: '100%', type: 'request'},
+      ],
+      focus: ['vs', 'v1'],
+      status: {v2: 'error'},
+      badges: {vs: '100 : 0'},
+      values: {p1: {text: '100%', tone: 'good'}, p2: {text: '0% (보관)', tone: 'good'}, scope: {text: '없음', tone: 'good'}},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '트래픽 정책은 "무엇", 가상 서비스는 "어디로·얼마나"',
+      text: [
+        '트래픽 정책이 버전 묶음(서브셋)과 도착한 뒤의 연결 규칙을, 가상 서비스가 비율·헤더 조건과 재시도·타임아웃을 정한다. 실제 분배는 요청을 보내는 쪽 프록시가 한다.',
+        'Argo Rollouts나 Flagger 같은 도구는 이 비율을 지표에 따라 자동으로 조금씩 올리고, 문제가 보이면 되돌린다.',
+      ],
+      keyIdea: '트래픽 정책은 버전 묶음과 도착 뒤 연결 규칙을, 가상 서비스는 어디로 몇 %·재시도·타임아웃을 정한다. 비율 변경은 접속에 바로 영향을 주니 Git으로 관리하고 바꾼 뒤 지표를 확인한다.',
+      focus: ['vs', 'dr'],
+      status: {v2: null},
+      badges: {vs: null},
+    },
+  ]}
+/>
+
+## 직접 확인해 보기
+
+```bash
+kubectl get destinationrule api -o yaml      # subsets, trafficPolicy(부하 분산·연결 제한)
+kubectl get virtualservice api -o yaml       # match(헤더), route weight, retries, timeout
+kubectl edit virtualservice api              # 비율을 100 : 0으로 되돌리기
+istioctl proxy-config routes deploy/web      # web 쪽 프록시가 받은 실제 규칙
+```
+
+더 읽을거리: [Istio 트래픽 관리](https://istio.io/latest/docs/concepts/traffic-management/) · [VirtualService 레퍼런스](https://istio.io/latest/docs/reference/config/networking/virtual-service/) · [DestinationRule 레퍼런스](https://istio.io/latest/docs/reference/config/networking/destination-rule/) · [롤링 업데이트](../k8s/rolling-update.mdx)
+
+다음 레슨: [서비스 메시 ③ 메시 게이트웨이](./mesh-gateway.mdx)

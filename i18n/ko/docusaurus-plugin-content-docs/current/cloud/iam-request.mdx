@@ -1,0 +1,182 @@
+---
+id: iam-request
+title: API 요청 하나의 권한 검사 (IAM)
+sidebar_label: 05 · API 요청 하나의 권한 검사
+description: 클라우드 API 요청이 인증, 기본 거부·명시적 허용·명시적 거부의 정책 평가를 거쳐 허용 또는 거부되는 과정과, 역할의 임시 자격 증명, 유출된 장기 키 사례, 최소 권한을 애니메이션으로 따라간다
+hide_table_of_contents: true
+---
+
+# API 요청 하나의 권한 검사 (IAM)
+
+배포 스크립트가 클라우드에 "이 파일을 저장소에 올려 줘"라고 요청한다. 클라우드는 요청 하나하나마다 "누구인가", "그 일을 해도 되는가"를 따진다. 이 검사를 IAM(Identity and Access Management, 신원·접근 관리)이 맡는다. 쿠버네티스 안에서 같은 일을 하는 RBAC는 [누가 무엇을 할 수 있나 (RBAC)](../k8s/rbac.mdx)에서 다룬다.
+
+<StepDiagram
+  width={1000}
+  meta={{duration: '약 9분', level: '기초'}}
+  nodes={[
+    {id: 'caller', label: '스크립트', sub: 'deploy-bot', icon: 'agent', tone: 'app', x: 100, y: 120, show: true},
+    {id: 'attacker', label: '공격자', sub: '유출된 키', icon: 'alert', tone: 'ext', x: 100, y: 350},
+    {id: 'auth', label: '인증', sub: '누구인가', icon: 'shield', tone: 'cp', x: 370, y: 120, show: true},
+    {id: 'pol', label: '정책 평가', sub: '해도 되는가', icon: 'target', tone: 'cp', x: 640, y: 120, show: true},
+    {id: 'res', label: '저장소 버킷', sub: '배포 파일', icon: 'archive', tone: 'store', x: 900, y: 120, show: true},
+    {id: 'db', label: '운영 DB', sub: '고객 데이터', icon: 'db', tone: 'store', x: 900, y: 340},
+    {id: 'role', label: '역할', sub: '임시 자격 증명', icon: 'ticket', tone: 'cp', x: 370, y: 340},
+    {id: 'audit', label: '감사 로그', sub: '누가·언제·무엇', icon: 'book', tone: 'store', x: 640, y: 340},
+  ]}
+  metrics={[
+    {id: 'who', label: '요청한 주체'},
+    {id: 'decision', label: '판정'},
+    {id: 'cred', label: '쓰는 자격 증명'},
+  ]}
+  learn={[
+    {text: '인증(누구인가)과 인가(해도 되는가)의 차이', at: 1},
+    {text: '아무 허용도 없으면 거부된다는 것(기본 거부)', at: 2},
+    {text: '명시적 거부가 허용보다 항상 이긴다는 것', at: 4},
+    {text: '역할을 맡아 임시 자격 증명을 받는 방식', at: 5},
+    {text: '유출된 장기 키가 위험한 이유와 최소 권한', at: 6},
+  ]}
+  steps={[
+    {
+      short: '요청',
+      kind: '시작',
+      title: '배포 스크립트가 API 요청을 보낸다',
+      text: [
+        '배포 스크립트가 "저장소 버킷에 새 배포 파일 올리기" 요청을 클라우드 API로 보낸다. 요청에는 액세스 키로 만든 서명이 붙어 있다.',
+        '액세스 키는 프로그램이 쓰는 아이디·비밀번호 같은 것이다. 이 스크립트는 만료되지 않는 장기 키를 쓰고 있다.',
+      ],
+      flows: [{from: 'caller', to: 'auth', label: '요청 + 서명', type: 'request'}],
+      focus: ['auth'],
+      values: {who: '확인 전', decision: '-', cred: '장기 액세스 키'},
+    },
+    {
+      short: '인증',
+      kind: '원리',
+      title: '인증 — 요청한 것이 누구인지 확인한다',
+      text: [
+        '인증(authentication)은 "누구인가"를 확인하는 일이다. 서명이 등록된 키와 맞는지 검사해, 요청한 주체가 deploy-bot이라는 것을 밝힌다.',
+        '인증을 통과했다고 무엇이든 할 수 있는 것은 아니다. "그 일을 해도 되는가"는 다음 단계인 인가(authorization)에서 따진다.',
+      ],
+      flows: [{from: 'auth', to: 'pol', label: 'deploy-bot', type: 'request'}],
+      focus: ['auth'],
+      status: {auth: 'ok'},
+      values: {who: 'deploy-bot'},
+    },
+    {
+      short: '기본 거부',
+      kind: '원리',
+      title: '허용이 없으면 거부가 기본이다',
+      text: [
+        '정책 평가는 deploy-bot에 붙은 정책(policy)을 모두 모아 본다. 정책은 "누가, 어떤 자원에, 어떤 동작을 허용 또는 거부한다"를 적은 문서다.',
+        '모은 정책 어디에도 이 동작을 허용하는 문장이 없으면 거부된다. 이것을 기본 거부(default deny)라고 한다. 권한은 처음에 아무것도 없고, 필요한 것만 하나씩 더한다.',
+      ],
+      flows: [{from: 'pol', to: 'res', label: '대상·동작 확인', type: 'watch'}],
+      focus: ['pol'],
+      values: {decision: '평가 중 (기본은 거부)'},
+    },
+    {
+      short: '허용',
+      kind: '원리',
+      title: '명시적 허용이 있어 요청이 통과한다',
+      text: [
+        'deploy-bot 정책에 "배포 버킷에 파일 쓰기 허용"이 적혀 있다. 이렇게 정책에 직접 적힌 허용을 명시적 허용이라고 한다.',
+        '거부하는 문장도 없으므로 요청이 통과하고, 파일이 버킷에 올라간다.',
+      ],
+      flows: [{from: 'pol', to: 'res', label: '쓰기 허용', type: 'request'}],
+      focus: ['res'],
+      status: {pol: 'ok', res: 'ok'},
+      values: {decision: {text: '허용', tone: 'good'}},
+    },
+    {
+      short: '명시적 거부',
+      kind: '주의',
+      title: '거부가 하나라도 있으면 거부가 이긴다',
+      text: [
+        '같은 스크립트가 운영 DB 삭제를 요청한다. 너무 넓게 준 관리자 정책은 이를 허용하지만, 조직 전체에 걸린 "운영 DB 삭제 금지" 정책이 명시적으로 거부한다.',
+        '허용과 거부가 부딪히면 명시적 거부가 항상 이긴다. 그래서 조직 차원의 안전장치는 거부 정책으로 건다.',
+      ],
+      keyIdea: '평가 순서: 명시적 거부가 있으면 거부 → 없고 명시적 허용이 있으면 허용 → 둘 다 없으면 기본 거부.',
+      flows: [
+        {from: 'caller', to: 'auth', label: 'DB 삭제 요청', type: 'request'},
+        {from: 'pol', to: 'db', label: '명시적 거부', type: 'response'},
+      ],
+      focus: ['pol', 'db'],
+      status: {pol: 'warn', res: null, db: 'ok'},
+      badges: {db: '거부됨'},
+      values: {decision: {text: '거부 (명시적 거부)', tone: 'bad'}},
+    },
+    {
+      short: '역할',
+      kind: '원리',
+      title: '역할을 맡아 임시 자격 증명을 받는다',
+      text: [
+        '역할(role)은 사람이나 프로그램이 잠시 "맡는" 권한 묶음이다. 스크립트가 역할을 맡겠다고 요청하면, 정해진 시간(예: 1시간) 뒤 만료되는 임시 자격 증명을 받는다.',
+        '클라우드 안의 가상 머신이나 함수는 붙여 둔 역할로 임시 자격 증명을 자동으로 받는다. 코드나 설정 파일에 키를 적어 둘 필요가 없다.',
+      ],
+      flows: [
+        {from: 'caller', to: 'role', label: '역할 맡기', type: 'request'},
+        {from: 'role', to: 'caller', label: '임시 키', type: 'response'},
+      ],
+      focus: ['role'],
+      status: {pol: null, db: null},
+      badges: {db: null},
+      values: {decision: '-', cred: {text: '임시 자격 증명 (곧 만료)', tone: 'good'}},
+    },
+    {
+      short: '키 유출',
+      kind: '장애',
+      title: '예전 장기 키가 유출되어 쓰인다',
+      text: [
+        '예전에 쓰던 장기 액세스 키가 실수로 공개 코드 저장소에 올라가 있었다. 누군가 이 키를 주워 클라우드 API를 부른다.',
+        '키 자체는 진짜이므로 인증을 통과한다. 그 키에 넓은 권한이 붙어 있었다면 공격자도 그만큼 할 수 있다.',
+      ],
+      flows: [
+        {from: 'attacker', to: 'auth', label: '유출된 키', type: 'request'},
+        {from: 'auth', to: 'pol', label: 'deploy-bot', type: 'request'},
+      ],
+      focus: ['attacker', 'auth'],
+      status: {attacker: 'error', auth: 'warn'},
+      badges: {attacker: '진짜 키'},
+      values: {who: {text: 'deploy-bot (실제는 공격자)', tone: 'bad'}, cred: {text: '유출된 장기 키', tone: 'bad'}},
+    },
+    {
+      short: '감사·대응',
+      kind: '원리',
+      title: '감사 로그로 찾아내고 키를 끊는다',
+      text: [
+        '모든 API 호출은 감사 로그에 "누가, 언제, 어디서, 무엇을" 남긴다. 평소와 다른 위치·시간의 호출을 보고 유출을 알아챈다.',
+        '키를 즉시 비활성화하고 새 키로 바꾼다. 임시 자격 증명만 썼다면 곧 만료됐을 것이고, 권한을 좁게 줬다면 피해 범위도 작았을 것이다.',
+      ],
+      flows: [{from: 'pol', to: 'audit', label: '호출 기록', type: 'response'}],
+      focus: ['audit'],
+      status: {attacker: 'off', auth: 'ok'},
+      badges: {attacker: '키 비활성화'},
+      values: {who: '-', cred: '키 폐기 → 역할로 교체'},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '누구인지 확인하고, 필요한 만큼만 허용한다',
+      text: [
+        '요청 하나는 인증(누구인가) → 정책 평가(명시적 거부 → 명시적 허용 → 기본 거부) 순서로 판정된다. 사람 계정에는 MFA(다중 요소 인증)를 켜고, 프로그램에는 장기 키 대신 역할을 쓴다.',
+        '최소 권한(least privilege)은 일에 꼭 필요한 동작·자원만 허용하는 원칙이다. 키가 새어 나가도 피해가 그 범위를 넘지 않는다.',
+      ],
+      keyIdea: '모든 API 요청은 인증을 거쳐 정책 평가를 받는다. 거부되면 어느 정책 때문인지부터 확인하고, 전체 허용 대신 필요한 동작만 허용하는 최소 권한을 지킨다.',
+      focus: ['pol', 'role'],
+      status: {attacker: 'gone'},
+      badges: {attacker: null},
+    },
+  ]}
+/>
+
+## 권한 검사에 쓰이는 이름 (AWS · Azure · GCP)
+
+| 개념 | AWS | Azure | GCP |
+| --- | --- | --- | --- |
+| 신원과 권한 관리 | IAM | Microsoft Entra ID · Azure RBAC | Cloud IAM |
+| 프로그램이 맡는 신원 | IAM 역할 (STS로 임시 자격 증명) | 관리 ID (Managed Identity) | 서비스 계정 |
+| 조직 전체에 거는 거부 | 서비스 제어 정책 (SCP) | 거부 할당 (deny assignment) | IAM 거부 정책 |
+| API 호출 기록 | CloudTrail | 활동 로그 (Activity Log) | Cloud Audit Logs |
+
+더 읽을거리: [IAM이란 무엇인가 (AWS)](https://docs.aws.amazon.com/IAM/latest/UserGuide/introduction.html) · [정책 평가 로직 (AWS)](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_evaluation-logic.html) · [누가 무엇을 할 수 있나 (RBAC)](../k8s/rbac.mdx)
+
+다음 레슨: 이 트랙의 마지막 레슨이다. [레슨 안내](../index.mdx)로 돌아가 다른 트랙을 이어서 보자.

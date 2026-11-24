@@ -1,0 +1,190 @@
+---
+id: node-troubleshoot
+title: 노드 NotReady와 구성요소 장애 (CKA)
+sidebar_label: 02 · 노드·구성요소 장애
+description: 노드가 NotReady일 때 kubelet 상태와 로그로 원인을 좁히는 순서, 그리고 정적 파드로 도는 API 서버가 죽어 kubectl이 안 될 때 crictl로 확인하고 매니페스트를 고치는 과정을 애니메이션으로 따라간다
+hide_table_of_contents: true
+---
+
+# 노드 NotReady와 구성요소 장애 (CKA)
+
+CKA의 Troubleshooting(30%) 영역 중 "클러스터·노드"와 "클러스터 구성요소" 문제 해결과 관련 있다. 워커 노드 하나가 NotReady가 된 장면과, 컨트롤 플레인의 API 서버가 죽어 kubectl조차 듣지 않는 장면을 차례로 풀어 본다.
+
+노드가 멈췄을 때 파드가 다른 노드에서 다시 만들어지는 과정은 [파드가 죽으면 (자가 치유)](../k8s/self-healing.mdx)에서, 인증서 만료로 통신이 끊기는 과정은 [클러스터 인증서 만료](../advanced/cluster-cert.mdx)에서 다룬다. 여기서는 노드에 들어가 원인을 찾는 순서에 집중한다.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '약 10분', level: '중급'}}
+  groups={[
+    {label: '컨트롤 플레인 노드', x: 220, y: 25, w: 440, h: 265, tone: 'mgmt'},
+    {label: '워커 노드 · worker-1', x: 720, y: 25, w: 200, h: 395, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'admin', label: '운영자', sub: 'kubectl · ssh', icon: 'user', tone: 'ext', x: 85, y: 380, show: true},
+    {id: 'cpRuntime', label: '런타임', sub: 'crictl로 조회', icon: 'box', tone: 'node', x: 320, y: 230, show: true},
+    {id: 'api', label: 'API 서버', sub: '정적 파드', icon: 'gate', tone: 'cp', x: 560, y: 230, show: true},
+    {id: 'manifests', label: '매니페스트', sub: '정적 파드 정의', icon: 'book', tone: 'store', x: 320, y: 100, show: true},
+    {id: 'cpKubelet', label: 'kubelet', sub: '제어부 노드', icon: 'agent', tone: 'cp', x: 560, y: 100, show: true},
+    {id: 'journal', label: '로그', sub: 'journalctl', icon: 'archive', tone: 'store', x: 820, y: 100, show: true},
+    {id: 'wKubelet', label: 'kubelet', sub: 'worker-1', icon: 'agent', tone: 'node', x: 820, y: 230, show: true},
+    {id: 'wRuntime', label: '런타임', sub: 'containerd', icon: 'box', tone: 'node', x: 820, y: 360, show: true},
+  ]}
+  metrics={[
+    {id: 'node', label: 'worker-1 상태'},
+    {id: 'kubectl', label: 'kubectl'},
+    {id: 'cmd', label: '지금 친 명령'},
+  ]}
+  learn={[
+    {text: 'NotReady가 "kubelet의 보고가 끊겼다"는 뜻인 이유', at: 1},
+    {text: 'systemctl status와 journalctl -u kubelet으로 원인 좁히기', at: 2},
+    {text: 'API 서버가 정적 파드라 kubectl 없이도 고칠 수 있는 이유', at: 5},
+    {text: 'kubectl이 안 될 때 crictl로 컨테이너 보기', at: 6},
+  ]}
+  steps={[
+    {
+      short: 'NotReady',
+      kind: '시작',
+      title: 'kubectl get nodes에 NotReady가 보인다',
+      text: [
+        '운영자가 kubectl get nodes를 치니 worker-1의 STATUS가 NotReady다. 나머지 노드는 Ready다.',
+        '먼저 kubectl describe node worker-1로 Conditions(노드 상태 항목)와 이벤트를 본다. 노드 하나만 이상한지, 여러 노드가 함께 이상한지부터 가른다.',
+      ],
+      flows: [
+        {from: 'admin', to: 'api', label: 'get nodes', type: 'request'},
+        {from: 'api', to: 'admin', label: 'NotReady', type: 'response'},
+      ],
+      focus: ['api'],
+      status: {wKubelet: 'error'},
+      values: {node: {text: 'NotReady', tone: 'bad'}, kubectl: '정상', cmd: 'kubectl get nodes'},
+    },
+    {
+      short: '보고 끊김',
+      kind: '원리',
+      title: 'NotReady는 kubelet의 보고가 끊겼다는 뜻이다',
+      text: [
+        '각 노드의 kubelet(노드 관리자)은 자기 상태를 API 서버에 주기적으로 보고한다. 보고가 일정 시간 끊기면 Ready 항목이 Unknown이 되고, describe에는 "Kubelet stopped posting node status."가 찍힌다.',
+        '그 노드의 파드는 마지막으로 보고된 Running으로 한동안 남아 있다가, 기본으로 약 5분 뒤 다른 노드로 옮겨진다.',
+      ],
+      keyIdea: 'API 서버는 노드 안을 들여다보지 못한다. 원인을 찾으려면 그 노드에 직접 들어가야 한다.',
+      flows: [{from: 'wKubelet', to: 'api', label: '상태 보고', type: 'request'}],
+      focus: ['wKubelet', 'api'],
+      badges: {wKubelet: '보고 끊김'},
+      values: {cmd: 'kubectl describe node'},
+    },
+    {
+      short: 'status·로그',
+      kind: '원리',
+      title: '노드에 들어가 kubelet 상태와 로그를 본다',
+      text: [
+        'ssh worker-1로 들어가 systemctl status kubelet을 친다. inactive(dead)면 꺼져 있는 것이고, 켜졌다 꺼지기를 반복하면 시작하다 실패하는 것이다.',
+        '왜 실패하는지는 journalctl -u kubelet에 남는다. 맨 아래쪽 최근 오류 줄부터 읽는다.',
+      ],
+      flows: [
+        {from: 'admin', to: 'wKubelet', label: 'ssh', type: 'request', bend: 0.1},
+        {from: 'wKubelet', to: 'journal', label: '오류 기록', type: 'response'},
+      ],
+      focus: ['wKubelet', 'journal'],
+      values: {cmd: 'journalctl -u kubelet'},
+    },
+    {
+      short: '원인',
+      kind: '문제',
+      title: '로그가 알려 주는 흔한 원인은 네 가지다',
+      text: [
+        '서비스가 멈춰 있거나 부팅 때 켜지게 설정되지 않았을 수 있다. 설정 파일(/var/lib/kubelet/config.yaml 등)의 경로·값이 틀렸을 수도 있다.',
+        '인증서가 만료됐거나 맞지 않으면 API 서버와 말을 못 한다. 컨테이너 런타임(containerd)이 죽어 있으면 kubelet이 파드를 돌릴 수 없다.',
+      ],
+      changes: ['kubelet 중지·비활성 → systemctl start·enable kubelet', '설정 오류 → 설정 파일 경로·값 수정', '인증서 만료·불일치 → 인증서 갱신', '런타임 중지 → systemctl status containerd'],
+      flows: [{from: 'wKubelet', to: 'wRuntime', label: '런타임 연결', type: 'request'}],
+      focus: ['wKubelet', 'wRuntime'],
+      status: {wRuntime: 'warn'},
+    },
+    {
+      short: '복구',
+      kind: '원리',
+      title: '고치고 kubelet을 다시 띄운다',
+      text: [
+        '원인을 고친 뒤 systemctl daemon-reload, systemctl restart kubelet을 친다. 재부팅 뒤에도 켜지도록 systemctl enable kubelet도 확인한다.',
+        'kubelet이 다시 보고를 보내면 잠시 뒤 kubectl get nodes에서 worker-1이 Ready로 돌아온다.',
+      ],
+      flows: [{from: 'wKubelet', to: 'api', label: '상태 보고', type: 'request'}],
+      focus: ['wKubelet'],
+      status: {wKubelet: 'ok', wRuntime: 'ok'},
+      badges: {wKubelet: null},
+      values: {node: {text: 'Ready', tone: 'good'}, cmd: 'systemctl restart kubelet'},
+    },
+    {
+      short: 'kubectl 먹통',
+      kind: '장애',
+      title: '이번에는 kubectl 자체가 대답하지 않는다',
+      text: [
+        'kubectl get pods가 "The connection to the server ... was refused"로 끝난다. API 서버가 죽은 것이다.',
+        'kubeadm 클러스터에서 API 서버·etcd·스케줄러·컨트롤러 매니저는 정적 파드다. 컨트롤 플레인 노드의 kubelet이 /etc/kubernetes/manifests 폴더의 파일을 읽어 API 서버 없이 직접 띄운다.',
+      ],
+      keyIdea: 'kubectl은 API 서버를 거쳐야만 일한다. API 서버가 죽으면 kubectl로는 아무것도 볼 수 없다.',
+      flows: [{from: 'admin', to: 'api', label: 'kubectl', type: 'request'}],
+      focus: ['api', 'manifests'],
+      status: {api: 'error'},
+      values: {kubectl: {text: '연결 거부', tone: 'bad'}, cmd: 'kubectl get pods'},
+    },
+    {
+      short: 'crictl',
+      kind: '원리',
+      title: 'crictl로 런타임에 직접 묻는다',
+      text: [
+        '컨트롤 플레인 노드에 ssh로 들어가 crictl ps -a를 친다. crictl은 API 서버를 거치지 않고 컨테이너 런타임에 바로 묻는 도구라, kube-apiserver 컨테이너가 Exited인지 바로 보인다.',
+        'crictl logs 컨테이너ID로 마지막 오류를 읽는다. 잘못된 옵션 이름, 틀린 인증서 경로, etcd 주소 오류 같은 원인이 여기에 찍힌다.',
+      ],
+      flows: [
+        {from: 'admin', to: 'cpRuntime', label: 'crictl ps', type: 'request'},
+        {from: 'cpKubelet', to: 'cpRuntime', label: '재시작 반복', type: 'request'},
+      ],
+      focus: ['cpRuntime'],
+      badges: {api: 'Exited'},
+      values: {cmd: 'crictl ps -a · crictl logs'},
+    },
+    {
+      short: '파일 수정',
+      kind: '원리',
+      title: '매니페스트 파일을 고치면 kubelet이 알아서 다시 띄운다',
+      text: [
+        '/etc/kubernetes/manifests/kube-apiserver.yaml의 틀린 곳을 고치고 저장한다. kubectl apply는 쓰지 않고, 쓸 수도 없다.',
+        'kubelet은 이 폴더를 지켜보다가 파일이 바뀌면 그 정적 파드를 새로 만든다. 1~2분 뒤 kubectl이 다시 대답한다.',
+      ],
+      flows: [
+        {from: 'cpKubelet', to: 'manifests', label: '파일 감시', type: 'watch'},
+        {from: 'cpKubelet', to: 'api', label: '다시 실행', type: 'request'},
+      ],
+      focus: ['manifests', 'cpKubelet'],
+      status: {api: 'ok'},
+      badges: {api: null},
+      values: {kubectl: {text: '정상', tone: 'good'}, cmd: 'vi kube-apiserver.yaml'},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '노드 문제는 kubelet부터, 구성요소 문제는 crictl부터',
+      text: [
+        '노드가 NotReady면 그 노드에 들어가 systemctl status kubelet → journalctl -u kubelet 순서로 원인을 좁힌다.',
+        'kubectl이 안 되면 API 서버가 정적 파드라는 점을 떠올린다. crictl로 컨테이너를 보고 /etc/kubernetes/manifests의 파일을 고친다.',
+      ],
+      keyIdea: 'NotReady는 kubelet 상태와 로그(systemctl status kubelet, journalctl -u kubelet)부터 좁힌다. API 서버가 죽어 kubectl이 안 되면 crictl로 보고 정적 파드 매니페스트를 고친다. NotReady 노드 위 파드의 Running은 마지막으로 보고된 값일 뿐이다.',
+      focus: ['wKubelet', 'cpKubelet'],
+    },
+  ]}
+/>
+
+## 시험에서 자주 묻는 것
+
+| 상황 | 해야 할 일·명령 | 함정 |
+| --- | --- | --- |
+| 노드가 NotReady다 | `kubectl describe node <노드>` → `ssh <노드>` → `systemctl status kubelet` → `journalctl -u kubelet` | 컨트롤 플레인 노드에서 로그를 보면 안 된다. 문제 노드에 들어가야 한다 |
+| kubelet이 꺼져 있다 | `systemctl start kubelet`, `systemctl enable kubelet` | enable을 빼먹으면 재부팅 뒤 다시 NotReady가 된다 |
+| kubelet 설정 파일을 고쳤다 | `systemctl daemon-reload` → `systemctl restart kubelet` | 고치기만 하고 재시작하지 않으면 반영되지 않는다 |
+| kubectl이 connection refused다 | 컨트롤 플레인 노드에서 `crictl ps -a`, `crictl logs <컨테이너ID>` | `kubectl logs`는 API 서버가 있어야 동작한다 |
+| 정적 파드 설정이 틀렸다 | `/etc/kubernetes/manifests/` 아래 파일을 직접 수정 | `kubectl edit`·`kubectl delete`로는 고칠 수 없다. 파일을 고쳐야 kubelet이 다시 만든다 |
+
+더 읽을거리: [CNCF 자격증 출제 범위](https://github.com/cncf/curriculum) · [클러스터 트러블슈팅](https://kubernetes.io/docs/tasks/debug/debug-cluster/) · [crictl로 노드 디버깅](https://kubernetes.io/docs/tasks/debug/debug-cluster/crictl/) · [파드가 죽으면 (자가 치유)](../k8s/self-healing.mdx) · [클러스터 인증서 만료](../advanced/cluster-cert.mdx)
+
+다음 레슨: [Kustomize로 환경별 배포 (CKA·CKAD)](./kustomize.mdx)

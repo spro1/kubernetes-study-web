@@ -1,0 +1,184 @@
+---
+id: self-healing
+title: 파드가 죽으면 (자가 치유)
+sidebar_label: 05 · 파드가 죽으면
+description: 컨테이너가 죽었을 때 kubelet의 재시작과 CrashLoopBackOff, 노드가 멈췄을 때 컨트롤러의 대체 파드 생성까지 애니메이션으로 따라간다
+hide_table_of_contents: true
+---
+
+# 파드가 죽으면 (자가 치유)
+
+쿠버네티스는 "원하는 상태"와 "실제 상태"가 어긋나면 스스로 맞춰 놓는다. 컨테이너 하나가 죽었을 때와 노드 전체가 멈췄을 때, 누가 어떻게 되살리는지 따라가 본다.
+
+<StepDiagram
+  width={700}
+  height={450}
+  meta={{duration: '약 10분', level: '중급'}}
+  groups={[
+    {label: '컨트롤 플레인', x: 20, y: 30, w: 250, h: 400, tone: 'mgmt'},
+    {label: 'node-1', x: 320, y: 30, w: 360, h: 180, tone: 'biz'},
+    {label: 'node-2', x: 320, y: 250, w: 360, h: 180, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'api', label: 'API 서버', sub: '상태 기록', icon: 'gate', tone: 'cp', x: 145, y: 100, show: true},
+    {id: 'cm', label: '컨트롤러', sub: '노드·RS 감시', icon: 'gear', tone: 'cp', x: 145, y: 230, show: true},
+    {id: 'sched', label: '스케줄러', sub: '노드 고르기', icon: 'target', tone: 'cp', x: 145, y: 360, show: true},
+    {id: 'k1', label: 'kubelet', sub: 'node-1', icon: 'agent', tone: 'node', x: 420, y: 120, show: true},
+    {id: 'pa', label: 'app-a', sub: 'Pod', icon: 'pod', tone: 'app', size: 'sm', x: 595, y: 120, show: true},
+    {id: 'k2', label: 'kubelet', sub: 'node-2', icon: 'agent', tone: 'node', x: 420, y: 340, show: true},
+    {id: 'pb', label: 'app-b', sub: 'Pod', icon: 'pod', tone: 'app', size: 'sm', x: 595, y: 300, show: true},
+    {id: 'pc', label: 'app-c', sub: '대체 파드', icon: 'pod', tone: 'app', size: 'sm', x: 595, y: 385},
+  ]}
+  metrics={[
+    {id: 'node1', label: 'node-1 상태'},
+    {id: 'restart', label: 'app-a 재시작 횟수'},
+    {id: 'ready', label: 'Ready 파드 / 원하는 수'},
+  ]}
+  learn={[
+    {text: '컨테이너가 죽으면 같은 노드의 kubelet이 다시 띄운다는 것', at: 2},
+    {text: 'CrashLoopBackOff가 "기다리는 중"이라는 뜻이라는 것', at: 3},
+    {text: '노드가 멈추면 컨트롤러가 다른 노드에 새로 만든다는 것', at: 6},
+    {text: '자가 치유에 걸리는 시간이 단계마다 다르다는 것', at: 8},
+  ]}
+  steps={[
+    {
+      short: '정상',
+      kind: '시작',
+      title: '모두 정상, kubelet은 꾸준히 보고한다',
+      text: [
+        'app 파드 두 개가 node-1과 node-2에서 돌고 있다. 원하는 수는 2개다.',
+        '각 노드의 kubelet은 주기적으로 "나 살아 있다"는 신호(하트비트)를 API 서버에 보낸다.',
+      ],
+      flows: [
+        {from: 'k1', to: 'api', label: '하트비트', type: 'response'},
+        {from: 'k2', to: 'api', label: '하트비트', type: 'response', bend: 0.15},
+      ],
+      status: {pa: 'ok', pb: 'ok'},
+      values: {node1: 'Ready', restart: '0', ready: '2 / 2'},
+    },
+    {
+      short: '컨테이너 종료',
+      kind: '장애',
+      title: 'app-a의 컨테이너가 죽었다',
+      text: [
+        '애플리케이션이 메모리 부족이나 처리하지 못한 오류로 종료됐다. 노드 자체는 멀쩡하다.',
+        '파드는 그대로 있지만 안의 컨테이너가 멈춘 상태다.',
+      ],
+      focus: ['pa'],
+      status: {pa: 'error'},
+      badges: {pa: 'Error'},
+      values: {ready: {text: '1 / 2', tone: 'bad'}},
+    },
+    {
+      short: '재시작',
+      kind: '원리',
+      title: '같은 노드의 kubelet이 바로 다시 띄운다',
+      text: [
+        'kubelet은 자기 노드의 컨테이너를 지켜보다가 종료를 알아채고, 파드의 재시작 정책(기본값 Always)에 따라 컨테이너를 다시 띄운다.',
+        '살아 있는지 검사(liveness probe)가 계속 실패할 때도 kubelet이 같은 방식으로 컨테이너를 다시 띄운다.',
+      ],
+      keyIdea: '컨테이너 재시작은 그 노드의 kubelet 혼자 처리한다. 컨트롤 플레인을 거치지 않으니 몇 초면 끝난다. 파드도, 노드도 바뀌지 않는다.',
+      flows: [{from: 'k1', to: 'pa', label: '컨테이너 재시작', type: 'request'}],
+      focus: ['k1', 'pa'],
+      status: {pa: 'ok'},
+      badges: {pa: '재시작 1'},
+      values: {restart: '1', ready: {text: '2 / 2', tone: 'good'}},
+    },
+    {
+      short: '반복 종료',
+      kind: '주의',
+      title: '계속 죽으면 점점 길게 기다린다',
+      text: [
+        '설정 오류처럼 다시 띄워도 곧 죽는 문제라면, kubelet은 재시작 간격을 10초, 20초, 40초… 최대 5분까지 늘려 간다.',
+        '이렇게 다음 재시작을 기다리는 상태가 CrashLoopBackOff다. 재시작으로는 고쳐지지 않는 문제라는 신호다.',
+      ],
+      keyIdea: 'CrashLoopBackOff는 원인이 아니라 증상이다. 원인은 직전 컨테이너 로그(이전 실행의 로그)에서 찾는다.',
+      flows: [{from: 'k1', to: 'pa', label: '대기 후 재시작', type: 'request'}],
+      focus: ['pa'],
+      status: {pa: 'warn'},
+      badges: {pa: 'CrashLoop'},
+      values: {restart: {text: '5', tone: 'bad'}, ready: {text: '1 / 2', tone: 'bad'}},
+    },
+    {
+      short: '노드 장애',
+      kind: '장애',
+      title: '이번에는 node-1 전체가 멈췄다',
+      text: [
+        '앞의 문제를 고쳐 app-a가 정상으로 돌아온 뒤, 이번에는 node-1의 전원이 나갔다. kubelet도 함께 멈췄으니 재시작해 줄 주체가 없다.',
+        'node-1에서 오던 하트비트가 끊긴다. node-2는 계속 보고한다.',
+      ],
+      flows: [{from: 'k2', to: 'api', label: '하트비트', type: 'response', bend: 0.15}],
+      focus: ['k1'],
+      status: {k1: 'off', pa: 'off'},
+      badges: {pa: null},
+      values: {node1: {text: '응답 없음', tone: 'bad'}, restart: '0', ready: {text: '1 / 2', tone: 'bad'}},
+    },
+    {
+      short: '이상 감지',
+      kind: '원리',
+      title: '컨트롤러가 노드를 NotReady로 표시한다',
+      text: [
+        '컨트롤러는 노드의 하트비트를 지켜본다. 일정 시간(수십 초) 신호가 없으면 node-1을 NotReady로 표시한다.',
+        '그 위의 파드는 바로 옮기지 않는다. 잠깐의 네트워크 끊김일 수도 있으니 기본 5분을 기다린 뒤 대체 대상으로 처리한다.',
+      ],
+      flows: [{from: 'api', to: 'cm', label: '하트비트 끊김', type: 'watch'}],
+      focus: ['cm'],
+      status: {k1: 'error'},
+      badges: {k1: 'NotReady'},
+      values: {node1: {text: 'NotReady', tone: 'bad'}},
+    },
+    {
+      short: '대체 파드',
+      kind: '원리',
+      title: '원하는 수를 맞추려 새 파드를 만든다',
+      text: [
+        '기다림이 끝나면 node-1의 app-a는 쫓아낼(evict) 대상이 된다. ReplicaSet 컨트롤러는 "원하는 2개 중 1개가 모자라다"고 보고 새 파드 app-c를 만든다.',
+        'app-c는 아직 놓일 노드가 정해지지 않았다.',
+      ],
+      flows: [{from: 'cm', to: 'api', label: '대체 파드 생성', type: 'request'}],
+      focus: ['pc', 'cm'],
+      status: {pc: 'warn', pa: 'off'},
+      badges: {pc: 'Pending', pa: 'Unknown'},
+    },
+    {
+      short: '다시 실행',
+      kind: '원리',
+      title: '다른 노드에 놓고 실행한다',
+      text: [
+        '스케줄러가 남은 node-2에 app-c를 배치하고, node-2의 kubelet이 컨테이너를 실행한다.',
+        'Ready가 되면 다시 원하는 수 2개가 맞춰진다. app-c는 새 파드이므로 이름과 IP가 app-a와 다르다.',
+      ],
+      flows: [
+        {from: 'sched', to: 'api', type: 'request', bend: -0.55},
+        {from: 'k2', to: 'pc', label: '실행', type: 'request'},
+      ],
+      focus: ['pc', 'k2'],
+      status: {pc: 'ok', pa: 'gone'},
+      badges: {pc: 'node-2'},
+      values: {ready: {text: '2 / 2', tone: 'good'}},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '누가 되살리는지에 따라 걸리는 시간이 다르다',
+      text: [
+        '컨테이너가 죽으면 같은 노드의 kubelet이 몇 초 만에 다시 띄운다. 노드가 멈추면 컨트롤러가 기다렸다가 다른 노드에 새 파드를 만든다. 여기에는 수 분이 걸린다.',
+        '파드가 하나뿐인 서비스는 노드 장애 동안 멈춘다. 그래서 파드를 둘 이상, 서로 다른 노드에 둔다.',
+      ],
+      keyIdea: 'kubectl get pods의 RESTARTS는 컨테이너 수준 문제를, kubectl get nodes의 NotReady는 노드 수준 문제를 가리킨다. 둘을 구분하면 대응이 빨라진다.',
+      focus: ['cm', 'k2'],
+    },
+  ]}
+/>
+
+## 장애 수준별 자가 치유
+
+| 무엇이 멈췄나 | 누가 되살리나 | 결과 | 걸리는 시간 |
+| --- | --- | --- | --- |
+| 컨테이너 | 그 노드의 kubelet | 같은 파드 안에서 컨테이너 재시작 | 수 초 (반복되면 최대 5분 간격) |
+| 노드 | 컨트롤러 + 스케줄러 | 다른 노드에 새 파드 생성 | 수 분 (기본 대기 5분 포함) |
+| 파드를 직접 지움 | ReplicaSet 컨트롤러 | 새 파드 생성 | 수 초 |
+
+더 읽을거리: [파드 라이프사이클](https://kubernetes.io/ko/docs/concepts/workloads/pods/pod-lifecycle/) · [활성·준비·시작 프로브 구성](https://kubernetes.io/ko/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/)
+
+다음 레슨: [설정과 비밀값](./config-secret.mdx)

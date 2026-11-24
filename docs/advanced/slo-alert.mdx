@@ -1,0 +1,182 @@
+---
+id: slo-alert
+title: SLOs and Alert Design
+sidebar_label: 12 · SLOs and Alert Design
+description: Turn goals into numbers with SLIs, SLOs and error budgets, set symptom alerts based on burn rate, and narrow down the cause with metrics, traces and logs after an alert fires, step by step with animation
+hide_table_of_contents: true
+---
+
+# SLOs and Alert Design
+
+A "CPU over 80%" alert fires 30 times a day, yet users have no complaints. Meanwhile, users may hit errors with no alert at all. Let's redesign the alerts that wake people up around user experience, and follow how to narrow down the cause once one fires.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~10 min', level: 'Advanced'}}
+  nodes={[
+    {id: 'users', label: 'Users', sub: 'order requests', icon: 'browser', tone: 'ext', x: 85, y: 110, show: true},
+    {id: 'svc', label: 'Order service', sub: 'handles requests', icon: 'pod', tone: 'app', x: 355, y: 110, show: true},
+    {id: 'prom', label: 'Metrics store', sub: 'Prometheus', icon: 'chart', tone: 'store', x: 625, y: 110, show: true},
+    {id: 'slo', label: 'SLO', sub: '99.9% over 30d', icon: 'target', tone: 'cp', x: 895, y: 110},
+    {id: 'alert', label: 'Alertmanager', sub: 'grouping · routing', icon: 'bell', tone: 'cp', x: 895, y: 300, w: 160},
+    {id: 'oncall', label: 'On-call', sub: 'responds', icon: 'user', tone: 'ext', x: 625, y: 300},
+    {id: 'trace', label: 'Traces', sub: 'request path', icon: 'route', tone: 'store', x: 355, y: 300},
+    {id: 'logs', label: 'Logs', sub: 'detailed records', icon: 'book', tone: 'store', x: 85, y: 300},
+  ]}
+  metrics={[
+    {id: 'sli', label: 'SLI (success ratio)'},
+    {id: 'budget', label: 'Error budget'},
+    {id: 'burn', label: 'Burn rate'},
+  ]}
+  learn={[
+    {text: 'How SLI, SLO and error budget relate', at: 1},
+    {text: 'Why cause-based alerts lead to alert fatigue', at: 2},
+    {text: 'Why burn rate is checked over two windows', at: 5},
+    {text: 'Narrowing the cause: metrics → traces → logs', at: 7},
+  ]}
+  steps={[
+    {
+      short: 'SLI',
+      kind: '시작',
+      title: 'Measure user experience with one number',
+      text: [
+        'An SLI (Service Level Indicator) is a measurement of user experience. For an order service, it is "the ratio of successful requests" or "the ratio of requests finished within 0.5 seconds".',
+        'The service exports request and error counts as metrics, and the metrics store collects them and computes the ratio.',
+      ],
+      flows: [
+        {from: 'users', to: 'svc', label: 'Order', type: 'request'},
+        {from: 'svc', to: 'prom', label: 'Requests · errors', type: 'request'},
+      ],
+      focus: ['svc', 'prom'],
+      values: {sli: '99.95%'},
+    },
+    {
+      short: 'SLO · budget',
+      kind: '원리',
+      title: 'Set a target and you get the amount of failure allowed',
+      text: [
+        'An SLO (Service Level Objective) is the target and period the SLI must meet. For example, "99.9% success over 30 days".',
+        'The error budget is the amount of failure the target allows. 30 days × 0.1% equals about 43 minutes of total outage.',
+      ],
+      keyIdea: 'With budget left, ship new features boldly; once it is spent, focus on stability. It becomes the yardstick between speed and stability.',
+      flows: [{from: 'prom', to: 'slo', label: 'SLI', type: 'request'}],
+      focus: ['slo'],
+      badges: {slo: 'Budget ~43 min'},
+      values: {budget: '~43 min per 30 days'},
+    },
+    {
+      short: 'Cause alert',
+      kind: '문제',
+      title: 'A CPU alert fires regardless of users',
+      text: [
+        'Cause-based alerts like "CPU over 80%" or "Pod restarted once" fire even when users are unaffected. Fire dozens of times a day, and on-call starts ignoring them.',
+        'This state, where alerts fire so often that people ignore them, is called alert fatigue. The biggest risk is a real alert getting buried in the noise.',
+      ],
+      flows: [
+        {from: 'prom', to: 'alert', label: 'CPU 80%', type: 'request'},
+        {from: 'alert', to: 'oncall', label: 'Page', type: 'request'},
+      ],
+      focus: ['alert', 'oncall'],
+      status: {oncall: 'warn'},
+      badges: {svc: 'CPU 80%↑'},
+      values: {sli: {text: '99.95% (no issue)', tone: 'good'}},
+    },
+    {
+      short: 'Symptom alert',
+      kind: '원리',
+      title: 'Alerts that wake people up are based on symptoms',
+      text: [
+        'Symptom-based alerts fire only for problems users actually feel, like "error rate rising fast enough to threaten the SLO" or "p99 latency over 2 seconds for 10 minutes".',
+        'Cause metrics like CPU are not thrown away. They move out of alerting into dashboards and analysis.',
+      ],
+      changes: ['- alert: CPU over 80%', '+ dashboard: CPU usage', '+ alert: error budget burn rate'],
+      flows: [{from: 'prom', to: 'slo', label: 'Error rate', type: 'request'}],
+      focus: ['slo'],
+      status: {oncall: null},
+      badges: {svc: null},
+    },
+    {
+      short: 'Burn rate',
+      kind: '원리',
+      title: 'Watch how fast the budget is burning',
+      text: [
+        'The burn rate is how fast you spend the error budget. At 1, you use up the budget exactly at the end of the period. At 14.4, you burn a 30-day budget in about two days.',
+        'Alert on this rate, not on the error rate itself. Brief errors pass; you are alerted only when the rate threatens the budget.',
+      ],
+      flows: [{from: 'slo', to: 'alert', label: 'Burn rate', type: 'request'}],
+      focus: ['slo', 'alert'],
+      values: {burn: '1 (normal pace)'},
+    },
+    {
+      short: 'Two windows',
+      kind: '원리',
+      title: 'Fire only when a long and a short window both cross',
+      text: [
+        'The urgent alert fires when both the 1-hour and 5-minute windows have a burn rate of 14.4 or more. The warning fires when both the 6-hour and 30-minute windows are at 6 or more.',
+        'With only a long window, the alert lingers after the outage ends. With only a short window, it fires on brief blips. Together they detect fast with fewer false alarms.',
+      ],
+      keyIdea: 'The long window confirms "it is burning hard now"; the short window confirms "it is still burning right now".',
+      changes: ['+ urgent: 1h and 5m windows both ≥ 14.4 → page now', '+ warning: 6h and 30m windows both ≥ 6 → check in work hours'],
+      flows: [{from: 'slo', to: 'alert', label: 'Check 2 windows', type: 'watch'}],
+      focus: ['alert'],
+    },
+    {
+      short: 'Page',
+      kind: '장애',
+      title: 'Errors spike and one urgent alert goes out',
+      text: [
+        'Order errors spike and both windows exceed a burn rate of 14.4. Even if 20 Pods hit the same error, Alertmanager groups them into one notification to on-call.',
+        'By severity, urgent goes to the on-call pager and warnings go to the team chat channel. Sending to mail or chat is covered in the external alerting lesson.',
+      ],
+      flows: [
+        {from: 'svc', to: 'users', label: 'Error response', type: 'response'},
+        {from: 'alert', to: 'oncall', label: '1 urgent page', type: 'request'},
+      ],
+      focus: ['oncall', 'svc'],
+      status: {svc: 'error', alert: 'error', oncall: 'warn'},
+      badges: {slo: 'Burning budget'},
+      values: {sli: {text: 'Dropping', tone: 'bad'}, burn: {text: '14.4 or more', tone: 'bad'}},
+    },
+    {
+      short: 'Narrow down',
+      kind: '원리',
+      title: 'From metrics to traces, from traces to logs',
+      text: [
+        'On-call picks a spike on the error rate graph. If a point carries the trace ID of a representative request (an exemplar), they jump straight to that request\'s path.',
+        'In the trace, they find the slow or failed span, then confirm the cause in logs with the same trace_id. With this chain in place, a few clicks reach the cause.',
+      ],
+      flows: [
+        {from: 'oncall', to: 'prom', label: 'Graph', type: 'request'},
+        {from: 'prom', to: 'trace', label: 'exemplar', type: 'request'},
+        {from: 'trace', to: 'logs', label: 'trace_id', type: 'request'},
+      ],
+      focus: ['prom', 'trace', 'logs'],
+      status: {oncall: 'ok'},
+    },
+    {
+      short: 'Recap',
+      kind: '정리',
+      title: 'Alert on symptoms, analyze causes',
+      text: [
+        'SLOs turned the target and error budget into numbers, and two conditions, long and short windows on the burn rate, woke people only for problems users actually felt.',
+        'Cause metrics stayed on dashboards, and when an alert fired, we narrowed the cause through metrics → traces → logs.',
+      ],
+      keyIdea: 'Put alerts that wake people on user-facing symptoms (error budget burn rate), and keep cause metrics like CPU on dashboards. When an alert fires, narrow down via metrics → traces → logs.',
+      focus: ['slo', 'alert', 'trace'],
+    },
+  ]}
+/>
+
+## Cause-based vs symptom-based alerts
+
+| Type | Example | Result | Where it belongs |
+| --- | --- | --- | --- |
+| Cause-based | CPU over 80%, Pod restarted once | Fires even without user impact, causing alert fatigue | Dashboards and analysis |
+| Symptom-based | Error budget burn rate, p99 latency over 2s for 10 minutes | Fires only for problems users actually feel | Alerts that wake people |
+
+With Prometheus, write alert conditions as alerting rules, and set grouping, repeat intervals and receivers in Alertmanager.
+
+Further reading: [Google SRE Workbook — Alerting on SLOs](https://sre.google/workbook/alerting-on-slos/) · [Prometheus alerting overview](https://prometheus.io/docs/alerting/latest/overview/) · [Kubernetes system metrics](https://kubernetes.io/docs/concepts/cluster-administration/system-metrics/)
+
+Next lesson: [Upgrading a cluster with kubeadm (CKA)](../cert/kubeadm-upgrade.mdx)

@@ -1,0 +1,206 @@
+---
+id: runtime-security
+title: 런타임 보안 — 이상 행동 잡기 (CKS)
+sidebar_label: 06 · 런타임 보안
+description: 컨테이너 안에서 셸을 열고 민감한 파일을 읽는 행동을 Falco가 시스템 콜로 잡아내고, seccomp·AppArmor·읽기 전용 파일 시스템으로 막고, 감사 로그로 조사하는 과정을 애니메이션으로 따라간다
+hide_table_of_contents: true
+---
+
+# 런타임 보안 — 이상 행동 잡기 (CKS)
+
+CKS 출제 영역 중 Monitoring, Logging and Runtime Security(20%)와 System Hardening(10%)의 "AppArmor·seccomp 같은 커널 강화 도구"에 해당한다. 배포 전 검사를 모두 통과한 컨테이너라도 실행 중(런타임)에 뚫릴 수 있다. 실행 중인 컨테이너 안에서 일어나는 이상 행동을 어떻게 알아채고, 막고, 조사하는지 따라가 본다. 파드를 만들 때 거는 보안 기준은 [파드 보안 기준과 securityContext](../advanced/pod-security.mdx)에서, 감사 로그 정책은 [감사 로그](../advanced/audit-log.mdx)에서 먼저 본다.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '약 10분', level: '고급'}}
+  groups={[
+    {label: '워커 노드', x: 495, y: 25, w: 465, h: 305, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'attacker', label: '공격자', sub: '탈취한 계정', icon: 'user', tone: 'ext', x: 85, y: 100, show: true},
+    {id: 'api', label: 'API 서버', sub: '요청 입구', icon: 'gate', tone: 'cp', x: 330, y: 100, show: true},
+    {id: 'app', label: 'web', sub: '컨테이너', icon: 'pod', tone: 'app', x: 600, y: 100, show: true},
+    {id: 'audit', label: '감사 로그', sub: '요청별 기록', icon: 'archive', tone: 'store', x: 330, y: 270},
+    {id: 'kernel', label: '리눅스 커널', sub: '시스템 콜', icon: 'layers', tone: 'node', x: 600, y: 270, show: true},
+    {id: 'falco', label: 'Falco', sub: '노드마다 실행', icon: 'shield', tone: 'node', x: 860, y: 270},
+    {id: 'alert', label: '경보 채널', sub: '알림·로그', icon: 'bell', tone: 'ext', x: 860, y: 400},
+    {id: 'sec', label: '보안 담당', sub: '조사', icon: 'user', tone: 'ext', x: 330, y: 400},
+  ]}
+  metrics={[
+    {id: 'alerts', label: 'Falco 경보'},
+    {id: 'blocked', label: '막힌 시도'},
+    {id: 'who', label: '누가 했나'},
+  ]}
+  learn={[
+    {text: '컨테이너 안의 모든 행동이 시스템 콜이 되는 이유', at: 1},
+    {text: 'Falco가 탐지만 하고 막지는 않는다는 점', at: 3},
+    {text: '읽기 전용 루트 파일 시스템으로 지키는 불변성', at: 5},
+    {text: 'seccomp와 AppArmor가 막는 대상의 차이', at: 6},
+    {text: 'Falco 경보와 감사 로그를 함께 보는 조사 순서', at: 7},
+  ]}
+  steps={[
+    {
+      short: '침입',
+      kind: '시작',
+      title: '탈취한 계정으로 컨테이너에 셸을 연다',
+      text: [
+        '공격자가 개발자의 접속 정보를 손에 넣고 kubectl exec로 web 컨테이너 안에 셸(명령을 치는 창)을 연다.',
+        '이 요청도 API 서버를 거친다. 감사 로그(audit log)가 켜져 있으면 누가 언제 어느 파드에 exec 했는지가 기록된다.',
+      ],
+      keyIdea: '배포 전 검사(이미지 검사, 파드 보안 기준)는 실행 중에 일어나는 일을 보지 못한다. 런타임 보안은 그 빈자리를 맡는다.',
+      flows: [
+        {from: 'attacker', to: 'api', label: 'exec', type: 'request'},
+        {from: 'api', to: 'app', label: '셸 열기', type: 'request'},
+        {from: 'api', to: 'audit', label: '기록', type: 'request'},
+      ],
+      focus: ['attacker', 'app'],
+      status: {app: 'warn'},
+      values: {alerts: '0', blocked: '0', who: '모름'},
+    },
+    {
+      short: '시스템 콜',
+      kind: '원리',
+      title: '컨테이너 안의 행동은 모두 시스템 콜이 된다',
+      text: [
+        '셸을 띄우면 execve, 파일을 열면 openat처럼 프로그램은 무엇을 하든 리눅스 커널에 시스템 콜(커널에 일을 맡기는 요청)을 보낸다.',
+        '컨테이너는 노드의 커널 하나를 함께 쓴다. 그래서 커널 자리에서 보면 모든 컨테이너의 행동을 볼 수 있다.',
+      ],
+      keyIdea: '컨테이너는 가상 머신과 달리 커널을 나눠 쓴다. 커널이 감시 지점이자, 뚫리면 노드 전체가 위험해지는 지점이다.',
+      flows: [{from: 'app', to: 'kernel', label: 'execve', type: 'request'}],
+      focus: ['kernel'],
+      badges: {kernel: 'execve bash'},
+    },
+    {
+      short: 'Falco',
+      kind: '원리',
+      title: 'Falco가 시스템 콜을 지켜보며 규칙과 맞춰 본다',
+      text: [
+        'Falco는 노드마다 하나씩(보통 데몬셋으로) 실행되며, 커널 드라이버(eBPF 프로브 등)로 시스템 콜 이벤트를 받아 본다.',
+        '받은 이벤트를 YAML로 적힌 규칙과 하나씩 맞춰 본다. 규칙에는 조건(condition), 경보 문구(output), 심각도(priority)가 들어 있다.',
+      ],
+      flows: [{from: 'kernel', to: 'falco', label: '이벤트', type: 'watch'}],
+      focus: ['falco'],
+      status: {falco: 'ok'},
+    },
+    {
+      short: '셸 탐지',
+      kind: '문제',
+      title: '"컨테이너 안 셸" 규칙이 경보를 낸다',
+      text: [
+        '기본 규칙 Terminal shell in container가 조건에 맞아 경보를 낸다. 경보에는 규칙 이름, 실행된 명령, 컨테이너·파드·네임스페이스 이름이 담긴다.',
+        '경보는 표준 출력·파일·syslog 같은 출력처로 나가고, 거기서 알림 채널로 이어진다. Falco는 알릴 뿐, 셸 실행을 막지는 않는다.',
+      ],
+      keyIdea: 'Falco는 탐지 도구다. 막는 일은 seccomp·AppArmor 같은 다른 장치가 맡는다.',
+      flows: [
+        {from: 'kernel', to: 'falco', type: 'watch'},
+        {from: 'falco', to: 'alert', label: '경보', type: 'request'},
+      ],
+      focus: ['falco', 'alert'],
+      status: {falco: 'warn'},
+      badges: {falco: '셸 실행'},
+      values: {alerts: {text: '1', tone: 'bad'}},
+    },
+    {
+      short: '민감 파일',
+      kind: '문제',
+      title: '민감한 파일을 읽자 다른 규칙이 또 울린다',
+      text: [
+        '공격자가 셸에서 /etc/shadow(계정 비밀번호 해시가 든 파일)를 읽는다. 이 행동은 openat 시스템 콜로 커널에 전달된다.',
+        '기본 규칙 Read sensitive file untrusted가 조건에 맞아 두 번째 경보를 낸다. 하나의 공격이 여러 규칙에 걸려 흔적을 남긴다.',
+      ],
+      flows: [
+        {from: 'app', to: 'kernel', label: 'openat', type: 'request'},
+        {from: 'kernel', to: 'falco', type: 'watch'},
+        {from: 'falco', to: 'alert', label: '경보', type: 'request'},
+      ],
+      focus: ['kernel', 'falco'],
+      badges: {kernel: '/etc/shadow', falco: '민감 파일'},
+      values: {alerts: {text: '2', tone: 'bad'}},
+    },
+    {
+      short: '불변성',
+      kind: '원리',
+      title: '읽기 전용 루트 파일 시스템이 도구 심기를 막는다',
+      text: [
+        '공격자가 컨테이너 안에 해킹 도구를 내려받아 실행 파일 폴더에 두려 한다. web에 readOnlyRootFilesystem: true가 걸려 있어 쓰기가 실패한다.',
+        '실행 중인 컨테이너를 고치지 않고, 바꿀 일이 있으면 새 이미지로 교체하는 것을 불변성(immutability)이라 한다. 임시 파일이 필요한 경로만 emptyDir로 따로 붙인다.',
+      ],
+      changes: ['+ readOnlyRootFilesystem: true', '+ /tmp 에만 emptyDir 마운트'],
+      flows: [
+        {from: 'app', to: 'kernel', label: '파일 쓰기', type: 'request'},
+        {from: 'kernel', to: 'app', label: '읽기 전용', type: 'response', bend: 0.15},
+      ],
+      focus: ['app'],
+      badges: {kernel: null, app: '읽기 전용'},
+      values: {blocked: {text: '1', tone: 'good'}},
+    },
+    {
+      short: '미리 막기',
+      kind: '원리',
+      title: 'seccomp와 AppArmor로 애초에 막는다',
+      text: [
+        'seccomp는 컨테이너가 부를 수 있는 시스템 콜을 거르는 필터다. RuntimeDefault 프로파일만 걸어도 위험한 시스템 콜 상당수가 막힌다.',
+        'AppArmor는 프로그램이 읽고 쓰고 실행할 수 있는 파일을 프로파일로 제한한다. 노드에 프로파일을 미리 올려 두고, 파드의 securityContext에서 그 이름을 지정한다.',
+      ],
+      keyIdea: '두 도구 모두 커널에서 동작한다. 프로파일이 노드에 없으면 파드가 시작되지 못하므로, 노드 준비가 먼저다.',
+      changes: [
+        '+ seccompProfile.type: RuntimeDefault',
+        '+ appArmorProfile.type: Localhost',
+        '+ appArmorProfile.localhostProfile: deny-shell',
+      ],
+      flows: [
+        {from: 'app', to: 'kernel', label: '셸 실행', type: 'request'},
+        {from: 'kernel', to: 'app', label: '권한 거부', type: 'response', bend: 0.15},
+      ],
+      focus: ['kernel'],
+      status: {kernel: 'ok'},
+      badges: {app: null, kernel: 'AppArmor 거부'},
+      values: {blocked: {text: '2', tone: 'good'}},
+    },
+    {
+      short: '조사',
+      kind: '주의',
+      title: 'Falco 경보와 감사 로그를 맞춰 누가 했는지 찾는다',
+      text: [
+        'Falco 경보는 컨테이너 안에서 무엇이 일어났는지를, 감사 로그는 API 서버로 누가 그 컨테이너에 들어왔는지를 알려 준다. 두 기록의 시간과 파드 이름을 맞춰 본다.',
+        '감사 로그의 pods/exec 요청에서 사용자 이름을 찾으면, 그 계정의 접속 정보를 폐기하고 파드를 새 것으로 교체한다. 감사 정책에 이 요청이 빠져 있으면 기록이 없다.',
+      ],
+      keyIdea: '런타임 경보 하나만으로는 "무엇"만 알고 "누가"는 모른다. 감사 로그가 함께 있어야 조사가 끝난다.',
+      flows: [
+        {from: 'alert', to: 'sec', label: '경보 확인', type: 'request'},
+        {from: 'audit', to: 'sec', label: 'exec 기록', type: 'response'},
+      ],
+      focus: ['sec', 'audit'],
+      status: {app: 'gone', falco: 'ok'},
+      badges: {kernel: null, falco: null, sec: '계정 확인'},
+      values: {who: {text: '개발자 B 계정', tone: 'good'}},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '탐지하고, 막고, 기록으로 조사한다',
+      text: [
+        '컨테이너 안의 행동은 모두 시스템 콜이 되고, Falco가 그 흐름을 규칙과 맞춰 이상 행동을 알렸다. seccomp·AppArmor·읽기 전용 파일 시스템은 같은 행동을 애초에 실패하게 만들었다.',
+        '마지막으로 감사 로그가 누가 들어왔는지를 알려 주어 계정 폐기와 파드 교체로 이어졌다.',
+      ],
+      keyIdea: 'Falco는 잡고, seccomp·AppArmor·읽기 전용 루트 파일 시스템은 막고, 감사 로그는 누가 했는지 밝힌다. 조사할 때는 Falco 경보의 파드·시간과 감사 로그의 사용자를 이어 맞춰 "무엇이, 누구 때문에"를 판단한다.',
+      focus: ['falco', 'kernel', 'audit'],
+    },
+  ]}
+/>
+
+## 시험에서 자주 묻는 것
+
+| 상황 | 해야 할 일·명령 | 함정 |
+| --- | --- | --- |
+| 셸을 연 컨테이너 찾기 | Falco 출력에서 규칙 이름과 컨테이너·파드 이름을 확인하고 해당 파드를 교체 | Falco는 알리기만 한다. 파드는 직접 정리해야 한다 |
+| Falco 규칙 추가·수정 | 기본 규칙 파일 대신 `falco_rules.local.yaml` 같은 로컬 규칙 파일에 적는다 | 기본 규칙 파일을 고치면 업그레이드 때 덮어써질 수 있다 |
+| 컨테이너 불변성 | `readOnlyRootFilesystem: true`, 쓰기가 필요한 경로만 `emptyDir` | 임시 파일을 쓰는 앱은 볼륨 없이 시작에 실패한다 |
+| seccomp 적용 | `securityContext.seccompProfile.type: RuntimeDefault` 또는 `Localhost` | `Localhost` 프로파일 경로는 kubelet의 seccomp 폴더 기준이다 |
+| AppArmor 적용 | 노드에서 `apparmor_parser`로 프로파일을 올리고 `appArmorProfile`에 이름 지정 | 프로파일이 없는 노드에 배치되면 파드가 시작되지 못한다 |
+| 누가 exec 했나 | 감사 로그에서 `pods/exec` 요청의 사용자 확인 | 감사 정책에 규칙이 없으면 남지 않는다 |
+
+더 읽을거리: [CNCF 자격증 출제 범위](https://github.com/cncf/curriculum) · [Falco 문서](https://falco.org/docs/) · [seccomp로 시스템 콜 제한](https://kubernetes.io/docs/tutorials/security/seccomp/) · [파드 보안 기준과 securityContext](../advanced/pod-security.mdx) · [감사 로그](../advanced/audit-log.mdx)
+
+다음 레슨: [4C와 위협 모델로 클러스터 보기 (KCSA·KCNA)](./threat-model.mdx)

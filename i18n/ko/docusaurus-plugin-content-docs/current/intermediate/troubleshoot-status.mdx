@@ -1,0 +1,179 @@
+---
+id: troubleshoot-status
+title: 상태를 세 단계로 읽고 문제 확인하기
+sidebar_label: 03 · 상태 읽기와 확인 순서
+description: kubectl get pods의 STATUS 칸을 파드 단계·컨테이너 상태·사유 세 가지로 나눠 읽고, Pending·ImagePullBackOff·CrashLoopBackOff에서 이벤트와 로그 중 어디를 먼저 보는지 애니메이션으로 따라간다
+hide_table_of_contents: true
+---
+
+# 상태를 세 단계로 읽고 문제 확인하기
+
+파드 목록의 "상태" 칸 하나에는 서로 다른 세 가지 정보가 섞여 있다. 이것을 풀어 읽고, 상황마다 이벤트와 로그 중 어디부터 볼지 따라가 본다. 파드가 뜨는 과정의 어느 단계에서 멈추는지는 [파드가 뜨기까지](../k8s/pod-startup.mdx)에서 다룬다.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '약 10분', level: '중급'}}
+  groups={[
+    {label: '상태의 세 겹', x: 255, y: 30, w: 210, h: 395, tone: 'plain'},
+  ]}
+  nodes={[
+    {id: 'list', label: '파드 목록', sub: 'STATUS·READY', icon: 'browser', tone: 'ext', x: 100, y: 225, show: true},
+    {id: 'phase', label: '파드 단계', sub: 'phase', icon: 'layers', tone: 'cp', x: 360, y: 105, show: true},
+    {id: 'cstate', label: '컨테이너', sub: '상태 state', icon: 'box', tone: 'node', x: 360, y: 235, show: true},
+    {id: 'reason', label: '사유', sub: 'reason', icon: 'alert', tone: 'app', x: 360, y: 365, show: true},
+    {id: 'events', label: '이벤트', sub: '쿠버네티스 기록', icon: 'bell', tone: 'store', x: 640, y: 120},
+    {id: 'logs', label: '로그', sub: '앱이 남긴 글', icon: 'book', tone: 'store', x: 640, y: 340},
+    {id: 'node', label: '노드', sub: 'Ready·압박', icon: 'server', tone: 'node', x: 880, y: 230},
+  ]}
+  metrics={[
+    {id: 'phase', label: '파드 단계'},
+    {id: 'cstate', label: '컨테이너 상태'},
+    {id: 'reason', label: '사유'},
+    {id: 'ready', label: 'READY'},
+  ]}
+  learn={[
+    {text: '상태 칸에 단계 이름과 사유 이름이 섞여 나오는 이유', at: 0},
+    {text: 'Running이어도 READY가 부족할 수 있다는 것', at: 2},
+    {text: '실행 전 문제는 이벤트, 실행 후 실패는 로그부터', at: 5},
+    {text: '여러 파드가 한꺼번에 이상하면 노드를 본다는 것', at: 6},
+  ]}
+  steps={[
+    {
+      short: '한 칸 세 겹',
+      kind: '시작',
+      title: '상태 칸 하나에 세 가지 정보가 섞여 있다',
+      text: [
+        '상태는 세 층으로 나뉜다. 파드 전체가 어디쯤인지(단계), 컨테이너 하나하나가 무엇을 하는지(상태), 그리고 왜 그런지(사유)다.',
+        'kubectl get pods는 셋을 합쳐 가장 구체적인 값 하나만 보여 준다. 그래서 상태 칸에 단계 이름과 사유 이름이 섞여 나온다.',
+      ],
+      keyIdea: '상태 칸에 ImagePullBackOff가 보여도, 파드 단계는 Pending이고 컨테이너는 Waiting이다.',
+      flows: [
+        {from: 'list', to: 'phase', type: 'request'},
+        {from: 'list', to: 'cstate', type: 'request'},
+        {from: 'list', to: 'reason', type: 'request'},
+      ],
+      focus: ['list'],
+    },
+    {
+      short: '파드 단계',
+      kind: '원리',
+      title: '파드 단계는 수명 중 어디쯤인지 알려 준다',
+      text: [
+        'Pending(배치 대기·준비 중), Running(컨테이너 실행 중), Succeeded(정상 종료), Failed(실패로 종료), Unknown(노드와 연락 끊김) 다섯 가지다.',
+        'Pending은 잠깐이면 정상이지만 오래 머물면 문제다. Running도 프로세스가 실행 중이라는 뜻일 뿐, "서비스 정상"을 보장하지는 않는다.',
+      ],
+      flows: [{from: 'list', to: 'phase', label: '단계', type: 'request'}],
+      focus: ['phase'],
+      values: {phase: 'Running'},
+    },
+    {
+      short: 'READY',
+      kind: '원리',
+      title: '컨테이너 상태와 READY를 함께 본다',
+      text: [
+        '컨테이너는 Waiting(아직 실행 전·재시작 대기), Running(실행 중), Terminated(종료, 종료 코드 포함) 중 하나다.',
+        '파드의 READY 1/2는 컨테이너 2개 중 1개가 준비 검사를 통과했다는 뜻이다. 준비되지 않은 파드에는 서비스가 요청을 보내지 않는다.',
+      ],
+      keyIdea: '서비스 메시를 쓰는 구획에서는 사이드카 컨테이너가 하나 더 들어가, 컨테이너가 하나뿐인 앱도 2/2로 보인다.',
+      flows: [{from: 'list', to: 'cstate', label: 'READY', type: 'request'}],
+      focus: ['cstate'],
+      values: {cstate: 'Running', reason: '-', ready: {text: '1/2', tone: 'bad'}},
+    },
+    {
+      short: 'Pending',
+      kind: '장애',
+      title: 'Pending에 멈춰 있으면 이벤트부터 본다',
+      text: [
+        '파드가 노드에 배치되지 못했다. 아직 컨테이너가 실행된 적이 없으니 로그에는 아무것도 없다.',
+        '이벤트에 FailedScheduling이 남는다. Insufficient cpu·memory면 요청값·쿼터·노드 여유를, untolerated taint면 배치 조건을 확인한다.',
+      ],
+      flows: [{from: 'phase', to: 'events', label: '이벤트 먼저', type: 'request'}],
+      focus: ['phase', 'events'],
+      status: {phase: 'warn', events: 'warn'},
+      badges: {events: 'FailedScheduling'},
+      values: {phase: {text: 'Pending', tone: 'bad'}, cstate: '아직 없음', reason: '-', ready: {text: '0/1', tone: 'bad'}},
+    },
+    {
+      short: '이미지',
+      kind: '장애',
+      title: 'ImagePullBackOff도 이벤트에 답이 있다',
+      text: [
+        '배치는 됐지만 이미지를 받지 못했다. 파드는 Pending, 컨테이너는 Waiting, 사유는 ImagePullBackOff다.',
+        '이벤트 메시지에 not found가 있으면 이미지 이름·태그가, unauthorized면 인증 정보가, timeout·no such host면 저장소 주소나 네트워크가 문제다.',
+      ],
+      keyIdea: 'BackOff는 포기가 아니라 간격을 늘려 가며 다시 시도하는 중이라는 뜻이다. 원인을 고치면 저절로 돌아올 수 있다.',
+      flows: [{from: 'reason', to: 'events', label: '이벤트 먼저', type: 'request'}],
+      focus: ['reason', 'events'],
+      status: {phase: null, reason: 'warn'},
+      badges: {events: 'Failed to pull', reason: 'ImagePull'},
+      values: {phase: {text: 'Pending', tone: 'bad'}, cstate: 'Waiting', reason: {text: 'ImagePullBackOff', tone: 'bad'}},
+    },
+    {
+      short: '재시작 반복',
+      kind: '장애',
+      title: 'CrashLoopBackOff는 직전 컨테이너 로그부터 본다',
+      text: [
+        '컨테이너는 실행됐는데 프로그램이 곧바로 종료되기를 반복한다. 파드는 Running, 컨테이너는 Waiting, 사유는 CrashLoopBackOff다.',
+        '지금 컨테이너는 막 시작해 로그가 거의 없다. 원인은 직전에 종료된 컨테이너의 로그(kubectl logs --previous)에 있다.',
+      ],
+      keyIdea: '자세히 보기(describe)의 Last State도 함께 본다. OOMKilled·종료 코드 137이면 메모리 상한을, 이벤트에 Liveness probe failed가 있으면 프로브 설정을 의심한다.',
+      flows: [
+        {from: 'reason', to: 'logs', label: '이전 로그', type: 'request'},
+        {from: 'cstate', to: 'events', label: 'Last State', type: 'request'},
+      ],
+      focus: ['reason', 'logs'],
+      status: {events: null, reason: 'error', logs: 'warn'},
+      badges: {events: null, reason: 'CrashLoop', logs: '--previous'},
+      values: {phase: 'Running', cstate: 'Waiting', reason: {text: 'CrashLoopBackOff', tone: 'bad'}, ready: {text: '0/1', tone: 'bad'}},
+    },
+    {
+      short: '노드 확인',
+      kind: '주의',
+      title: '여러 파드가 한꺼번에 이상하면 노드를 본다',
+      text: [
+        '파드 단계가 Unknown이거나 같은 노드의 파드가 동시에 이상하다면, 파드 하나가 아니라 노드 쪽 문제다.',
+        '노드가 NotReady인지, MemoryPressure·DiskPressure 같은 압박 조건이 있는지 노드 상태와 노드 이벤트를 확인한다.',
+      ],
+      keyIdea: '파드 하나의 문제인지, 같은 노드의 파드가 한꺼번에 이상한지 먼저 가르면 범위가 빠르게 좁혀진다.',
+      flows: [
+        {from: 'phase', to: 'node', label: '노드 상태', type: 'request', bend: 0.15},
+        {from: 'node', to: 'events', label: '노드 이벤트', type: 'response'},
+      ],
+      focus: ['node'],
+      status: {reason: null, logs: null, node: 'error'},
+      badges: {reason: null, logs: null, node: 'NotReady'},
+      values: {phase: {text: 'Unknown', tone: 'bad'}, cstate: '-', reason: '-', ready: '-'},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '상태 → 이벤트 → 로그 → 노드 순서로 좁힌다',
+      text: [
+        '실행 전·실행 환경의 문제(Pending, ImagePullBackOff, Evicted)는 쿠버네티스가 남긴 이벤트에, 실행은 됐는데 프로그램이 실패하는 문제는 앱이 남긴 로그에 답이 있다.',
+        '이벤트는 기본 설정에서 약 1시간 뒤 사라지고, 로그는 컨테이너가 다시 만들어지면 대부분 사라진다. 문제를 발견하면 바로 확인한다.',
+      ],
+      keyIdea: 'STATUS 칸은 세 가지 정보를 합친 한 값이다. 사유를 읽었으면 그에 맞는 곳으로 간다. 배치·이미지 문제는 이벤트(kubectl describe pod), 재시작 반복은 직전 로그(kubectl logs --previous), 여러 파드 동시 이상은 노드(kubectl describe node)다.',
+      focus: ['events', 'logs'],
+      status: {node: null},
+      badges: {node: null},
+    },
+  ]}
+/>
+
+## 상황별 먼저 볼 곳
+
+| 상태 칸에 보이는 것 | 세 가지로 나누면 (단계 / 컨테이너 / 사유) | 먼저 볼 곳 | 확인할 것 |
+| --- | --- | --- | --- |
+| `Pending` | Pending / 아직 없음 / FailedScheduling | 이벤트 | `Insufficient cpu`·`memory`면 요청값·쿼터·노드 여유, taint면 배치 조건 |
+| `ImagePullBackOff` | Pending / Waiting / ImagePullBackOff | 이벤트 | `not found`는 이름·태그, `unauthorized`는 인증, `timeout`은 저장소 주소·네트워크 |
+| `CrashLoopBackOff` | Running / Waiting / CrashLoopBackOff | 직전 컨테이너 로그 | 앱 오류 메시지, Last State의 사유와 종료 코드 |
+| `OOMKilled` | Running / Terminated / OOMKilled | 메모리 사용량 | 메모리 상한값과 실제 사용량 비교 |
+| `CreateContainerConfigError` | Pending / Waiting / CreateContainerConfigError | 이벤트 | 참조한 컨피그맵·시크릿이 있는지, 키 이름이 맞는지 |
+| `Unknown`, 여러 파드 동시 이상 | Unknown / - / - | 노드 상태 | NotReady, 압박 조건 |
+
+이벤트는 `kubectl describe pod <이름>`, 직전 컨테이너 로그는 `kubectl logs <이름> --previous`로 본다. 로그는 파드에만 있으므로 디플로이먼트에서 문제를 발견하면 그 아래 파드로 내려간다. 네임스페이스 전체 이벤트는 `kubectl get events --sort-by=.lastTimestamp`로 본다.
+
+더 읽을거리: [파드 디버깅](https://kubernetes.io/docs/tasks/debug/debug-application/debug-pods/) · [kubectl 치트 시트](https://kubernetes.io/ko/docs/reference/kubectl/cheatsheet/) · [파드 라이프사이클](https://kubernetes.io/ko/docs/concepts/workloads/pods/pod-lifecycle/) · [파드가 죽으면 (자가 치유)](../k8s/self-healing.mdx)
+
+다음 레슨: [정상 종료 — 요청을 잃지 않고 내려가기](./graceful-shutdown.mdx)

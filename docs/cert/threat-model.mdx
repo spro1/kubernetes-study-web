@@ -1,0 +1,203 @@
+---
+id: threat-model
+title: Viewing the cluster through the 4Cs and a threat model (KCSA·KCNA)
+sidebar_label: 07 · 4Cs and threat model
+description: Follow an animation of one attacker trying to cross the Code, Container and Cluster boundaries in turn, showing where each threat model item arises and which control stops it
+hide_table_of_contents: true
+---
+
+# Viewing the cluster through the 4Cs and a threat model (KCSA·KCNA)
+
+This covers the 4Cs in Overview of Cloud Native Security (14%) and the Kubernetes Threat Model (16%) in the KCSA domains, and ties into the security items within Container Orchestration (28%) in the KCNA. As one attacker starts outside and tries to cross the boundaries one by one, we follow where each threat model item arises and which control stops it.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~12 min', level: 'Intermediate'}}
+  groups={[
+    {label: 'Cloud · infrastructure', x: 180, y: 15, w: 810, h: 425, tone: 'plain'},
+    {label: 'Cluster', x: 205, y: 55, w: 760, h: 360, tone: 'mgmt'},
+    {label: 'Container · Code', x: 230, y: 99, w: 200, h: 127, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'attacker', label: 'Attacker', sub: 'outside', icon: 'user', tone: 'ext', x: 85, y: 165, show: true},
+    {id: 'web', label: 'web', sub: 'app container', icon: 'pod', tone: 'app', x: 330, y: 170, show: true},
+    {id: 'api', label: 'API server', sub: 'request gateway', icon: 'gate', tone: 'cp', x: 600, y: 130, show: true},
+    {id: 'etcd', label: 'etcd', sub: 'stores Secrets', icon: 'db', tone: 'store', x: 860, y: 130, show: true},
+    {id: 'node', label: 'node-1', sub: 'worker node', icon: 'server', tone: 'node', x: 330, y: 340, show: true},
+    {id: 'audit', label: 'Audit log', sub: 'per-request record', icon: 'archive', tone: 'store', x: 600, y: 340, show: true},
+    {id: 'db', label: 'DB', sub: 'sensitive data', icon: 'db', tone: 'app', x: 860, y: 300, show: true},
+  ]}
+  metrics={[
+    {id: 'where', label: 'Attacker position'},
+    {id: 'threat', label: 'Threat item'},
+    {id: 'defense', label: 'Control that stopped it'},
+  ]}
+  learn={[
+    {text: 'How the 4Cs (Cloud, Cluster, Container, Code) wrap each other from the outside in', at: 0},
+    {text: 'Reading the diagram as trust boundaries and data flows', at: 0},
+    {text: 'Where the seven threat model items arise', at: 2},
+    {text: 'Matching controls per boundary: NetworkPolicy, RBAC, Pod Security Standards, Secret encryption, audit logs', at: 7},
+  ]}
+  steps={[
+    {
+      short: '4C bounds',
+      kind: '시작',
+      title: 'Split security into four boundaries',
+      text: [
+        'Cloud native security is seen as four layers from the outside in: Cloud (infrastructure), Cluster, Container and Code, or the 4Cs for short. Inner layers rely on the security of outer ones, so strong code is useless if the outside is breached.',
+        'Each frame in the diagram is a trust boundary (a line where the level of trust changes), and each arrow is a data flow. A threat model asks, wherever a flow crosses a boundary, "what could go wrong here?".',
+      ],
+      keyIdea: 'The first threat model item is trust boundaries and data flows. Only once you can draw them can you find where the other threats arise.',
+      flows: [{from: 'attacker', to: 'web', label: 'normal request', type: 'request'}],
+      focus: ['attacker', 'web'],
+      values: {where: 'outside', threat: 'Trust boundaries & data flow', defense: '-'},
+    },
+    {
+      short: 'Code breach',
+      kind: '문제',
+      title: 'A flaw in the code gets the attacker into the container',
+      text: [
+        'The attacker exploits a flaw in the web application code to run their own commands inside the container. This is the threat model\'s "malicious code or compromise in a container".',
+        'The defense here is images with few vulnerabilities, plus settings that limit what a compromise can do. The restricted Pod Security Standard blocks running as root, privilege escalation and kernel capabilities.',
+      ],
+      keyIdea: 'A threat model starts by assuming compromise cannot be fully prevented, and making a breach stop at the next boundary.',
+      flows: [{from: 'attacker', to: 'web', label: 'exploit', type: 'request'}],
+      focus: ['web'],
+      status: {web: 'error'},
+      badges: {web: 'compromised'},
+      values: {where: {text: 'inside Container', tone: 'bad'}, threat: 'Container compromise', defense: 'Pod Security Standards'},
+    },
+    {
+      short: 'Lateral move',
+      kind: '문제',
+      title: 'It tries to reach other pods over the network',
+      text: [
+        'By default in Kubernetes, every pod can talk to every pod. The attacker tries to connect from web straight to the DB pod. This is the threat model\'s "attacker on the network".',
+        'If each namespace has a default-deny NetworkPolicy with only needed traffic allowed, this connection is blocked. Eavesdropping and impersonation are handled separately by service mesh mTLS.',
+      ],
+      changes: ['+ NetworkPolicy default deny', '+ no web → DB allow rule'],
+      flows: [{from: 'web', to: 'db', label: 'connect DB', type: 'request'}],
+      focus: ['db'],
+      status: {db: 'ok'},
+      badges: {db: 'blocked'},
+      values: {threat: 'Attacker on the network', defense: {text: 'NetworkPolicy', tone: 'good'}},
+    },
+    {
+      short: 'Escalation',
+      kind: '문제',
+      title: 'It tries to grow its power with the pod token and the node',
+      text: [
+        'Using the service account token mounted in the container, it tries to create pods or read Secrets through the API server, and to launch a privileged container to take over the node. This is the threat model\'s "privilege escalation".',
+        'RBAC that gives the service account least privilege rejects the API requests with 403, and the baseline Pod Security Standard rejects the privileged container at admission. Pods that need no token turn off automounting.',
+      ],
+      keyIdea: 'Even just the right to create pods is a path to borrowing another service account\'s rights. Review "harmless-looking permissions" separately.',
+      changes: ['~ RBAC least privilege', '+ automountServiceAccountToken: false'],
+      flows: [
+        {from: 'web', to: 'api', label: 'use token', type: 'request'},
+        {from: 'api', to: 'web', label: '403 denied', type: 'response', bend: 0.15},
+        {from: 'web', to: 'node', label: 'node escape', type: 'request'},
+      ],
+      focus: ['api', 'node'],
+      status: {api: 'ok', node: 'ok'},
+      badges: {db: null},
+      values: {threat: 'Privilege escalation', defense: {text: 'RBAC · Pod Security', tone: 'good'}},
+    },
+    {
+      short: 'Sensitive data',
+      kind: '문제',
+      title: 'It goes after where Secrets are stored',
+      text: [
+        'Secret values are only base64-encoded when stored, not encrypted. Get hold of etcd or its backup files and you can read passwords as is. This is the threat model\'s "access to sensitive data".',
+        'Configuring etcd encryption at rest on the API server leaves only encrypted values in etcd. The path through the API is blocked by RBAC that grants Secret read access only to subjects that truly need it.',
+      ],
+      changes: ['+ etcd encryption at rest (EncryptionConfiguration)', '~ narrow Secret get·list rights'],
+      flows: [
+        {from: 'api', to: 'etcd', label: 'store encrypted', type: 'request'},
+      ],
+      focus: ['etcd'],
+      status: {etcd: 'ok', api: null, node: null},
+      badges: {etcd: 'encrypted'},
+      values: {threat: 'Access to sensitive data', defense: {text: 'Secret encryption · RBAC', tone: 'good'}},
+    },
+    {
+      short: 'Persistence',
+      kind: '주의',
+      title: 'It tries to leave a foothold to come back',
+      text: [
+        'So it can return even after the pod is replaced, the attacker tries to quietly create a workload such as a CronJob. This is the threat model\'s "persistence".',
+        'Without create rights, RBAC rejects it, and the attempt itself stays in the audit log as who tried to create what, and when. A read-only root filesystem also stops planting tools inside the container.',
+      ],
+      flows: [
+        {from: 'web', to: 'api', label: 'create CronJob', type: 'request'},
+        {from: 'api', to: 'audit', label: 'log attempt', type: 'request'},
+      ],
+      focus: ['audit'],
+      status: {audit: 'warn'},
+      badges: {audit: 'create denied'},
+      values: {threat: 'Persistence', defense: {text: 'RBAC · audit log', tone: 'good'}},
+    },
+    {
+      short: 'DoS',
+      kind: '장애',
+      title: 'It hogs resources to stall its neighbors',
+      text: [
+        'Unable to go further, the attacker tries to use up CPU and memory or flood the API server with requests to stall other services too. This is the threat model\'s "denial of service".',
+        'Container requests and limits and namespace resource quotas cap what one pod can use, and API Priority and Fairness on the API server keeps a request flood from blocking other requests.',
+      ],
+      flows: [
+        {from: 'web', to: 'node', label: 'hog CPU', type: 'request'},
+        {from: 'web', to: 'api', label: 'request flood', type: 'request'},
+      ],
+      focus: ['node', 'api'],
+      status: {node: 'warn', api: 'warn', audit: null},
+      badges: {audit: null, node: 'limits applied'},
+      values: {threat: 'Denial of service', defense: {text: 'limits · quota · APF', tone: 'good'}},
+    },
+    {
+      short: 'Trace',
+      kind: '원리',
+      title: 'Follow the attacker\'s footprints in the audit log',
+      text: [
+        'Every attempt that went through the API server so far (token use, CronJob creation, request flood) is in the audit log. Reading which service account did what, and when, in order reveals web as the compromised pod.',
+        'Replace the compromised pod, revoke its token, then redeploy with an image that fixes the Code flaw that was first exploited.',
+      ],
+      keyIdea: 'Audit logging is off by default. Records exist only if you configure an audit policy on the API server.',
+      flows: [
+        {from: 'api', to: 'audit', label: 'log requests', type: 'request'},
+      ],
+      focus: ['audit', 'web'],
+      status: {web: 'gone', node: 'ok', api: 'ok', audit: 'ok'},
+      badges: {web: null, node: null, audit: 'breach path'},
+      values: {where: {text: 'blocked·replaced', tone: 'good'}, threat: '-', defense: 'audit log'},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Block at every boundary; if breached, stop at the next one',
+      text: [
+        'The attacker got from Code into the Container, but NetworkPolicy stopped lateral movement, RBAC and Pod Security Standards stopped privilege escalation, Secret encryption stopped data leaks, and limits and quotas stopped denial of service.',
+        'The audit log recorded even the blocked attempts, letting you trace who came in and where. A threat model is this method of pairing threats with defenses on top of boundaries and flows.',
+      ],
+      keyIdea: 'In the 4Cs, an inner boundary cannot stand in for an outer one. List which boundary (Cloud, Cluster, Container, Code) each control protects, and fill the empty boundaries first.',
+      focus: ['web', 'api', 'etcd', 'db', 'audit'],
+    },
+  ]}
+/>
+
+## Common exam questions
+
+| Situation | What to do / command | Trap |
+| --- | --- | --- |
+| Asked for the 4C order | From the outside: Cloud → Cluster → Container → Code | Inner layers rely on outer ones. Protecting only the code is not enough |
+| A compromised pod reaches other pods | A default-deny NetworkPolicy in the namespace, allowing only needed traffic | By default, all pods can talk to each other |
+| Privilege escalation via the pod token | Least-privilege service accounts, `automountServiceAccountToken: false` | Even pod-create rights are a path to borrowing another account's rights |
+| Protecting Secrets | etcd encryption at rest (`EncryptionConfiguration`) + narrower Secret read RBAC | base64 is not encryption |
+| Denial of service | requests and limits, ResourceQuota, API Priority and Fairness | Without limits, one pod can starve its neighbors on the node |
+| Tracing persistence and breach paths | Check create and exec requests and their users in the audit log | Audit logs exist only if an audit policy is configured |
+
+To go deeper into each boundary's defenses, continue with the lessons [Blocking and Allowing Traffic (NetworkPolicy)](../k8s/network-policy.mdx), [Who Can Do What (RBAC)](../k8s/rbac.mdx), [Pod Security Standards and securityContext](../advanced/pod-security.mdx) and [Audit Logs](../advanced/audit-log.mdx).
+
+Further reading: [CNCF certification curriculum](https://github.com/cncf/curriculum) · [Overview of cloud native security](https://kubernetes.io/docs/concepts/security/overview/) · [Multi-tenancy](https://kubernetes.io/docs/concepts/security/multi-tenancy/)
+
+Next lesson: [Who Owns What (IaaS · PaaS · SaaS)](../cloud/service-models.mdx)

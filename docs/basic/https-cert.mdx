@@ -1,0 +1,188 @@
+---
+id: https-cert
+title: HTTPS and Certificates
+sidebar_label: 02 · HTTPS and Certificates
+description: Follow step by step how a browser and a server verify each other with certificates, how private certificates and trust stores work, and what happens when a certificate expires
+hide_table_of_contents: true
+---
+
+# HTTPS and Certificates
+
+An HTTPS connection starts by using a certificate to check "is this really that server?". Follow how a browser trusts a certificate, why internal networks often show warnings, and what happens when a certificate expires.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~8 min', level: 'Beginner'}}
+  nodes={[
+    {id: 'browser', label: 'Browser', sub: 'User PC', icon: 'browser', tone: 'ext', x: 90, y: 230, show: true},
+    {id: 'trust', label: 'Trust store', sub: 'Trusted CA list', icon: 'book', tone: 'store', x: 90, y: 390},
+    {id: 'ca', label: 'Cert authority', sub: 'CA', icon: 'shield', tone: 'ext', x: 330, y: 80},
+    {id: 'cert', label: 'Certificate', sub: 'Domain · expiry', icon: 'ticket', tone: 'store', x: 620, y: 80},
+    {id: 'server', label: 'Portal server', sub: 'Holds the cert', icon: 'server', tone: 'app', x: 620, y: 230, show: true},
+    {id: 'privca', label: 'Private CA', sub: 'Issued in-house', icon: 'shield', tone: 'cp', x: 330, y: 390},
+    {id: 'knode', label: 'Worker node', sub: 'Pulls images', icon: 'agent', tone: 'node', x: 880, y: 230},
+    {id: 'harbor', label: 'Harbor', sub: 'Image registry', icon: 'registry', tone: 'store', x: 880, y: 390},
+  ]}
+  metrics={[
+    {id: 'issuer', label: 'Issuer'},
+    {id: 'name', label: 'Domain match'},
+    {id: 'expire', label: 'Validity'},
+    {id: 'result', label: 'Result'},
+  ]}
+  learn={[
+    {text: 'A certificate proves "I own this domain"', at: 1},
+    {text: 'The browser checks the issuer against its trust store', at: 2},
+    {text: 'Why private certificates trigger warnings', at: 4},
+    {text: 'Server-to-server traffic also needs trust registration', at: 6},
+    {text: 'Why expiry becomes a "sudden" outage', at: 7},
+  ]}
+  steps={[
+    {
+      short: 'Connect',
+      kind: '시작',
+      title: 'Connect to an HTTPS address',
+      text: [
+        'The browser asks to connect to https://portal.example.com. HTTPS adds encryption to HTTP so no one in between can read or tamper with the traffic.',
+        'But one thing comes before encryption: is the other side really that server?',
+      ],
+      flows: [{from: 'browser', to: 'server', label: 'HTTPS connect', type: 'request'}],
+      focus: ['server'],
+      values: {result: 'Not checked'},
+    },
+    {
+      short: 'Certificate',
+      kind: '원리',
+      title: 'The server shows its certificate',
+      text: [
+        'The server presents its certificate (TLS certificate). A certificate is a digital document proving "I own this domain". It lists the domain name and the validity period.',
+        'It also says who issued and vouches for it. This issuer is called a certificate authority (CA).',
+      ],
+      flows: [{from: 'server', to: 'browser', label: 'Certificate', type: 'response'}],
+      focus: ['cert', 'server'],
+      badges: {cert: 'Portal domain'},
+    },
+    {
+      short: 'Issuer',
+      kind: '원리',
+      title: 'Check that a trusted authority vouches for it',
+      text: [
+        'The browser (and the OS) ships with a list of trusted certificate authorities. It follows the issuers upward from the certificate, and if it reaches one on the list, it trusts it. There may be one or two intermediate authorities along the way. This chain is called the chain of trust.',
+        'If an authority not on the list issued it, the browser does not trust it, even if the contents are correct.',
+      ],
+      keyIdea: 'The browser does not trust the certificate itself. It trusts the authority that vouches for it.',
+      flows: [
+        {from: 'ca', to: 'cert', label: 'Vouch (sign)', type: 'request'},
+        {from: 'browser', to: 'trust', label: 'Check issuer', type: 'request'},
+      ],
+      focus: ['ca', 'trust'],
+      values: {issuer: {text: 'In trust store', tone: 'good'}},
+    },
+    {
+      short: 'Name · dates',
+      kind: '원리',
+      title: 'If domain and dates match, encryption starts',
+      text: [
+        'The browser also checks that the domain on the certificate matches the address it connected to, and that today is within the validity period. If everything passes, all traffic from then on is encrypted.',
+        'Connecting directly by IP address does not match the certificate domain, so a warning appears. Domain mismatch is a common warning in practice.',
+      ],
+      flows: [
+        {from: 'browser', to: 'server', label: 'Encrypted talk', type: 'request'},
+        {from: 'server', to: 'browser', type: 'response'},
+      ],
+      focus: ['browser', 'server'],
+      status: {server: 'ok'},
+      badges: {server: 'Padlock'},
+      values: {name: {text: 'Match', tone: 'good'}, expire: {text: 'Valid', tone: 'good'}, result: {text: 'Connected', tone: 'good'}},
+    },
+    {
+      short: 'Private cert',
+      kind: '주의',
+      title: 'Private certificates are not trusted by default',
+      text: [
+        'Internal systems often use private certificates the company issues itself. That private CA is not in the browser trust store by default.',
+        'So the first visit to an internal system often shows a "Not secure" warning. Encryption is still there. The browser just could not verify the issuer.',
+      ],
+      flows: [
+        {from: 'privca', to: 'cert', label: 'Issue', type: 'request'},
+        {from: 'browser', to: 'trust', label: 'Not in list', type: 'request'},
+      ],
+      focus: ['privca', 'trust'],
+      status: {server: 'warn'},
+      badges: {server: 'Not secure'},
+      values: {issuer: {text: 'Not in list', tone: 'bad'}, result: {text: 'Warning', tone: 'bad'}},
+    },
+    {
+      short: 'Server-server',
+      kind: '주의',
+      title: 'Servers run the same check with each other',
+      text: [
+        'People are not the only ones checking certificates. When a Kubernetes node pulls an image from a registry (for example Harbor), it checks the HTTPS certificate too.',
+        'If Harbor uses a private certificate and the node does not trust its issuer, the connection is refused and the image cannot be pulled. Servers have no warning dialog, so it just fails.',
+      ],
+      flows: [{from: 'knode', to: 'harbor', label: 'HTTPS connect', type: 'request'}],
+      focus: ['knode', 'harbor'],
+      status: {server: null, knode: 'error'},
+      badges: {server: null, knode: 'Refused'},
+      values: {issuer: 'Private CA', name: '-', expire: '-', result: {text: 'Refused', tone: 'bad'}},
+    },
+    {
+      short: 'Add trust',
+      kind: '원리',
+      title: 'Add the private CA to the trust store',
+      text: [
+        'The fix is to add the other server\'s private certificate (or its issuer) to the node trust store. Then the node trusts Harbor and connects.',
+        'The same works for people\'s PCs: add the company private CA to the trust store and the warning goes away.',
+      ],
+      changes: ['+ Register private CA in node trust store'],
+      flows: [
+        {from: 'privca', to: 'knode', label: 'Add private CA', type: 'request'},
+        {from: 'knode', to: 'harbor', label: 'Pull image', type: 'request'},
+      ],
+      focus: ['knode'],
+      status: {knode: 'ok', harbor: 'ok'},
+      badges: {knode: null},
+      values: {issuer: {text: 'Trusted', tone: 'good'}, result: {text: 'Connected', tone: 'good'}},
+    },
+    {
+      short: 'Expiry',
+      kind: '장애',
+      title: 'Past its validity, it suddenly stops one day',
+      text: [
+        'Certificates have an expiry date. Once expired, connections are refused and the service looks like it suddenly died. Traffic between cluster components also uses certificates, so the same thing happens there.',
+        'This is a classic outage that hits a long-stable system out of nowhere. So teams automate renewal before expiry (in Kubernetes, tools like cert-manager) or set up alerts for upcoming expiry dates.',
+      ],
+      flows: [{from: 'server', to: 'browser', label: 'Expired cert', type: 'response'}],
+      focus: ['cert', 'server'],
+      status: {cert: 'error', server: 'error', knode: null, harbor: null},
+      badges: {cert: 'Expired', server: 'Unreachable'},
+      values: {issuer: 'In trust store', name: 'Match', expire: {text: 'Expired', tone: 'bad'}, result: {text: 'Refused', tone: 'bad'}},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Check three things: issuer, domain, validity',
+      text: [
+        'Verifying a certificate means asking: did a trusted authority vouch for it, does it match the domain, and is it within its validity period? If any check fails, people see a warning and servers refuse the connection.',
+        'Kubernetes is the same. The TLS certificate on an Ingress, the certificate a node sees when pulling from a private registry, and the certificates between control plane components are all checked on these three points.',
+      ],
+      keyIdea: 'A certificate is checked on issuer, domain and validity. Expiry causes outages without warning, so monitor expiry dates and automate renewal (for example cert-manager).',
+      focus: ['cert'],
+      status: {cert: null, server: null},
+      badges: {cert: null, server: null},
+    },
+  ]}
+/>
+
+## What to do for each warning or error
+
+| Symptom | Cause | What to do |
+| --- | --- | --- |
+| "Not secure" warning (first internal visit) | Private certificate, so the issuer is not trusted | Register the company private CA in the PC trust store |
+| Address mismatch warning | Certificate domain differs from the address used (e.g. direct IP access) | Connect using the domain on the certificate |
+| Connections suddenly fail one day | Certificate expired | Renew the certificate. Automate renewal and set up expiry alerts |
+| Node cannot pull images from Harbor | Node does not trust Harbor's private certificate | Register the private certificate in the node trust store |
+
+Further reading: [Ingress TLS (Kubernetes docs)](https://kubernetes.io/docs/concepts/services-networking/ingress/#tls) · [Certificate management with kubeadm](https://kubernetes.io/docs/tasks/administer-cluster/kubeadm/kubeadm-certs/) · [cert-manager](https://cert-manager.io/docs/)
+
+Next lesson: [From One Server to Containers](./server-to-container.mdx)
