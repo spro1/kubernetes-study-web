@@ -174,7 +174,7 @@ Until now, Kubernetes could only request GPUs by count. **Dynamic Resource Alloc
         'The driver publishes devices, the user submits a claim with criteria, the scheduler picks and records a matching device, and the kubelet and driver prepare it on the node.',
         'Before DRA, device plugins only allowed a count like nvidia.com/gpu. Sharing modes such as dedicated, MIG, or time-slicing were set on the node side.',
       ],
-      keyIdea: 'With DRA, a GPU request is "class + criteria", not a count. If a Pod is waiting, kubectl describe resourceclaim shows which criteria do not match.',
+      keyIdea: 'With DRA, a GPU request is "class + criteria", not a count. If a Pod is waiting, check the FailedScheduling event in kubectl describe pod (cannot allocate all claims) and compare the criteria with kubectl get resourceslices.',
       status: {claim: null},
       badges: {claim: null},
       focus: ['sched'],
@@ -188,7 +188,7 @@ Until now, Kubernetes could only request GPUs by count. **Dynamic Resource Alloc
 | --- | --- | --- |
 | How you request | Count only (`nvidia.com/gpu: 1`) | Class + criteria (e.g. at least 40 GB of memory) |
 | Device info | Node only reports "how many" | Driver publishes each device with its attributes |
-| Who picks | The node’s device plugin, any device | The scheduler, picking a matching device and recording it |
+| Who picks | The kubelet on the node, any free device | The scheduler, picking a matching device and recording it |
 | Status in Kubernetes | Still widely used | Core API GA in 1.34; extra features graduate in later versions |
 
-Further reading: [Dynamic Resource Allocation](https://kubernetes.io/docs/concepts/scheduling-eviction/dynamic-resource-allocation/) · [Device Plugins](https://kubernetes.io/docs/concepts/extend-kubernetes/compute-storage-net/device-plugins/) · [Schedule GPUs](https://kubernetes.io/docs/tasks/manage-gpus/scheduling-gpus/)
+Further reading: [Dynamic Resource Allocation](https://kubernetes.io/docs/concepts/resource-management/dynamic-resource-allocation/) · [Device Plugins](https://kubernetes.io/docs/concepts/extend-kubernetes/compute-storage-net/device-plugins/) · [Schedule GPUs](https://kubernetes.io/docs/tasks/manage-gpus/scheduling-gpus/)

@@ -169,7 +169,7 @@ Accelerator memory is fast but small and expensive. When the KV cache overflows,
 
 ## What to check on Kubernetes
 
-- Offloading is an engine feature; in vLLM, for example, you enable it by attaching a KV connector such as LMCache. Before turning it on, check KV cache usage and the preemption count to confirm the cache really is overflowing.
+- Offloading is an engine feature; in vLLM, for example, you attach a KV connector with `--kv-transfer-config`: the built-in `OffloadingConnector` for CPU memory, or an external one such as LMCache. Before turning it on, check KV cache usage and the preemption count to confirm the cache really is overflowing.
 - Cache offloaded to CPU memory counts against the Pod’s memory. If the Pod’s memory requests and limits do not include the offload size, the container gets OOMKilled.
 - If local NVMe is mounted as an emptyDir, the cache disappears with the Pod. That is fine for a cache, but exceeding the ephemeral-storage limit gets the Pod evicted by the kubelet. Put a cap and a cleanup rule on disk usage.
 - With shared storage, storage latency shows up directly in time to first token. Put storage response time and TTFT on the same dashboard.

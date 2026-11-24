@@ -167,7 +167,7 @@ The previous lesson showed that answers are built one token at a time. But **the
 
 ## Running it on Kubernetes
 
-- vLLM exposes a TTFT histogram (`vllm:time_to_first_token_seconds`) and a per-token latency histogram on `/metrics`. Look at p95 and p99 rather than the mean, and alert on TTFT and TPOT separately.
+- vLLM exposes a TTFT histogram (`vllm:time_to_first_token_seconds`) and per-token latency histograms on `/metrics`: per-request TPOT (`vllm:request_time_per_output_token_seconds`) and the gap between streamed tokens (`vllm:inter_token_latency_seconds`). Look at p95 and p99 rather than the mean, and alert on TTFT and TPOT separately.
 - If only TTFT got worse, inputs usually got longer or the queue grew; check waiting requests (`vllm:num_requests_waiting`) alongside it. If only TPOT got worse, suspect more concurrent decoding or long prefills cutting in.
 - Decode is bound by memory bandwidth, so a high GPU utilization reading can still leave plenty of compute headroom. Do not size replicas on utilization alone.
 - Give models with very different workloads their own replicas, and run load tests with realistic input and output length distributions. Testing with short prompts only hides the prefill cost.

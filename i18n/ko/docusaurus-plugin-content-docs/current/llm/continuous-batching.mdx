@@ -124,7 +124,7 @@ hide_table_of_contents: true
       title: '새 요청의 질문 읽기는 잘게 나눠 끼워 넣는다',
       text: [
         'D는 먼저 질문을 읽는 프리필이 필요하다. 긴 질문을 한 번에 읽으면 그동안 B·C의 답 쓰기가 멈춘다.',
-        '그래서 엔진은 D의 프리필을 일정 크기로 잘라, 매 반복 B·C의 디코드와 함께 조금씩 계산한다(청크 단위 프리필, chunked prefill). 진행 중인 답이 덜 끊긴다.',
+        '그래서 엔진은 매 반복 B·C의 디코드를 먼저 넣고, 반복당 토큰 한도(vLLM의 --max-num-batched-tokens)에서 남은 만큼 D의 프리필을 잘라 함께 계산한다(청크 단위 프리필, chunked prefill). 진행 중인 답이 덜 끊긴다.',
       ],
       flows: [{from: 'sched', to: 'gpu', label: 'D 질문 일부 + B·C 토큰', type: 'request'}],
       focus: ['gpu'],
@@ -178,4 +178,4 @@ hide_table_of_contents: true
 - 대기 요청 수는 가속기 사용률보다 확장 기준으로 쓰기 좋다. 디코드 중에는 사용률이 높게 찍혀도 여유가 있을 수 있다. HPA나 KEDA에 외부 지표로 연결해 레플리카 수를 조정할 수 있다.
 - 최대 동시 요청 수를 올리면 처리량은 늘지만 KV 캐시가 부족해져 요청이 밀려날 수 있다. 설정을 바꾼 뒤에는 KV 캐시 사용률도 함께 확인한다.
 
-더 읽을거리: [Horizontal Pod Autoscaling](https://kubernetes.io/ko/docs/tasks/run-application/horizontal-pod-autoscale/) · [vLLM 문서](https://docs.vllm.ai/)
+더 읽을거리: [Horizontal Pod Autoscaling](https://kubernetes.io/ko/docs/concepts/workloads/autoscaling/horizontal-pod-autoscale/) · [vLLM 문서](https://docs.vllm.ai/)

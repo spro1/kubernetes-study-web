@@ -59,7 +59,7 @@ hide_table_of_contents: true
       title: '가속기가 남은 노드에 배치하고 엔진 이미지를 받는다',
       text: [
         '스케줄러가 필요한 가속기가 남은 노드를 골라 파드를 놓는다. 노드는 엔진 컨테이너 이미지를 받아 실행한다.',
-        'CUDA 같은 라이브러리가 든 엔진 이미지는 수 GB에 이르기도 한다. 한 번 받아 두면 같은 노드에서는 다시 받지 않는다.',
+        'CUDA 같은 라이브러리가 든 엔진 이미지는 수 GB에 이르기도 한다. IfNotPresent라면 이미지 가비지 컬렉션으로 지워지기 전까지 같은 노드에서 다시 쓴다.',
       ],
       flows: [{from: 'sched', to: 'pod', label: '노드 결정', type: 'request'}],
       focus: ['pod'],
@@ -113,7 +113,7 @@ hide_table_of_contents: true
       title: '준비가 끝나면 입구가 요청을 보내기 시작한다',
       text: [
         '엔진이 준비 상태 확인(readinessProbe)을 통과하면, 입구·분배기는 이 레플리카를 대상 목록에 넣고 요청을 보내기 시작한다.',
-        '준비 확인이 통과되기 전에는 요청을 보내지 않는다. 반대로 기동 중에 활성 확인(livenessProbe)이 실패하면 kubelet이 컨테이너를 재시작해 처음부터 다시 시작된다. 기동 확인(startupProbe)에 기동 시간보다 넉넉한 시간을 준다.',
+        '준비 확인이 통과되기 전에는 요청을 보내지 않는다. 반대로 모델을 올리는 중에 활성 확인(livenessProbe)이 실패하면 kubelet이 컨테이너를 재시작해 처음부터 다시 시작된다. 기동 확인(startupProbe)이 있으면 성공할 때까지 활성·준비 확인을 하지 않는다. failureThreshold × periodSeconds를 기동 시간보다 넉넉히 잡는다.',
       ],
       flows: [
         {from: 'pod', to: 'gw', label: '준비 완료', type: 'response'},
@@ -173,4 +173,4 @@ hide_table_of_contents: true
 | 가속기 적재 | 엔진 로그의 적재 시간 | NVMe, GPUDirect Storage |
 | 엔진 준비 | 엔진 로그의 준비 시간 | 컴파일 캐시 재사용, 미리 컴파일 |
 
-더 읽을거리: [활성·준비·기동 프로브](https://kubernetes.io/docs/concepts/configuration/liveness-readiness-startup-probes/) · [vLLM 문서](https://docs.vllm.ai/) · [KServe](https://kserve.github.io/website/)
+더 읽을거리: [활성·준비·기동 프로브](https://kubernetes.io/docs/concepts/workloads/pods/probes/) · [vLLM 문서](https://docs.vllm.ai/) · [KServe 모델 캐시](https://kserve.github.io/website/docs/model-serving/generative-inference/modelcache/localmodel)

@@ -72,7 +72,7 @@ hide_table_of_contents: true
       title: 'API 서버가 네임스페이스 할당량을 확인한다',
       text: [
         '운영자는 Deployment 같은 워크로드에 레플리카 수와 장치 조건만 적는다. 어느 서버의 어느 장치인지는 적지 않는다.',
-        'API 서버는 요청을 받을 때 네임스페이스의 ResourceQuota를 확인한다. DRA 장치도 장치 종류(DeviceClass)별 개수로 할당량을 걸 수 있고, 넘으면 요청서 생성이 거절된다. 자원이 생길 때까지 워크로드를 줄 세워 두려면 Kueue 같은 큐잉 도구를 함께 쓴다.',
+        'API 서버는 요청을 받을 때 네임스페이스의 ResourceQuota를 확인한다. DRA 장치도 장치 종류(DeviceClass)별 개수로 할당량을 걸 수 있고(키 예: gpu.example.com.deviceclass.resource.k8s.io/devices), 넘으면 요청서 생성이 거절된다. 자원이 생길 때까지 워크로드를 줄 세워 두려면 Kueue 같은 큐잉 도구를 함께 쓴다.',
       ],
       focus: ['mgr'],
       badges: {mgr: '할당량 안'},
@@ -110,7 +110,7 @@ hide_table_of_contents: true
       kind: '원리',
       title: 'GPU와 네트워크 카드를 한 묶음으로 배정한다',
       text: [
-        '요청서 하나에 장치 요청을 여러 개 적을 수 있다. 예를 들어 "GPU 2장과 네트워크 카드 1개"를 한 번에 요청하고, 제약(constraints)으로 "같은 PCIe 루트에 붙은 것끼리"처럼 장치 속성이 서로 맞아야 한다고 적는다.',
+        '요청서 하나에 장치 요청을 여러 개 적을 수 있다. 예를 들어 "GPU 2장과 네트워크 카드 1개"를 한 번에 요청하고, matchAttribute 제약으로 "같은 PCIe 루트에 붙은 것끼리"(표준 속성 resource.kubernetes.io/pcieRoot)처럼 장치 속성이 서로 맞아야 한다고 적는다.',
         '스케줄러는 고른 장치를 요청서에 기록한다. 같은 장치가 다른 파드에 중복 배정되지 않는다.',
       ],
       keyIdea: '프리필·디코드 분리처럼 가속기 사이에 KV 캐시를 고속으로 옮겨야 하는 구성은 GPU와 네트워크 카드를 맞춰 받는 것이 전제다.',
@@ -142,7 +142,7 @@ hide_table_of_contents: true
       title: '조건에 맞는 장치가 없으면 대기 상태로 남는다',
       text: [
         '두 번째 배포는 할당량 검사를 통과했다. 그런데 다른 파드가 장치를 다 쓰고 있어 스케줄러가 놓을 곳을 찾지 못하고, 파드는 Pending으로 남는다.',
-        '할당량은 "이만큼까지 써도 된다"는 상한일 뿐 실제로 남은 장치를 보장하지 않는다. kubectl describe pod의 FailedScheduling 이벤트에서 어떤 조건 때문에 못 놓였는지 확인한다.',
+        '할당량은 "이만큼까지 써도 된다"는 상한일 뿐 실제로 남은 장치를 보장하지 않는다. kubectl describe pod의 FailedScheduling 이벤트(cannot allocate all claims)로 요청서를 배정할 노드가 없었는지 확인한다.',
       ],
       flows: [{from: 'claim', to: 'sched', label: '두 번째 배포', type: 'response'}],
       focus: ['sched'],
@@ -188,4 +188,4 @@ hide_table_of_contents: true
 | 배포 전 확인 | 없음 | ResourceQuota로 장치 수 상한, 필요하면 Kueue로 줄 세우기 |
 | 대기 원인 | 조건 불일치 | 할당량 초과와 장치 부족을 구분해서 본다 |
 
-더 읽을거리: [동적 리소스 할당](https://kubernetes.io/docs/concepts/scheduling-eviction/dynamic-resource-allocation/) · [리소스 쿼터](https://kubernetes.io/ko/docs/concepts/policy/resource-quotas/) · [Kueue](https://kueue.sigs.k8s.io/docs/overview/)
+더 읽을거리: [동적 리소스 할당](https://kubernetes.io/docs/concepts/resource-management/dynamic-resource-allocation/) · [리소스 쿼터](https://kubernetes.io/docs/concepts/policy/resource-quotas/) · [Kueue](https://kueue.sigs.k8s.io/docs/overview/)

@@ -169,7 +169,7 @@ hide_table_of_contents: true
 
 ## 쿠버네티스에서 볼 것
 
-- 오프로딩은 엔진 기능이다. vLLM에서는 LMCache 같은 KV 커넥터를 붙여 켜는 식이다. 켜기 전에 KV 캐시 사용률과 선점(preemption) 횟수를 보고, 캐시가 정말 넘치고 있는지부터 확인한다.
+- 오프로딩은 엔진 기능이다. vLLM에서는 `--kv-transfer-config`로 KV 커넥터를 붙여 켠다. CPU 메모리로 내리는 내장 `OffloadingConnector`를 쓰거나 LMCache 같은 외부 커넥터를 쓴다. 켜기 전에 KV 캐시 사용률과 선점(preemption) 횟수를 보고, 캐시가 정말 넘치고 있는지부터 확인한다.
 - CPU 메모리로 내려 두는 캐시는 파드의 메모리로 잡힌다. 파드의 메모리 요청·제한에 오프로드 크기를 더해 두지 않으면 OOMKilled로 재시작된다.
 - 로컬 NVMe를 emptyDir로 쓰면 파드가 지워질 때 캐시도 사라진다. 캐시라서 괜찮지만, ephemeral-storage 제한을 넘으면 kubelet이 파드를 축출한다. 디스크 사용량에 상한과 정리 규칙을 둔다.
 - 공유 저장소를 쓰면 저장소 지연이 첫 토큰 시간에 그대로 나타난다. 저장소 응답 시간과 TTFT를 같은 대시보드에서 본다.

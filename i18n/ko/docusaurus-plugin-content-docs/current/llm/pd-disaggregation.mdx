@@ -173,9 +173,9 @@ hide_table_of_contents: true
 
 ## 쿠버네티스에서 볼 것
 
-- 쿠버네티스에서는 프리필과 디코드를 별도 워크로드로 띄우고, Gateway API Inference Extension의 분배기(EPP)가 둘을 골라 묶는다. llm-d가 이 구성을 제공하는 오픈소스 프로젝트의 예다.
+- 쿠버네티스에서는 프리필과 디코드를 별도 워크로드로 띄우고, Gateway API Inference Extension 기반 분배기(EPP)가 요청마다 프리필 파드와 디코드 파드를 고른다. llm-d가 이 구성을 묶어 제공한다. llm-d의 EPP는 `llm-d.ai/role` 레이블로 두 파드를 구분하고, 디코드 쪽이 NIXL로 프리필 파드의 KV 캐시를 가져온다.
 - 프리필과 디코드는 레플리카 수를 따로 조정한다. 입력이 긴 업무에서 TTFT가 늘면 프리필 쪽을, 답이 긴 업무에서 TPOT이 늘면 디코드 쪽을 늘린다.
-- RDMA가 전제다. 노드에 RDMA 가능한 네트워크 카드가 있고, 그 장치가 파드에 붙어 있어야 한다. 엔진 로그에서 KV 전송이 RDMA로 잡혔는지, TCP로 떨어지지 않았는지 확인한다.
+- 운영 환경에서는 RDMA(InfiniBand, RoCE, EFA)가 전제다. NIXL은 TCP로도 돌지만 훨씬 느리다. 노드에 RDMA 가능한 네트워크 카드가 있고, 그 장치가 파드에 붙어 있어야 한다. 엔진 로그에서 KV 전송이 RDMA로 잡혔는지, TCP로 떨어지지 않았는지 확인한다.
 - 바꾸기 전에 실제 동시 요청 수에서 단일 서빙과 분리 서빙의 TTFT·TPOT을 나란히 잰다. 저부하에서 TTFT가 오히려 늘면 분리할 이유가 약하다.
 
 더 읽을거리: [Gateway API Inference Extension](https://gateway-api-inference-extension.sigs.k8s.io/) · [llm-d](https://llm-d.ai/) · [NIXL](https://github.com/ai-dynamo/nixl)

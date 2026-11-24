@@ -167,7 +167,7 @@ hide_table_of_contents: true
 
 ## 쿠버네티스에서 운영할 때
 
-- vLLM은 `/metrics`로 첫 토큰 시간 히스토그램(`vllm:time_to_first_token_seconds`)과 토큰 간격 히스토그램을 내보낸다. 평균보다 p95, p99를 보고, TTFT와 TPOT 알림 기준을 따로 둔다.
+- vLLM은 `/metrics`로 첫 토큰 시간 히스토그램(`vllm:time_to_first_token_seconds`)과 토큰 간격 히스토그램을 내보낸다. 요청별 TPOT은 `vllm:request_time_per_output_token_seconds`, 스트리밍 토큰 사이 간격은 `vllm:inter_token_latency_seconds`다. 평균보다 p95, p99를 보고, TTFT와 TPOT 알림 기준을 따로 둔다.
 - TTFT만 나빠졌다면 입력이 길어졌거나 대기 줄이 길어진 경우가 많다. 대기 요청 수(`vllm:num_requests_waiting`)를 함께 본다. TPOT만 나빠졌다면 동시에 디코드하는 요청이 많아졌거나 긴 프리필이 끼어든 경우를 의심한다.
 - 디코드는 메모리 대역폭에 묶이므로, GPU 사용률 지표가 높아 보여도 연산 여유가 많이 남아 있을 수 있다. 사용률 하나로 레플리카 수를 정하지 않는다.
 - 업무 성격이 크게 다른 모델은 레플리카를 나누고, 부하 테스트도 실제 입력·출력 길이 분포로 돌린다. 짧은 질문만으로 측정하면 프리필 부담이 가려진다.

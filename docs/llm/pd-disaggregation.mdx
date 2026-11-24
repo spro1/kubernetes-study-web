@@ -173,9 +173,9 @@ Prefill (reading the prompt) is compute-heavy; decode (writing the answer) is me
 
 ## What to check on Kubernetes
 
-- On Kubernetes, prefill and decode run as separate workloads, and the endpoint picker (EPP) from the Gateway API Inference Extension pairs them per request. llm-d is one open-source project that packages this setup.
+- On Kubernetes, prefill and decode run as separate workloads, and an endpoint picker (EPP) built on the Gateway API Inference Extension picks a prefill and a decode Pod per request. llm-d packages this setup: its EPP tells the two apart by the `llm-d.ai/role` label, and the decode side pulls the KV cache from the prefill Pod with NIXL.
 - Scale prefill and decode replicas separately. If TTFT grows on long-input workloads, add prefill replicas; if TPOT grows on long-output workloads, add decode replicas.
-- RDMA is a prerequisite. Nodes need RDMA-capable NICs, and those devices must be attached to the Pods. Check the engine logs to confirm the KV transfer uses RDMA and has not fallen back to TCP.
+- Treat RDMA (InfiniBand, RoCE, EFA) as a prerequisite for production. NIXL can run over TCP, but much slower. Nodes need RDMA-capable NICs, and those devices must be attached to the Pods. Check the engine logs to confirm the KV transfer uses RDMA and has not fallen back to TCP.
 - Before switching, measure TTFT and TPOT for single and disaggregated serving side by side at your real concurrency. If TTFT gets worse at low load, the case for splitting is weak.
 
 Further reading: [Gateway API Inference Extension](https://gateway-api-inference-extension.sigs.k8s.io/) · [llm-d](https://llm-d.ai/) · [NIXL](https://github.com/ai-dynamo/nixl)

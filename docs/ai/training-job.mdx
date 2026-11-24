@@ -144,8 +144,8 @@ GPUs are shared by many teams. Instead of running training and evaluation Jobs r
       kind: '원리',
       title: 'Register the artifacts as a model version',
       text: [
-        'The last step of the training code registers a new version in a model registry such as MLflow. The artifact location, run ID, and hyperparameters are recorded with it, so you can trace which Job produced the model.',
-        'From here it is the same as lesson 04: package it as a deployable artifact and cache it on nodes before serving.',
+        'The last step of the training code registers a new version in a model registry such as MLflow. The version records the artifact location and the run ID, and that run holds the hyperparameters, so you can trace which Job produced the model.',
+        'From here it is the same as lessons 06 and 08: package it as a deployable artifact and cache it on nodes before serving.',
       ],
       flows: [{from: 'job', to: 'model', label: 'register version', type: 'request'}],
       focus: ['model'],
@@ -172,7 +172,7 @@ GPUs are shared by many teams. Instead of running training and evaluation Jobs r
         'Submit → suspended → queued → admitted → run on GPU nodes → checkpoints → register a model version. Evaluation scores stay in the run history for comparing versions.',
         'If a Job waits a long time, the Workload status tells you whether it is quota, Jobs ahead of it, or preemption.',
       ],
-      keyIdea: 'Use kubectl get workloads and kubectl describe workload for the waiting reason, and kubectl get clusterqueue for quota usage.',
+      keyIdea: 'Use kubectl get workloads and kubectl describe workload for the waiting reason, and kubectl describe clusterqueue for quota usage.',
       focus: ['cq', 'job', 'model'],
     },
   ]}

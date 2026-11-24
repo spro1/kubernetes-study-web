@@ -91,7 +91,7 @@ Once a model server is ready, clients call it through an OpenAI-compatible API. 
       title: 'Auth is useless if there is a path around the gateway',
       text: [
         'If the model server’s Service is open to anyone inside the cluster, or exposed separately, a client can reach a replica directly without a key.',
-        'Use a NetworkPolicy so model Pods only accept traffic from the gateway and routing layer. vLLM’s --api-key option adds a key check on the model server as well.',
+        'Use a NetworkPolicy so model Pods only accept traffic from the gateway and routing layer. vLLM’s --api-key option adds a key check on the model server, but only for paths such as /v1, so it does not replace the NetworkPolicy.',
       ],
       keyIdea: 'After changing auth settings, check both: a request without a key gets 401, and a direct request to the model Service is blocked.',
       flows: [{from: 'app', to: 'p2', label: 'direct access', type: 'request', bend: 0.3}],
@@ -119,7 +119,7 @@ Once a model server is ready, clients call it through an OpenAI-compatible API. 
       title: 'Routing picks a replica',
       text: [
         'When a model has several replicas, the routing layer picks one. A plain Service spreads connections without knowing how busy each replica is.',
-        'Inference-aware routing looks at queued requests and KV cache state. A replica that already computed the same prefix returns the first token sooner. Lesson 08 covers this in detail.',
+        'Inference-aware routing looks at queued requests and KV cache state. A replica that already computed the same prefix returns the first token sooner. Lesson 10 covers this in detail.',
       ],
       flows: [
         {from: 'gw', to: 'route', label: 'allowed request', type: 'request'},

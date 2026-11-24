@@ -124,7 +124,7 @@ One accelerator can serve dozens of users at once thanks to **batching**: comput
       title: 'A new prompt is read in small chunks',
       text: [
         'D first needs a prefill to read its prompt. Reading a long prompt in one go would pause B and C while it runs.',
-        'So the engine cuts D’s prefill into fixed-size chunks and computes one chunk per iteration alongside B and C’s decode (chunked prefill). Ongoing answers stutter less.',
+        'So the engine schedules B and C’s decode first and fills the rest of the per-iteration token budget (--max-num-batched-tokens in vLLM) with a chunk of D’s prefill (chunked prefill). Ongoing answers stutter less.',
       ],
       flows: [{from: 'sched', to: 'gpu', label: 'D chunk + B·C tokens', type: 'request'}],
       focus: ['gpu'],
@@ -178,4 +178,4 @@ One accelerator can serve dozens of users at once thanks to **batching**: comput
 - Waiting requests make a better scaling signal than accelerator utilization, which can read high during decode even with headroom left. You can feed it to HPA or KEDA as an external metric to adjust replicas.
 - Raising max concurrent requests increases throughput but can run the KV cache short and preempt requests. Check KV cache usage after changing it.
 
-Further reading: [Horizontal Pod Autoscaling](https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/) · [vLLM documentation](https://docs.vllm.ai/)
+Further reading: [Horizontal Pod Autoscaling](https://kubernetes.io/docs/concepts/workloads/autoscaling/horizontal-pod-autoscale/) · [vLLM documentation](https://docs.vllm.ai/)

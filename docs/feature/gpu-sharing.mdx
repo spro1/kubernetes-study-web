@@ -2,7 +2,7 @@
 id: gpu-sharing
 title: Sharing GPUs
 sidebar_label: 04 · Sharing GPUs
-description: Step through how the NVIDIA GPU Operator hands out GPUs in dedicated (Pass-through), MIG, and Time-Slicing modes, and how the visible GPU metrics change with each mode
+description: Step through how the NVIDIA GPU Operator hands out GPUs as dedicated whole GPUs, MIG partitions, or Time-Slicing, and how the visible GPU metrics change with each mode
 summary: 'Splitting GPUs as dedicated, MIG or time-slicing, and how the visible metrics differ by method.'
 icon: server
 hide_table_of_contents: true
@@ -10,7 +10,7 @@ hide_table_of_contents: true
 
 # Sharing GPUs
 
-GPUs are expensive, so keep them busy by sharing them. On Kubernetes, the NVIDIA GPU Operator lets you use one GPU **whole (Pass-through)**, **split by hardware partitions (MIG)**, or **split in time (Time-Slicing)**. Follow what each mode divides and what shows up in the metrics.
+GPUs are expensive, so keep them busy by sharing them. On Kubernetes, the NVIDIA GPU Operator lets you use one GPU **whole (dedicated)**, **split by hardware partitions (MIG)**, or **split in time (Time-Slicing)**. Follow what each mode divides and what shows up in the metrics.
 
 <StepDiagram
   width={1000}
@@ -36,7 +36,7 @@ GPUs are expensive, so keep them busy by sharing them. On Kubernetes, the NVIDIA
     {id: 'view', label: 'Per-pod usage'},
   ]}
   learn={[
-    {text: 'Dedicated (Pass-through) is the default: one job uses a whole GPU', at: 0},
+    {text: 'Dedicated is the default: one job uses a whole GPU', at: 0},
     {text: 'The GPU Operator is what actually hands out GPUs', at: 1},
     {text: 'How MIG and Time-Slicing differ in isolation', at: 3},
     {text: 'Why the dashboard metrics change with the sharing mode', at: 7},
@@ -47,12 +47,12 @@ GPUs are expensive, so keep them busy by sharing them. On Kubernetes, the NVIDIA
       kind: '시작',
       title: 'By default, one job uses a whole GPU',
       text: [
-        'Kubernetes hands GPUs to pods in whole units. In the default dedicated mode (Pass-through), one job uses an entire GPU.',
+        'Kubernetes hands GPUs to pods in whole units. In the default dedicated mode, one job uses an entire GPU.',
         'Even if the job uses only part of the GPU, no other job can share it. The more small jobs you have, the more GPU capacity sits idle.',
       ],
       flows: [{from: 'gpu', to: 'podA', label: 'Whole GPU', type: 'request'}],
       focus: ['gpu', 'podA'],
-      values: {mode: 'Pass-through', share: '1', iso: 'Fully isolated', view: 'Visible'},
+      values: {mode: 'Dedicated', share: '1', iso: 'Fully isolated', view: 'Visible'},
     },
     {
       short: 'Components',
@@ -72,9 +72,9 @@ GPUs are expensive, so keep them busy by sharing them. On Kubernetes, the NVIDIA
       title: 'MIG partitions one GPU in hardware',
       text: [
         'MIG (Multi-Instance GPU) splits one GPU into hardware partitions that act like separate GPUs. A cluster admin sets the partition layout on the node (for example, the nvidia.com/mig.config label), and the GPU Operator\'s MIG Manager applies it to the device.',
-        'The partitions cannot add up to more than the whole GPU, and each model supports fixed profiles. Only some models support MIG (for example, NVIDIA A100, A30, H100).',
+        'The partitions cannot add up to more than the whole GPU, and each model supports fixed profiles. Only some Ampere-or-later models support MIG (for example, NVIDIA A100, A30, H100). With the single strategy each slice is advertised as nvidia.com/gpu; with mixed, by profile name such as nvidia.com/mig-1g.10gb.',
       ],
-      changes: ['~ Mode: Pass-through → MIG'],
+      changes: ['~ Mode: Dedicated → MIG'],
       flows: [
         {from: 'user', to: 'api', label: 'GPU config', type: 'request'},
         {from: 'api', to: 'operator', label: 'MIG profile', type: 'request'},
@@ -90,7 +90,7 @@ GPUs are expensive, so keep them busy by sharing them. On Kubernetes, the NVIDIA
       title: 'One job per partition, no interference',
       text: [
         'Each partition is assigned to one job, like a separate GPU. Memory and compute are separated, so a busy job does not affect the partition next to it.',
-        'However, enabling MIG or changing the layout requires a GPU reset, and on some hardware a node reboot. GPU jobs on that node stop in the meantime.',
+        'However, to change the layout the MIG Manager first stops all GPU pods on the node, including the device plugin and DCGM Exporter, and no user workloads may run on those GPUs. Enabling MIG mode can also require a node reboot, for example on some cloud VMs.',
       ],
       flows: [
         {from: 'gpu', to: 'podA', label: 'Slice 1', type: 'request'},
@@ -106,9 +106,9 @@ GPUs are expensive, so keep them busy by sharing them. On Kubernetes, the NVIDIA
       title: 'Time-Slicing is a sharing setting on top of dedicated or MIG',
       text: [
         'Time-Slicing is not a standalone mode. In the GPU Operator config (a ConfigMap), you add it on top of dedicated or MIG as "share, split into N replicas".',
-        'You cannot apply it to a single card. It applies to all GPUs of the same type on the node at once. Changing it restarts the device plugin, so do it when few GPU jobs are running.',
+        'You cannot apply it to a single card. Every GPU of that resource on the node is split into the same number of replicas. The GPU Operator does not watch this ConfigMap, so after editing it you restart the device plugin DaemonSet (kubectl rollout restart).',
       ],
-      changes: ['~ Mode: Pass-through + shared ×3'],
+      changes: ['~ Mode: Dedicated + shared ×3'],
       flows: [
         {from: 'user', to: 'api', label: 'Share config', type: 'request'},
         {from: 'api', to: 'operator', label: 'Replicas', type: 'request'},
@@ -160,9 +160,9 @@ GPUs are expensive, so keep them busy by sharing them. On Kubernetes, the NVIDIA
       title: 'Visible metrics depend on the sharing mode',
       text: [
         'The GPU Operator\'s metrics exporter (DCGM Exporter) publishes usage on port 9400. Prometheus collects it, and a dashboard such as Grafana shows utilization, memory, temperature, power, and pod assignments.',
-        'Dedicated and MIG show per-pod usage. A GPU shared with Time-Slicing shows only whole-GPU values, not split by pod. MIG also reports separate metrics per partition (GPU instance).',
+        'Dedicated and MIG show per-pod usage. When Time-Slicing is on, DCGM Exporter cannot associate metrics with containers, so you see only whole-GPU values. MIG also reports separate metrics per partition (GPU instance).',
       ],
-      keyIdea: 'This is not a bug to fix. It is a limit of the hardware setup. When jobs share time, you cannot tell which job the current usage belongs to.',
+      keyIdea: 'This is not a bug to fix. NVIDIA documents it as a Time-Slicing limitation. When jobs share time, you cannot tell which job the current usage belongs to.',
       flows: [
         {from: 'operator', to: 'dash', label: 'Metrics 9400', type: 'response'},
         {from: 'dash', to: 'user', type: 'response'},
@@ -192,4 +192,4 @@ kubectl describe node <gpu-node> | grep -i nvidia    # GPU resource name and cou
 kubectl get pods -A -o wide | grep -i gpu            # Which node each GPU pod runs on
 ```
 
-Further reading: [Scheduling GPUs](https://kubernetes.io/docs/tasks/manage-gpus/scheduling-gpus/) · [Device plugins](https://kubernetes.io/docs/concepts/extend-kubernetes/compute-storage-net/device-plugins/) · [NVIDIA GPU Operator](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/index.html) · [Requesting GPUs by Criteria (DRA)](../k8s/dra.mdx)
+Further reading: [Scheduling GPUs](https://kubernetes.io/docs/tasks/manage-gpus/scheduling-gpus/) · [Device plugins](https://kubernetes.io/docs/concepts/extend-kubernetes/compute-storage-net/device-plugins/) · [NVIDIA GPU Operator](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/index.html) · [GPU Operator with MIG](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/gpu-operator-mig.html) · [Time-Slicing GPUs](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/gpu-sharing.html) · [Requesting GPUs by Criteria (DRA)](../k8s/dra.mdx)

@@ -72,7 +72,7 @@ For a long time Kubernetes handed out accelerators only as "N GPUs". **Dynamic R
       title: 'The API server checks the namespace quota',
       text: [
         'The operator writes only the replica count and device criteria in a workload such as a Deployment. Which server or which device is not part of the spec.',
-        'On admission the API server checks the namespace ResourceQuota. DRA devices can be capped per DeviceClass, and a claim that would exceed the cap is rejected. To queue workloads until capacity frees up, add a queueing tool such as Kueue.',
+        'On admission the API server checks the namespace ResourceQuota. DRA devices can be capped per DeviceClass with a key like gpu.example.com.deviceclass.resource.k8s.io/devices, and a claim that would exceed the cap is rejected. To queue workloads until capacity frees up, add a queueing tool such as Kueue.',
       ],
       focus: ['mgr'],
       badges: {mgr: 'within quota'},
@@ -110,7 +110,7 @@ For a long time Kubernetes handed out accelerators only as "N GPUs". **Dynamic R
       kind: '원리',
       title: 'A GPU and a network card are allocated as a set',
       text: [
-        'One claim can hold several device requests, for example "2 GPUs and 1 network card". Constraints can require their attributes to match, such as "attached to the same PCIe root".',
+        'One claim can hold several device requests, for example "2 GPUs and 1 network card". A matchAttribute constraint can require their attributes to match, such as the standard resource.kubernetes.io/pcieRoot for "attached to the same PCIe root".',
         'The scheduler records the chosen devices in the claim, so the same device is never given to another Pod.',
       ],
       keyIdea: 'Setups that move KV cache between accelerators at high speed, such as prefill/decode disaggregation, depend on getting matched GPUs and network cards.',
@@ -142,7 +142,7 @@ For a long time Kubernetes handed out accelerators only as "N GPUs". **Dynamic R
       title: 'With no matching devices, the Pod stays Pending',
       text: [
         'A second deployment passes the quota check. But other Pods hold all matching devices, so the scheduler finds no place for it and the Pod stays Pending.',
-        'Quota is only a ceiling on what you may use; it does not guarantee free devices. The FailedScheduling event in kubectl describe pod tells you which criteria could not be met.',
+        'Quota is only a ceiling on what you may use; it does not guarantee free devices. The FailedScheduling event in kubectl describe pod shows that no node could allocate the claim (cannot allocate all claims).',
       ],
       flows: [{from: 'claim', to: 'sched', label: 'second deploy', type: 'response'}],
       focus: ['sched'],
@@ -188,4 +188,4 @@ For a long time Kubernetes handed out accelerators only as "N GPUs". **Dynamic R
 | Check before deploy | None | ResourceQuota caps device count; Kueue can queue |
 | Why a Pod waits | Criteria mismatch | Tell quota exceeded apart from devices exhausted |
 
-Further reading: [Dynamic Resource Allocation](https://kubernetes.io/docs/concepts/scheduling-eviction/dynamic-resource-allocation/) · [Resource Quotas](https://kubernetes.io/docs/concepts/policy/resource-quotas/) · [Kueue](https://kueue.sigs.k8s.io/docs/overview/)
+Further reading: [Dynamic Resource Allocation](https://kubernetes.io/docs/concepts/resource-management/dynamic-resource-allocation/) · [Resource Quotas](https://kubernetes.io/docs/concepts/policy/resource-quotas/) · [Kueue](https://kueue.sigs.k8s.io/docs/overview/)

@@ -10,7 +10,7 @@ hide_table_of_contents: true
 
 # Sharing Accelerators (Time-Slicing, MPS)
 
-When a small model holds a whole GPU, most of it sits idle. With DRA you can write a **sharing mode (none, time-slicing, or MPS)** into the device claim so several Pods share one GPU. This lesson uses NVIDIA’s DRA driver for GPUs as the example. Node-wide MIG and time-slicing through the GPU Operator are covered in [Sharing GPUs](../feature/gpu-sharing.mdx).
+When a small model holds a whole GPU, most of it sits idle. With DRA you can write a **sharing strategy (TimeSlicing or MPS)** into the device claim’s config so several Pods share one GPU. With no sharing config, which this lesson calls “none”, a claim gets a whole GPU. This lesson uses NVIDIA’s DRA driver for GPUs as the example. Node-wide MIG and time-slicing through the GPU Operator are covered in [Sharing GPUs](../feature/gpu-sharing.mdx).
 
 <StepDiagram
   width={1000}
@@ -52,11 +52,11 @@ When a small model holds a whole GPU, most of it sits idle. With DRA you can wri
         'Scaling to 2 replicas needs 2 GPUs.',
       ],
       flows: [
-        {from: 'user', to: 'mgr', label: 'sharing: none', type: 'request'},
+        {from: 'user', to: 'mgr', label: 'no sharing', type: 'request'},
         {from: 'gpu', to: 'a1', label: 'whole GPU', type: 'request'},
       ],
       focus: ['gpu', 'a1'],
-      values: {mode: 'none (default)', who: '1 Pod', iso: {text: 'no interference', tone: 'good'}, quota: '—'},
+      values: {mode: 'none (no config)', who: '1 Pod', iso: {text: 'no interference', tone: 'good'}, quota: '—'},
     },
     {
       short: 'Idle',
@@ -118,7 +118,7 @@ When a small model holds a whole GPU, most of it sits idle. With DRA you can wri
       title: 'MPS: several Pods run at once under set limits',
       text: [
         'With MPS (Multi-Process Service), Pods of deployments B and C that reference the same claim run on one GPU at the same moment instead of taking turns.',
-        'The claim config sets how much compute (active thread percentage) and pinned memory each Pod may use. No Pod can go past its limit into another’s share.',
+        'The claim config sets the compute share each MPS client may use (defaultActiveThreadPercentage) and a pinned GPU memory limit (defaultPinnedDeviceMemoryLimit). A process cannot go past these caps, but throughput is not guaranteed.',
       ],
       flows: [
         {from: 'gpu', to: 'b', label: 'compute/mem cap', type: 'request'},
@@ -144,7 +144,7 @@ When a small model holds a whole GPU, most of it sits idle. With DRA you can wri
       kind: '원리',
       title: 'Quota is counted per claim',
       text: [
-        'When ResourceQuota caps DRA devices, Kubernetes counts the devices written in claims. The number of Pods does not matter.',
+        'When ResourceQuota caps DRA devices (for example gpu.nvidia.com.deviceclass.resource.k8s.io/devices), Kubernetes counts the devices requested in claims. The number of Pods does not matter.',
         'If deployments B and C reference one claim together, only 1 GPU is charged. The saving from sharing shows up in quota too.',
       ],
       focus: ['b', 'c'],
@@ -157,7 +157,7 @@ When a small model holds a whole GPU, most of it sits idle. With DRA you can wri
       title: 'Whole, in turns, or at once under caps',
       text: [
         'None gives each Pod a whole GPU with no interference. Time-slicing lets Pods on the same claim take turns with no memory isolation. MPS runs them together under caps, with weak fault isolation.',
-        'These sharing modes are features of NVIDIA’s DRA driver for GPUs. Whether an NPU can be shared depends on its vendor driver; often each replica gets a whole device.',
+        'These sharing modes are features of NVIDIA’s DRA driver for GPUs, behind its TimeSlicingSettings and MPSSupport feature gates (alpha, off by default). Whether an NPU can be shared depends on its vendor driver; often each replica gets a whole device.',
       ],
       keyIdea: 'A sharing mode is a choice of what to give up in exchange for lower cost. Use MIG for hardware isolation, and time-slicing or MPS to pack light workloads.',
       status: {b: null, c: null},
@@ -175,4 +175,4 @@ When a small model holds a whole GPU, most of it sits idle. With DRA you can wri
 | How | Whole GPU | Take turns in time | Run at once under caps |
 | Isolation | No interference | No memory isolation or performance guarantee | Concurrent within caps; weak fault isolation |
 
-Further reading: [Dynamic Resource Allocation](https://kubernetes.io/docs/concepts/scheduling-eviction/dynamic-resource-allocation/) · [NVIDIA MPS](https://docs.nvidia.com/deploy/mps/index.html) · [NVIDIA GPU Operator](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/index.html)
+Further reading: [Dynamic Resource Allocation](https://kubernetes.io/docs/concepts/resource-management/dynamic-resource-allocation/) · [DRA Driver for NVIDIA GPUs](https://dra-driver-nvidia-gpu.sigs.k8s.io/docs/) · [Time-slicing with the DRA driver](https://dra-driver-nvidia-gpu.sigs.k8s.io/docs/guides/gpu-allocation/time-slicing/) · [MPS with the DRA driver](https://dra-driver-nvidia-gpu.sigs.k8s.io/docs/guides/mps/) · [NVIDIA MPS](https://docs.nvidia.com/deploy/mps/latest/index.html)

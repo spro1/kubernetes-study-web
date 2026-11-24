@@ -175,6 +175,6 @@ hide_table_of_contents: true
 
 ## 쿠버네티스에서는
 
-Gateway API 추론 확장에서는 같은 모델의 레플리카 묶음을 **InferencePool**로 정의하고, 그 묶음에 붙은 분배기(EPP)가 요청마다 레플리카를 고른다. 입구는 이 확장을 지원하는 게이트웨이 구현을 쓴다. llm-d 같은 프로젝트는 이 구조 위에 프리픽스 캐시·부하 기반 점수 규칙을 더하고, 프리필·디코드 분리 서빙에서는 프리필 쪽과 디코드 쪽 레플리카를 함께 고른다. 프리픽스 캐시가 무엇인지는 [KV 캐시가 차오르기까지](../llm/kv-cache.mdx)에서, 분리 서빙은 [읽는 곳과 쓰는 곳 나누기 (프리필·디코드 분리)](../llm/pd-disaggregation.mdx)에서 본다.
+Gateway API 추론 확장에서는 같은 모델의 레플리카 묶음을 **InferencePool**(inference.networking.k8s.io/v1)로 정의하고, 그 묶음에 붙은 분배기(EPP)가 요청마다 레플리카를 고른다. 입구는 이 확장을 지원하는 게이트웨이 구현을 쓴다. llm-d 같은 프로젝트는 이 구조 위에 프리픽스 캐시·부하 기반 점수 규칙을 더하고, 프리필·디코드 분리 서빙에서는 프리필 쪽과 디코드 쪽 레플리카를 함께 고른다. 프리픽스 캐시가 무엇인지는 [KV 캐시가 차오르기까지](../llm/kv-cache.mdx)에서, 분리 서빙은 [읽는 곳과 쓰는 곳 나누기 (프리필·디코드 분리)](../llm/pd-disaggregation.mdx)에서 본다.
 
 더 읽을거리: [Gateway API Inference Extension](https://gateway-api-inference-extension.sigs.k8s.io/) · [llm-d](https://llm-d.ai/) · [vLLM 문서](https://docs.vllm.ai/)

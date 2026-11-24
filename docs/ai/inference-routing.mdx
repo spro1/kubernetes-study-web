@@ -175,6 +175,6 @@ When one model runs as several replicas, every request needs a target replica. R
 
 ## On Kubernetes
 
-In the Gateway API Inference Extension, the replicas of one model are defined as an **InferencePool**, and the endpoint picker (EPP) attached to it chooses a replica per request. The gateway is any implementation that supports the extension. Projects such as llm-d add prefix-cache and load-based scoring on top, and for prefill/decode disaggregated serving they choose a prefill replica and a decode replica together. For what the prefix cache is, see [How the KV Cache Fills Up](../llm/kv-cache.mdx); for split serving, see [Splitting Prefill and Decode (P/D Disaggregation)](../llm/pd-disaggregation.mdx).
+In the Gateway API Inference Extension, the replicas of one model are defined as an **InferencePool** (inference.networking.k8s.io/v1), and the endpoint picker (EPP) attached to it chooses a replica per request. The gateway is any implementation that supports the extension. Projects such as llm-d add prefix-cache and load-based scoring on top, and for prefill/decode disaggregated serving they choose a prefill replica and a decode replica together. For what the prefix cache is, see [How the KV Cache Fills Up](../llm/kv-cache.mdx); for split serving, see [Splitting Prefill and Decode (P/D Disaggregation)](../llm/pd-disaggregation.mdx).
 
 Further reading: [Gateway API Inference Extension](https://gateway-api-inference-extension.sigs.k8s.io/) · [llm-d](https://llm-d.ai/) · [vLLM docs](https://docs.vllm.ai/)

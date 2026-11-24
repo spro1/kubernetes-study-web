@@ -136,7 +136,7 @@ Out of the box, Kubernetes only knows about CPU and memory. Plugging a GPU or NP
       kind: '원리',
       title: 'The kubelet picks a device and calls Allocate',
       text: [
-        'The kubelet on node-1 picks gpu-1 from the free devices and, before creating the container, calls the plugin Allocate with that device ID.',
+        'The kubelet on node-1 picks gpu-1 from the free devices (the plugin can suggest a preferred set through the optional GetPreferredAllocation call) and, before creating the container, calls the plugin Allocate with that device ID.',
         'The plugin returns environment variables, device nodes and mounts for the container. Newer setups can return CDI device names instead, and the runtime injects the device from the CDI spec.',
       ],
       flows: [
@@ -171,7 +171,7 @@ Out of the box, Kubernetes only knows about CPU and memory. Plugging a GPU or NP
         'The driver reports an error on the idle gpu-0. The plugin sends an updated list over the ListAndWatch stream with gpu-0 marked Unhealthy.',
         'The kubelet keeps capacity at 2 but lowers allocatable to 1. That one GPU is used by train, so new GPU Pods go to other nodes or stay Pending.',
       ],
-      keyIdea: 'The kubelet does not move a Pod that was already using a device when it failed. Watch the gap between capacity and allocatable, together with device metrics.',
+      keyIdea: 'The kubelet does not move a Pod that was already using a device when it failed. Since v1.36 (beta), the container status shows device health in allocatedResourcesStatus. Watch the gap between capacity and allocatable, together with device metrics.',
       flows: [
         {from: 'plugin', to: 'kubelet', label: 'gpu-0 Unhealthy', type: 'response'},
         {from: 'kubelet', to: 'status', label: 'allocatable: 1', type: 'request'},

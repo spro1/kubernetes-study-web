@@ -174,7 +174,7 @@ hide_table_of_contents: true
         '드라이버가 장치 목록을 올리고, 사용자는 조건을 적은 요청서를 내고, 스케줄러가 맞는 장치를 골라 기록하고, kubelet과 드라이버가 노드에서 준비한다.',
         'DRA 이전에는 디바이스 플러그인으로 nvidia.com/gpu 같은 개수만 요청했다. 전용·MIG·Time-Slicing 같은 공유 방식은 노드 쪽 설정으로 정했다.',
       ],
-      keyIdea: 'DRA에서는 GPU를 "개수" 대신 "종류 + 조건"으로 요청한다. 파드가 대기 중이면 kubectl describe resourceclaim으로 어떤 조건이 맞지 않는지 본다.',
+      keyIdea: 'DRA에서는 GPU를 "개수" 대신 "종류 + 조건"으로 요청한다. 파드가 대기 중이면 kubectl describe pod의 FailedScheduling 이벤트(cannot allocate all claims)를 보고, kubectl get resourceslices로 조건과 장치 속성을 비교한다.',
       status: {claim: null},
       badges: {claim: null},
       focus: ['sched'],
@@ -188,7 +188,7 @@ hide_table_of_contents: true
 | --- | --- | --- |
 | 요청 방법 | 개수만 (`nvidia.com/gpu: 1`) | 종류 + 조건 (메모리 40GB 이상 등) |
 | 장치 정보 | 노드에 "몇 개 있다"만 알림 | 드라이버가 장치별 속성까지 목록으로 올림 |
-| 누가 고르나 | 노드의 장치 플러그인이 아무거나 | 스케줄러가 조건에 맞는 장치를 골라 기록 |
+| 누가 고르나 | 노드의 kubelet이 남은 장치 중 아무거나 | 스케줄러가 조건에 맞는 장치를 골라 기록 |
 | 쿠버네티스 상태 | 계속 쓰인다 | 핵심 API는 1.34에서 정식, 부가 기능은 이후 버전에서 차례로 정식 |
 
-더 읽을거리: [동적 리소스 할당](https://kubernetes.io/docs/concepts/scheduling-eviction/dynamic-resource-allocation/) · [장치 플러그인](https://kubernetes.io/ko/docs/concepts/extend-kubernetes/compute-storage-net/device-plugins/) · [GPU 스케줄링](https://kubernetes.io/ko/docs/tasks/manage-gpus/scheduling-gpus/)
+더 읽을거리: [동적 리소스 할당](https://kubernetes.io/docs/concepts/resource-management/dynamic-resource-allocation/) · [장치 플러그인](https://kubernetes.io/ko/docs/concepts/extend-kubernetes/compute-storage-net/device-plugins/) · [GPU 스케줄링](https://kubernetes.io/ko/docs/tasks/manage-gpus/scheduling-gpus/)

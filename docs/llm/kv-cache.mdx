@@ -127,7 +127,7 @@ The **KV cache** holds the computed results for every token the model has alread
         'If requests A and B start with the same system prompt (the instructions a service puts in front of every request), the keys and values for that prefix are identical.',
         'The engine finds the existing blocks, links them to B, and skips prefill for that part. This is prefix caching. The first token arrives sooner and memory is saved.',
       ],
-      keyIdea: 'Prefix caching only works within the same engine (replica). That is why routing that sends requests with the same prefix to the same replica emerged.',
+      keyIdea: 'vLLM’s built-in prefix cache lives inside each engine (replica). That is why routing that sends requests with the same prefix to the same replica emerged.',
       flows: [{from: 'kv', to: 'model', label: 'reuse prefix', type: 'response', bend: 0.15}],
       focus: ['kv', 'b'],
       badges: {kv: 'shared blocks'},
@@ -165,8 +165,8 @@ The **KV cache** holds the computed results for every token the model has alread
 
 ## Running it on Kubernetes
 
-- GPU memory usage from `nvidia-smi` or the DCGM exporter looks high as soon as vLLM starts. vLLM claims the `--gpu-memory-utilization` fraction of memory (default 0.9) and uses what remains after the weights for the KV cache.
-- Real headroom is the KV cache usage metric on vLLM’s `/metrics` (`vllm:kv_cache_usage_perc`, `vllm:gpu_cache_usage_perc` in older versions). If waiting requests (`vllm:num_requests_waiting`) and preemptions rise along with it, the cache is too small.
+- GPU memory usage from `nvidia-smi` or the DCGM exporter looks high as soon as vLLM starts. vLLM claims the fraction of memory set by `--gpu-memory-utilization` (long 0.9 by default; recent releases pick it automatically when unset) and uses what remains after the weights for the KV cache. `--kv-cache-memory-bytes` sets the KV cache size directly.
+- Real headroom is the KV cache usage metric on vLLM’s `/metrics` (`vllm:kv_cache_usage_perc`, `vllm:gpu_cache_usage_perc` in older versions). If waiting requests (`vllm:num_requests_waiting`) and preemptions (`vllm:num_preemptions_total`) rise along with it, the cache is too small.
 - Levers when the cache runs short: `--max-model-len` (maximum length of one request), `--max-num-seqs` (concurrent requests), replica count, or accelerators with more memory. If an HPA scales replicas, base it on engine metrics such as waiting requests or KV cache usage rather than GPU utilization.
 - Prefix caching pays off most when requests with the same prefix reach the same replica; see [Which Replica Gets the Request (Inference Routing)](../ai/inference-routing.mdx). Moving overflow cache to CPU memory or disk is covered in [Offloading Overflowing KV Cache](../llm/kv-offloading.mdx).
 

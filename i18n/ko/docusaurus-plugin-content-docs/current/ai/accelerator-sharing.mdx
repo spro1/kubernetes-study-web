@@ -10,7 +10,7 @@ hide_table_of_contents: true
 
 # 가속기 나눠 쓰기 (시분할·MPS)
 
-작은 모델 하나가 GPU 한 장을 통째로 쓰면 대부분이 논다. DRA로 GPU를 받을 때는 장치 요청서에 **공유 방식(없음·시분할·MPS)** 을 적어 GPU 한 장을 여러 파드가 나눠 쓰게 할 수 있다. 여기서는 NVIDIA의 GPU용 DRA 드라이버를 예로 든다. GPU Operator로 MIG·시분할을 노드 단위로 설정하는 방식은 [GPU 나눠 쓰기](../feature/gpu-sharing.mdx)에 있다.
+작은 모델 하나가 GPU 한 장을 통째로 쓰면 대부분이 논다. DRA로 GPU를 받을 때는 장치 요청서의 설정에 **공유 방식(TimeSlicing 또는 MPS)** 을 적어 GPU 한 장을 여러 파드가 나눠 쓰게 할 수 있다. 공유 설정을 적지 않으면 요청서 하나가 GPU 한 장을 통째로 받는다. 여기서는 이것을 "없음"이라고 부른다. 여기서는 NVIDIA의 GPU용 DRA 드라이버를 예로 든다. GPU Operator로 MIG·시분할을 노드 단위로 설정하는 방식은 [GPU 나눠 쓰기](../feature/gpu-sharing.mdx)에 있다.
 
 <StepDiagram
   width={1000}
@@ -52,11 +52,11 @@ hide_table_of_contents: true
         '레플리카를 2개로 늘리면 GPU도 2장이 필요하다.',
       ],
       flows: [
-        {from: 'user', to: 'mgr', label: '공유: 없음', type: 'request'},
+        {from: 'user', to: 'mgr', label: '공유 설정 없음', type: 'request'},
         {from: 'gpu', to: 'a1', label: '통째로', type: 'request'},
       ],
       focus: ['gpu', 'a1'],
-      values: {mode: '없음 (기본값)', who: '파드 1개', iso: {text: '영향 없음', tone: 'good'}, quota: '—'},
+      values: {mode: '없음 (설정 없음)', who: '파드 1개', iso: {text: '영향 없음', tone: 'good'}, quota: '—'},
     },
     {
       short: '놀고 있음',
@@ -118,7 +118,7 @@ hide_table_of_contents: true
       title: 'MPS: 여러 파드가 상한을 정해 동시에 쓴다',
       text: [
         'MPS(Multi-Process Service)를 고르면 같은 요청서를 가리키는 배포 B와 C의 파드가 GPU 한 장을 동시에 쓴다. 번갈아 쓰지 않고 같은 순간에 함께 실행된다.',
-        '요청서 설정에 각 파드가 쓸 수 있는 연산 비율(활성 스레드 비율)과 고정 메모리 상한을 적는다. 한 파드가 상한을 넘어 다른 파드 몫을 가져가지 못한다.',
+        '요청서 설정에 MPS 클라이언트마다 쓸 수 있는 연산 비율(defaultActiveThreadPercentage)과 고정 GPU 메모리 상한(defaultPinnedDeviceMemoryLimit)을 적는다. 한 프로세스가 이 상한을 넘지는 못하지만 처리량까지 보장되지는 않는다.',
       ],
       flows: [
         {from: 'gpu', to: 'b', label: '연산·메모리 상한', type: 'request'},
@@ -144,7 +144,7 @@ hide_table_of_contents: true
       kind: '원리',
       title: '할당량은 요청서 기준으로 센다',
       text: [
-        'ResourceQuota로 DRA 장치 수에 상한을 걸면, 쿠버네티스는 요청서에 적힌 장치 수를 센다. 파드가 몇 개인지가 기준이 아니다.',
+        'ResourceQuota로 DRA 장치 수에 상한을 걸면(예: gpu.nvidia.com.deviceclass.resource.k8s.io/devices), 쿠버네티스는 요청서에 적힌 장치 수를 센다. 파드가 몇 개인지가 기준이 아니다.',
         '배포 B와 C가 요청서 하나를 함께 가리키면 GPU 1장만 차감된다. 공유로 아낀 만큼 할당량에도 그대로 드러난다.',
       ],
       focus: ['b', 'c'],
@@ -157,7 +157,7 @@ hide_table_of_contents: true
       title: '통째로, 번갈아, 동시에 상한대로',
       text: [
         '없음은 파드마다 한 장을 통째로 써서 영향이 없다. 시분할은 같은 요청서를 가리키는 파드끼리 번갈아 쓰며 메모리 격리가 없다. MPS는 상한을 정해 동시에 쓰지만 오류 격리가 약하다.',
-        '여기서 본 공유 방식은 NVIDIA GPU용 DRA 드라이버의 기능이다. NPU를 나눠 쓸 수 있는지는 제조사 드라이버에 달려 있고, 레플리카마다 장치를 통째로 받는 경우가 많다.',
+        '여기서 본 공유 방식은 NVIDIA GPU용 DRA 드라이버의 기능이다. 드라이버의 TimeSlicingSettings·MPSSupport 기능 게이트(알파, 기본 꺼짐)를 켜야 쓸 수 있다. NPU를 나눠 쓸 수 있는지는 제조사 드라이버에 달려 있고, 레플리카마다 장치를 통째로 받는 경우가 많다.',
       ],
       keyIdea: '공유 방식은 "비용을 아끼는 대신 무엇을 포기하나"의 선택이다. 하드웨어 격리가 필요하면 MIG를, 가벼운 업무를 모으려면 시분할이나 MPS를 고른다.',
       status: {b: null, c: null},
@@ -175,4 +175,4 @@ hide_table_of_contents: true
 | 나누는 방식 | 통째로 | 시간을 번갈아 | 상한을 정해 동시에 |
 | 격리·보장 | 다른 파드 영향 없음 | 메모리 격리·성능 보장 없음 | 상한 안에서 동시 실행, 오류 격리는 약함 |
 
-더 읽을거리: [동적 리소스 할당](https://kubernetes.io/docs/concepts/scheduling-eviction/dynamic-resource-allocation/) · [NVIDIA MPS](https://docs.nvidia.com/deploy/mps/index.html) · [NVIDIA GPU Operator](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/index.html)
+더 읽을거리: [동적 리소스 할당](https://kubernetes.io/docs/concepts/resource-management/dynamic-resource-allocation/) · [NVIDIA GPU용 DRA 드라이버](https://dra-driver-nvidia-gpu.sigs.k8s.io/docs/) · [DRA 드라이버의 시분할](https://dra-driver-nvidia-gpu.sigs.k8s.io/docs/guides/gpu-allocation/time-slicing/) · [DRA 드라이버의 MPS](https://dra-driver-nvidia-gpu.sigs.k8s.io/docs/guides/mps/) · [NVIDIA MPS](https://docs.nvidia.com/deploy/mps/latest/index.html)

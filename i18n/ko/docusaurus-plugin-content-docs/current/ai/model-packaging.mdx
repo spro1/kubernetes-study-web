@@ -123,7 +123,7 @@ Hugging Face에 모델이 있다고 서빙 Pod가 곧장 빨리 뜨지는 않는
       title: '아티팩트는 레지스트리에 보관한다',
       text: [
         '빌드 Job이 결과를 레지스트리에 푸시한다. 태그와 다이제스트가 붙어 컨테이너 이미지처럼 버전을 관리하고, 여러 노드에 똑같이 내려보낼 수 있다.',
-        '서빙 Pod는 이 아티팩트를 사이드카 컨테이너나 이미지 볼륨으로 붙여 읽는다. KServe의 modelcar처럼 oci:// 주소를 받는 방식도 있다. PVC에 가중치를 풀어 두고 여러 Pod가 함께 읽는 방법도 쓰인다.',
+        '서빙 Pod는 이 아티팩트를 사이드카 컨테이너나 이미지 볼륨(쿠버네티스 v1.36부터 stable)으로 붙여 읽는다. KServe의 modelcar처럼 storageUri에 oci:// 주소를 받는 방식도 있다. PVC에 가중치를 풀어 두고 여러 Pod가 함께 읽는 방법도 쓰인다.',
       ],
       flows: [{from: 'build', to: 'reg', label: '푸시', type: 'request'}],
       focus: ['reg'],
@@ -152,9 +152,9 @@ Hugging Face에 모델이 있다고 서빙 Pod가 곧장 빨리 뜨지는 않는
       title: '캐시가 없으면 Pod가 오래 ContainerCreating에 머문다',
       text: [
         '캐시가 없는 노드에 서빙 Pod가 배치되면 그 자리에서 아티팩트를 받는다. 그동안 Pod는 ContainerCreating 상태로 머물고, 이벤트에 Pulling image가 오래 남는다.',
-        'kubelet은 디스크 사용률이 높아지면 쓰지 않는 이미지부터 지운다(이미지 가비지 컬렉션). 큰 모델을 여러 개 캐시하면 디스크가 부족해져 캐시가 사라질 수 있다.',
+        'kubelet은 디스크 사용률이 상한을 넘으면 쓰지 않는 이미지를 가장 오래전에 쓴 것부터 지운다(이미지 가비지 컬렉션). 큰 모델을 여러 개 캐시하면 디스크가 부족해져 캐시가 사라질 수 있다. 실행 중인 컨테이너가 쓰는 이미지는 지우지 않는다.',
       ],
-      keyIdea: 'imagePullPolicy가 Always이면 캐시가 있어도 레지스트리에 다시 확인한다. 태그를 생략하거나 latest를 쓰면 기본값이 Always가 된다. 고정 태그와 IfNotPresent를 쓴다.',
+      keyIdea: 'imagePullPolicy가 Always이면 캐시가 있어도 런타임이 레지스트리에 다이제스트를 다시 확인한다. 없는 레이어만 새로 받는다. 태그를 생략하거나 latest를 쓰면 기본값이 Always가 된다. 고정 태그와 IfNotPresent를 쓴다.',
       focus: ['node'],
       status: {node: 'warn'},
       badges: {node: '캐시 확인'},
@@ -183,4 +183,4 @@ Hugging Face에 모델이 있다고 서빙 Pod가 곧장 빨리 뜨지는 않는
 | 버전 관리 | 리비전 고정에 달렸다 | 경로 규칙으로 직접 관리 | 태그·다이제스트 |
 | 신경 쓸 것 | 외부 네트워크, 토큰 | 여러 노드에서 읽을 수 있는 스토리지 | 노드 디스크 용량, 이미지 GC |
 
-더 읽을거리: [이미지](https://kubernetes.io/ko/docs/concepts/containers/images/) · [가비지 수집](https://kubernetes.io/ko/docs/concepts/architecture/garbage-collection/) · [잡](https://kubernetes.io/ko/docs/concepts/workloads/controllers/job/)
+더 읽을거리: [이미지](https://kubernetes.io/ko/docs/concepts/containers/images/) · [이미지 볼륨](https://kubernetes.io/docs/tasks/configure-pod-container/image-volumes/) · [KServe OCI 모델 저장소](https://kserve.github.io/website/docs/model-serving/storage/providers/oci) · [가비지 수집](https://kubernetes.io/ko/docs/concepts/architecture/garbage-collection/) · [잡](https://kubernetes.io/ko/docs/concepts/workloads/controllers/job/)

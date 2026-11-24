@@ -123,7 +123,7 @@ A model on Hugging Face does not make a serving Pod start fast. Tens to hundreds
       title: 'The artifact lives in a registry',
       text: [
         'The build Job pushes the result to a registry. With a tag and a digest it is versioned like a container image and can be shipped identically to many nodes.',
-        'A serving Pod mounts it as a sidecar container or an image volume; KServe modelcars, for example, accept an oci:// URI. Another common option is unpacking the weights onto a PVC that many Pods read.',
+        'A serving Pod mounts it as a sidecar container or an image volume (stable since Kubernetes v1.36); KServe modelcars, for example, accept an oci:// storageUri. Another common option is unpacking the weights onto a PVC that many Pods read.',
       ],
       flows: [{from: 'build', to: 'reg', label: 'push', type: 'request'}],
       focus: ['reg'],
@@ -152,9 +152,9 @@ A model on Hugging Face does not make a serving Pod start fast. Tens to hundreds
       title: 'Without a cache, Pods sit in ContainerCreating',
       text: [
         'If a serving Pod lands on a node without the cache, the artifact is pulled on the spot. The Pod stays in ContainerCreating and the "Pulling image" event lingers.',
-        'When disk usage gets high, the kubelet deletes unused images first (image garbage collection). Caching many large models can fill the disk and evict caches.',
+        'When disk usage passes the high threshold, the kubelet deletes unused images, least recently used first (image garbage collection). Caching many large models can fill the disk and evict caches. Images used by running containers are kept.',
       ],
-      keyIdea: 'With imagePullPolicy Always, the kubelet checks the registry even when the image is cached. Omitting the tag or using latest makes Always the default. Use fixed tags with IfNotPresent.',
+      keyIdea: 'With imagePullPolicy Always, the runtime asks the registry for the digest even when the image is cached; only missing layers are downloaded. Omitting the tag or using latest makes Always the default. Use fixed tags with IfNotPresent.',
       focus: ['node'],
       status: {node: 'warn'},
       badges: {node: 'check cache'},
@@ -183,4 +183,4 @@ A model on Hugging Face does not make a serving Pod start fast. Tens to hundreds
 | Versioning | Depends on pinned revision | Managed by path conventions | Tags and digests |
 | What to watch | External network, tokens | Storage readable from many nodes | Node disk size, image GC |
 
-Further reading: [Images](https://kubernetes.io/docs/concepts/containers/images/) · [Garbage Collection](https://kubernetes.io/docs/concepts/architecture/garbage-collection/) · [Jobs](https://kubernetes.io/docs/concepts/workloads/controllers/job/)
+Further reading: [Images](https://kubernetes.io/docs/concepts/containers/images/) · [Image volumes](https://kubernetes.io/docs/tasks/configure-pod-container/image-volumes/) · [KServe OCI model storage](https://kserve.github.io/website/docs/model-serving/storage/providers/oci) · [Garbage Collection](https://kubernetes.io/docs/concepts/architecture/garbage-collection/) · [Jobs](https://kubernetes.io/docs/concepts/workloads/controllers/job/)

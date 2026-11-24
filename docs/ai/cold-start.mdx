@@ -59,7 +59,7 @@ A typical web Pod starts in seconds. An LLM replica must read **model weights** 
       title: 'Place it on a node with free accelerators and pull the image',
       text: [
         'The scheduler picks a node with the accelerators it needs. The node pulls the engine container image and runs it.',
-        'Engine images bundling libraries like CUDA can reach several GB. Once pulled, the same node does not pull it again.',
+        'Engine images bundling libraries like CUDA can reach several GB. With IfNotPresent, the same node reuses it until image garbage collection removes it.',
       ],
       flows: [{from: 'sched', to: 'pod', label: 'node chosen', type: 'request'}],
       focus: ['pod'],
@@ -113,7 +113,7 @@ A typical web Pod starts in seconds. An LLM replica must read **model weights** 
       title: 'Once ready, the gateway starts sending requests',
       text: [
         'When the engine passes its readinessProbe, the gateway and endpoint picker add the replica to their targets and start sending requests.',
-        'No requests arrive before that. If a livenessProbe fails during startup, the kubelet restarts the container and the whole load begins again. Give the startupProbe more time than the startup takes.',
+        'No requests arrive before that. If a livenessProbe fails while the model is still loading, the kubelet restarts the container and the whole load begins again. A startupProbe holds off liveness and readiness checks until it succeeds, so set its failureThreshold × periodSeconds longer than the startup.',
       ],
       flows: [
         {from: 'pod', to: 'gw', label: 'ready', type: 'response'},
@@ -173,4 +173,4 @@ A typical web Pod starts in seconds. An LLM replica must read **model weights** 
 | Load to accelerator | Load time in engine logs | NVMe, GPUDirect Storage |
 | Engine warm-up | Warm-up time in engine logs | Reuse compile cache, compile ahead |
 
-Further reading: [Liveness, Readiness, and Startup Probes](https://kubernetes.io/docs/concepts/configuration/liveness-readiness-startup-probes/) · [vLLM docs](https://docs.vllm.ai/) · [KServe](https://kserve.github.io/website/)
+Further reading: [Liveness, Readiness, and Startup Probes](https://kubernetes.io/docs/concepts/workloads/pods/probes/) · [vLLM docs](https://docs.vllm.ai/) · [KServe Model Cache](https://kserve.github.io/website/docs/model-serving/generative-inference/modelcache/localmodel)
