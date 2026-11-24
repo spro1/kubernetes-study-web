@@ -38,9 +38,11 @@ const config = {
           routeBasePath: '/',
           sidebarPath: './sidebars.js',
           editUrl: `${REPO_URL}/edit/main/`,
-          showLastUpdateTime: false,
+          editLocalizedFiles: true, // 한국어 페이지의 '수정' 링크는 i18n/ko 파일로
+          showLastUpdateTime: true, // 사이트맵 lastmod 에도 쓰인다(배포 시 git 전체 이력 필요)
         },
         blog: false,
+        sitemap: {lastmod: 'date', changefreq: 'weekly', ignorePatterns: ['**/search']},
         theme: {customCss: './src/css/custom.css'},
       }),
     ],
@@ -67,6 +69,14 @@ const config = {
     ({
       image: 'img/social-card.png',
       metadata: [
+        // 검색엔진 소유 확인 코드. GitHub 저장소 Settings → Variables 에 넣으면 배포 때 붙는다(.github/workflows/deploy.yml).
+        ...[
+          ['google-site-verification', process.env.GOOGLE_SITE_VERIFICATION],
+          ['msvalidate.01', process.env.BING_SITE_VERIFICATION],
+          ['naver-site-verification', process.env.NAVER_SITE_VERIFICATION],
+        ]
+          .filter(([, v]) => v)
+          .map(([name, content]) => ({name, content})),
         {name: 'keywords', content: 'kubernetes, k8s, 쿠버네티스, cloud, 클라우드, CKA, CKAD, CKS, learning, animation, diagram'},
       ],
       colorMode: {defaultMode: 'light', respectPrefersColorScheme: true},

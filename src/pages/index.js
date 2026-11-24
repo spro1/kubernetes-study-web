@@ -1,6 +1,7 @@
 import React from 'react';
 import Link from '@docusaurus/Link';
 import Layout from '@theme/Layout';
+import Head from '@docusaurus/Head';
 import useDocusaurusContext from '@docusaurus/useDocusaurusContext';
 import StepDiagram from '@site/src/components/StepDiagram';
 import TRACKS from '@site/src/data/tracks';
@@ -35,7 +36,7 @@ const LAYOUT = {
 // 언어별 문구. 맛보기 레슨은 LAYOUT 의 같은 순서 배열에 글자만 입힌다.
 const TEXT = {
   ko: {
-    pageTitle: '쿠버네티스 동작 원리를 그림으로',
+    pageTitle: '쿠버네티스를 그림으로 배우기: 단계별 애니메이션 레슨',
     description: '쿠버네티스가 실제로 어떻게 움직이는지 단계별 애니메이션 다이어그램으로 배운다',
     eyebrow: '무료 · 오픈 소스 · 설치 없이 브라우저에서',
     title: ['kubectl apply 한 줄 뒤에서', '무슨 일이 일어나는지', '눈으로 따라가 본다'],
@@ -70,7 +71,7 @@ const TEXT = {
     },
   },
   en: {
-    pageTitle: 'See how Kubernetes works',
+    pageTitle: 'Learn Kubernetes Visually: Animated, Step-by-Step Lessons',
     description: 'Learn how Kubernetes really works through step-by-step animated diagrams',
     eyebrow: 'Free · Open source · Runs in your browser',
     title: ['What happens after', 'kubectl apply?', 'Watch it, step by step'],
@@ -136,6 +137,29 @@ export default function Home() {
   const repo = `https://github.com/${siteConfig.organizationName}/${siteConfig.projectName}`;
   return (
     <Layout title={t.pageTitle} description={t.description}>
+      <Head>
+        <script type="application/ld+json">
+          {JSON.stringify({
+            '@context': 'https://schema.org',
+            '@graph': [
+              {'@type': 'WebSite', name: 'K8s Flow', url: `${siteConfig.url}${siteConfig.baseUrl}`, inLanguage: ['en', 'ko']},
+              {
+                '@type': 'Course',
+                name: 'K8s Flow: Kubernetes, animated',
+                description: t.description,
+                url: `${siteConfig.url}${siteConfig.baseUrl}`,
+                inLanguage: i18n.currentLocale,
+                isAccessibleForFree: true,
+                educationalLevel: 'Beginner to Advanced',
+                about: ['Kubernetes', 'Cloud computing', 'GPU', 'LLM serving'],
+                provider: {'@type': 'Organization', name: 'K8s Flow', sameAs: repo},
+                hasCourseInstance: {'@type': 'CourseInstance', courseMode: 'online', courseWorkload: `PT${total * 10}M`},
+                offers: {'@type': 'Offer', price: 0, priceCurrency: 'USD', category: 'Free'},
+              },
+            ],
+          })}
+        </script>
+      </Head>
       <header className={styles.hero}>
         <span className={styles.eyebrow}>{t.eyebrow}</span>
         <h1 className={styles.title}>

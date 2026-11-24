@@ -10,7 +10,11 @@ What happens after `kubectl apply`? 75 interactive lessons take you from cloud b
 
 No install, no sign-up. English and 한국어.
 
-![K8s Flow preview](static/img/social-card.png)
+[![K8s Flow: a Pod starting, step by step](static/img/demo.gif)](https://spro1.github.io/kubernetes-study-web/)
+
+[![Deploy](https://github.com/spro1/kubernetes-study-web/actions/workflows/deploy.yml/badge.svg)](https://github.com/spro1/kubernetes-study-web/actions/workflows/deploy.yml)
+[![Stars](https://img.shields.io/github/stars/spro1/kubernetes-study-web?style=social)](https://github.com/spro1/kubernetes-study-web/stargazers)
+[![License: MIT + CC BY 4.0](https://img.shields.io/badge/license-MIT%20%2B%20CC%20BY%204.0-blue)](LICENSE)
 
 </div>
 
@@ -45,7 +49,7 @@ Tracks go from easy to hard. The [lessons page](https://spro1.github.io/kubernet
 
 ## Contributing
 
-Corrections, translations and new lesson ideas are all welcome. Open an [issue](https://github.com/spro1/kubernetes-study-web/issues) or send a PR.
+Corrections, translations and new lesson ideas are all welcome. Open an [issue](https://github.com/spro1/kubernetes-study-web/issues) or send a PR. See [CONTRIBUTING.md](CONTRIBUTING.md) for how lessons are built.
 
 Each lesson is a single MDX file: `docs/<track>/<lesson>.mdx` for English and `i18n/ko/docusaurus-plugin-content-docs/current/<track>/<lesson>.mdx` for Korean. A lesson is one `<StepDiagram nodes={...} steps={...} />` element with node positions and per-step flows. Copying an existing lesson is the fastest way to start. The component's props are documented at the top of [`src/components/StepDiagram.jsx`](src/components/StepDiagram.jsx). The curriculum lives in [`src/data/tracks.js`](src/data/tracks.js); after adding or reordering lessons run `node scripts/build-lesson-index.js` to regenerate the lesson list and numbering.
 
@@ -56,6 +60,10 @@ npm start -- --locale ko  # Korean
 ```
 
 Every push to `main` is built and deployed to GitHub Pages by GitHub Actions.
+
+## License
+
+Code: [MIT](LICENSE). Lesson content: [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Share and adapt freely with credit to K8s Flow.
 
 ---
 

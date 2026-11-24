@@ -19,12 +19,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # 페이지별 마지막 수정일(사이트맵 lastmod)에 git 이력이 필요하다
       - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
       - run: npm ci
       - run: npm run build
+        env:
+          GOOGLE_SITE_VERIFICATION: ${{ vars.GOOGLE_SITE_VERIFICATION }}
+          BING_SITE_VERIFICATION: ${{ vars.BING_SITE_VERIFICATION }}
+          NAVER_SITE_VERIFICATION: ${{ vars.NAVER_SITE_VERIFICATION }}
       - uses: actions/upload-pages-artifact@v3
         with:
           path: build

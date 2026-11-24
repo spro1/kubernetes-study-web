@@ -1,0 +1,20 @@
+name: Suggest a lesson
+description: A flow you would like to see animated
+labels: [lesson-idea]
+body:
+  - type: input
+    id: topic
+    attributes:
+      label: Topic
+      placeholder: e.g. How a Gateway API HTTPRoute reaches a Pod
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Which components are involved, and what confuses people about it?
+  - type: dropdown
+    id: help
+    attributes:
+      label: Would you like to write it?
+      options: ["No, just suggesting", "Yes, with some help", "Yes, I'll send a PR"]

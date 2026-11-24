@@ -1,0 +1,22 @@
+name: Fix a lesson
+description: Something in a lesson is wrong, unclear or broken
+labels: [lesson-fix]
+body:
+  - type: input
+    id: url
+    attributes:
+      label: Lesson URL
+      placeholder: https://spro1.github.io/kubernetes-study-web/k8s/pod-startup
+    validations:
+      required: true
+  - type: input
+    id: step
+    attributes:
+      label: Step number (if it is about one step)
+  - type: textarea
+    id: problem
+    attributes:
+      label: What is wrong, and what should it say?
+      description: A link to official docs that backs the fix helps a lot.
+    validations:
+      required: true
