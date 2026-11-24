@@ -146,7 +146,7 @@ export default function Home() {
           {started ? (
             <Link className={styles.primary} to={`/${nextId}`}>{t.resume}</Link>
           ) : (
-            <Link className={styles.primary} to="/k8s/pod-startup">{t.start}</Link>
+            <Link className={styles.primary} to={`/${TRACKS[0].lessons[0]}`}>{t.start}</Link>
           )}
           <Link className={styles.secondary} to="/lessons">{t.all}</Link>
           <Link className={styles.secondary} href={repo}>{t.star}</Link>

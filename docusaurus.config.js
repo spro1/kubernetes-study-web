@@ -2,6 +2,8 @@
 const GITHUB_USER = 'spro1';
 const REPO = 'kubernetes-study-web';
 const REPO_URL = `https://github.com/${GITHUB_USER}/${REPO}`;
+// 커리큘럼(src/data/tracks.js)의 첫 레슨
+const FIRST_LESSON = `/${require('./src/data/tracks')[0].lessons[0]}`;
 
 /** @type {import('@docusaurus/types').Config} */
 const config = {
@@ -73,7 +75,7 @@ const config = {
         logo: {alt: 'K8s Flow', src: 'img/favicon.svg'},
         items: [
           {type: 'docSidebar', sidebarId: 'lessons', label: 'Lessons', position: 'left'},
-          {to: '/k8s/pod-startup', label: 'Start learning', position: 'left'},
+          {to: FIRST_LESSON, label: 'Start learning', position: 'left'},
           {type: 'localeDropdown', position: 'right'},
           {href: REPO_URL, label: '⭐ GitHub', position: 'right'},
         ],
