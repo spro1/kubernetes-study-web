@@ -1,8 +1,10 @@
 ---
 id: troubleshoot-status
 title: 상태를 세 단계로 읽고 문제 확인하기
-sidebar_label: 03 · 상태 읽기와 확인 순서
+sidebar_label: 11 · 상태 읽기와 확인 순서
 description: kubectl get pods의 STATUS 칸을 파드 단계·컨테이너 상태·사유 세 가지로 나눠 읽고, Pending·ImagePullBackOff·CrashLoopBackOff에서 이벤트와 로그 중 어디를 먼저 보는지 애니메이션으로 따라간다
+summary: '파드 단계·컨테이너 상태·사유를 읽고, 이벤트와 로그 중 어디를 먼저 볼지.'
+icon: alert
 hide_table_of_contents: true
 ---
 
@@ -175,5 +177,3 @@ hide_table_of_contents: true
 이벤트는 `kubectl describe pod <이름>`, 직전 컨테이너 로그는 `kubectl logs <이름> --previous`로 본다. 로그는 파드에만 있으므로 디플로이먼트에서 문제를 발견하면 그 아래 파드로 내려간다. 네임스페이스 전체 이벤트는 `kubectl get events --sort-by=.lastTimestamp`로 본다.
 
 더 읽을거리: [파드 디버깅](https://kubernetes.io/docs/tasks/debug/debug-application/debug-pods/) · [kubectl 치트 시트](https://kubernetes.io/ko/docs/reference/kubectl/cheatsheet/) · [파드 라이프사이클](https://kubernetes.io/ko/docs/concepts/workloads/pods/pod-lifecycle/) · [파드가 죽으면 (자가 치유)](../k8s/self-healing.mdx)
-
-다음 레슨: [정상 종료 — 요청을 잃지 않고 내려가기](./graceful-shutdown.mdx)

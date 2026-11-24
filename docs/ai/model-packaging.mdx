@@ -1,0 +1,186 @@
+---
+id: model-packaging
+title: Getting a Model Ready to Deploy
+sidebar_label: 06 · Getting a Model Ready to Deploy
+description: Follow model weights from Hugging Face or S3 as they are pulled, packaged as an OCI artifact, and pre-pulled onto GPU nodes so that serving Pods start fast.
+summary: 'Pull weights, package them as an image or artifact, and pre-cache them on nodes so serving starts fast.'
+icon: archive
+hide_table_of_contents: true
+---
+
+# Getting a Model Ready to Deploy
+
+A model on Hugging Face does not make a serving Pod start fast. Tens to hundreds of GB of weights have to be **pulled → packaged for deployment → pre-pulled onto GPU nodes**. Follow what each stage does and what it leaves behind.
+
+<StepDiagram
+  width={1000}
+  height={470}
+  meta={{duration: '~10 min', level: 'Beginner'}}
+  groups={[
+    {label: 'Pipeline · control plane', x: 170, y: 30, w: 390, h: 280, tone: 'mgmt'},
+    {label: 'Storage · GPU nodes', x: 590, y: 30, w: 395, h: 425, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'user', label: 'ML engineer', sub: 'model + revision', icon: 'user', tone: 'ext', x: 85, y: 100, show: true},
+    {id: 'wf', label: 'Workflow', sub: 'e.g. Argo Workflows', icon: 'git', tone: 'cp', x: 265, y: 100, show: true},
+    {id: 'api', label: 'API server', sub: 'Kubernetes', icon: 'gate', tone: 'cp', x: 470, y: 100, show: true},
+    {id: 'secret', label: 'Credentials', sub: 'Secret', icon: 'ticket', tone: 'store', x: 265, y: 235},
+    {id: 'dl', label: 'Download Job', sub: 'fetch weights', icon: 'archive', tone: 'node', x: 470, y: 235},
+    {id: 'src', label: 'HF · S3', sub: 'model source', icon: 'cloud', tone: 'ext', x: 85, y: 390},
+    {id: 'node', label: 'GPU node', sub: 'node-local cache', icon: 'target', tone: 'node', x: 880, y: 100},
+    {id: 'build', label: 'Build Job', sub: 'package as OCI', icon: 'hammer', tone: 'node', x: 690, y: 235},
+    {id: 'reg', label: 'Registry', sub: 'OCI model artifact', icon: 'registry', tone: 'store', x: 880, y: 235},
+    {id: 's3', label: 'Object storage', sub: 'raw weights', icon: 'disk', tone: 'store', x: 880, y: 390},
+  ]}
+  metrics={[
+    {id: 'raw', label: 'Raw weights'},
+    {id: 'img', label: 'Model artifact'},
+    {id: 'cache', label: 'Node cache'},
+  ]}
+  learn={[
+    {text: 'How raw weights differ from a deployable artifact', at: 3},
+    {text: 'Why models are stored as OCI artifacts in a registry', at: 5},
+    {text: 'How models get pre-pulled onto GPU nodes', at: 6},
+    {text: 'What happens when the cache is missing or evicted', at: 7},
+  ]}
+  steps={[
+    {
+      short: 'Pin version',
+      kind: '시작',
+      title: 'Decide which model and which revision',
+      text: [
+        'The ML engineer hands the workflow a model name, a revision, and a source: a Hugging Face repository or an S3 bucket.',
+        'The main branch on Hugging Face can change later. Pin the revision to a commit hash so the same model can be rebuilt.',
+      ],
+      flows: [{from: 'user', to: 'wf', label: 'model, revision, source', type: 'request'}],
+      focus: ['wf'],
+      values: {raw: '—', img: '—', cache: '—'},
+    },
+    {
+      short: 'Create Job',
+      kind: '원리',
+      title: 'Importing becomes a long-running Job',
+      text: [
+        'Weights can be tens to hundreds of GB. The workflow creates a download Job through the API server and waits for it to finish.',
+        'Set a retry count (backoffLimit) and a time limit (activeDeadlineSeconds) on the Job so a broken network does not leave it hanging forever.',
+      ],
+      flows: [
+        {from: 'wf', to: 'api', label: 'create Job', type: 'request'},
+        {from: 'api', to: 'dl', label: 'run Pod', type: 'request'},
+      ],
+      focus: ['api', 'dl'],
+      values: {raw: 'downloading'},
+    },
+    {
+      short: 'Download',
+      kind: '원리',
+      title: 'The download Job pulls the weights',
+      text: [
+        'The download Job reads a Hugging Face token or S3 keys from a Secret as environment variables. Gated models cannot be downloaded without a token.',
+        'It downloads weight files such as safetensors, plus the config and tokenizer files.',
+      ],
+      flows: [
+        {from: 'secret', to: 'dl', label: 'token / keys', type: 'response'},
+        {from: 'src', to: 'dl', label: 'weight files', type: 'response'},
+      ],
+      focus: ['dl', 'secret'],
+    },
+    {
+      short: 'Raw weights',
+      kind: '원리',
+      title: 'Keep the files in in-house object storage',
+      text: [
+        'The files are stored as-is in object storage close to the cluster, under a path that includes the model name and revision, together with checksums.',
+        'If the external source slows down or disappears, you can restart from this copy. It is still not in a shape a serving Pod can use directly.',
+      ],
+      keyIdea: 'Raw weights are "the files as downloaded"; a model artifact is "packaged for deployment". Keeping them separate lets you change the packaging without downloading again.',
+      flows: [
+        {from: 'dl', to: 's3', label: 'raw weights', type: 'request'},
+        {from: 'dl', to: 'api', label: 'Job complete', type: 'response'},
+      ],
+      focus: ['s3'],
+      status: {s3: 'ok'},
+      values: {raw: {text: 'stored', tone: 'good'}},
+    },
+    {
+      short: 'Build',
+      kind: '원리',
+      title: 'Package the weights as an OCI artifact',
+      text: [
+        'The workflow then creates a build Job. It reads the weights from object storage and packages them in OCI format, the same format container images use.',
+        'Splitting large files across several layers, instead of one huge layer, lets nodes download them in parallel.',
+      ],
+      flows: [
+        {from: 'api', to: 'build', label: 'build Job', type: 'request'},
+        {from: 's3', to: 'build', label: 'read weights', type: 'response'},
+      ],
+      focus: ['build'],
+      values: {img: 'building'},
+    },
+    {
+      short: 'Registry',
+      kind: '원리',
+      title: 'The artifact lives in a registry',
+      text: [
+        'The build Job pushes the result to a registry. With a tag and a digest it is versioned like a container image and can be shipped identically to many nodes.',
+        'A serving Pod mounts it as a sidecar container or an image volume; KServe modelcars, for example, accept an oci:// URI. Another common option is unpacking the weights onto a PVC that many Pods read.',
+      ],
+      flows: [{from: 'build', to: 'reg', label: 'push', type: 'request'}],
+      focus: ['reg'],
+      status: {reg: 'ok'},
+      values: {img: {text: 'pushed', tone: 'good'}},
+    },
+    {
+      short: 'Node cache',
+      kind: '원리',
+      title: 'Pre-pull onto GPU nodes',
+      text: [
+        'Downloading the artifact ahead of time to the local disk of the GPU nodes that will serve it is the node cache. It avoids pulling tens of GB every time a Pod starts.',
+        'A common approach is a pre-pull DaemonSet scoped by a GPU node label. Its Pods reference the model artifact, so the kubelet pulls it on each node, and the whole node pool gets the cache together.',
+      ],
+      flows: [
+        {from: 'api', to: 'node', label: 'pre-pull DaemonSet', type: 'request'},
+        {from: 'reg', to: 'node', label: 'pull layers', type: 'response'},
+      ],
+      focus: ['node'],
+      status: {node: 'ok'},
+      values: {cache: {text: 'cached', tone: 'good'}},
+    },
+    {
+      short: 'No cache',
+      kind: '주의',
+      title: 'Without a cache, Pods sit in ContainerCreating',
+      text: [
+        'If a serving Pod lands on a node without the cache, the artifact is pulled on the spot. The Pod stays in ContainerCreating and the "Pulling image" event lingers.',
+        'When disk usage gets high, the kubelet deletes unused images first (image garbage collection). Caching many large models can fill the disk and evict caches.',
+      ],
+      keyIdea: 'With imagePullPolicy Always, the kubelet checks the registry even when the image is cached. Omitting the tag or using latest makes Always the default. Use fixed tags with IfNotPresent.',
+      focus: ['node'],
+      status: {node: 'warn'},
+      badges: {node: 'check cache'},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Import → package → cache',
+      text: [
+        'Raw weights stay in object storage, the model artifact in the registry, and the cache on the GPU nodes’ local disks. All three stages are long-running work done by Jobs or a DaemonSet.',
+        'A failed stage can be rerun with the same revision. As long as the raw weights are kept, nothing has to be downloaded from outside again.',
+      ],
+      keyIdea: 'Use kubectl get jobs for import and build progress, and the events in kubectl describe pod for image pull time. On the node, crictl images shows whether the cache is there.',
+      status: {node: null},
+      badges: {node: null},
+      focus: ['s3', 'reg', 'node'],
+    },
+  ]}
+/>
+
+## Ways to deliver model files
+
+| | Download at startup | Unpack onto a PVC | OCI artifact + node cache |
+| --- | --- | --- | --- |
+| First start time | Long, every time | Depends on volume performance | Short when cached |
+| Versioning | Depends on pinned revision | Managed by path conventions | Tags and digests |
+| What to watch | External network, tokens | Storage readable from many nodes | Node disk size, image GC |
+
+Further reading: [Images](https://kubernetes.io/docs/concepts/containers/images/) · [Garbage Collection](https://kubernetes.io/docs/concepts/architecture/garbage-collection/) · [Jobs](https://kubernetes.io/docs/concepts/workloads/controllers/job/)

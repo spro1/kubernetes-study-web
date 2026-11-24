@@ -1,8 +1,10 @@
 ---
 id: entry-compare
 title: Three Entry Points Compared (Ingress · Mesh Gateway · Gateway API)
-sidebar_label: 06 · Entry Points Compared
+sidebar_label: 07 · Entry Points Compared
 description: Send the same external request through Ingress, a service mesh gateway with a VirtualService, and the Gateway API's Gateway and HTTPRoute, and compare who handles what on each path
+summary: 'What Ingress, the mesh gateway and the Gateway API each handle, compared with the same request.'
+icon: layers
 hide_table_of_contents: true
 ---
 
@@ -181,5 +183,3 @@ kubectl get gateways.gateway.networking.k8s.io,httproutes -n shop # Standard Gat
 ```
 
 Further reading: [Ingress](https://kubernetes.io/docs/concepts/services-networking/ingress/) · [Gateway API](https://kubernetes.io/docs/concepts/services-networking/gateway/) · [Gateway API docs](https://gateway-api.sigs.k8s.io/) · [Istio traffic management](https://istio.io/latest/docs/concepts/traffic-management/)
-
-Next lesson: [Namespaces and Resource Quotas](./namespace-quota.mdx)

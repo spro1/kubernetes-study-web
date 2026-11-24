@@ -1,8 +1,10 @@
 ---
 id: autoscaling
 title: 부하에 맞춰 늘어나기 (HPA)
-sidebar_label: 04 · 부하에 맞춰 늘어나기
+sidebar_label: 08 · 부하에 맞춰 늘어나기
 description: 사용량 수집, HPA의 필요 파드 수 계산, Deployment 변경, 스케줄링, 노드 자원 부족으로 Pending이 되는 지점까지 애니메이션으로 따라간다
+summary: '사용량을 재고, 필요한 파드 수를 계산하고, 노드 자원이 모자라면 어디서 멈추는지.'
+icon: scale
 hide_table_of_contents: true
 ---
 
@@ -176,5 +178,3 @@ hide_table_of_contents: true
 | 부하가 줄었는데 파드가 그대로다 | 스케일 인 대기 시간(안정화 시간)이 지났는지, 최소 레플리카 수 |
 
 더 읽을거리: [Horizontal Pod Autoscaling](https://kubernetes.io/ko/docs/tasks/run-application/horizontal-pod-autoscale/) · [HPA 연습](https://kubernetes.io/ko/docs/tasks/run-application/horizontal-pod-autoscale-walkthrough/)
-
-다음 레슨: [파드가 죽으면 (자가 치유)](./self-healing.mdx)

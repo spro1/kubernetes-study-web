@@ -1,8 +1,10 @@
 ---
 id: pod-security
 title: 파드 보안 기준과 securityContext
-sidebar_label: 09 · 파드 보안 기준
+sidebar_label: 03 · 파드 보안 기준
 description: 네임스페이스 레이블로 파드 보안 기준을 걸고, 특권 파드가 어드미션에서 거절되며, securityContext로 고친 파드가 통과하는 과정을 애니메이션으로 따라간다
+summary: '네임스페이스 보안 기준이 위험한 파드를 거절하는 과정과 securityContext.'
+icon: shield
 hide_table_of_contents: true
 ---
 
@@ -202,8 +204,6 @@ hide_table_of_contents: true
 | `capabilities.drop` | 네트워크 설정·파일 소유권 변경 같은 특수 권한 남용 | 1024 미만 포트를 쓰면 기능 하나를 다시 추가해야 한다 |
 | `allowPrivilegeEscalation: false` | 실행 중 권한 상승 | 대부분 영향 없다 |
 
-API 서버의 세 관문(인증·인가·어드미션) 전체는 [API 요청 경로](./api-request-path.mdx)에서 따로 본다.
+API 서버의 세 관문(인증·인가·어드미션) 전체는 [API 요청이 저장되기까지](./api-request-path.mdx)에서 따로 본다.
 
 더 읽을거리: [파드 보안 표준](https://kubernetes.io/docs/concepts/security/pod-security-standards/) · [파드 시큐리티 어드미션](https://kubernetes.io/docs/concepts/security/pod-security-admission/) · [파드와 컨테이너에 securityContext 설정](https://kubernetes.io/docs/tasks/configure-pod-container/security-context/)
-
-다음 레슨: [이미지와 공급망 보안](./supply-chain.mdx)

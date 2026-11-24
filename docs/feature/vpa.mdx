@@ -3,6 +3,8 @@ id: vpa
 title: Automatic Pod Sizing (VPA)
 sidebar_label: 09 · Automatic Pod Sizing
 description: Animated walkthrough of how the VPA (Vertical Pod Autoscaler) computes recommendations from usage history and, depending on its update mode, recreates pods to change their CPU and memory values
+summary: 'Adjusting CPU and memory size rather than count, and why defined and actual values can look different.'
+icon: scale
 hide_table_of_contents: true
 ---
 
@@ -182,5 +184,3 @@ kubectl get hpa -A                                   # Is an HPA attached to the
 ```
 
 Further reading: [Workload autoscaling](https://kubernetes.io/docs/concepts/workloads/autoscaling/) · [Vertical Pod Autoscaler (GitHub)](https://github.com/kubernetes/autoscaler/tree/master/vertical-pod-autoscaler) · [Resource management for containers](https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/) · [Scaling with Load (HPA)](../k8s/autoscaling.mdx)
-
-Next lesson: [Back to lesson list](../index.mdx)

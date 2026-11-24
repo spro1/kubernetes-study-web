@@ -3,6 +3,8 @@ id: self-healing
 title: 파드가 죽으면 (자가 치유)
 sidebar_label: 05 · 파드가 죽으면
 description: 컨테이너가 죽었을 때 kubelet의 재시작과 CrashLoopBackOff, 노드가 멈췄을 때 컨트롤러의 대체 파드 생성까지 애니메이션으로 따라간다
+summary: '컨테이너가 죽었을 때와 노드가 통째로 멈췄을 때, 누가 어떻게 되살리는지.'
+icon: heart
 hide_table_of_contents: true
 ---
 
@@ -180,5 +182,3 @@ hide_table_of_contents: true
 | 파드를 직접 지움 | ReplicaSet 컨트롤러 | 새 파드 생성 | 수 초 |
 
 더 읽을거리: [파드 라이프사이클](https://kubernetes.io/ko/docs/concepts/workloads/pods/pod-lifecycle/) · [활성·준비·시작 프로브 구성](https://kubernetes.io/ko/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/)
-
-다음 레슨: [설정과 비밀값](./config-secret.mdx)

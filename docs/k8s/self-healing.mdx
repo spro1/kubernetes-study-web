@@ -3,6 +3,8 @@ id: self-healing
 title: When a Pod Dies (Self-Healing)
 sidebar_label: 05 · When a Pod Dies
 description: Follow, step by step, how the kubelet restarts a dead container and what CrashLoopBackOff means, and how controllers create a replacement pod when a node stops
+summary: 'Who brings things back, and how, when a container dies or a whole node stops.'
+icon: heart
 hide_table_of_contents: true
 ---
 
@@ -180,5 +182,3 @@ When the desired state and the actual state drift apart, Kubernetes brings them 
 | Pod deleted manually | ReplicaSet controller | New pod created | Seconds |
 
 Further reading: [Pod Lifecycle](https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/) · [Configure Liveness, Readiness and Startup Probes](https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/)
-
-Next lesson: [Config and Secrets (ConfigMap · Secret)](./config-secret.mdx)

@@ -1,8 +1,10 @@
 ---
 id: supply-chain
 title: Image and Supply Chain Security
-sidebar_label: 10 · Image and Supply Chain Security
+sidebar_label: 04 · Image and Supply Chain Security
 description: Follow an image through build, vulnerability scanning and signing into a registry, then signature verification at admission on deploy, plus the roles of digest pinning and SBOMs, step by step with animation
+summary: 'Scanning, signing and digest pinning, and verifying provenance at deploy time.'
+icon: registry
 hide_table_of_contents: true
 ---
 
@@ -177,5 +179,3 @@ The software supply chain is the whole path from source → dependencies → bui
 Example: an image registry like Harbor can attach Trivy as a scanner to scan stored images and show the results (CVE ID, package name, installed version, fixed version, severity). Locally you can run the same scan with `trivy image <image>`.
 
 Further reading: [Images](https://kubernetes.io/docs/concepts/containers/images/) · [Harbor docs](https://goharbor.io/docs/) · [Sigstore docs](https://docs.sigstore.dev/) · [Trivy](https://trivy.dev/)
-
-Next lesson: [Audit Logs](./audit-log.mdx)

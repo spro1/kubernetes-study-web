@@ -1,8 +1,10 @@
 ---
 id: node-drain
 title: 노드 비우기와 클러스터 업그레이드
-sidebar_label: 13 · 노드 비우기와 업그레이드
+sidebar_label: 02 · 노드 비우기와 업그레이드
 description: 컨트롤 플레인을 먼저 올리고 워커 노드를 한 대씩 cordon·drain·uncordon 하는 동안 PodDisruptionBudget이 서비스 중단을 막는 원리를 애니메이션으로 따라간다
+summary: '노드를 하나씩 비우며 업그레이드하는 순서와, 한꺼번에 너무 많이 빠지지 않게 막는 장치.'
+icon: server
 hide_table_of_contents: true
 ---
 
@@ -196,5 +198,3 @@ hide_table_of_contents: true
 | 엔진 업그레이드가 성공하면 애플리케이션도 문제없다 | 새 버전에서 제거된 API를 쓰는 배포는 다음 배포 때 실패한다 |
 
 더 읽을거리: [노드를 안전하게 드레인하기](https://kubernetes.io/docs/tasks/administer-cluster/safely-drain-node/) · [중단(disruption)](https://kubernetes.io/ko/docs/concepts/workloads/pods/disruptions/) · [kubeadm 클러스터 업그레이드](https://kubernetes.io/docs/tasks/administer-cluster/kubeadm/kubeadm-upgrade/)
-
-다음 레슨: [조건으로 GPU 받기 (DRA)](./dra.mdx)

@@ -3,6 +3,8 @@ id: rolling-update
 title: Zero-Downtime Deploys (Rolling Update)
 sidebar_label: 03 · Zero-Downtime Deploys
 description: Follow, step by step, how a Deployment creates a new ReplicaSet and replaces pods one at a time without interrupting the service, and how rollback works
+summary: 'Why service stays up while new Pods start one by one and old ones leave, and how to roll back.'
+icon: layers
 hide_table_of_contents: true
 ---
 
@@ -181,5 +183,3 @@ Three pods running nginx 1.26 move to 1.27. During the change, user requests are
 | `readinessProbe` | Checks whether a new pod may receive requests | Without it, pods get requests as soon as they start, which can cause errors |
 
 Further reading: [Deployments](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/) · [Performing a Rolling Update](https://kubernetes.io/docs/tutorials/kubernetes-basics/update/update-intro/)
-
-Next lesson: [Scaling with Load (HPA)](./autoscaling.mdx)

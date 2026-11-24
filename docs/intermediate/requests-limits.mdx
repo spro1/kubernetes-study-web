@@ -3,6 +3,8 @@ id: requests-limits
 title: Requests and limits
 sidebar_label: 02 · Requests and limits
 description: Follow an animation of how the scheduler places pods by requests, how limits stop a running container by slowing CPU (throttling) or killing on memory (OOMKilled), and what happens when requests are left empty
+summary: 'Requests place Pods; limits cap them. Throttling, OOMKilled and QoS eviction.'
+icon: chart
 hide_table_of_contents: true
 ---
 
@@ -176,5 +178,3 @@ Each container declares resources as two values: "I need at least this much" (re
 | Generous requests are safer | Pods fail to place even with room, and resources are wasted |
 
 Further reading: [Resource management for Pods and containers](https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/) · [Kubernetes scheduler](https://kubernetes.io/docs/concepts/scheduling-eviction/kube-scheduler/) · [Configure Quality of Service for Pods](https://kubernetes.io/docs/tasks/configure-pod-container/quality-service-pod/) · [Which Node Gets the Pod (Scheduling)](../k8s/scheduling.mdx)
-
-Next lesson: [Reading status in three layers and the troubleshooting order](./troubleshoot-status.mdx)

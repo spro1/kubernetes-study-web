@@ -1,0 +1,191 @@
+---
+id: accelerator-allocation
+title: Getting Accelerators by Criteria (DRA in Depth)
+sidebar_label: 03 · Accelerators by Criteria (DRA in Depth)
+description: Follow a model deployment through Dynamic Resource Allocation (DRA) as it gets a matching GPU and network card together, waits when devices run out, and releases them at the end.
+summary: 'A deployment becomes a device claim, gets a GPU and a network card together, then gives them back.'
+icon: target
+hide_table_of_contents: true
+---
+
+# Getting Accelerators by Criteria (DRA in Depth)
+
+For a long time Kubernetes handed out accelerators only as "N GPUs". **Dynamic Resource Allocation (DRA)** lets you request "which kind of device, under what criteria, and how it is shared". LLM serving needs this when a GPU and a fast network card must come **together**, or when one GPU is shared. See the basic flow in [Requesting GPUs by Criteria (DRA)](../k8s/dra.mdx) first; this lesson adds quota, multi-device requests, and what happens when devices run out.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~10 min', level: 'Intermediate'}}
+  groups={[
+    {label: 'Kubernetes control plane', x: 405, y: 30, w: 395, h: 405, tone: 'mgmt'},
+    {label: 'GPU node', x: 815, y: 115, w: 170, h: 320, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'user', label: 'Operator', sub: 'deploys a model', icon: 'user', tone: 'ext', x: 90, y: 225, w: 130, show: true},
+    {id: 'mgr', label: 'API server', sub: 'admission · quota', icon: 'gate', tone: 'cp', x: 280, y: 225, w: 160, show: true},
+    {id: 'claim', label: 'Device claim', sub: 'ResourceClaim', icon: 'ticket', tone: 'store', x: 505, y: 105, w: 160},
+    {id: 'sched', label: 'Scheduler', sub: 'picks device+node', icon: 'target', tone: 'cp', x: 700, y: 225, w: 160, show: true},
+    {id: 'slice', label: 'Device list', sub: 'ResourceSlice', icon: 'db', tone: 'store', x: 505, y: 355, w: 160},
+    {id: 'driver', label: 'DRA driver', sub: 'GPU · NIC', icon: 'gear', tone: 'node', x: 900, y: 200, w: 150, show: true},
+    {id: 'pod', label: 'Model Pod', sub: 'vLLM', icon: 'pod', tone: 'app', size: 'sm', w: 120, x: 900, y: 360},
+  ]}
+  metrics={[
+    {id: 'req', label: 'Request style'},
+    {id: 'alloc', label: 'Allocated devices'},
+    {id: 'state', label: 'Model Pod'},
+  ]}
+  learn={[
+    {text: 'Some requests cannot be expressed as a count', at: 0},
+    {text: 'Node drivers publish devices with their attributes', at: 1},
+    {text: 'Criteria go in the claim; the scheduler picks', at: 4},
+    {text: 'A GPU and a NIC can be allocated as a matched set', at: 5},
+    {text: 'Quota and free devices must be checked separately', at: 7},
+  ]}
+  steps={[
+    {
+      short: 'Old way',
+      kind: '시작',
+      title: 'The old way can only say "N GPUs"',
+      text: [
+        'With device plugins, a Pod only states a count such as nvidia.com/gpu: 1. The node only reports how many GPUs it has.',
+        'LLM serving wants more: "at least 80 GB of memory", "plus a fast network card close to that GPU on the same server", "one GPU shared by several Pods". A count cannot express any of these.',
+      ],
+      flows: [{from: 'user', to: 'mgr', label: 'deploy model', type: 'request'}],
+      focus: ['mgr'],
+      values: {req: 'N GPUs', alloc: '—', state: '—'},
+    },
+    {
+      short: 'Device list',
+      kind: '원리',
+      title: 'The driver publishes each device with its attributes',
+      text: [
+        'The DRA driver on each GPU node (provided by the device vendor) lists the devices on that node and their attributes. That list is a ResourceSlice.',
+        'It carries attributes such as GPU model and memory size. Non-GPU devices like network cards or NPUs show up the same way when a driver exists for them.',
+      ],
+      flows: [{from: 'driver', to: 'slice', label: 'publish devices', type: 'request', bend: 0.15}],
+      focus: ['driver', 'slice'],
+      badges: {slice: 'GPU 8 · NIC 2'},
+    },
+    {
+      short: 'Quota',
+      kind: '원리',
+      title: 'The API server checks the namespace quota',
+      text: [
+        'The operator writes only the replica count and device criteria in a workload such as a Deployment. Which server or which device is not part of the spec.',
+        'On admission the API server checks the namespace ResourceQuota. DRA devices can be capped per DeviceClass, and a claim that would exceed the cap is rejected. To queue workloads until capacity frees up, add a queueing tool such as Kueue.',
+      ],
+      focus: ['mgr'],
+      badges: {mgr: 'within quota'},
+    },
+    {
+      short: 'Claim',
+      kind: '원리',
+      title: 'Each Pod gets its own device claim',
+      text: [
+        'The Pod template points to a ResourceClaimTemplate. For every Pod created, a ResourceClaim just for that Pod is generated from the template.',
+        'The claim says "this many devices matching these criteria". No device is chosen yet.',
+      ],
+      flows: [{from: 'mgr', to: 'claim', label: 'write criteria', type: 'request'}],
+      focus: ['claim'],
+      badges: {claim: 'unallocated'},
+      values: {req: 'class + criteria', state: 'Pending'},
+    },
+    {
+      short: 'Pick',
+      kind: '원리',
+      title: 'The scheduler picks the devices and the node together',
+      text: [
+        'The scheduler matches the claim’s criteria against the device list and picks a node that has devices satisfying them.',
+        'Choosing devices happens in the same place as choosing the node. That is how the scheduler can tell "GPUs are free, but none match".',
+      ],
+      flows: [
+        {from: 'claim', to: 'sched', label: 'criteria', type: 'response'},
+        {from: 'slice', to: 'sched', label: 'device list', type: 'response'},
+      ],
+      focus: ['sched'],
+      badges: {mgr: null},
+    },
+    {
+      short: 'Together',
+      kind: '원리',
+      title: 'A GPU and a network card are allocated as a set',
+      text: [
+        'One claim can hold several device requests, for example "2 GPUs and 1 network card". Constraints can require their attributes to match, such as "attached to the same PCIe root".',
+        'The scheduler records the chosen devices in the claim, so the same device is never given to another Pod.',
+      ],
+      keyIdea: 'Setups that move KV cache between accelerators at high speed, such as prefill/decode disaggregation, depend on getting matched GPUs and network cards.',
+      flows: [{from: 'sched', to: 'claim', label: 'record allocation', type: 'request'}],
+      focus: ['claim', 'sched'],
+      badges: {claim: 'GPU 2 + NIC 1'},
+      values: {alloc: 'node-1 · GPU 2 + NIC 1'},
+    },
+    {
+      short: 'Run',
+      kind: '원리',
+      title: 'The driver prepares the devices and the model starts',
+      text: [
+        'On the chosen node, the DRA driver prepares the allocated devices for this Pod. Any sharing settings in the claim are applied at this point.',
+        'Once they are ready, the model Pod starts with the devices attached.',
+      ],
+      flows: [
+        {from: 'sched', to: 'driver', label: 'node chosen', type: 'request'},
+        {from: 'driver', to: 'pod', label: 'prepare', type: 'request'},
+      ],
+      focus: ['driver', 'pod'],
+      status: {pod: 'ok'},
+      badges: {pod: 'GPU 2 + NIC 1'},
+      values: {state: {text: 'Running', tone: 'good'}},
+    },
+    {
+      short: 'No match',
+      kind: '문제',
+      title: 'With no matching devices, the Pod stays Pending',
+      text: [
+        'A second deployment passes the quota check. But other Pods hold all matching devices, so the scheduler finds no place for it and the Pod stays Pending.',
+        'Quota is only a ceiling on what you may use; it does not guarantee free devices. The FailedScheduling event in kubectl describe pod tells you which criteria could not be met.',
+      ],
+      flows: [{from: 'claim', to: 'sched', label: 'second deploy', type: 'response'}],
+      focus: ['sched'],
+      status: {sched: 'warn'},
+      badges: {sched: 'no match'},
+      values: {state: {text: 'second deploy waits', tone: 'bad'}},
+    },
+    {
+      short: 'Release',
+      kind: '원리',
+      title: 'Deleting the deployment releases the devices',
+      text: [
+        'When the deployment is deleted, the claims go with the Pods and the allocation is cleared. The driver cleans up the devices.',
+        'The released devices can be allocated again, and the scheduler retries the waiting Pod.',
+      ],
+      flows: [{from: 'driver', to: 'slice', label: 'available', type: 'response', bend: 0.15}],
+      focus: ['slice'],
+      status: {pod: 'gone', sched: null},
+      badges: {pod: null, sched: null, claim: 'deleted'},
+      values: {alloc: '—', state: 'Deleted'},
+    },
+    {
+      short: 'Recap',
+      kind: '정리',
+      title: 'From "how many" to "which devices, under what criteria"',
+      text: [
+        'The driver publishes devices with attributes, the API server checks quota, each Pod gets a claim with criteria, the scheduler picks and records matching devices and a node, and the node’s driver prepares them.',
+        'This is what makes matched GPU + NIC sets and shared GPUs possible. The next lesson looks at sharing.',
+      ],
+      keyIdea: 'For a Pending Pod, check three things in order: quota (kubectl describe quota), free devices (kubectl get resourceslices, kubectl get resourceclaims -A), and whether the criteria are too strict.',
+      badges: {claim: null},
+      focus: ['sched'],
+    },
+  ]}
+/>
+
+## What this adds to the basic DRA lesson
+
+| | Basic flow | Added here |
+| --- | --- | --- |
+| Unit of request | One Pod, one device | One claim per Deployment replica |
+| Device set | One kind of GPU | GPU and network card matched by constraints |
+| Check before deploy | None | ResourceQuota caps device count; Kueue can queue |
+| Why a Pod waits | Criteria mismatch | Tell quota exceeded apart from devices exhausted |
+
+Further reading: [Dynamic Resource Allocation](https://kubernetes.io/docs/concepts/scheduling-eviction/dynamic-resource-allocation/) · [Resource Quotas](https://kubernetes.io/docs/concepts/policy/resource-quotas/) · [Kueue](https://kueue.sigs.k8s.io/docs/overview/)

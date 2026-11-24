@@ -1,14 +1,16 @@
 ---
 id: statefulset
 title: 스테이트풀셋과 데이터베이스
-sidebar_label: 05 · 스테이트풀셋과 데이터베이스
+sidebar_label: 10 · 스테이트풀셋과 데이터베이스
 description: 스테이트풀셋이 순번 이름의 파드를 차례로 만들고, 파드마다 전용 PVC와 고정 DNS 이름을 주며, 파드가 다시 떠도 같은 데이터에 붙는 원리를 애니메이션으로 따라간다
+summary: '순서대로 뜨는 파드, 고정 이름, 파드마다 따라다니는 자기 볼륨.'
+icon: db
 hide_table_of_contents: true
 ---
 
 # 스테이트풀셋과 데이터베이스
 
-데이터베이스처럼 파드마다 정체성과 데이터가 있는 앱은 디플로이먼트로 돌리기 어렵다. 스테이트풀셋(StatefulSet)이 이름·순서·저장소를 어떻게 고정하는지 따라가 본다. PVC가 실제 저장 공간이 되는 과정은 [저장 공간이 붙기까지](../k8s/storage-volume.mdx)에서 다룬다.
+데이터베이스처럼 파드마다 정체성과 데이터가 있는 앱은 디플로이먼트로 돌리기 어렵다. 스테이트풀셋(StatefulSet)이 이름·순서·저장소를 어떻게 고정하는지 따라가 본다. PVC가 실제 저장 공간이 되는 과정은 [저장 공간이 붙기까지 (PVC·PV)](../k8s/storage-volume.mdx)에서 다룬다.
 
 <StepDiagram
   width={1000}
@@ -163,5 +165,3 @@ hide_table_of_contents: true
 딸린 파드는 `kubectl get pods -l <셀렉터>`, PVC는 `kubectl get pvc`로 확인한다. 줄이거나 지울 때 PVC를 함께 지울지는 `persistentVolumeClaimRetentionPolicy`로 정할 수 있다.
 
 더 읽을거리: [스테이트풀셋](https://kubernetes.io/ko/docs/concepts/workloads/controllers/statefulset/) · [퍼시스턴트 볼륨](https://kubernetes.io/ko/docs/concepts/storage/persistent-volumes/) · [이름으로 찾아가기 (Service·DNS)](../k8s/service-dns.mdx)
-
-다음 레슨: [Helm과 GitOps](./gitops-sync.mdx)

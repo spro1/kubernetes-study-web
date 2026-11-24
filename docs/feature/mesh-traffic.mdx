@@ -1,8 +1,10 @@
 ---
 id: mesh-traffic
 title: Service Mesh ② Splitting Traffic
-sidebar_label: 04 · Splitting Traffic
+sidebar_label: 05 · Splitting Traffic
 description: Animated walkthrough of canary releases with Istio DestinationRule subsets and VirtualService weight and header rules, plus connection limits, retries and timeouts, and rolling back the weights
+summary: 'Sending a share to a new version with virtual services and traffic policies, plus retries and timeouts.'
+icon: split
 hide_table_of_contents: true
 ---
 
@@ -193,5 +195,3 @@ istioctl proxy-config routes deploy/web      # Actual rules the web-side proxy r
 ```
 
 Further reading: [Istio traffic management](https://istio.io/latest/docs/concepts/traffic-management/) · [VirtualService reference](https://istio.io/latest/docs/reference/config/networking/virtual-service/) · [DestinationRule reference](https://istio.io/latest/docs/reference/config/networking/destination-rule/) · [Zero-Downtime Deploys (Rolling Update)](../k8s/rolling-update.mdx)
-
-Next lesson: [Service Mesh ③ Mesh Gateway](./mesh-gateway.mdx)

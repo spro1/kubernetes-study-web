@@ -1,0 +1,191 @@
+---
+id: accelerator-allocation
+title: 가속기를 조건으로 받기 (DRA 심화)
+sidebar_label: 03 · 가속기를 조건으로 받기 (DRA 심화)
+description: 모델 배포가 DRA(동적 리소스 할당)를 거쳐 조건에 맞는 GPU와 네트워크 카드를 함께 배정받고, 장치가 모자라면 대기하고, 끝나면 반납하기까지를 단계별 애니메이션으로 따라간다
+summary: '배포 설정이 장치 요청서가 되어 GPU와 네트워크 카드를 함께 배정받고 반납하기까지.'
+icon: target
+hide_table_of_contents: true
+---
+
+# 가속기를 조건으로 받기 (DRA 심화)
+
+쿠버네티스는 오랫동안 가속기를 "GPU 몇 장"으로만 나눠 줬다. **DRA(Dynamic Resource Allocation, 동적 리소스 할당)** 는 "어떤 조건의 장치를, 어떻게 나눠서"까지 적어 요청하는 방식이다. LLM 서빙에서는 GPU와 고속 네트워크 카드를 **함께** 받거나 GPU 한 장을 나눠 쓸 때 이 방식이 필요하다. DRA의 기본 흐름은 [조건으로 GPU 받기 (DRA)](../k8s/dra.mdx)에서 먼저 보고, 여기서는 할당량·여러 장치 묶음·대기 상황까지 이어서 본다.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '약 10분', level: '중급'}}
+  groups={[
+    {label: '쿠버네티스 컨트롤 플레인', x: 405, y: 30, w: 395, h: 405, tone: 'mgmt'},
+    {label: 'GPU 노드', x: 815, y: 115, w: 170, h: 320, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'user', label: '운영자', sub: '모델 배포', icon: 'user', tone: 'ext', x: 90, y: 225, w: 130, show: true},
+    {id: 'mgr', label: 'API 서버', sub: '승인 · 할당량 검사', icon: 'gate', tone: 'cp', x: 280, y: 225, w: 160, show: true},
+    {id: 'claim', label: '장치 요청서', sub: 'ResourceClaim', icon: 'ticket', tone: 'store', x: 505, y: 105, w: 160},
+    {id: 'sched', label: '스케줄러', sub: '장치·노드 고르기', icon: 'target', tone: 'cp', x: 700, y: 225, w: 160, show: true},
+    {id: 'slice', label: '장치 목록', sub: 'ResourceSlice', icon: 'db', tone: 'store', x: 505, y: 355, w: 160},
+    {id: 'driver', label: 'DRA 드라이버', sub: 'GPU · 네트워크 카드', icon: 'gear', tone: 'node', x: 900, y: 200, w: 150, show: true},
+    {id: 'pod', label: '모델 파드', sub: 'vLLM', icon: 'pod', tone: 'app', size: 'sm', w: 120, x: 900, y: 360},
+  ]}
+  metrics={[
+    {id: 'req', label: '요청 방식'},
+    {id: 'alloc', label: '배정된 장치'},
+    {id: 'state', label: '모델 파드'},
+  ]}
+  learn={[
+    {text: '"몇 장" 방식으로는 표현할 수 없는 요청이 있다는 것', at: 0},
+    {text: '노드의 드라이버가 장치 목록을 속성까지 올린다는 것', at: 1},
+    {text: '조건은 장치 요청서에 적고, 고르는 것은 스케줄러라는 것', at: 4},
+    {text: 'GPU와 네트워크 카드를 한 번에 맞춰 받을 수 있다는 것', at: 5},
+    {text: '할당량과 남은 장치는 따로 확인해야 한다는 것', at: 7},
+  ]}
+  steps={[
+    {
+      short: '기존 방식',
+      kind: '시작',
+      title: '기존 방식은 "GPU 몇 장"만 말할 수 있다',
+      text: [
+        '기존 장치 플러그인 방식에서는 파드에 nvidia.com/gpu: 1처럼 개수만 적는다. 노드는 "GPU가 몇 장 있다"만 알린다.',
+        'LLM 서빙은 더 많은 것을 원한다. "메모리 80GB 이상", "같은 서버에서 GPU와 가까운 고속 네트워크 카드도 함께", "GPU 한 장을 여러 파드가 나눠서" 같은 요청이다. 개수만으로는 이런 요청을 표현할 수 없다.',
+      ],
+      flows: [{from: 'user', to: 'mgr', label: '모델 배포', type: 'request'}],
+      focus: ['mgr'],
+      values: {req: 'GPU N장', alloc: '—', state: '—'},
+    },
+    {
+      short: '장치 목록',
+      kind: '원리',
+      title: '드라이버가 노드의 장치를 속성까지 목록으로 올린다',
+      text: [
+        '각 GPU 노드에서 실행되는 DRA 드라이버(장치 제조사가 제공)가 이 노드에 어떤 장치가 있고 각각 속성이 무엇인지 정리해 올린다. 이것이 장치 목록(ResourceSlice)이다.',
+        '목록에는 GPU 모델·메모리 크기 같은 속성이 들어간다. 네트워크 카드나 NPU처럼 GPU가 아닌 장치도 해당 드라이버가 있으면 같은 방식으로 올라온다.',
+      ],
+      flows: [{from: 'driver', to: 'slice', label: '장치 목록 게시', type: 'request', bend: 0.15}],
+      focus: ['driver', 'slice'],
+      badges: {slice: 'GPU 8 · NIC 2'},
+    },
+    {
+      short: '할당량 검사',
+      kind: '원리',
+      title: 'API 서버가 네임스페이스 할당량을 확인한다',
+      text: [
+        '운영자는 Deployment 같은 워크로드에 레플리카 수와 장치 조건만 적는다. 어느 서버의 어느 장치인지는 적지 않는다.',
+        'API 서버는 요청을 받을 때 네임스페이스의 ResourceQuota를 확인한다. DRA 장치도 장치 종류(DeviceClass)별 개수로 할당량을 걸 수 있고, 넘으면 요청서 생성이 거절된다. 자원이 생길 때까지 워크로드를 줄 세워 두려면 Kueue 같은 큐잉 도구를 함께 쓴다.',
+      ],
+      focus: ['mgr'],
+      badges: {mgr: '할당량 안'},
+    },
+    {
+      short: '요청서 생성',
+      kind: '원리',
+      title: '파드마다 장치 요청서가 만들어진다',
+      text: [
+        '파드 템플릿은 요청서 틀(ResourceClaimTemplate)을 가리킨다. 파드가 하나 생길 때마다 이 틀로 파드 전용 장치 요청서(ResourceClaim)가 하나씩 만들어진다.',
+        '요청서에는 "이런 조건의 장치 몇 개"가 적힌다. 아직 어떤 장치도 정해지지 않았다.',
+      ],
+      flows: [{from: 'mgr', to: 'claim', label: '조건 기록', type: 'request'}],
+      focus: ['claim'],
+      badges: {claim: '배정 전'},
+      values: {req: '종류 + 조건', state: 'Pending'},
+    },
+    {
+      short: '장치 고르기',
+      kind: '원리',
+      title: '스케줄러가 조건에 맞는 장치와 노드를 함께 고른다',
+      text: [
+        '스케줄러는 요청서의 조건과 장치 목록을 맞춰 보고, 조건을 만족하는 장치가 있는 노드를 고른다.',
+        '장치를 고르는 일이 노드를 고르는 일과 같은 자리에서 일어난다. 그래서 "GPU는 남았는데 조건이 안 맞아 대기"하는 경우를 스케줄러가 판단할 수 있다.',
+      ],
+      flows: [
+        {from: 'claim', to: 'sched', label: '조건', type: 'response'},
+        {from: 'slice', to: 'sched', label: '장치 목록', type: 'response'},
+      ],
+      focus: ['sched'],
+      badges: {mgr: null},
+    },
+    {
+      short: '함께 배정',
+      kind: '원리',
+      title: 'GPU와 네트워크 카드를 한 묶음으로 배정한다',
+      text: [
+        '요청서 하나에 장치 요청을 여러 개 적을 수 있다. 예를 들어 "GPU 2장과 네트워크 카드 1개"를 한 번에 요청하고, 제약(constraints)으로 "같은 PCIe 루트에 붙은 것끼리"처럼 장치 속성이 서로 맞아야 한다고 적는다.',
+        '스케줄러는 고른 장치를 요청서에 기록한다. 같은 장치가 다른 파드에 중복 배정되지 않는다.',
+      ],
+      keyIdea: '프리필·디코드 분리처럼 가속기 사이에 KV 캐시를 고속으로 옮겨야 하는 구성은 GPU와 네트워크 카드를 맞춰 받는 것이 전제다.',
+      flows: [{from: 'sched', to: 'claim', label: '배정 기록', type: 'request'}],
+      focus: ['claim', 'sched'],
+      badges: {claim: 'GPU 2 + NIC 1'},
+      values: {alloc: 'node-1 · GPU 2 + NIC 1'},
+    },
+    {
+      short: '준비·실행',
+      kind: '원리',
+      title: '노드에서 드라이버가 장치를 준비하고 모델이 기동한다',
+      text: [
+        '파드가 놓인 노드에서 DRA 드라이버가 배정된 장치를 이 파드가 쓸 수 있게 준비한다. 요청서에 공유 설정이 있으면 이때 함께 적용된다.',
+        '준비가 끝나면 모델 파드가 장치를 받은 채로 기동한다.',
+      ],
+      flows: [
+        {from: 'sched', to: 'driver', label: '노드 결정', type: 'request'},
+        {from: 'driver', to: 'pod', label: '장치 준비', type: 'request'},
+      ],
+      focus: ['driver', 'pod'],
+      status: {pod: 'ok'},
+      badges: {pod: 'GPU 2 + NIC 1'},
+      values: {state: {text: '실행 중', tone: 'good'}},
+    },
+    {
+      short: '맞는 장치 없음',
+      kind: '문제',
+      title: '조건에 맞는 장치가 없으면 대기 상태로 남는다',
+      text: [
+        '두 번째 배포는 할당량 검사를 통과했다. 그런데 다른 파드가 장치를 다 쓰고 있어 스케줄러가 놓을 곳을 찾지 못하고, 파드는 Pending으로 남는다.',
+        '할당량은 "이만큼까지 써도 된다"는 상한일 뿐 실제로 남은 장치를 보장하지 않는다. kubectl describe pod의 FailedScheduling 이벤트에서 어떤 조건 때문에 못 놓였는지 확인한다.',
+      ],
+      flows: [{from: 'claim', to: 'sched', label: '두 번째 배포', type: 'response'}],
+      focus: ['sched'],
+      status: {sched: 'warn'},
+      badges: {sched: '맞는 장치 없음'},
+      values: {state: {text: '두 번째 배포 대기', tone: 'bad'}},
+    },
+    {
+      short: '반납',
+      kind: '원리',
+      title: '배포를 지우면 장치가 반납된다',
+      text: [
+        '배포를 지우면 모델 파드와 함께 장치 요청서도 지워지고, 배정 기록이 풀린다. 드라이버는 장치를 정리한다.',
+        '반납된 장치는 다시 배정할 수 있는 상태가 되고, 기다리던 다음 파드를 스케줄러가 다시 시도해 배정한다.',
+      ],
+      flows: [{from: 'driver', to: 'slice', label: '쓸 수 있음', type: 'response', bend: 0.15}],
+      focus: ['slice'],
+      status: {pod: 'gone', sched: null},
+      badges: {pod: null, sched: null, claim: '삭제됨'},
+      values: {alloc: '—', state: '삭제'},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '"몇 장"에서 "어떤 장치를 어떤 조건으로"로',
+      text: [
+        '드라이버가 장치 목록을 속성까지 올리고, API 서버가 할당량을 확인하고, 파드마다 조건을 적은 장치 요청서가 생기고, 스케줄러가 맞는 장치와 노드를 골라 기록하고, 노드의 드라이버가 준비한다.',
+        '이 방식 덕분에 GPU와 네트워크 카드를 맞춰 받거나 GPU 한 장을 나눠 쓰는 구성이 가능해진다. 다음 레슨에서 나눠 쓰는 방식을 본다.',
+      ],
+      keyIdea: '파드가 Pending이면 세 가지를 차례로 본다. 할당량(kubectl describe quota), 남은 장치(kubectl get resourceslices, kubectl get resourceclaims -A), 조건이 너무 까다롭지 않은지.',
+      badges: {claim: null},
+      focus: ['sched'],
+    },
+  ]}
+/>
+
+## 기본 DRA 레슨과 달라진 점
+
+| 구분 | 기본 흐름 | 이 레슨에서 더한 것 |
+| --- | --- | --- |
+| 요청 단위 | 파드 하나, 장치 하나 | Deployment 레플리카마다 요청서 하나 |
+| 장치 묶음 | GPU 한 종류 | GPU와 네트워크 카드를 제약으로 맞춰 함께 |
+| 배포 전 확인 | 없음 | ResourceQuota로 장치 수 상한, 필요하면 Kueue로 줄 세우기 |
+| 대기 원인 | 조건 불일치 | 할당량 초과와 장치 부족을 구분해서 본다 |
+
+더 읽을거리: [동적 리소스 할당](https://kubernetes.io/docs/concepts/scheduling-eviction/dynamic-resource-allocation/) · [리소스 쿼터](https://kubernetes.io/ko/docs/concepts/policy/resource-quotas/) · [Kueue](https://kueue.sigs.k8s.io/docs/overview/)

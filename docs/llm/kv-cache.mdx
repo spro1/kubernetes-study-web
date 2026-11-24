@@ -1,0 +1,173 @@
+---
+id: kv-cache
+title: How the KV Cache Fills Up
+sidebar_label: 03 · How the KV Cache Fills Up
+description: Learn why the KV cache exists, how it fills accelerator memory as conversations grow and concurrent requests increase, and what happens when prefixes are reused or the cache runs full.
+summary: 'Storing attention results for reuse, block allocation, prefix caching and what happens when it fills up.'
+icon: db
+hide_table_of_contents: true
+---
+
+# How the KV Cache Fills Up
+
+The **KV cache** holds the computed results for every token the model has already read or written. It lets the model keep writing quickly, but it fills accelerator memory fast as conversations grow and concurrent requests increase. In serving, this cache usually decides "how many users can we handle at once".
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~10 min', level: 'Intermediate'}}
+  groups={[
+    {label: 'One accelerator', x: 255, y: 30, w: 730, h: 405, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'a', label: 'Request A', sub: 'chat 1', icon: 'user', tone: 'ext', size: 'sm', w: 110, x: 105, y: 140, show: true},
+    {id: 'b', label: 'Request B', sub: 'same prompt', icon: 'user', tone: 'ext', size: 'sm', w: 130, x: 105, y: 330},
+    {id: 'model', label: 'Model compute', sub: 'next token', icon: 'spark', tone: 'node', x: 420, y: 230, w: 160, show: true},
+    {id: 'w', label: 'Model weights', sub: 'fixed size', icon: 'disk', tone: 'store', x: 700, y: 110, w: 160, show: true},
+    {id: 'kv', label: 'KV cache area', sub: 'most of the rest', icon: 'db', tone: 'store', x: 700, y: 340, w: 170},
+    {id: 'q', label: 'Queue', sub: 'waits', icon: 'layers', tone: 'cp', size: 'sm', w: 120, x: 905, y: 230},
+  ]}
+  metrics={[
+    {id: 'use', label: 'KV cache usage'},
+    {id: 'calc', label: 'New compute per token'},
+    {id: 'conc', label: 'Concurrent requests'},
+  ]}
+  learn={[
+    {text: 'Without a KV cache, everything is recomputed every time', at: 1},
+    {text: 'The cache grows with conversation length × concurrent requests', at: 4},
+    {text: 'Splitting it into blocks reduces wasted memory', at: 5},
+    {text: 'Shared prefixes can be reused (prefix caching)', at: 6},
+    {text: 'When it is full, new requests wait or get preempted', at: 7},
+  ]}
+  steps={[
+    {
+      short: 'Look back',
+      kind: '시작',
+      title: 'Each next token must look at all previous tokens',
+      text: [
+        'To compute the next token, the model looks at its relationship to every earlier token (attention). Producing the 1,000th token means consulting all 999 before it.',
+        'For that, each token needs two computed results: a key and a value.',
+      ],
+      flows: [{from: 'a', to: 'model', label: 'chat 1', type: 'request'}],
+      focus: ['model'],
+      values: {use: '0%', calc: '—', conc: '1'},
+    },
+    {
+      short: 'No cache',
+      kind: '문제',
+      title: 'Without a cache, the past is recomputed for every token',
+      text: [
+        'If keys and values are thrown away, every new token requires recomputing the keys and values of all earlier tokens from scratch.',
+        'The longer the answer, the more there is to recompute, so generation keeps slowing down.',
+      ],
+      focus: ['model'],
+      status: {model: 'warn'},
+      badges: {model: 'recompute all'},
+      values: {calc: {text: 'all past tokens', tone: 'bad'}},
+    },
+    {
+      short: 'Store',
+      kind: '원리',
+      title: 'Keys and values are computed once and kept in memory',
+      text: [
+        'The engine stores computed keys and values in the KV cache. For the next token it computes only the new token’s key and value and reads the rest from the cache.',
+        'It trades compute for memory: faster, but it uses memory.',
+      ],
+      flows: [{from: 'model', to: 'kv', label: 'store K/V', type: 'request'}],
+      focus: ['kv'],
+      status: {model: null},
+      badges: {model: null, kv: 'A'},
+      values: {use: '5%', calc: {text: 'new token only', tone: 'good'}},
+    },
+    {
+      short: 'Memory split',
+      kind: '원리',
+      title: 'What is left after the weights goes to the KV cache',
+      text: [
+        'Model weights are loaded into accelerator memory first, and their size is fixed. Engines like vLLM then reserve most of the remaining memory up front as the KV cache area.',
+        'So accelerator memory usage looks high from the start. Judge real headroom by KV cache usage, not by memory usage.',
+      ],
+      keyIdea: '"GPU memory 90% used" does not mean "full". It may be space the engine reserved in advance.',
+      flows: [{from: 'w', to: 'model', label: 'read weights', type: 'response'}],
+      focus: ['w', 'kv'],
+      badges: {w: 'fixed'},
+    },
+    {
+      short: 'Growth',
+      kind: '원리',
+      title: 'Longer conversations and more requests grow the cache',
+      text: [
+        'Cache size is proportional to token count. It grows as conversations get longer and as more requests run at the same time.',
+        'When request B arrives, B gets its own share of the cache. Larger models also need more cache per token.',
+      ],
+      flows: [
+        {from: 'b', to: 'model', label: 'chat 2', type: 'request'},
+        {from: 'model', to: 'kv', label: 'store B', type: 'request'},
+      ],
+      focus: ['kv', 'b'],
+      badges: {w: null, kv: 'A · B'},
+      values: {use: '45%', conc: '2'},
+    },
+    {
+      short: 'Blocks',
+      kind: '원리',
+      title: 'Splitting the cache into small blocks reduces gaps',
+      text: [
+        'Older approaches reserved a contiguous chunk for each request’s maximum length, so space left by requests that ended early was wasted.',
+        'vLLM splits the cache into small fixed-size blocks and hands them out one at a time as needed (PagedAttention), the same idea as an operating system paging memory. The same memory holds more requests.',
+      ],
+      focus: ['kv'],
+      badges: {kv: 'block allocation'},
+    },
+    {
+      short: 'Prefix reuse',
+      kind: '원리',
+      title: 'A shared prefix is computed once and reused',
+      text: [
+        'If requests A and B start with the same system prompt (the instructions a service puts in front of every request), the keys and values for that prefix are identical.',
+        'The engine finds the existing blocks, links them to B, and skips prefill for that part. This is prefix caching. The first token arrives sooner and memory is saved.',
+      ],
+      keyIdea: 'Prefix caching only works within the same engine (replica). That is why routing that sends requests with the same prefix to the same replica emerged.',
+      flows: [{from: 'kv', to: 'model', label: 'reuse prefix', type: 'response', bend: 0.15}],
+      focus: ['kv', 'b'],
+      badges: {kv: 'shared blocks'},
+      values: {use: '38%'},
+    },
+    {
+      short: 'Full',
+      kind: '문제',
+      title: 'When the KV cache is full, new requests wait',
+      text: [
+        'As concurrent requests keep growing and the cache area fills up, the engine puts new requests in a queue. Time to first token jumps.',
+        'If even running requests run out of room, some are set aside (preempted) and recomputed later. The same work is done twice.',
+      ],
+      flows: [{from: 'model', to: 'q', label: 'no room', type: 'request'}],
+      focus: ['kv', 'q'],
+      status: {kv: 'error'},
+      badges: {kv: 'full', q: 'waiting'},
+      values: {use: {text: '100%', tone: 'bad'}, conc: 'cannot grow'},
+    },
+    {
+      short: 'Recap',
+      kind: '정리',
+      title: 'Trading compute for memory, so memory is the limit',
+      text: [
+        'The KV cache stores the results for earlier tokens so they are not recomputed. In exchange it uses accelerator memory in proportion to conversation length and concurrent requests.',
+        'Block allocation and prefix caching fit more into the same memory, but when it is full, queuing and recomputation follow. Moving overflow to a lower storage tier is covered in the KV cache offloading lesson.',
+      ],
+      keyIdea: 'Judge server capacity by KV cache usage as well as accelerator count. If the cache stays full and waiting requests pile up, it is time to add replicas.',
+      status: {kv: null},
+      badges: {kv: null, q: null},
+      focus: ['kv'],
+    },
+  ]}
+/>
+
+## Running it on Kubernetes
+
+- GPU memory usage from `nvidia-smi` or the DCGM exporter looks high as soon as vLLM starts. vLLM claims the `--gpu-memory-utilization` fraction of memory (default 0.9) and uses what remains after the weights for the KV cache.
+- Real headroom is the KV cache usage metric on vLLM’s `/metrics` (`vllm:kv_cache_usage_perc`, `vllm:gpu_cache_usage_perc` in older versions). If waiting requests (`vllm:num_requests_waiting`) and preemptions rise along with it, the cache is too small.
+- Levers when the cache runs short: `--max-model-len` (maximum length of one request), `--max-num-seqs` (concurrent requests), replica count, or accelerators with more memory. If an HPA scales replicas, base it on engine metrics such as waiting requests or KV cache usage rather than GPU utilization.
+- Prefix caching pays off most when requests with the same prefix reach the same replica; see [Which Replica Gets the Request (Inference Routing)](../ai/inference-routing.mdx). Moving overflow cache to CPU memory or disk is covered in [Offloading Overflowing KV Cache](../llm/kv-offloading.mdx).
+
+Further reading: [vLLM documentation](https://docs.vllm.ai/) · [PagedAttention paper](https://arxiv.org/abs/2309.06180) · [Gateway API Inference Extension](https://gateway-api-inference-extension.sigs.k8s.io/)

@@ -1,8 +1,10 @@
 ---
 id: entry-compare
 title: 입구 셋 비교 (인그레스 · 메시 게이트웨이 · 게이트웨이 API)
-sidebar_label: 06 · 입구 셋 비교
+sidebar_label: 07 · 입구 셋 비교
 description: 같은 바깥 요청이 인그레스, 서비스 메시 게이트웨이와 가상 서비스, 게이트웨이 API의 Gateway와 HTTPRoute로 들어올 때 각각 누가 무엇을 맡는지 경로를 바꿔 가며 비교한다
+summary: '인그레스·메시 게이트웨이·게이트웨이 API가 각각 무엇을 맡는지 같은 요청으로 비교.'
+icon: layers
 hide_table_of_contents: true
 ---
 
@@ -181,5 +183,3 @@ kubectl get gateways.gateway.networking.k8s.io,httproutes -n shop # 표준 Gatew
 ```
 
 더 읽을거리: [인그레스](https://kubernetes.io/ko/docs/concepts/services-networking/ingress/) · [게이트웨이 API](https://kubernetes.io/docs/concepts/services-networking/gateway/) · [Gateway API 공식 문서](https://gateway-api.sigs.k8s.io/) · [Istio 트래픽 관리](https://istio.io/latest/docs/concepts/traffic-management/)
-
-다음 레슨: [네임스페이스와 리소스 쿼터](./namespace-quota.mdx)

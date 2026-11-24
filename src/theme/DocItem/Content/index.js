@@ -14,9 +14,8 @@ export default function ContentWrapper(props) {
   const en = i18n.currentLocale === 'en';
   const {done, ready} = useProgress();
   const id = metadata.id;
-  const [dir, name] = id.split('/');
-  const track = TRACKS.find((t) => t.dir === dir);
-  const index = track ? track.lessons.indexOf(name) : -1;
+  const track = TRACKS.find((t) => t.lessons.includes(id));
+  const index = track ? track.lessons.indexOf(id) : -1;
 
   useEffect(() => {
     if (index >= 0) setLast(id);
@@ -24,7 +23,7 @@ export default function ContentWrapper(props) {
 
   if (!track || index < 0) return <Content {...props} />;
 
-  const doneCount = track.lessons.filter((l) => done.has(`${dir}/${l}`)).length;
+  const doneCount = track.lessons.filter((l) => done.has(l)).length;
   const isDone = done.has(id);
   return (
     <LessonContext.Provider value={id}>
@@ -35,7 +34,7 @@ export default function ContentWrapper(props) {
         </span>
         <div className={styles.bar} aria-hidden="true">
           {track.lessons.map((l, k) => (
-            <span key={l} className={[k === index && styles.here, ready && done.has(`${dir}/${l}`) && styles.filled].filter(Boolean).join(' ')} />
+            <span key={l} className={[k === index && styles.here, ready && done.has(l) && styles.filled].filter(Boolean).join(' ')} />
           ))}
         </div>
         <span className={styles.count}>

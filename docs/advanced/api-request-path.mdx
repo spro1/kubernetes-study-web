@@ -3,6 +3,8 @@ id: api-request-path
 title: How an API Request Gets Stored
 sidebar_label: 01 · How an API Request Gets Stored
 description: Follow one request through authentication, authorization, admission webhooks and schema validation into etcd, out to controllers via watch, and see why a 409 conflict happens, step by step with animation
+summary: 'Through authentication, authorization, admission webhooks and validation into etcd, then out via watch.'
+icon: shield
 hide_table_of_contents: true
 ---
 
@@ -196,5 +198,3 @@ A request sent by a dashboard `[Create]` button or by `kubectl apply` passes sev
 | Storage | `409 Conflict` | The name already exists, or someone else changed it first |
 
 Further reading: [Controlling Access to the Kubernetes API](https://kubernetes.io/docs/concepts/security/controlling-access/) · [Admission controllers](https://kubernetes.io/docs/reference/access-authn-authz/admission-controllers/) · [API concepts — resourceVersion](https://kubernetes.io/docs/reference/using-api/api-concepts/)
-
-Next lesson: [Deletion Is More Complex Than You Think](./deletion-finalizer.mdx)

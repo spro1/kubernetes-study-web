@@ -1,8 +1,10 @@
 ---
 id: mesh-sidecar
 title: Service Mesh ① Sidecars and Mutual Authentication
-sidebar_label: 03 · Sidecars and mTLS
+sidebar_label: 04 · Sidecars and mTLS
 description: Animated walkthrough of what happens when you enable Istio sidecar injection on a namespace - each pod gets a sidecar proxy, and proxies verify each other with certificates from istiod and record metrics
+summary: 'How a proxy next to each Pod handles all traffic for encryption, identity and observability.'
+icon: shield
 hide_table_of_contents: true
 ---
 
@@ -183,5 +185,3 @@ kubectl get peerauthentication -A                      # mTLS mode (PERMISSIVE, 
 ```
 
 Further reading: [Istio concepts](https://istio.io/latest/docs/concepts/) · [Istio security (mTLS)](https://istio.io/latest/docs/concepts/security/) · [Istio observability](https://istio.io/latest/docs/concepts/observability/) · [Kiali](https://kiali.io/) · [Blocking and Allowing Traffic (NetworkPolicy)](../k8s/network-policy.mdx)
-
-Next lesson: [Service Mesh ② Splitting Traffic](./mesh-traffic.mdx)

@@ -1,0 +1,194 @@
+---
+id: inference-request
+title: From API Request to Response
+sidebar_label: 09 · From API Request to Response
+description: Follow a request sent with an API key through API gateway authentication and rate limits to a vLLM replica and back as a stream, along with where rejected requests stop.
+summary: 'One inference request through API-key checks, the gateway and a replica to a streamed answer, and where it gets stopped.'
+icon: route
+hide_table_of_contents: true
+---
+
+# From API Request to Response
+
+Once a model server is ready, clients call it through an OpenAI-compatible API. One request travels **load balancer → API gateway → routing → model server** and back. Along the way, see where requests with a bad key or over their limit are stopped.
+
+<StepDiagram
+  width={1000}
+  height={470}
+  meta={{duration: '~10 min', level: 'Beginner'}}
+  groups={[
+    {label: 'Key management · auth', x: 170, y: 30, w: 500, h: 125, tone: 'mgmt'},
+    {label: 'Inference cluster', x: 170, y: 185, w: 815, h: 270, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'app', label: 'Client app', sub: 'e.g. chatbot', icon: 'agent', tone: 'ext', x: 85, y: 300, show: true},
+    {id: 'keys', label: 'Key service', sub: 'issues API keys', icon: 'server', tone: 'cp', x: 275, y: 90, show: true},
+    {id: 'authz', label: 'Auth service', sub: 'external authz', icon: 'ticket', tone: 'cp', x: 500, y: 90},
+    {id: 'lb', label: 'Load balancer', sub: 'external entry', icon: 'split', tone: 'node', x: 275, y: 300},
+    {id: 'gw', label: 'API gateway', sub: 'key + limit check', icon: 'shield', tone: 'cp', x: 470, y: 300, w: 170},
+    {id: 'route', label: 'Routing', sub: 'picks a replica', icon: 'route', tone: 'node', x: 665, y: 300},
+    {id: 'p1', label: 'Replica 1', sub: 'vLLM', icon: 'pod', tone: 'app', size: 'sm', x: 870, y: 250, show: true},
+    {id: 'p2', label: 'Replica 2', sub: 'vLLM', icon: 'pod', tone: 'app', size: 'sm', x: 870, y: 350, show: true},
+    {id: 'logs', label: 'Access logs', sub: '401 / 429 records', icon: 'book', tone: 'store', x: 470, y: 410},
+  ]}
+  metrics={[
+    {id: 'auth', label: 'Key check'},
+    {id: 'limit', label: 'Usage limit'},
+    {id: 'tokens', label: 'Tokens'},
+  ]}
+  learn={[
+    {text: 'The raw API key is shown only once, at issue time', at: 0},
+    {text: 'How the gateway checks the key on every request', at: 2},
+    {text: 'Paths that bypass the gateway must be blocked', at: 3},
+    {text: 'Token limits are charged after the response ends', at: 7},
+  ]}
+  steps={[
+    {
+      short: 'Issue key',
+      kind: '시작',
+      title: 'The client gets an API key',
+      text: [
+        'A key service issues an API key and sets which models it may call and when it expires.',
+        'The raw key is shown only once. The server stores only a hash, so a lost key must be reissued.',
+      ],
+      flows: [{from: 'keys', to: 'app', label: 'API key (shown once)', type: 'response'}],
+      focus: ['keys'],
+      values: {auth: '—', limit: '—', tokens: '—'},
+    },
+    {
+      short: 'Request',
+      kind: '원리',
+      title: 'Send an OpenAI-compatible request',
+      text: [
+        'The client calls a path such as /v1/chat/completions with the key in an Authorization: Bearer header. vLLM provides an OpenAI-compatible API, so existing client code only needs a new URL and key.',
+        'The request passes the load balancer and reaches the API gateway. The model field in the body says which model it is for.',
+      ],
+      keyIdea: 'The key service is not on the request path. If it is briefly down, requests with already issued keys keep working.',
+      flows: [
+        {from: 'app', to: 'lb', label: 'request + key', type: 'request'},
+        {from: 'lb', to: 'gw', type: 'request'},
+      ],
+      focus: ['lb', 'gw'],
+    },
+    {
+      short: 'Check key',
+      kind: '원리',
+      title: 'The gateway checks the key on every request',
+      text: [
+        'For each request, the gateway asks the auth service to check the key and forwards only requests that pass. Envoy-based gateways commonly do this with external authorization (ext_authz).',
+        'The auth service usually caches the key list, so a revoked key may keep working for up to one cache refresh interval.',
+      ],
+      flows: [
+        {from: 'gw', to: 'authz', label: 'check key', type: 'request'},
+        {from: 'authz', to: 'gw', label: 'allowed', type: 'response'},
+      ],
+      focus: ['gw', 'authz'],
+      values: {auth: {text: 'passed', tone: 'good'}},
+    },
+    {
+      short: 'Bypass',
+      kind: '주의',
+      title: 'Auth is useless if there is a path around the gateway',
+      text: [
+        'If the model server’s Service is open to anyone inside the cluster, or exposed separately, a client can reach a replica directly without a key.',
+        'Use a NetworkPolicy so model Pods only accept traffic from the gateway and routing layer. vLLM’s --api-key option adds a key check on the model server as well.',
+      ],
+      keyIdea: 'After changing auth settings, check both: a request without a key gets 401, and a direct request to the model Service is blocked.',
+      flows: [{from: 'app', to: 'p2', label: 'direct access', type: 'request', bend: 0.3}],
+      focus: ['p2'],
+      status: {p2: 'warn'},
+      badges: {p2: 'block bypass'},
+      values: {auth: {text: 'check bypass', tone: 'bad'}},
+    },
+    {
+      short: 'Rate limit',
+      kind: '원리',
+      title: 'Apply usage limits per key',
+      text: [
+        'The gateway applies limits per key, such as requests per minute and tokens per minute. Requests over the limit get 429 Too Many Requests.',
+        'Decide whether limits count per key or per key and model. The result differs when one key calls several models.',
+      ],
+      focus: ['gw'],
+      status: {p2: null},
+      badges: {p2: null},
+      values: {limit: {text: 'within limit', tone: 'good'}},
+    },
+    {
+      short: 'Routing',
+      kind: '원리',
+      title: 'Routing picks a replica',
+      text: [
+        'When a model has several replicas, the routing layer picks one. A plain Service spreads connections without knowing how busy each replica is.',
+        'Inference-aware routing looks at queued requests and KV cache state. A replica that already computed the same prefix returns the first token sooner. Lesson 08 covers this in detail.',
+      ],
+      flows: [
+        {from: 'gw', to: 'route', label: 'allowed request', type: 'request'},
+        {from: 'route', to: 'p1', label: 'less busy', type: 'request'},
+      ],
+      focus: ['route', 'p1'],
+    },
+    {
+      short: 'Generate',
+      kind: '원리',
+      title: 'The model server generates the answer',
+      text: [
+        'vLLM on replica 1 processes the whole input at once (prefill), then produces tokens one by one (decode). A serving layer such as KServe handles deploying and autoscaling these Pods.',
+        'With stream: true, each token is sent back right away as server-sent events.',
+      ],
+      focus: ['p1'],
+      status: {p1: 'ok'},
+      values: {tokens: 'generating'},
+    },
+    {
+      short: 'Respond · charge',
+      kind: '주의',
+      title: 'Tokens are counted after the response',
+      text: [
+        'The response goes back through routing and the gateway to the client. The output token count is only known when generation ends, so the gateway charges usage against the limit afterwards.',
+        'A request just under the limit still passes, so actual usage can slightly exceed the limit. Set gateway and load balancer timeouts long enough that long streams are not cut off.',
+      ],
+      flows: [
+        {from: 'p1', to: 'route', label: 'token stream', type: 'response'},
+        {from: 'route', to: 'gw', type: 'response'},
+        {from: 'gw', to: 'app', label: 'response', type: 'response', bend: 0.22},
+      ],
+      focus: ['gw', 'app'],
+      status: {p1: null},
+      values: {tokens: {text: 'done', tone: 'good'}, limit: 'charged after'},
+    },
+    {
+      short: 'Rejections',
+      kind: '원리',
+      title: 'Rejected requests show up in access logs',
+      text: [
+        'Requests with a bad key (401) or over the limit (429) stop at the gateway and never reach the model server. They appear in the gateway’s access logs and metrics.',
+        'Never log the raw key. A key ID or a hash prefix is enough to find who hit the limit.',
+      ],
+      flows: [{from: 'gw', to: 'logs', label: '401 / 429', type: 'request'}],
+      focus: ['logs'],
+      values: {limit: {text: '429 if over', tone: 'bad'}},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Entry → key and limit → routing → model server',
+      text: [
+        'A request passes the load balancer, the API gateway (key and limit), routing (replica choice), and the model server, then returns the same way. The key service only issues keys and is not on this path.',
+        'Authenticate at the gateway, and block every path around it with NetworkPolicy.',
+      ],
+      keyIdea: 'When responses are slow, separate gateway latency, the replica queue, and time to first token (TTFT). vLLM exports metrics such as vllm:num_requests_waiting and vllm:time_to_first_token_seconds.',
+      focus: ['gw', 'route', 'p1'],
+    },
+  ]}
+/>
+
+## Where requests get stopped
+
+| Situation | Stopped at | Response |
+| --- | --- | --- |
+| Missing, wrong, or revoked key | API gateway (auth service) | 401 |
+| Over the limit | API gateway | 429 |
+| All replicas busy | Model server queue | Slow first token |
+| Bypassing the gateway | Not stopped without a NetworkPolicy | Passes through |
+
+Further reading: [Network Policies](https://kubernetes.io/docs/concepts/services-networking/network-policies/) · [Gateway API](https://gateway-api.sigs.k8s.io/) · [Gateway API Inference Extension](https://gateway-api-inference-extension.sigs.k8s.io/)

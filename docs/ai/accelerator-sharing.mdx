@@ -1,0 +1,178 @@
+---
+id: accelerator-sharing
+title: Sharing Accelerators (Time-Slicing, MPS)
+sidebar_label: 05 · Sharing Accelerators
+description: Step through the DRA sharing modes none, time-slicing, and MPS, how each divides one GPU, and what each does and does not guarantee.
+summary: 'Whole GPU, time-slicing or MPS: three ways to share one card and what each gives up.'
+icon: split
+hide_table_of_contents: true
+---
+
+# Sharing Accelerators (Time-Slicing, MPS)
+
+When a small model holds a whole GPU, most of it sits idle. With DRA you can write a **sharing mode (none, time-slicing, or MPS)** into the device claim so several Pods share one GPU. This lesson uses NVIDIA’s DRA driver for GPUs as the example. Node-wide MIG and time-slicing through the GPU Operator are covered in [Sharing GPUs](../feature/gpu-sharing.mdx).
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~10 min', level: 'Intermediate'}}
+  groups={[
+    {label: 'GPU node', x: 455, y: 30, w: 530, h: 410, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'user', label: 'Operator', sub: 'deploy settings', icon: 'user', tone: 'ext', x: 90, y: 225, w: 130, show: true},
+    {id: 'mgr', label: 'Device claim', sub: 'ResourceClaim+sharing', icon: 'ticket', tone: 'store', x: 290, y: 225, w: 170, show: true},
+    {id: 'drv', label: 'DRA driver', sub: 'applies sharing', icon: 'gear', tone: 'cp', x: 565, y: 105, w: 160},
+    {id: 'gpu', label: 'One GPU', sub: 'NVIDIA GPU', icon: 'layers', tone: 'node', x: 565, y: 320, w: 170, show: true},
+    {id: 'a1', label: 'Deploy A', sub: 'replica 1', icon: 'pod', tone: 'app', size: 'sm', w: 110, x: 870, y: 80},
+    {id: 'a2', label: 'Deploy A', sub: 'replica 2', icon: 'pod', tone: 'app', size: 'sm', w: 110, x: 870, y: 180},
+    {id: 'b', label: 'Deploy B', sub: 'same namespace', icon: 'pod', tone: 'app', size: 'sm', w: 110, x: 870, y: 290},
+    {id: 'c', label: 'Deploy C', sub: 'same namespace', icon: 'pod', tone: 'app', size: 'sm', w: 110, x: 870, y: 390},
+  ]}
+  metrics={[
+    {id: 'mode', label: 'Sharing mode'},
+    {id: 'who', label: 'Who uses the GPU'},
+    {id: 'iso', label: 'Isolation'},
+    {id: 'quota', label: 'Quota charged'},
+  ]}
+  learn={[
+    {text: 'The default "none" gives each Pod a whole GPU', at: 0},
+    {text: 'In DRA, Pods that reference the same claim share its device', at: 2},
+    {text: 'Time-slicing takes turns and has no memory isolation', at: 3},
+    {text: 'MPS runs Pods at the same time under set limits', at: 5},
+    {text: 'Quota is counted per claim', at: 7},
+  ]}
+  steps={[
+    {
+      short: 'None',
+      kind: '시작',
+      title: 'Default "none": each Pod gets a whole GPU',
+      text: [
+        'With a ResourceClaimTemplate, every Pod gets its own claim, and one replica of deployment A uses one whole GPU. Other Pods cannot affect it.',
+        'Scaling to 2 replicas needs 2 GPUs.',
+      ],
+      flows: [
+        {from: 'user', to: 'mgr', label: 'sharing: none', type: 'request'},
+        {from: 'gpu', to: 'a1', label: 'whole GPU', type: 'request'},
+      ],
+      focus: ['gpu', 'a1'],
+      values: {mode: 'none (default)', who: '1 Pod', iso: {text: 'no interference', tone: 'good'}, quota: '—'},
+    },
+    {
+      short: 'Idle',
+      kind: '주의',
+      title: 'A small model leaves most of the GPU idle',
+      text: [
+        'A small model or a low-traffic service uses only part of the GPU’s compute and memory. The rest is locked away from other Pods.',
+        'If nvidia-smi or DCGM metrics show utilization staying low, it is time to consider sharing.',
+      ],
+      focus: ['gpu'],
+      badges: {gpu: 'mostly idle'},
+    },
+    {
+      short: 'Same claim',
+      kind: '원리',
+      title: 'In DRA, Pods that reference the same claim share it',
+      text: [
+        'Instead of a template, create one named ResourceClaim and have several Pods reference it by name. They all use the same allocated GPU. A claim is a namespaced object, so only Pods in that namespace can reference it.',
+        'How to share is written in the claim’s config and applied to the GPU by the node’s DRA driver. Device-plugin time-slicing is a node-wide setting; here it can differ per claim.',
+      ],
+      flows: [
+        {from: 'mgr', to: 'drv', label: 'sharing config', type: 'request'},
+        {from: 'drv', to: 'gpu', type: 'request'},
+      ],
+      focus: ['drv'],
+      badges: {gpu: null},
+    },
+    {
+      short: 'Time-slice',
+      kind: '원리',
+      title: 'Time-slicing: Pods take turns on the GPU',
+      text: [
+        'With TimeSlicing, replicas 1 and 2 of deployment A take turns on one GPU. At a set interval the GPU switches from one to the other.',
+        'The interval is chosen from levels such as Default, Short, Medium, and Long. Scaling to 2 replicas still uses 1 GPU.',
+      ],
+      flows: [
+        {from: 'gpu', to: 'a1', label: 'take turns', type: 'request'},
+        {from: 'gpu', to: 'a2', label: 'take turns', type: 'request'},
+      ],
+      focus: ['a1', 'a2'],
+      values: {mode: 'time-slicing', who: '2 replicas'},
+    },
+    {
+      short: 'Limits',
+      kind: '주의',
+      title: 'Time-slicing gives no memory isolation and no performance guarantee',
+      text: [
+        'Both replicas share the same GPU memory. If one uses a lot, the other may fail to start or crash out of memory.',
+        'The GPU count does not grow, so throughput does not scale with replicas. Engines like vLLM that reserve a large share of GPU memory at startup need a lower memory fraction to fit side by side.',
+      ],
+      keyIdea: 'Under time-slicing, "2 replicas" does not mean "twice as fast". It suits standby spares and light workloads.',
+      focus: ['gpu'],
+      status: {a1: 'warn', a2: 'warn'},
+      values: {iso: {text: 'no memory isolation', tone: 'bad'}},
+    },
+    {
+      short: 'MPS',
+      kind: '원리',
+      title: 'MPS: several Pods run at once under set limits',
+      text: [
+        'With MPS (Multi-Process Service), Pods of deployments B and C that reference the same claim run on one GPU at the same moment instead of taking turns.',
+        'The claim config sets how much compute (active thread percentage) and pinned memory each Pod may use. No Pod can go past its limit into another’s share.',
+      ],
+      flows: [
+        {from: 'gpu', to: 'b', label: 'compute/mem cap', type: 'request'},
+        {from: 'gpu', to: 'c', label: 'compute/mem cap', type: 'request'},
+      ],
+      focus: ['b', 'c'],
+      status: {a1: 'gone', a2: 'gone'},
+      values: {mode: 'MPS', who: 'Pods of several deploys', iso: {text: 'concurrent within caps', tone: 'good'}},
+    },
+    {
+      short: 'MPS limits',
+      kind: '주의',
+      title: 'MPS has weak fault isolation, and changing it means recreating',
+      text: [
+        'Under MPS several processes share the GPU, so a fatal GPU error in one Pod can affect the other Pods on that GPU.',
+        'The limits live in the claim, and a claim’s spec cannot be changed after creation. To change them, recreate the claim and the Pods that use it.',
+      ],
+      focus: ['gpu'],
+      badges: {gpu: 'weak fault isolation'},
+    },
+    {
+      short: 'Quota',
+      kind: '원리',
+      title: 'Quota is counted per claim',
+      text: [
+        'When ResourceQuota caps DRA devices, Kubernetes counts the devices written in claims. The number of Pods does not matter.',
+        'If deployments B and C reference one claim together, only 1 GPU is charged. The saving from sharing shows up in quota too.',
+      ],
+      focus: ['b', 'c'],
+      badges: {gpu: null, b: 'same claim', c: 'same claim'},
+      values: {quota: '1 GPU (1 claim)'},
+    },
+    {
+      short: 'Recap',
+      kind: '정리',
+      title: 'Whole, in turns, or at once under caps',
+      text: [
+        'None gives each Pod a whole GPU with no interference. Time-slicing lets Pods on the same claim take turns with no memory isolation. MPS runs them together under caps, with weak fault isolation.',
+        'These sharing modes are features of NVIDIA’s DRA driver for GPUs. Whether an NPU can be shared depends on its vendor driver; often each replica gets a whole device.',
+      ],
+      keyIdea: 'A sharing mode is a choice of what to give up in exchange for lower cost. Use MIG for hardware isolation, and time-slicing or MPS to pack light workloads.',
+      status: {b: null, c: null},
+      badges: {b: null, c: null},
+      focus: ['gpu'],
+    },
+  ]}
+/>
+
+## The three modes
+
+| | None | Time-slicing | MPS |
+| --- | --- | --- | --- |
+| Who shares | Nobody | Pods referencing the same claim | Pods referencing the same claim |
+| How | Whole GPU | Take turns in time | Run at once under caps |
+| Isolation | No interference | No memory isolation or performance guarantee | Concurrent within caps; weak fault isolation |
+
+Further reading: [Dynamic Resource Allocation](https://kubernetes.io/docs/concepts/scheduling-eviction/dynamic-resource-allocation/) · [NVIDIA MPS](https://docs.nvidia.com/deploy/mps/index.html) · [NVIDIA GPU Operator](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/index.html)

@@ -3,6 +3,8 @@ id: rolling-update
 title: 무중단 배포 (롤링 업데이트)
 sidebar_label: 03 · 무중단 배포
 description: Deployment가 새 ReplicaSet을 만들고 파드를 하나씩 바꾸는 동안 서비스가 끊기지 않는 원리와 되돌리기를 애니메이션으로 따라간다
+summary: '새 버전 파드가 하나씩 뜨고 옛 버전이 빠지는 동안 서비스가 끊기지 않는 이유와 되돌리기.'
+icon: layers
 hide_table_of_contents: true
 ---
 
@@ -181,5 +183,3 @@ nginx 1.26으로 돌던 파드 세 개를 1.27로 바꾼다. 그동안 사용자
 | `readinessProbe` | 새 파드가 요청을 받아도 되는지 확인하는 검사 | 없으면 시작만 해도 요청을 받아 오류가 날 수 있다 |
 
 더 읽을거리: [디플로이먼트](https://kubernetes.io/ko/docs/concepts/workloads/controllers/deployment/) · [롤링 업데이트 수행하기](https://kubernetes.io/ko/docs/tutorials/kubernetes-basics/update/update-intro/)
-
-다음 레슨: [부하에 맞춰 늘어나기 (HPA)](./autoscaling.mdx)

@@ -1,0 +1,181 @@
+---
+id: pd-disaggregation
+title: Splitting Prefill and Decode (P/D Disaggregation)
+sidebar_label: 06 · Splitting Prefill and Decode (P/D Disaggregation)
+description: Follow prefill/decode disaggregated serving, which runs prefill and decode on different accelerators and hands the KV cache over a fast link, and see when it pays off and what it requires.
+summary: 'Running prefill and decode on different replicas and handing the KV cache across, plus what it needs.'
+icon: split
+hide_table_of_contents: true
+---
+
+# Splitting Prefill and Decode (P/D Disaggregation)
+
+Prefill (reading the prompt) is compute-heavy; decode (writing the answer) is memory-read-heavy. Mixing them on one accelerator makes them get in each other’s way. **Prefill/decode disaggregation** runs the two phases on different accelerators and hands the KV cache from prefill to decode so the answer can continue.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~10 min', level: 'Advanced'}}
+  groups={[
+    {label: 'GPU replicas', x: 640, y: 30, w: 345, h: 405, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'app', label: 'Application', sub: 'many requests', icon: 'browser', tone: 'ext', x: 95, y: 225, w: 150, show: true},
+    {id: 'gw', label: 'Gateway', sub: 'entry point', icon: 'gate', tone: 'cp', x: 285, y: 225, w: 140, show: true},
+    {id: 'epp', label: 'Picker (EPP)', sub: 'chooses replicas', icon: 'target', tone: 'cp', x: 490, y: 225, w: 160, show: true},
+    {id: 'single', label: 'Single replica', sub: 'read + write', icon: 'server', tone: 'node', x: 815, y: 225, w: 170},
+    {id: 'pre', label: 'Prefill replica', sub: 'reads prompts only', icon: 'layers', tone: 'node', x: 815, y: 105, w: 180},
+    {id: 'dec', label: 'Decode replica', sub: 'writes answers only', icon: 'spark', tone: 'node', x: 815, y: 355, w: 180},
+  ]}
+  metrics={[
+    {id: 'mode', label: 'Serving mode'},
+    {id: 'tpot', label: 'Answer pace'},
+    {id: 'ttft', label: 'First token'},
+    {id: 'link', label: 'KV transfer path'},
+  ]}
+  learn={[
+    {text: 'How the two phases interfere on one replica', at: 1},
+    {text: 'Each phase can be scaled on its own', at: 2},
+    {text: 'The KV cache transfer makes or breaks it', at: 5},
+    {text: 'With few concurrent requests it can be a net loss', at: 7},
+  ]}
+  steps={[
+    {
+      short: 'Single',
+      kind: '시작',
+      title: 'Normally one replica both reads and writes',
+      text: [
+        'In single serving, a request goes through the gateway and the picker to one replica, which handles both reading the prompt (prefill) and writing the answer (decode).',
+        'With few concurrent requests, this is the simplest and fastest setup.',
+      ],
+      flows: [
+        {from: 'app', to: 'gw', label: 'request', type: 'request'},
+        {from: 'gw', to: 'epp', type: 'request'},
+        {from: 'epp', to: 'single', label: 'pick replica', type: 'request'},
+      ],
+      focus: ['single'],
+      values: {mode: 'single', tpot: 'steady', ttft: 'fast', link: 'not needed'},
+    },
+    {
+      short: 'Interference',
+      kind: '문제',
+      title: 'Under load, prompt reading interrupts answer writing',
+      text: [
+        'As concurrency grows, prefills for new requests keep cutting in. While a prefill takes over most of the compute, ongoing decodes stall.',
+        'Users see answers pause mid-stream, and the gap between tokens (TPOT) becomes uneven.',
+      ],
+      flows: [{from: 'epp', to: 'single', label: 'more prompts', type: 'request'}],
+      focus: ['single'],
+      status: {single: 'warn'},
+      badges: {single: 'read/write clash'},
+      values: {tpot: {text: 'uneven', tone: 'bad'}},
+    },
+    {
+      short: 'Split',
+      kind: '원리',
+      title: 'Give each phase its own replicas',
+      text: [
+        'Prefill replicas only read prompts, and decode replicas only write answers. Each uses the accelerator in the way that suits its job.',
+        'You can set the replica count and accelerators per replica separately for each side. Long-input workloads get a bigger prefill side; long-output workloads get a bigger decode side.',
+      ],
+      keyIdea: 'Accelerators per replica is how many accelerators one copy of the model is split across. It is usually the tensor parallel (TP) size, set with --tensor-parallel-size in vLLM.',
+      focus: ['pre', 'dec'],
+      status: {single: 'gone'},
+      badges: {single: null},
+      values: {mode: 'P/D split'},
+    },
+    {
+      short: 'Pick both',
+      kind: '원리',
+      title: 'The picker chooses a prefill and a decode replica',
+      text: [
+        'When a request arrives, the picker (EPP) chooses both the prefill replica and the decode replica that will handle it.',
+        'Nothing changes for the client. It sends to the same address and gets answers in the same format.',
+      ],
+      flows: [
+        {from: 'app', to: 'gw', label: 'request', type: 'request'},
+        {from: 'gw', to: 'epp', type: 'request'},
+        {from: 'epp', to: 'pre', label: 'reader', type: 'request'},
+        {from: 'epp', to: 'dec', label: 'writer', type: 'request'},
+      ],
+      focus: ['epp'],
+    },
+    {
+      short: 'Prefill',
+      kind: '원리',
+      title: 'The prefill replica reads the prompt and builds KV cache',
+      text: [
+        'The prefill replica computes the whole prompt at once and produces the KV cache (the computed result of what it read).',
+        'Since it never writes answers, it can keep reading prompts without pause.',
+      ],
+      focus: ['pre'],
+      badges: {pre: 'building KV'},
+    },
+    {
+      short: 'KV transfer',
+      kind: '원리',
+      title: 'The KV cache moves to the decode side over a fast link',
+      text: [
+        'The KV cache is handed to the decode replica. The longer the prompt, the bigger the cache, so transfer speed drives the overall response time.',
+        'That is why this uses RDMA networking, where accelerator memories exchange data without going through the CPU, plus a library that handles the transfer (for example NIXL).',
+      ],
+      keyIdea: 'The transfer path makes or breaks disaggregated serving. If it falls back from the fast path to ordinary networking (TCP), transfers slow down a lot.',
+      flows: [{from: 'pre', to: 'dec', label: 'KV cache transfer', type: 'request'}],
+      focus: ['pre', 'dec'],
+      badges: {pre: null, dec: 'KV received'},
+      values: {link: 'RDMA (fast)'},
+    },
+    {
+      short: 'Decode',
+      kind: '원리',
+      title: 'The decode replica writes the answer without stalls',
+      text: [
+        'The decode replica uses the received KV cache to write the answer one token at a time. No new prompt reading cuts in, so the token pace stays even.',
+        'Answer tokens stream back through the gateway to the application.',
+      ],
+      flows: [
+        {from: 'dec', to: 'gw', label: 'answer tokens', type: 'response', bend: -0.15},
+        {from: 'gw', to: 'app', type: 'response'},
+      ],
+      focus: ['dec'],
+      badges: {dec: 'writing'},
+      values: {tpot: {text: 'steady', tone: 'good'}},
+    },
+    {
+      short: 'When it hurts',
+      kind: '주의',
+      title: 'Low load or a slow link makes it a net loss',
+      text: [
+        'Splitting adds one more step: the KV cache transfer. At low concurrency, interference is small to begin with, so the first token can arrive later by the transfer time.',
+        'If the transfer falls back to ordinary networking, the first response can be badly delayed. You also have to reserve accelerators for two separate sides.',
+      ],
+      flows: [{from: 'pre', to: 'dec', label: 'if the link is slow', type: 'request'}],
+      focus: ['pre', 'dec'],
+      status: {dec: 'warn'},
+      badges: {dec: 'waiting on KV'},
+      values: {ttft: {text: 'can be slower at low load', tone: 'bad'}, link: 'slow if on TCP'},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Protecting answer generation under heavy concurrency',
+      text: [
+        'P/D disaggregation runs prompt reading and answer writing on different replicas and hands the KV cache over a fast link. Each side scales on its own.',
+        'The benefit is that answers keep flowing under heavy concurrency. A fast transfer path is a prerequisite, and for low-concurrency workloads single serving is better.',
+      ],
+      keyIdea: 'The accurate claim is not "splitting makes it faster" but "answers stall less under heavy concurrency".',
+      status: {dec: null},
+      badges: {dec: null},
+      focus: ['pre', 'dec'],
+    },
+  ]}
+/>
+
+## What to check on Kubernetes
+
+- On Kubernetes, prefill and decode run as separate workloads, and the endpoint picker (EPP) from the Gateway API Inference Extension pairs them per request. llm-d is one open-source project that packages this setup.
+- Scale prefill and decode replicas separately. If TTFT grows on long-input workloads, add prefill replicas; if TPOT grows on long-output workloads, add decode replicas.
+- RDMA is a prerequisite. Nodes need RDMA-capable NICs, and those devices must be attached to the Pods. Check the engine logs to confirm the KV transfer uses RDMA and has not fallen back to TCP.
+- Before switching, measure TTFT and TPOT for single and disaggregated serving side by side at your real concurrency. If TTFT gets worse at low load, the case for splitting is weak.
+
+Further reading: [Gateway API Inference Extension](https://gateway-api-inference-extension.sigs.k8s.io/) · [llm-d](https://llm-d.ai/) · [NIXL](https://github.com/ai-dynamo/nixl)

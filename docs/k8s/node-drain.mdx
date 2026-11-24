@@ -1,8 +1,10 @@
 ---
 id: node-drain
 title: Draining Nodes and Upgrading the Cluster
-sidebar_label: 13 · Draining and Upgrading
+sidebar_label: 02 · Draining and Upgrading
 description: Follow how the control plane is upgraded first, then each worker node is cordoned, drained, and uncordoned one at a time while a PodDisruptionBudget prevents a service outage.
+summary: 'The order of draining and upgrading nodes one by one, and the safeguard against removing too many at once.'
+icon: server
 hide_table_of_contents: true
 ---
 
@@ -196,5 +198,3 @@ We are upgrading a 1.33 cluster to 1.34. Three web Pods are spread over three wo
 | If the engine upgrade succeeds, apps are fine | Deployments using APIs removed in the new version fail on their next deploy |
 
 Further reading: [Safely Drain a Node](https://kubernetes.io/docs/tasks/administer-cluster/safely-drain-node/) · [Disruptions](https://kubernetes.io/docs/concepts/workloads/pods/disruptions/) · [Upgrading kubeadm clusters](https://kubernetes.io/docs/tasks/administer-cluster/kubeadm/kubeadm-upgrade/)
-
-Next lesson: [Requesting GPUs by Criteria (DRA)](./dra.mdx)

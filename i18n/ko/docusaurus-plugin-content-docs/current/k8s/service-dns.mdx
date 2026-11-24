@@ -1,8 +1,10 @@
 ---
 id: service-dns
 title: 이름으로 찾아가기 (Service·DNS)
-sidebar_label: 08 · 이름으로 찾아가기
+sidebar_label: 05 · 이름으로 찾아가기
 description: 파드가 서비스 이름으로 다른 서비스를 부를 때 CoreDNS 조회와 Service 가상 IP를 거쳐 대상 파드에 닿는 흐름과, 네임스페이스·오타·DNS 장애 때 이름 찾기가 실패하는 모습을 애니메이션으로 따라간다
+summary: '파드가 서비스 이름으로 다른 서비스를 부를 때 일어나는 일과, 네임스페이스가 다르면 생기는 차이.'
+icon: book
 hide_table_of_contents: true
 ---
 
@@ -185,5 +187,3 @@ hide_table_of_contents: true
 | 이름은 찾았는데 접속 실패 | 서비스 → 파드 | 셀렉터와 파드 레이블 불일치로 대상 파드 0개, 포트 불일치 |
 
 더 읽을거리: [서비스](https://kubernetes.io/ko/docs/concepts/services-networking/service/) · [서비스 및 파드용 DNS](https://kubernetes.io/ko/docs/concepts/services-networking/dns-pod-service/)
-
-다음 레슨: [통신 막고 열기 (네트워크 정책)](./network-policy.mdx)

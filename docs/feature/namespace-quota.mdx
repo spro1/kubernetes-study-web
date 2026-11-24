@@ -1,8 +1,10 @@
 ---
 id: namespace-quota
 title: Namespaces and Resource Quotas
-sidebar_label: 07 · Namespaces and Quotas
+sidebar_label: 02 · Namespaces and Quotas
 description: Step-by-step animation of how Kubernetes divides a cluster with namespaces and rejects pods that would exceed a quota
+summary: 'Dividing into sections and setting limits, and why Pods stop scaling past the limit.'
+icon: box
 hide_table_of_contents: true
 ---
 
@@ -177,5 +179,3 @@ kubectl auth can-i create resourcequotas -n team-a
 ```
 
 Further reading: [Namespaces](https://kubernetes.io/docs/concepts/overview/working-with-objects/namespaces/) · [Resource quotas](https://kubernetes.io/docs/concepts/policy/resource-quotas/) · [Limit ranges](https://kubernetes.io/docs/concepts/policy/limit-range/) · [Using RBAC authorization](https://kubernetes.io/docs/reference/access-authn-authz/rbac/)
-
-Next lesson: [Sharing GPUs](./gpu-sharing.mdx)

@@ -1,8 +1,10 @@
 ---
 id: troubleshoot-status
 title: Reading status in three layers and the troubleshooting order
-sidebar_label: 03 · Reading status
+sidebar_label: 11 · Reading status
 description: Follow an animation that unpacks the STATUS column of kubectl get pods into pod phase, container state and reason, and shows whether to check events or logs first for Pending, ImagePullBackOff and CrashLoopBackOff
+summary: 'Reading Pod phase, container state and reason, and whether to check events or logs first.'
+icon: alert
 hide_table_of_contents: true
 ---
 
@@ -175,5 +177,3 @@ The single "status" column in the pod list mixes three different layers of infor
 See events with `kubectl describe pod <name>` and the previous container's logs with `kubectl logs <name> --previous`. Logs exist only on pods, so when you spot a problem on a Deployment, drill down to its pods. See all events in a namespace with `kubectl get events --sort-by=.lastTimestamp`.
 
 Further reading: [Debug pods](https://kubernetes.io/docs/tasks/debug/debug-application/debug-pods/) · [kubectl cheat sheet](https://kubernetes.io/docs/reference/kubectl/cheatsheet/) · [Pod lifecycle](https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/) · [When a Pod Dies (Self-Healing)](../k8s/self-healing.mdx)
-
-Next lesson: [Graceful shutdown — going down without losing requests](./graceful-shutdown.mdx)

@@ -3,12 +3,14 @@ id: volume-binding
 title: 볼륨이 붙는 시점과 장애
 sidebar_label: 07 · 볼륨이 붙는 시점과 장애
 description: 볼륨을 언제 만들지 정하는 바인딩 모드, 노드가 고장 났을 때 로컬 볼륨과 네트워크 스토리지의 차이, RWO의 여러 노드 문제, 볼륨 확장과 스냅샷을 애니메이션으로 따라간다
+summary: '바인딩 모드, 노드 장애 때 로컬 볼륨과 네트워크 스토리지의 차이.'
+icon: disk
 hide_table_of_contents: true
 ---
 
 # 볼륨이 붙는 시점과 장애
 
-PVC로 신청하고 PV로 받는 기본 순서는 [저장 공간이 붙기까지](../k8s/storage-volume.mdx)에서 보았다. 이 레슨은 그 다음, **볼륨을 언제 어디에 만드느냐**와 **노드가 고장 났을 때 데이터가 어떻게 되느냐**를 따라간다.
+PVC로 신청하고 PV로 받는 기본 순서는 [저장 공간이 붙기까지 (PVC·PV)](../k8s/storage-volume.mdx)에서 보았다. 이 레슨은 그 다음, **볼륨을 언제 어디에 만드느냐**와 **노드가 고장 났을 때 데이터가 어떻게 되느냐**를 따라간다.
 
 <StepDiagram
   width={1000}
@@ -192,5 +194,3 @@ PVC로 신청하고 PV로 받는 기본 순서는 [저장 공간이 붙기까지
 | 스냅샷이 있으니 백업은 필요 없다 | 스냅샷은 같은 장비 안에 있어 장비 고장 때 함께 잃을 수 있다 |
 
 더 읽을거리: [퍼시스턴트 볼륨](https://kubernetes.io/ko/docs/concepts/storage/persistent-volumes/) · [스토리지 클래스](https://kubernetes.io/docs/concepts/storage/storage-classes/) · [볼륨 스냅샷](https://kubernetes.io/docs/concepts/storage/volume-snapshots/)
-
-다음 레슨: [우선순위와 선점](./priority-preemption.mdx)

@@ -3,6 +3,8 @@ id: ingress
 title: 인그레스 규칙과 TLS
 sidebar_label: 02 · 인그레스 규칙과 TLS
 description: 인그레스의 호스트·경로 규칙, 규칙을 처리할 구현체를 고르는 인그레스 클래스, 시크릿 인증서로 HTTPS를 푸는 TLS 종료와 대표 실패를 애니메이션으로 따라간다
+summary: '도메인·경로별 규칙, 인그레스 클래스, 인증서 처리, 규칙이 겹치거나 대상이 없을 때.'
+icon: route
 hide_table_of_contents: true
 ---
 
@@ -193,5 +195,3 @@ kubectl get secret shop-tls -o jsonpath='{.type}'    # kubernetes.io/tls 인지
 ```
 
 더 읽을거리: [인그레스](https://kubernetes.io/ko/docs/concepts/services-networking/ingress/) · [인그레스 컨트롤러](https://kubernetes.io/ko/docs/concepts/services-networking/ingress-controllers/) · [게이트웨이 API](https://kubernetes.io/docs/concepts/services-networking/gateway/)
-
-다음 레슨: [서비스 메시 ① 사이드카와 상호 인증](./mesh-sidecar.mdx)

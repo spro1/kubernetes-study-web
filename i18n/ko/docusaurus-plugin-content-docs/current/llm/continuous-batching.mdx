@@ -1,0 +1,181 @@
+---
+id: continuous-batching
+title: 요청을 묶어 처리하기 (연속 배칭)
+sidebar_label: 04 · 요청을 묶어 처리하기 (연속 배칭)
+description: 추론 엔진이 여러 요청을 한 묶음으로 계산하는 이유와, 끝난 요청을 빼고 새 요청을 매 반복마다 끼워 넣는 연속 배칭이 처리량과 대기 시간을 어떻게 바꾸는지 단계별 애니메이션으로 따라간다
+summary: '여러 요청을 한 묶음으로 계산하는 이유와 매 반복마다 묶음을 다시 짜는 방식.'
+icon: layers
+hide_table_of_contents: true
+---
+
+# 요청을 묶어 처리하기 (연속 배칭)
+
+가속기 한 장으로 수십 명이 동시에 쓸 수 있는 것은 **배칭(batching)** 덕분이다. 여러 요청을 한 묶음으로 계산하는 방법이다. 다만 묶는 방식에 따라 가속기가 놀기도 하고 꽉 차기도 한다. 요즘 엔진이 쓰는 **연속 배칭(continuous batching)** 이 무엇을 바꿨는지 따라가 본다.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '약 9분', level: '중급'}}
+  groups={[
+    {label: '추론 엔진', x: 210, y: 30, w: 775, h: 405, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'apps', label: '애플리케이션', sub: '여러 사용자', icon: 'browser', tone: 'ext', x: 105, y: 225, w: 150, show: true},
+    {id: 'queue', label: '대기 줄', sub: '들어온 요청', icon: 'layers', tone: 'store', x: 330, y: 225, w: 150},
+    {id: 'sched', label: '엔진 스케줄러', sub: '이번 묶음 구성', icon: 'target', tone: 'cp', x: 560, y: 110, w: 160},
+    {id: 'gpu', label: '가속기', sub: '묶음을 한 번에 계산', icon: 'server', tone: 'node', x: 560, y: 345, w: 170, show: true},
+    {id: 'ra', label: '요청 A', sub: '짧은 답', icon: 'pod', tone: 'app', size: 'sm', x: 860, y: 75},
+    {id: 'rb', label: '요청 B', sub: '긴 답', icon: 'pod', tone: 'app', size: 'sm', x: 860, y: 175},
+    {id: 'rc', label: '요청 C', sub: '중간 답', icon: 'pod', tone: 'app', size: 'sm', x: 860, y: 275},
+    {id: 'rd', label: '요청 D', sub: '새로 도착', icon: 'pod', tone: 'app', size: 'sm', x: 860, y: 385},
+  ]}
+  metrics={[
+    {id: 'batch', label: '이번 묶음'},
+    {id: 'util', label: '가속기 활용'},
+    {id: 'wait', label: '기다리는 요청'},
+  ]}
+  learn={[
+    {text: '요청을 묶으면 가중치 읽기를 나눠 쓴다는 것', at: 1},
+    {text: '고정 묶음은 가장 긴 요청을 기다린다는 것', at: 3},
+    {text: '연속 배칭은 매 반복마다 묶음을 다시 짠다는 것', at: 4},
+    {text: '많이 묶을수록 처리량은 늘고 개별 속도는 줄 수 있다는 것', at: 6},
+  ]}
+  steps={[
+    {
+      short: '하나씩',
+      kind: '시작',
+      title: '요청을 하나씩 처리하면 가속기가 논다',
+      text: [
+        '디코드는 토큰 하나를 만들 때마다 모델 가중치 전체를 메모리에서 읽는다. 그에 비해 계산은 적어서 연산 장치는 대부분 쉰다.',
+        '요청 하나만 처리하면 가속기의 계산 능력 대부분이 놀고, 다른 사용자는 줄을 서서 기다린다.',
+      ],
+      flows: [
+        {from: 'apps', to: 'queue', label: '요청들', type: 'request'},
+        {from: 'gpu', to: 'ra', label: '하나만', type: 'response'},
+      ],
+      focus: ['gpu'],
+      values: {batch: '1개', util: {text: '낮음', tone: 'bad'}, wait: '3개'},
+    },
+    {
+      short: '묶기',
+      kind: '원리',
+      title: '여러 요청을 묶으면 한 번 읽은 가중치를 나눠 쓴다',
+      text: [
+        '요청 여러 개의 "다음 토큰"을 한 묶음으로 계산하면, 가중치를 한 번 읽어 여러 요청에 함께 쓴다. 읽는 시간은 거의 그대로인데 결과는 여러 개가 나온다.',
+        '그래서 묶음이 커질수록 초당 만드는 토큰 수(처리량)가 크게 늘어난다.',
+      ],
+      keyIdea: '배칭은 같은 가속기로 더 많은 사람을 받는 가장 기본적인 방법이다. 서빙 비용도 여기서 크게 좌우된다.',
+      flows: [
+        {from: 'gpu', to: 'ra', type: 'response'},
+        {from: 'gpu', to: 'rb', type: 'response'},
+        {from: 'gpu', to: 'rc', type: 'response'},
+      ],
+      focus: ['gpu', 'ra', 'rb', 'rc'],
+      values: {batch: 'A·B·C', util: '높음', wait: '0개'},
+    },
+    {
+      short: '고정 묶음',
+      kind: '원리',
+      title: '예전 방식은 묶음을 한 번 정하면 끝날 때까지 유지했다',
+      text: [
+        '고정 배칭(static batching)은 A·B·C를 한 묶음으로 시작하면, 셋이 모두 끝날 때까지 묶음을 바꾸지 않는다.',
+        '그런데 답 길이는 요청마다 다르다. A는 몇 줄, B는 몇 쪽일 수 있다.',
+      ],
+      flows: [{from: 'sched', to: 'gpu', label: 'A·B·C 고정', type: 'request'}],
+      focus: ['sched', 'gpu'],
+      badges: {ra: '짧음', rb: '김', rc: '중간'},
+    },
+    {
+      short: '빈자리',
+      kind: '문제',
+      title: 'A가 끝나도 자리가 빈 채로 B를 기다린다',
+      text: [
+        'A가 먼저 끝나도 묶음은 그대로다. A의 자리는 비어 있고, 새로 온 요청 D는 B가 끝날 때까지 대기 줄에서 기다린다.',
+        '가장 긴 요청이 묶음 전체의 속도를 정한다. 가속기는 다시 놀고, D의 첫 토큰은 한참 늦어진다.',
+      ],
+      flows: [{from: 'apps', to: 'queue', label: '요청 D', type: 'request'}],
+      focus: ['ra', 'queue'],
+      status: {ra: 'off'},
+      badges: {ra: '끝남 · 빈자리', queue: 'D 대기'},
+      values: {util: {text: '빈자리만큼 낭비', tone: 'bad'}, wait: '1개'},
+    },
+    {
+      short: '연속 배칭',
+      kind: '원리',
+      title: '연속 배칭은 토큰 한 번 만들 때마다 묶음을 다시 짠다',
+      text: [
+        '연속 배칭에서는 엔진 스케줄러가 매 반복(토큰 하나를 만드는 단위)마다 묶음을 다시 구성한다.',
+        '끝난 A를 빼고 그 자리에 대기 줄의 D를 넣는다. 가속기는 늘 꽉 찬 묶음을 계산한다. vLLM 같은 요즘 엔진은 이 방식을 기본으로 쓴다.',
+      ],
+      keyIdea: '요청 단위가 아니라 반복 단위로 묶는다. 그래서 반복 단위 스케줄링(iteration-level scheduling)이라고도 부른다.',
+      flows: [
+        {from: 'queue', to: 'sched', label: 'D 합류', type: 'request'},
+        {from: 'sched', to: 'gpu', label: 'B·C·D', type: 'request'},
+        {from: 'gpu', to: 'rd', type: 'response'},
+      ],
+      focus: ['sched', 'rd'],
+      status: {ra: 'gone'},
+      badges: {queue: null, ra: null, rd: '곧장 시작'},
+      values: {batch: 'B·C·D', util: {text: '높음', tone: 'good'}, wait: '0개'},
+    },
+    {
+      short: '새 요청 읽기',
+      kind: '원리',
+      title: '새 요청의 질문 읽기는 잘게 나눠 끼워 넣는다',
+      text: [
+        'D는 먼저 질문을 읽는 프리필이 필요하다. 긴 질문을 한 번에 읽으면 그동안 B·C의 답 쓰기가 멈춘다.',
+        '그래서 엔진은 D의 프리필을 일정 크기로 잘라, 매 반복 B·C의 디코드와 함께 조금씩 계산한다(청크 단위 프리필, chunked prefill). 진행 중인 답이 덜 끊긴다.',
+      ],
+      flows: [{from: 'sched', to: 'gpu', label: 'D 질문 일부 + B·C 토큰', type: 'request'}],
+      focus: ['gpu'],
+      badges: {rd: '질문 읽는 중'},
+    },
+    {
+      short: '얼마나 묶나',
+      kind: '주의',
+      title: '많이 묶을수록 처리량은 늘지만 개별 속도는 느려질 수 있다',
+      text: [
+        '묶음이 커지면 한 번의 반복도 조금씩 길어진다. 전체 처리량은 늘지만 각 사용자의 토큰 간격(TPOT)은 늘어난다.',
+        '묶음 크기의 상한은 결국 KV 캐시가 정한다. 요청마다 캐시가 필요해서, 캐시가 차면 더 넣을 수 없다. 엔진의 최대 동시 요청 수 설정(vLLM의 --max-num-seqs 등)이 이 균형을 조절한다.',
+      ],
+      keyIdea: '처리량(초당 총 토큰)과 개별 지연(TTFT·TPOT)은 서로 밀고 당긴다. 어느 쪽을 목표로 하는지 먼저 정해야 설정을 고를 수 있다.',
+      focus: ['sched', 'gpu'],
+      badges: {rd: null},
+      values: {batch: '많을수록 처리량↑'},
+    },
+    {
+      short: '부하와 지표',
+      kind: '원리',
+      title: '동시 요청이 늘면 지표가 이렇게 움직인다',
+      text: [
+        '동시 요청이 적을 때는 묶음이 작아 처리량이 낮고 개별 속도는 빠르다. 요청이 늘면 처리량이 오르다가 어느 지점에서 더 오르지 않는다.',
+        '그 지점을 넘으면 대기 줄이 길어지고 TTFT가 급격히 늘어난다. 그래서 성능을 잴 때는 동시 요청 수를 단계별로 올려 가며 이 지점을 찾는다.',
+      ],
+      flows: [{from: 'apps', to: 'queue', label: '요청 급증', type: 'request'}],
+      focus: ['queue'],
+      badges: {queue: '줄이 길어짐'},
+      values: {wait: {text: '늘어남', tone: 'bad'}},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '묶어서 계산하고, 매 반복마다 묶음을 다시 짠다',
+      text: [
+        '배칭은 가중치를 한 번 읽어 여러 요청에 쓰는 방법이라 처리량을 크게 늘린다. 고정 묶음은 가장 긴 요청을 기다리며 자리를 낭비한다.',
+        '연속 배칭은 매 반복마다 끝난 요청을 빼고 새 요청을 넣어 가속기를 꽉 채운다. 묶음 크기는 KV 캐시와 지연 목표 사이에서 정한다.',
+      ],
+      keyIdea: '"가속기 한 장에 몇 명"이라는 질문에는 고정된 답이 없다. 입력·출력 길이와 지연 목표를 함께 정해야 답이 나온다.',
+      focus: ['gpu'],
+      badges: {queue: null},
+    },
+  ]}
+/>
+
+## 쿠버네티스에서 볼 것
+
+- 연속 배칭은 엔진 안에서 일어난다. 파드 수를 늘리기 전에 파드 하나가 감당하는 동시 요청 수부터 잰다. 동시 요청 수를 단계별로 올리며 처리량·TTFT·TPOT을 기록하면 꺾이는 지점이 보인다.
+- 엔진이 내보내는 지표 중 실행 중인 요청 수와 대기 중인 요청 수를 함께 본다. vLLM이라면 `vllm:num_requests_running`, `vllm:num_requests_waiting`이다. 대기 수가 계속 0보다 크면 묶음이 이미 꽉 찼다는 뜻이다.
+- 대기 요청 수는 가속기 사용률보다 확장 기준으로 쓰기 좋다. 디코드 중에는 사용률이 높게 찍혀도 여유가 있을 수 있다. HPA나 KEDA에 외부 지표로 연결해 레플리카 수를 조정할 수 있다.
+- 최대 동시 요청 수를 올리면 처리량은 늘지만 KV 캐시가 부족해져 요청이 밀려날 수 있다. 설정을 바꾼 뒤에는 KV 캐시 사용률도 함께 확인한다.
+
+더 읽을거리: [Horizontal Pod Autoscaling](https://kubernetes.io/ko/docs/tasks/run-application/horizontal-pod-autoscale/) · [vLLM 문서](https://docs.vllm.ai/)

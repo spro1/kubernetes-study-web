@@ -1,8 +1,10 @@
 ---
 id: mesh-gateway
 title: Service Mesh ③ Mesh Gateway
-sidebar_label: 05 · Mesh Gateway
+sidebar_label: 06 · Mesh Gateway
 description: Animated walkthrough of how an external request enters an Istio service mesh through a Gateway and VirtualService rules to a pod with a sidecar, what a broken link looks like, and how it differs from Ingress
+summary: 'How an outside request reaches a Pod through the mesh ingress gateway and a virtual service.'
+icon: gate
 hide_table_of_contents: true
 ---
 
@@ -168,5 +170,3 @@ istioctl analyze -n shop                                       # Find broken lin
 ```
 
 Further reading: [Istio ingress gateways](https://istio.io/latest/docs/tasks/traffic-management/ingress/ingress-control/) · [Gateway reference](https://istio.io/latest/docs/reference/config/networking/gateway/) · [Ingress](https://kubernetes.io/docs/concepts/services-networking/ingress/) · [Gateway API](https://kubernetes.io/docs/concepts/services-networking/gateway/)
-
-Next lesson: [Three Entry Points Compared (Ingress · Mesh Gateway · Gateway API)](./entry-compare.mdx)

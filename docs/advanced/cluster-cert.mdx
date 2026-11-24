@@ -3,6 +3,8 @@ id: cluster-cert
 title: Cluster Certificate Expiry
 sidebar_label: 05 · Cluster Certificate Expiry
 description: See how control plane components verify each other with certificates, how expiry creeps up silently and cuts connections at one moment, and how renewal, restart and expiry monitoring work, step by step with animation
+summary: 'Certificate expiry that creeps up silently, what happens that day, and the renewal order.'
+icon: ticket
 hide_table_of_contents: true
 ---
 
@@ -200,5 +202,3 @@ A cluster that ran fine for over a year suddenly stops answering `kubectl` one m
 Upgrade order and node replacement continue in [Draining Nodes and Upgrading the Cluster](../k8s/node-drain.mdx).
 
 Further reading: [Certificate management with kubeadm](https://kubernetes.io/docs/tasks/administer-cluster/kubeadm/kubeadm-certs/) · [PKI certificates and requirements](https://kubernetes.io/docs/setup/best-practices/certificates/) · [cert-manager](https://cert-manager.io/docs/)
-
-Next lesson: [A Packet from Pod to Pod](./packet-path.mdx)

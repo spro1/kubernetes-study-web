@@ -3,6 +3,8 @@ id: probes
 title: 헬스 체크 — 살아 있나, 받을 준비가 됐나
 sidebar_label: 01 · 헬스 체크
 description: startup·readiness·liveness 프로브가 각각 무엇을 묻고, 실패하면 서비스 목록에서 빠지는지 재시작되는지, 잘못 설정하면 어떻게 재시작이 반복되는지 애니메이션으로 따라간다
+summary: 'startup·readiness·liveness 프로브가 각각 무엇을 바꾸는지와 잘못 설정한 결과.'
+icon: heart
 hide_table_of_contents: true
 ---
 
@@ -186,5 +188,3 @@ hide_table_of_contents: true
 | startup | 시작이 느린 앱에 두지 않는다 | liveness가 먼저 실패해 시작하다가 재시작된다 | 시작에 걸리는 최대 시간만큼 기다리게 둔다 |
 
 더 읽을거리: [Liveness, Readiness, Startup 프로브 구성](https://kubernetes.io/ko/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/) · [파드 라이프사이클 — 컨테이너 프로브](https://kubernetes.io/ko/docs/concepts/workloads/pods/pod-lifecycle/#container-probes) · [파드가 죽으면 (자가 치유)](../k8s/self-healing.mdx) · [요청이 파드에 닿기까지](../k8s/traffic.mdx)
-
-다음 레슨: [요청값과 상한값](./requests-limits.mdx)

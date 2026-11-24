@@ -1,8 +1,10 @@
 ---
 id: kubeadm-upgrade
 title: Upgrading a cluster with kubeadm (CKA)
-sidebar_label: 01 · kubeadm upgrade
+sidebar_label: 03 · kubeadm upgrade
 description: Follow an animation of the order in which you upgrade a kubeadm cluster by one minor version, for the control plane (kubeadm → plan → apply → kubelet) and for workers (kubeadm → upgrade node → drain → kubelet → uncordon)
+summary: 'From control plane to workers, the order for moving up one minor version at a time.'
+icon: layers
 hide_table_of_contents: true
 ---
 
@@ -192,5 +194,3 @@ Why the control plane goes first, and how drain respects PDBs, are covered in [D
 | The job is done | `kubectl uncordon`, then check Ready and VERSION with `kubectl get nodes` | Forget uncordon and the node stays SchedulingDisabled |
 
 Further reading: [CNCF certification curriculum](https://github.com/cncf/curriculum) · [Upgrading kubeadm clusters](https://kubernetes.io/docs/tasks/administer-cluster/kubeadm/kubeadm-upgrade/) · [Version skew policy](https://kubernetes.io/docs/setup/release/version-skew-policy/) · [Draining Nodes and Upgrading the Cluster](../k8s/node-drain.mdx)
-
-Next lesson: [Node NotReady and component failures (CKA)](./node-troubleshoot.mdx)

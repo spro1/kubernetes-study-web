@@ -1,0 +1,175 @@
+---
+id: token-generation
+title: How an Answer Is Built One Token at a Time
+sidebar_label: 01 · One Token at a Time
+description: Follow a question as it becomes tokens, the model picks one next token, and that token is appended and fed back in, until the answer is finished.
+summary: 'Tokenize, predict the next token, sample, append and repeat until the answer is done.'
+icon: spark
+hide_table_of_contents: true
+---
+
+# How an Answer Is Built One Token at a Time
+
+An LLM does not write its answer all at once. It turns the question into **tokens** (the text pieces a model reads), picks **one** next token, appends it, and computes again, repeating until the answer is done. That is why chat answers appear as if someone were typing.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~10 min', level: 'Beginner'}}
+  groups={[
+    {label: 'Inference engine (e.g. vLLM)', x: 195, y: 30, w: 790, h: 405, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'user', label: 'User', sub: 'sends a question', icon: 'user', tone: 'ext', x: 95, y: 225, w: 140, show: true},
+    {id: 'tok', label: 'Tokenizer', sub: 'text ↔ token IDs', icon: 'book', tone: 'cp', x: 320, y: 120, w: 160},
+    {id: 'model', label: 'Model', sub: 'scores next token', icon: 'spark', tone: 'node', x: 540, y: 225, w: 170},
+    {id: 'probs', label: 'Probabilities', sub: 'next-token candidates', icon: 'chart', tone: 'store', x: 540, y: 375, w: 150},
+    {id: 'pick', label: 'Sampling', sub: 'picks one candidate', icon: 'target', tone: 'cp', x: 820, y: 375, w: 160},
+    {id: 'out', label: 'Answer so far', sub: 'token sequence', icon: 'layers', tone: 'store', x: 820, y: 120, w: 160},
+  ]}
+  metrics={[
+    {id: 'in', label: 'Input tokens'},
+    {id: 'gen', label: 'Generated tokens'},
+    {id: 'text', label: 'Answer received'},
+  ]}
+  learn={[
+    {text: 'The model reads token IDs, not characters', at: 1},
+    {text: 'The model outputs a probability table for the next token', at: 2},
+    {text: 'Generation is a loop: pick a token, append it, compute again', at: 4},
+    {text: 'Why longer answers cost more time and money', at: 6},
+    {text: 'When generation stops', at: 7},
+  ]}
+  steps={[
+    {
+      short: 'Question',
+      kind: '시작',
+      title: 'The user sends a question',
+      text: [
+        'The user asks "What is Kubernetes?". What the engine receives is still human-readable text.',
+        'The model cannot work with text directly. The text must first become numbers the model knows.',
+      ],
+      flows: [{from: 'user', to: 'tok', label: 'question text', type: 'request'}],
+      focus: ['tok'],
+      values: {in: '—', gen: '0', text: '—'},
+    },
+    {
+      short: 'Tokenize',
+      kind: '원리',
+      title: 'The tokenizer splits the question into token IDs',
+      text: [
+        'The tokenizer cuts the text into pieces (tokens) from the model’s fixed vocabulary and maps each piece to a number. A word may be one token or several.',
+        'The same sentence gives different token counts on different models. Languages other than English often need more tokens for the same meaning.',
+      ],
+      keyIdea: 'Pricing, usage limits, and speed metrics are all counted in tokens. Character count and token count are not the same.',
+      flows: [{from: 'tok', to: 'model', label: 'token IDs', type: 'request'}],
+      focus: ['tok', 'model'],
+      badges: {tok: 'e.g. 6 tokens'},
+      values: {in: '6 (example)'},
+    },
+    {
+      short: 'Score',
+      kind: '원리',
+      title: 'The model computes next-token probabilities',
+      text: [
+        'The model reads all input tokens and computes, for every token in its vocabulary, the probability that it comes next.',
+        'The result is not a single answer but a probability table, for example "Kubernetes" 40%, "A" 20%, and so on for each candidate.',
+      ],
+      flows: [{from: 'model', to: 'probs', label: 'probabilities', type: 'response'}],
+      focus: ['model', 'probs'],
+      badges: {tok: null},
+    },
+    {
+      short: 'Pick',
+      kind: '원리',
+      title: 'One token is picked from the table',
+      text: [
+        'The sampling step picks one token from the table. Always taking the top one makes answers repetitive, so drawing in proportion to probability is common.',
+        'Settings such as temperature control how the pick is made. Lower temperature favors the likeliest candidates; higher temperature adds variety.',
+      ],
+      keyIdea: 'Sampling is why the same question can get a slightly different answer each time.',
+      flows: [{from: 'probs', to: 'pick', label: 'candidates', type: 'request'}],
+      focus: ['pick'],
+      badges: {pick: '"Kubernetes"'},
+    },
+    {
+      short: 'Append',
+      kind: '원리',
+      title: 'Append the token and compute again',
+      text: [
+        'The picked token is appended to the answer so far. Then "question + answer so far" goes back into the model to compute the next token.',
+        'Using each output as part of the next input is called autoregressive generation.',
+      ],
+      flows: [
+        {from: 'pick', to: 'out', label: 'add token', type: 'request'},
+        {from: 'out', to: 'model', label: 'feed back', type: 'request', bend: 0.15},
+      ],
+      focus: ['out', 'model'],
+      badges: {pick: null, out: '1'},
+      values: {gen: '1'},
+    },
+    {
+      short: 'Streaming',
+      kind: '원리',
+      title: 'Each new token is sent as text right away',
+      text: [
+        'Every time a token is produced, the tokenizer turns it back into text and sends it to the user. This is streaming.',
+        'There is no wait for the full answer, so the user sees the first words early and can start reading.',
+      ],
+      flows: [
+        {from: 'out', to: 'tok', label: 'new token', type: 'response'},
+        {from: 'tok', to: 'user', label: 'as text', type: 'response'},
+      ],
+      focus: ['tok', 'user'],
+      badges: {out: '12'},
+      values: {gen: '12', text: '"Kubernetes is a container…"'},
+    },
+    {
+      short: 'Cost',
+      kind: '주의',
+      title: 'Every token is one full pass through the model',
+      text: [
+        'Each answer token takes one full pass through the model. A 300-token answer means 300 passes.',
+        'Longer answers take longer and hold the accelerator longer. This is also why hosted APIs often price output tokens higher than input tokens.',
+      ],
+      keyIdea: 'Perceived speed splits into "time until the first token" and "gap between tokens". The next lesson shows why these two differ.',
+      flows: [{from: 'out', to: 'model', label: 'again', type: 'request', bend: 0.15}],
+      focus: ['model'],
+      badges: {out: '120'},
+      values: {gen: '120'},
+    },
+    {
+      short: 'Stop',
+      kind: '원리',
+      title: 'It stops at an end token or the length limit',
+      text: [
+        'When the model picks a special token that means "the answer is over" (the end-of-sequence token), the loop stops.',
+        'If the request’s maximum output length (max_tokens) is reached first, it stops even mid-sentence. If an answer is cut off abruptly, suspect this limit first.',
+      ],
+      flows: [{from: 'tok', to: 'user', label: 'last words', type: 'response'}],
+      focus: ['pick', 'user'],
+      badges: {pick: 'end token', out: 'done'},
+      values: {gen: '180', text: {text: 'Answer complete', tone: 'good'}},
+    },
+    {
+      short: 'Recap',
+      kind: '정리',
+      title: 'Tokenize → score → pick → append, in a loop',
+      text: [
+        'The question becomes token IDs, the model outputs a probability table, sampling picks one token, and that token is appended for the next pass. The loop runs until an end token or the length limit.',
+        'Input token count sets how long the initial read takes; output token count sets how many passes run. Most serving performance discussions start from these two numbers.',
+      ],
+      keyIdea: 'When sizing capacity or setting limits, count input and output tokens separately, not characters. Which side drives the load decides where to tune.',
+      focus: ['model'],
+      badges: {pick: null, out: null},
+    },
+  ]}
+/>
+
+## Running it on Kubernetes
+
+- Inference servers such as vLLM and KServe usually expose this process through an OpenAI-compatible API (`/v1/chat/completions` and similar). With `stream: true`, tokens arrive over SSE as they are generated.
+- If streamed tokens arrive in bursts or the stream breaks midway, check the Ingress or gateway in front first. Response buffering, or a read timeout shorter than a long answer, causes exactly this.
+- vLLM exposes cumulative input tokens (`vllm:prompt_tokens_total`) and output tokens (`vllm:generation_tokens_total`) on `/metrics`. Comparing their rates shows whether load comes from long prompts or long answers.
+- When users report answers cut off mid-sentence, check the client’s `max_tokens` and the server’s maximum context length first.
+
+Further reading: [vLLM documentation](https://docs.vllm.ai/) · [KServe documentation](https://kserve.github.io/website/)

@@ -1,8 +1,10 @@
 ---
 id: statefulset
 title: StatefulSets and databases
-sidebar_label: 05 · StatefulSets and databases
+sidebar_label: 10 · StatefulSets and databases
 description: Follow an animation of how a StatefulSet creates pods with ordinal names one by one, gives each pod its own PVC and a stable DNS name, and reattaches the same data when a pod comes back
+summary: 'Pods that start in order, stable names, and a volume that follows each Pod.'
+icon: db
 hide_table_of_contents: true
 ---
 
@@ -163,5 +165,3 @@ Apps like databases, where each pod has its own identity and data, are hard to r
 Check the pods with `kubectl get pods -l <selector>` and PVCs with `kubectl get pvc`. Whether PVCs are deleted on scale-down or delete can be set with `persistentVolumeClaimRetentionPolicy`.
 
 Further reading: [StatefulSets](https://kubernetes.io/docs/concepts/workloads/controllers/statefulset/) · [Persistent volumes](https://kubernetes.io/docs/concepts/storage/persistent-volumes/) · [Finding Services by Name (Service·DNS)](../k8s/service-dns.mdx)
-
-Next lesson: [Helm and GitOps](./gitops-sync.mdx)

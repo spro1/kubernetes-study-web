@@ -3,6 +3,8 @@ id: storage-volume
 title: How Storage Gets Attached (PVC·PV)
 sidebar_label: 07 · How Storage Gets Attached
 description: Follow, step by step, how a PVC request becomes a PV through a StorageClass and a CSI provisioner, how it is attached and mounted on the node where the pod runs, and why a PVC stays Pending
+summary: 'From requesting storage to a volume being created and attached to a Pod, and why data survives Pod death.'
+icon: disk
 hide_table_of_contents: true
 ---
 
@@ -193,5 +195,3 @@ We request 10Gi of storage for a database pod. Let's follow how one request turn
 | 6. Mount | Pod stays in `ContainerCreating` | `FailedMount` in pod events — permissions, file system errors, NFS server unreachable |
 
 Further reading: [Persistent Volumes](https://kubernetes.io/docs/concepts/storage/persistent-volumes/) · [Storage Classes](https://kubernetes.io/docs/concepts/storage/storage-classes/)
-
-Next lesson: [Finding Services by Name (Service·DNS)](./service-dns.mdx)

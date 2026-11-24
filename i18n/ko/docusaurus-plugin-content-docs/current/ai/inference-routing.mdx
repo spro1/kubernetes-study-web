@@ -1,0 +1,180 @@
+---
+id: inference-routing
+title: 요청을 어느 레플리카로 보낼까 (추론 라우팅)
+sidebar_label: 10 · 요청을 어느 레플리카로 보낼까 (추론 라우팅)
+description: 추론 요청이 게이트웨이를 지나 분배기(EPP)에서 프리픽스 캐시와 부하를 보고 레플리카를 고르는 과정을 단계별 애니메이션으로 따라가며, 돌아가며 보내는 일반 부하 분산과의 차이를 본다
+summary: '게이트웨이와 엔드포인트 선택기(EPP)가 프리픽스 캐시와 부하를 보고 레플리카를 고르는 원리.'
+icon: gate
+hide_table_of_contents: true
+---
+
+# 요청을 어느 레플리카로 보낼까 (추론 라우팅)
+
+같은 모델을 레플리카 여러 개로 실행하면, 요청마다 어느 레플리카로 보낼지 정해야 한다. 일반 웹 서비스는 돌아가며 보내면 충분하지만, LLM은 요청마다 길이가 크게 다르고 레플리카마다 **이미 계산해 둔 앞부분(프리픽스 캐시)** 이 다르다. 그래서 입구 뒤에 레플리카 상태를 보고 고르는 **분배기(EPP, Endpoint Picker)** 를 둔다.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '약 10분', level: '중급'}}
+  groups={[
+    {label: '같은 모델의 레플리카', x: 725, y: 30, w: 260, h: 405, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'app', label: '애플리케이션', sub: 'OpenAI 호환 요청', icon: 'browser', tone: 'ext', x: 95, y: 225, w: 150, show: true},
+    {id: 'gw', label: '입구', sub: '인증 · 한도 · 모델 이름', icon: 'gate', tone: 'cp', x: 310, y: 225, w: 170, show: true},
+    {id: 'epp', label: '분배기 (EPP)', sub: '레플리카 고르기', icon: 'target', tone: 'cp', x: 545, y: 225, w: 160},
+    {id: 'r1', label: '레플리카 1', sub: '한가함', icon: 'server', tone: 'node', x: 855, y: 105, w: 160, show: true},
+    {id: 'r2', label: '레플리카 2', sub: '같은 앞부분 보유', icon: 'server', tone: 'node', x: 855, y: 240, w: 160, show: true},
+    {id: 'r3', label: '레플리카 3', sub: '긴 요청 처리 중', icon: 'server', tone: 'node', x: 855, y: 375, w: 160, show: true},
+  ]}
+  metrics={[
+    {id: 'model', label: '요청한 모델'},
+    {id: 'pick', label: '고른 레플리카'},
+    {id: 'why', label: '고른 이유'},
+  ]}
+  learn={[
+    {text: '돌아가며 보내기가 LLM에 맞지 않는 이유', at: 0},
+    {text: '입구는 인증·한도와 목적지 모델을, 분배기는 레플리카를 정한다는 것', at: 2},
+    {text: '프리픽스 캐시를 보고 고르면 첫 토큰이 빨라진다는 것', at: 4},
+    {text: '부하를 함께 봐야 한쪽으로 쏠리지 않는다는 것', at: 5},
+  ]}
+  steps={[
+    {
+      short: '돌아가며',
+      kind: '시작',
+      title: '돌아가며 보내면 운에 맡기게 된다',
+      text: [
+        '레플리카가 셋이다. 일반 부하 분산은 요청을 1→2→3 순서로 돌아가며 보낸다. 요청 크기가 비슷한 웹 서비스라면 이것으로 충분하다.',
+        'LLM 요청은 짧은 질문부터 수만 토큰짜리 문서 요약까지 크기가 제각각이다. 레플리카 3이 긴 요청에 묶여 있어도 차례가 오면 또 요청을 받는다.',
+      ],
+      flows: [{from: 'app', to: 'r3', label: '차례라서', type: 'request', bend: 0.12}],
+      focus: ['r3'],
+      status: {r3: 'warn'},
+      badges: {r3: '대기 줄 김'},
+      values: {model: '—', pick: '레플리카 3', why: {text: '순서', tone: 'bad'}},
+    },
+    {
+      short: '입구',
+      kind: '원리',
+      title: '입구가 요청을 확인하고 목적지 모델을 정한다',
+      text: [
+        '요청은 먼저 입구(게이트웨이)에 닿는다. 입구는 API 키를 확인하고 사용 한도를 지키게 한다.',
+        '요청 본문에 적힌 모델 이름으로 어느 모델의 레플리카 묶음으로 갈지 정한다. 여기까지는 "어느 모델"이고, "그중 어느 레플리카"는 아직 정하지 않았다.',
+      ],
+      flows: [{from: 'app', to: 'gw', label: '모델: chat-model', type: 'request'}],
+      focus: ['gw'],
+      status: {r3: null},
+      badges: {r3: null, gw: '키 확인 · 한도'},
+      values: {model: 'chat-model', pick: '—', why: '—'},
+    },
+    {
+      short: '분배기에 묻기',
+      kind: '원리',
+      title: '입구가 분배기에 "어느 레플리카로?"라고 묻는다',
+      text: [
+        '입구는 레플리카를 직접 고르지 않고 분배기(EPP)에 묻는다. 분배기는 이 요청과 각 레플리카의 상태를 보고 하나를 골라 알려 준다.',
+        '입구와 고르는 판단을 나눠 두면, 고르는 규칙을 입구와 상관없이 바꾸거나 더할 수 있다. 쿠버네티스의 Gateway API 추론 확장(Inference Extension)이 이 구조를 InferencePool이라는 리소스로 표준화하고 있다.',
+      ],
+      flows: [{from: 'gw', to: 'epp', label: '어디로?', type: 'request'}],
+      focus: ['epp'],
+      badges: {gw: null},
+    },
+    {
+      short: '상태 수집',
+      kind: '원리',
+      title: '분배기는 레플리카의 상태를 계속 지켜본다',
+      text: [
+        '분배기는 각 레플리카의 엔진이 내는 지표를 계속 모은다. 대기 중인 요청 수, KV 캐시 사용률 같은 값이다.',
+        '어떤 앞부분(프리픽스)을 어느 레플리카가 최근에 처리했는지도 기억한다. 그 레플리카에는 그 앞부분의 KV 캐시가 남아 있을 가능성이 높다.',
+      ],
+      flows: [
+        {from: 'r1', to: 'epp', label: '대기 0', type: 'watch'},
+        {from: 'r2', to: 'epp', label: '앞부분 보유', type: 'watch'},
+        {from: 'r3', to: 'epp', label: 'KV 90%', type: 'watch'},
+      ],
+      focus: ['epp'],
+    },
+    {
+      short: '프리픽스 인식',
+      kind: '원리',
+      title: '같은 앞부분을 가진 레플리카로 보낸다',
+      text: [
+        '이번 요청은 서비스 공통 시스템 지시문과 같은 문서로 시작한다. 레플리카 2가 방금 같은 앞부분을 처리했다.',
+        '분배기가 레플리카 2를 고르면 그 앞부분의 KV 캐시를 재사용해 질문 읽기(프리필)를 대부분 건너뛴다. 첫 토큰이 빨라지고 가속기 계산도 아낀다.',
+      ],
+      keyIdea: '프리픽스 캐시는 레플리카마다 따로 있다. 엔진이 캐시를 갖고 있어도 요청이 다른 레플리카로 가면 쓸 수 없다. 라우팅이 캐시 효과를 살리거나 죽인다.',
+      flows: [
+        {from: 'epp', to: 'gw', label: '레플리카 2', type: 'response', bend: 0.15},
+        {from: 'gw', to: 'r2', label: '요청 전달', type: 'request', bend: -0.1},
+      ],
+      focus: ['r2'],
+      status: {r2: 'ok'},
+      badges: {r2: '캐시 적중'},
+      values: {pick: '레플리카 2', why: {text: '앞부분 캐시 적중', tone: 'good'}},
+    },
+    {
+      short: '부하 인식',
+      kind: '주의',
+      title: '캐시만 따라가면 한 레플리카에 몰린다',
+      text: [
+        '같은 시스템 지시문을 쓰는 요청이 계속 오면, 캐시만 보는 분배기는 모두 레플리카 2로 보낸다. 레플리카 2만 대기 줄이 길어지고 나머지는 논다.',
+        '그래서 부하도 함께 본다. 레플리카 2가 너무 바쁘면 캐시를 포기하고 한가한 레플리카 1로 보내는 편이 전체적으로 빠르다.',
+      ],
+      flows: [
+        {from: 'epp', to: 'gw', label: '레플리카 1', type: 'response', bend: 0.15},
+        {from: 'gw', to: 'r1', label: '요청 전달', type: 'request', bend: 0.1},
+      ],
+      focus: ['r1', 'r2'],
+      status: {r2: 'warn', r1: 'ok'},
+      badges: {r2: '대기 줄 김', r1: '한가함'},
+      values: {pick: '레플리카 1', why: '부하가 낮음 (캐시 포기)'},
+    },
+    {
+      short: '점수 합산',
+      kind: '원리',
+      title: '여러 기준을 점수로 매겨 합산한다',
+      text: [
+        '분배기는 먼저 받을 수 없는 레플리카(준비 안 됨, KV 캐시 가득 참 등)를 걸러 낸다. 남은 레플리카마다 기준별 점수를 매긴다.',
+        '"앞부분 캐시 적중" 점수, "대기 줄 짧음" 점수, "KV 캐시 여유" 점수 등을 가중치를 곱해 더하고, 가장 높은 레플리카를 고른다. 가중치는 업무 특성에 맞춰 조정한다.',
+      ],
+      keyIdea: '공통 앞부분이 많은 업무(같은 지시문, 같은 문서 질의)는 캐시 점수를, 요청 길이가 들쭉날쭉한 업무는 부하 점수를 크게 잡는다.',
+      flows: [{from: 'gw', to: 'epp', label: '다음 요청', type: 'request'}],
+      focus: ['epp'],
+      status: {r1: null, r2: null},
+      badges: {r1: '점수 0.7', r2: '점수 0.6', r3: '제외'},
+      values: {pick: '최고 점수', why: '캐시 + 부하 합산'},
+    },
+    {
+      short: '응답',
+      kind: '원리',
+      title: '답은 같은 입구를 거쳐 돌아간다',
+      text: [
+        '고른 레플리카가 만든 답 토큰은 입구를 거쳐 애플리케이션으로 스트리밍된다. 애플리케이션은 어느 레플리카가 답했는지 알 필요가 없다.',
+        '토큰 단위로 한도를 거는 입구라면 응답이 끝난 뒤 사용한 토큰 수를 한도에 반영한다.',
+      ],
+      flows: [
+        {from: 'r1', to: 'gw', label: '답 토큰', type: 'response', bend: -0.1},
+        {from: 'gw', to: 'app', type: 'response'},
+      ],
+      focus: ['app'],
+      badges: {r1: null, r2: null, r3: null},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '입구는 어느 모델로, 분배기는 어느 레플리카로',
+      text: [
+        '입구는 인증·한도를 지키고 모델 이름으로 목적지를 정한다. 분배기(EPP)는 레플리카 상태를 지켜보다가 요청마다 하나를 고른다.',
+        '프리픽스 캐시 적중을 보면 첫 토큰이 빨라지고, 부하를 함께 보면 쏠림을 막는다. 두 기준의 비중은 업무 특성에 맞춰 정한다.',
+      ],
+      keyIdea: '"레플리카를 늘렸는데 첫 토큰이 안 빨라진다"면 라우팅 기준을 먼저 의심한다. 레플리카별 대기 요청 수와 프리픽스 캐시 적중률 지표를 나란히 보면 쏠림과 캐시 분산을 구분할 수 있다.',
+      focus: ['epp'],
+    },
+  ]}
+/>
+
+## 쿠버네티스에서는
+
+Gateway API 추론 확장에서는 같은 모델의 레플리카 묶음을 **InferencePool**로 정의하고, 그 묶음에 붙은 분배기(EPP)가 요청마다 레플리카를 고른다. 입구는 이 확장을 지원하는 게이트웨이 구현을 쓴다. llm-d 같은 프로젝트는 이 구조 위에 프리픽스 캐시·부하 기반 점수 규칙을 더하고, 프리필·디코드 분리 서빙에서는 프리필 쪽과 디코드 쪽 레플리카를 함께 고른다. 프리픽스 캐시가 무엇인지는 [KV 캐시가 차오르기까지](../llm/kv-cache.mdx)에서, 분리 서빙은 [읽는 곳과 쓰는 곳 나누기 (프리필·디코드 분리)](../llm/pd-disaggregation.mdx)에서 본다.
+
+더 읽을거리: [Gateway API Inference Extension](https://gateway-api-inference-extension.sigs.k8s.io/) · [llm-d](https://llm-d.ai/) · [vLLM 문서](https://docs.vllm.ai/)

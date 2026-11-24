@@ -1,8 +1,10 @@
 ---
 id: network-policy
 title: Blocking and Allowing Traffic (NetworkPolicy)
-sidebar_label: 09 · Blocking and Allowing Traffic
+sidebar_label: 03 · Blocking and Allowing Traffic
 description: Follow how wide-open Pod traffic is locked down with a default-deny policy, how labels open only frontend→backend and backend→db, and why blocked requests show up as timeouts.
+summary: 'Opening only needed traffic from a default deny, and where to check blocked traffic.'
+icon: shield
 hide_table_of_contents: true
 ---
 
@@ -187,5 +189,3 @@ The `shop` namespace has frontend, backend, and db Pods. At first anyone can con
 | The policy has no effect at all | No Pod matches the selector, or the network plugin does not support policies | Compare the policy’s Pod selector with the Pod labels |
 
 Further reading: [Network Policies](https://kubernetes.io/docs/concepts/services-networking/network-policies/) · [Cilium docs](https://docs.cilium.io/)
-
-Next lesson: [Who Can Do What (RBAC)](./rbac.mdx)

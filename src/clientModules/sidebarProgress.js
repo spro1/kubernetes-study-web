@@ -2,8 +2,9 @@
 import ExecutionEnvironment from '@docusaurus/ExecutionEnvironment';
 import siteConfig from '@generated/docusaurus.config';
 import {getDone} from '../progress';
+import TRACKS from '../data/tracks';
 
-const TRACK_DIRS = ['cloud', 'basic', 'k8s', 'feature', 'intermediate', 'advanced', 'cert'];
+const TRACK_DIRS = [...new Set(TRACKS.flatMap((t) => t.lessons.map((l) => l.split('/')[0])))];
 
 function paint() {
   const done = getDone();

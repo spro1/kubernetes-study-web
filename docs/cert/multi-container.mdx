@@ -1,8 +1,10 @@
 ---
 id: multi-container
 title: Multi-container pods — init and sidecar (CKAD)
-sidebar_label: 05 · Multi-container pods
+sidebar_label: 07 · Multi-container pods
 description: Follow an animation of init containers finishing in order before the sidecar and app containers start, and of containers in the same pod sharing localhost and an emptyDir
+summary: 'Init container order, sidecars, and what containers in one Pod share.'
+icon: pod
 hide_table_of_contents: true
 ---
 
@@ -199,5 +201,3 @@ This covers "multi-container pod design patterns (e.g. sidecar, init and others)
 | Two containers open the same port | Change one port | A pod shares one IP, so the ports collide |
 
 Further reading: [CNCF certification curriculum](https://github.com/cncf/curriculum) · [Init containers](https://kubernetes.io/docs/concepts/workloads/pods/init-containers/) · [Sidecar containers](https://kubernetes.io/docs/concepts/workloads/pods/sidecar-containers/) · [Volumes](https://kubernetes.io/docs/concepts/storage/volumes/) · [Service Mesh ① Sidecars and Mutual Authentication](../feature/mesh-sidecar.mdx)
-
-Next lesson: [Runtime security — catching abnormal behavior (CKS)](./runtime-security.mdx)

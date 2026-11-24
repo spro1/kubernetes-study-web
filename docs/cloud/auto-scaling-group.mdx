@@ -3,6 +3,8 @@ id: auto-scaling-group
 title: Auto-Scaling VMs (Auto Scaling Groups)
 sidebar_label: 04 · Auto-Scaling VMs
 description: Follow in animation the launch template and min/desired/max counts, scaling out on a metric alarm, health checks and load balancer registration for new VMs, replacing unhealthy ones, and scaling in with a cooldown
+summary: 'A metric alarm adds VMs, which join the load balancer after health checks.'
+icon: scale
 hide_table_of_contents: true
 ---
 
@@ -184,5 +186,3 @@ An online store runs on two virtual machines. An auto scaling group adds VMs aut
 | Replace VMs failing health checks | Health check-based replacement | Automatic instance repairs | Autohealing |
 
 Further reading: [Amazon EC2 Auto Scaling (AWS)](https://docs.aws.amazon.com/autoscaling/ec2/userguide/what-is-amazon-ec2-auto-scaling.html) · [Node Autoscaling (Kubernetes docs)](https://kubernetes.io/docs/concepts/cluster-administration/node-autoscaling/) · [Scaling with Load (HPA)](../k8s/autoscaling.mdx)
-
-Next lesson: [Permission Checks on One API Request (IAM)](./iam-request.mdx)

@@ -1,8 +1,10 @@
 ---
 id: traffic
 title: How a Request Reaches a Pod
-sidebar_label: 02 · How a Request Reaches a Pod
+sidebar_label: 04 · How a Request Reaches a Pod
 description: Follow, step by step, the path a browser request takes through a load balancer, Ingress, Service, and EndpointSlice to a pod, and how unready pods are removed from the targets
+summary: 'The traffic path from load balancer → Ingress → Service → Pod, and how unready Pods are taken out.'
+icon: route
 hide_table_of_contents: true
 ---
 
@@ -161,5 +163,3 @@ When a user opens `shop.example.com`, let's follow how that request arrives at a
 | 4 | Is at least one pod Ready? | Readiness probe failing, all pods restarting |
 
 Further reading: [Ingress](https://kubernetes.io/docs/concepts/services-networking/ingress/) · [Service](https://kubernetes.io/docs/concepts/services-networking/service/) · [EndpointSlices](https://kubernetes.io/docs/concepts/services-networking/endpoint-slices/)
-
-Next lesson: [Zero-Downtime Deploys (Rolling Update)](./rolling-update.mdx)

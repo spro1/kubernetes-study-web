@@ -3,6 +3,8 @@ id: etcd-quorum
 title: Control Plane HA and etcd Quorum
 sidebar_label: 04 · Control Plane and etcd Quorum
 description: See how etcd on three control plane nodes completes writes by majority agreement, why it survives one failure but stops writing after two, and why an even count gains nothing, step by step with animation
+summary: 'etcd writes by majority agreement, and how many failures it can survive.'
+icon: db
 hide_table_of_contents: true
 ---
 
@@ -198,5 +200,3 @@ Production clusters run an odd number of control plane (master) nodes, such as t
 | 5 | 3 | 2 |
 
 Further reading: [Kubernetes components](https://kubernetes.io/docs/concepts/overview/components/) · [Creating highly available clusters with kubeadm](https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/high-availability/) · [Operating etcd clusters](https://kubernetes.io/docs/tasks/administer-cluster/configure-upgrade-etcd/)
-
-Next lesson: [Cluster Certificate Expiry](./cluster-cert.mdx)

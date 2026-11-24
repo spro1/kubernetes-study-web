@@ -1,8 +1,10 @@
 ---
 id: gpu-sharing
 title: GPU 나눠 쓰기
-sidebar_label: 08 · GPU 나눠 쓰기
+sidebar_label: 04 · GPU 나눠 쓰기
 description: NVIDIA GPU Operator의 전용(Pass-through)·MIG·Time-Slicing 방식이 GPU를 어떻게 나눠 주고, 방식에 따라 볼 수 있는 GPU 지표가 어떻게 달라지는지 단계별 애니메이션으로 따라간다
+summary: '전용·MIG·Time-Slicing으로 GPU를 나누는 방식과 방식별로 보이는 지표의 차이.'
+icon: server
 hide_table_of_contents: true
 ---
 
@@ -191,5 +193,3 @@ kubectl get pods -A -o wide | grep -i gpu            # GPU 파드가 어느 노�
 ```
 
 더 읽을거리: [GPU 스케줄링](https://kubernetes.io/ko/docs/tasks/manage-gpus/scheduling-gpus/) · [장치 플러그인](https://kubernetes.io/ko/docs/concepts/extend-kubernetes/compute-storage-net/device-plugins/) · [NVIDIA GPU Operator](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/index.html) · [조건으로 GPU 받기 (DRA)](../k8s/dra.mdx)
-
-다음 레슨: [파드 크기 자동 조정 (VPA)](./vpa.mdx)

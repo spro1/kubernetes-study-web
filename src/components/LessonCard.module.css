@@ -4,16 +4,6 @@
   --lc-line: #e1e4e8;
   --lc-ink: #1f2328;
   --lc-muted: #59636e;
-  --lc-k8s: #2f62c9;
-  --lc-k8s-soft: #e5edfb;
-  --lc-feature: #0f8b8d;
-  --lc-feature-soft: #dcf3f2;
-  --lc-learn: #b0670c;
-  --lc-learn-soft: #fbefdc;
-  --lc-cert: #c03a5b;
-  --lc-cert-soft: #fbe4ea;
-  --lc-cloud: #0b7bb5;
-  --lc-cloud-soft: #dff1fb;
 
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
@@ -26,21 +16,9 @@
   --lc-line: #2e323a;
   --lc-ink: #e6e8eb;
   --lc-muted: #a0a8b2;
-  --lc-k8s: #80a6ff;
-  --lc-k8s-soft: #1d2a45;
-  --lc-feature: #4fd1c5;
-  --lc-feature-soft: #143433;
-  --lc-learn: #f2b264;
-  --lc-learn-soft: #3a2a14;
-  --lc-cert: #ff8aa6;
-  --lc-cert-soft: #3d1a24;
-  --lc-cloud: #6cc4f0;
-  --lc-cloud-soft: #14303f;
 }
 
 .card {
-  --lc-color: var(--lc-k8s);
-  --lc-soft: var(--lc-k8s-soft);
 
   position: relative;
   display: flex;
@@ -62,10 +40,6 @@
   background: var(--lc-color);
 }
 
-.track_feature {
-  --lc-color: var(--lc-feature);
-  --lc-soft: var(--lc-feature-soft);
-}
 
 a.card:hover {
   color: var(--lc-ink);
@@ -142,20 +116,8 @@ a.card:focus-visible {
   color: var(--lc-muted);
 }
 
-.track_learn {
-  --lc-color: var(--lc-learn);
-  --lc-soft: var(--lc-learn-soft);
-}
 
-.track_cert {
-  --lc-color: var(--lc-cert);
-  --lc-soft: var(--lc-cert-soft);
-}
 
-.track_cloud {
-  --lc-color: var(--lc-cloud);
-  --lc-soft: var(--lc-cloud-soft);
-}
 
 .done {
   padding: 1px 8px;
@@ -173,3 +135,7 @@ a.card:focus-visible {
 .isDone .iconTile {
   background: color-mix(in srgb, #16a34a 16%, var(--lc-bg));
 }
+
+
+
+

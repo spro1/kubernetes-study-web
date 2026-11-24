@@ -1,8 +1,10 @@
 ---
 id: pod-startup
 title: How a Pod Starts
-sidebar_label: 01 · How a Pod Starts
+sidebar_label: 03 · How a Pod Starts
 description: Follow a single kubectl apply through the API server, etcd, controllers, scheduler, and kubelet until it becomes a running Pod, step by animated step.
+summary: 'How one kubectl apply goes through the API server, etcd, controllers, scheduler and kubelet to become a running Pod.'
+icon: pod
 hide_table_of_contents: true
 ---
 
@@ -193,5 +195,3 @@ After you run a single `kubectl apply`, what happens inside the cluster before a
 | CrashLoopBackOff | After 7. Run | Container keeps exiting right after start (config or code error) |
 
 Further reading: [Kubernetes Overview](https://kubernetes.io/docs/concepts/overview/) · [Pod Lifecycle](https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/) · [Debug Pods](https://kubernetes.io/docs/tasks/debug/debug-application/debug-pods/)
-
-Next lesson: [How a Request Reaches a Pod](./traffic.mdx)

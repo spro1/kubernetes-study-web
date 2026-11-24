@@ -3,6 +3,8 @@ id: service-types
 title: 서비스 종류 (ClusterIP · NodePort · LoadBalancer)
 sidebar_label: 01 · 서비스 종류
 description: 서비스의 셀렉터가 파드를 묶고, 서비스 유형에 따라 클러스터 안·노드 포트·외부 주소로 열리는 범위가 달라지는 원리를 애니메이션으로 따라간다
+summary: '파드 묶음 앞에 고정 주소를 두는 방식 세 가지와, 셀렉터가 어긋나면 대상이 0개가 되는 이유.'
+icon: target
 hide_table_of_contents: true
 ---
 
@@ -188,6 +190,4 @@ kubectl get endpointslices -l kubernetes.io/service-name=shop-svc   # 대상 파
 kubectl get svc shop-svc -o yaml                       # type, selector, ports, sessionAffinity
 ```
 
-더 읽을거리: [서비스](https://kubernetes.io/ko/docs/concepts/services-networking/service/) · [엔드포인트슬라이스](https://kubernetes.io/ko/docs/concepts/services-networking/endpoint-slices/) · [서비스와 DNS](../k8s/service-dns.mdx)
-
-다음 레슨: [인그레스 규칙과 TLS](./ingress.mdx)
+더 읽을거리: [서비스](https://kubernetes.io/ko/docs/concepts/services-networking/service/) · [엔드포인트슬라이스](https://kubernetes.io/ko/docs/concepts/services-networking/endpoint-slices/) · [이름으로 찾아가기 (Service·DNS)](../k8s/service-dns.mdx)

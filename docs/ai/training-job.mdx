@@ -1,0 +1,189 @@
+---
+id: training-job
+title: From Training Job to Model
+sidebar_label: 07 · From Training Job to Model
+description: Follow a training or evaluation Job as it waits in a Kueue queue, is admitted when GPU quota frees up, runs on GPU nodes, writes checkpoints, and is registered as a version in a model registry.
+summary: 'A training Job waits in a queue for GPU quota, runs, saves checkpoints and becomes a model version.'
+icon: hammer
+hide_table_of_contents: true
+---
+
+# From Training Job to Model
+
+GPUs are shared by many teams. Instead of running training and evaluation Jobs right away, you put them in a **queue** and run them when the team’s GPU quota has room. Using Kueue as the example, follow a Job as it waits, runs, leaves artifacts, and becomes a version in a model registry.
+
+<StepDiagram
+  width={1000}
+  height={460}
+  meta={{duration: '~10 min', level: 'Intermediate'}}
+  groups={[
+    {label: 'Team namespace', x: 170, y: 30, w: 250, h: 410, tone: 'biz'},
+    {label: 'Queueing · scheduling', x: 450, y: 30, w: 300, h: 410, tone: 'mgmt'},
+    {label: 'Model registry', x: 780, y: 30, w: 205, h: 410, tone: 'plain'},
+  ]}
+  nodes={[
+    {id: 'dev', label: 'Developer', sub: 'kubectl', icon: 'user', tone: 'ext', x: 85, y: 230, show: true},
+    {id: 'spec', label: 'Job manifest', sub: 'queue-name label', icon: 'book', tone: 'app', x: 295, y: 110, w: 160, show: true},
+    {id: 'job', label: 'Training Job', sub: 'GPU Pods', icon: 'hammer', tone: 'node', x: 295, y: 250},
+    {id: 'out', label: 'Checkpoints', sub: 'PVC · object store', icon: 'archive', tone: 'store', x: 295, y: 385},
+    {id: 'kueue', label: 'Kueue', sub: 'admission', icon: 'gear', tone: 'cp', x: 600, y: 110, show: true},
+    {id: 'cq', label: 'ClusterQueue', sub: 'GPU quota', icon: 'layers', tone: 'store', x: 600, y: 250},
+    {id: 'sched', label: 'Scheduler', sub: 'kube-scheduler', icon: 'target', tone: 'cp', x: 600, y: 385},
+    {id: 'model', label: 'Model version', sub: 'e.g. MLflow', icon: 'box', tone: 'store', x: 882, y: 140},
+    {id: 'eval', label: 'Eval metrics', sub: 'run history', icon: 'chart', tone: 'store', x: 882, y: 330},
+  ]}
+  metrics={[
+    {id: 'job', label: 'Job status'},
+    {id: 'quota', label: 'GPU quota'},
+    {id: 'model', label: 'Model version'},
+  ]}
+  learn={[
+    {text: 'How Kueue holds a Job in a suspended state', at: 1},
+    {text: 'Over-quota requests are not rejected; they wait forever', at: 2},
+    {text: 'Preemption loses progress, so checkpoints matter', at: 5},
+    {text: 'Registering artifacts as a model version with lineage', at: 7},
+  ]}
+  steps={[
+    {
+      short: 'Prepare Job',
+      kind: '시작',
+      title: 'Write a Job that names a queue',
+      text: [
+        'The developer writes a training Job manifest with GPU requests (such as nvidia.com/gpu) and the kueue.x-k8s.io/queue-name label pointing at the team’s LocalQueue.',
+        'Evaluation, data preprocessing, and other run-to-completion work is submitted the same way.',
+      ],
+      flows: [{from: 'dev', to: 'spec', label: 'write manifest', type: 'request'}],
+      focus: ['spec'],
+      values: {job: '—', quota: '—', model: '—'},
+    },
+    {
+      short: 'Suspended',
+      kind: '원리',
+      title: 'On submit, the Job is accepted but suspended',
+      text: [
+        'When you kubectl apply it, Kueue puts the Job in the suspended state. No Pods exist yet.',
+        'Kueue creates a Workload object that represents the Job and computes the GPUs needed across all of its Pods.',
+      ],
+      flows: [{from: 'spec', to: 'kueue', label: 'kubectl apply', type: 'request'}],
+      focus: ['kueue'],
+      values: {job: 'suspended', quota: 'under review'},
+    },
+    {
+      short: 'Over quota',
+      kind: '주의',
+      title: 'An over-quota request just keeps waiting',
+      text: [
+        'A request larger than the ClusterQueue can provide, even with borrowing, can never be admitted. It is not rejected with an error; it stays Pending.',
+        'A misspelled LocalQueue name has the same effect. The status message in kubectl describe workload explains why.',
+      ],
+      flows: [{from: 'kueue', to: 'spec', label: 'not admissible', type: 'response', bend: 0.2}],
+      focus: ['kueue'],
+      status: {kueue: 'warn'},
+      badges: {kueue: 'check reason'},
+      values: {quota: {text: 'waits forever if over', tone: 'bad'}},
+    },
+    {
+      short: 'Queue',
+      kind: '원리',
+      title: 'Admissible Jobs line up in the ClusterQueue',
+      text: [
+        'Requests within quota wait their turn in the ClusterQueue. The order depends on priority and the queueing strategy (BestEffortFIFO or StrictFIFO).',
+        'A queue can borrow unused quota from other queues in the same cohort. A Job running on borrowed quota can be pushed out when the owner reclaims it.',
+      ],
+      flows: [{from: 'kueue', to: 'cq', label: 'queued', type: 'request'}],
+      focus: ['cq'],
+      status: {kueue: null},
+      badges: {kueue: null},
+      values: {job: 'queued', quota: 'waiting for room'},
+    },
+    {
+      short: 'Admit · run',
+      kind: '원리',
+      title: 'When quota frees up, the Job is admitted and runs',
+      text: [
+        'When GPU quota has room, Kueue admits the Workload: it reserves the quota, injects the ResourceFlavor’s node labels into the Pods, and unsuspends the Job.',
+        'Only then does the Job controller create Pods, and kube-scheduler places them on GPU nodes.',
+      ],
+      flows: [
+        {from: 'cq', to: 'sched', label: 'admit (unsuspend)', type: 'request'},
+        {from: 'sched', to: 'job', label: 'place on GPU node', type: 'request'},
+      ],
+      focus: ['sched', 'job'],
+      values: {job: 'running', quota: {text: 'assigned', tone: 'good'}},
+    },
+    {
+      short: 'Preemption',
+      kind: '주의',
+      title: 'A preempted Job goes back to the queue',
+      text: [
+        'When a higher-priority Job arrives or lent quota is reclaimed, Kueue preempts a running Job. Its Pods are terminated and the Job returns to the queue, suspended again.',
+        'Losing a node has a similar effect. Without checkpoints, training starts over from the beginning.',
+      ],
+      keyIdea: 'The longer the training run, the shorter the checkpoint interval should be. Write the code so a restart resumes from the latest checkpoint.',
+      focus: ['job'],
+      status: {job: 'warn'},
+      badges: {job: 'preemptible'},
+      values: {job: {text: 'plan for interruption', tone: 'bad'}},
+    },
+    {
+      short: 'Artifacts',
+      kind: '원리',
+      title: 'The Job writes checkpoints and results, then ends',
+      text: [
+        'The training Job writes checkpoints during training and the final weights at the end, to a PVC or object storage. When its completion criteria are met, the Job becomes Complete and Kueue releases the quota.',
+        'Pod logs disappear when the Pod is deleted. Collect logs and training metrics somewhere else.',
+      ],
+      flows: [{from: 'job', to: 'out', label: 'checkpoints, weights', type: 'request'}],
+      focus: ['out'],
+      status: {job: 'ok'},
+      badges: {job: null},
+      values: {job: {text: 'complete', tone: 'good'}, quota: 'released'},
+    },
+    {
+      short: 'Register',
+      kind: '원리',
+      title: 'Register the artifacts as a model version',
+      text: [
+        'The last step of the training code registers a new version in a model registry such as MLflow. The artifact location, run ID, and hyperparameters are recorded with it, so you can trace which Job produced the model.',
+        'From here it is the same as lesson 04: package it as a deployable artifact and cache it on nodes before serving.',
+      ],
+      flows: [{from: 'job', to: 'model', label: 'register version', type: 'request'}],
+      focus: ['model'],
+      status: {model: 'ok'},
+      values: {model: {text: 'registered', tone: 'good'}},
+    },
+    {
+      short: 'Eval metrics',
+      kind: '원리',
+      title: 'Evaluation scores go into the run history',
+      text: [
+        'An evaluation Job goes through the same queue and logs its scores to the run history. Comparisons only mean something when versions are scored on the same eval set.',
+        'Put an alias only on versions that pass the bar and have serving follow that alias. Then nobody has to pick the version to deploy by hand.',
+      ],
+      flows: [{from: 'job', to: 'eval', label: 'eval scores', type: 'request', bend: 0.2}],
+      focus: ['eval'],
+      status: {eval: 'ok'},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Wait in the queue, end in the registry',
+      text: [
+        'Submit → suspended → queued → admitted → run on GPU nodes → checkpoints → register a model version. Evaluation scores stay in the run history for comparing versions.',
+        'If a Job waits a long time, the Workload status tells you whether it is quota, Jobs ahead of it, or preemption.',
+      ],
+      keyIdea: 'Use kubectl get workloads and kubectl describe workload for the waiting reason, and kubectl get clusterqueue for quota usage.',
+      focus: ['cq', 'job', 'model'],
+    },
+  ]}
+/>
+
+## Run directly vs queue
+
+| | Run the Job directly | Kueue queue |
+| --- | --- | --- |
+| When GPUs run short | Some Pods start and hold GPUs while others stay Pending | The whole Job waits suspended |
+| Fairness across teams | First come, first served | Per-team quota, borrowing, preemption |
+| Finding the waiting reason | Read Pod events one by one | Workload status message |
+
+Further reading: [Jobs](https://kubernetes.io/docs/concepts/workloads/controllers/job/) · [Kueue overview](https://kueue.sigs.k8s.io/docs/overview/)

@@ -1,0 +1,176 @@
+---
+id: cold-start
+title: Until a Model First Starts (Cold Start)
+sidebar_label: 08 · Model Cold Start
+description: Follow a model replica as it is placed on a node, downloads its weights, loads them into accelerator memory, and prepares the engine before its first request, plus the common ways to shorten that cold start.
+summary: 'Downloading weights, loading them onto the accelerator and warming the engine before the first request, and how to cut that time.'
+icon: spark
+hide_table_of_contents: true
+---
+
+# Until a Model First Starts (Cold Start)
+
+A typical web Pod starts in seconds. An LLM replica must read **model weights** that can exceed tens of GB, load them into accelerator memory, and prepare the engine, which can take minutes. The time from creating a replica until it can take its first request is the **cold start**. The general Pod startup path is in [How a Pod Starts](../k8s/pod-startup.mdx); this lesson focuses on the parts that get long because it is an LLM.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~9 min', level: 'Intermediate'}}
+  groups={[
+    {label: 'GPU node', x: 400, y: 30, w: 420, h: 405, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'user', label: 'Operator', sub: 'deploy · add replica', icon: 'user', tone: 'ext', x: 95, y: 110, w: 150, show: true},
+    {id: 'reg', label: 'Model store', sub: 'source weights', icon: 'registry', tone: 'store', x: 95, y: 345, w: 150, show: true},
+    {id: 'sched', label: 'Scheduler', sub: 'picks a node', icon: 'target', tone: 'cp', x: 285, y: 225, w: 140},
+    {id: 'disk', label: 'Local disk', sub: 'local model cache', icon: 'disk', tone: 'store', x: 515, y: 345, w: 170},
+    {id: 'pod', label: 'Engine Pod', sub: 'vLLM', icon: 'pod', tone: 'app', x: 515, y: 115, w: 150},
+    {id: 'gpu', label: 'Accel. memory', sub: 'weights + KV cache', icon: 'layers', tone: 'node', x: 720, y: 230, w: 160},
+    {id: 'gw', label: 'Gateway/picker', sub: 'sends requests', icon: 'gate', tone: 'cp', x: 910, y: 115, w: 140},
+  ]}
+  metrics={[
+    {id: 'phase', label: 'Current phase'},
+    {id: 'slow', label: 'Why this phase is slow'},
+    {id: 'ready', label: 'Can take requests'},
+  ]}
+  learn={[
+    {text: 'LLM replicas start slowly because of their weights', at: 0},
+    {text: 'Most of the time goes to fetching and reading weights', at: 2},
+    {text: 'The engine also needs preparation before the first request', at: 4},
+    {text: 'Cold start sets how fast scaling can react', at: 6},
+    {text: 'Pre-caching, fast storage, and reuse shorten it', at: 7},
+  ]}
+  steps={[
+    {
+      short: 'Request',
+      kind: '시작',
+      title: 'Start one new replica',
+      text: [
+        'The operator deploys a model or adds one more replica. Kubernetes creates one engine Pod.',
+        'From here until the replica can take its first request is the cold start. During that time it serves nothing.',
+      ],
+      flows: [{from: 'user', to: 'sched', label: 'replica +1', type: 'request'}],
+      focus: ['sched'],
+      values: {phase: 'waiting to schedule', slow: '—', ready: {text: 'No', tone: 'bad'}},
+    },
+    {
+      short: 'Place',
+      kind: '원리',
+      title: 'Place it on a node with free accelerators and pull the image',
+      text: [
+        'The scheduler picks a node with the accelerators it needs. The node pulls the engine container image and runs it.',
+        'Engine images bundling libraries like CUDA can reach several GB. Once pulled, the same node does not pull it again.',
+      ],
+      flows: [{from: 'sched', to: 'pod', label: 'node chosen', type: 'request'}],
+      focus: ['pod'],
+      values: {phase: 'container start', slow: 'engine image size'},
+    },
+    {
+      short: 'Fetch weights',
+      kind: '원리',
+      title: 'The slowest part: bringing the weights to the node',
+      text: [
+        'The engine cannot start without the weight files. Large models have tens to hundreds of GB of weights. Downloading them from object storage or a model hub can take minutes on its own.',
+        'So weights are often downloaded to the node’s local disk in advance (a local model cache). Tools such as KServe’s local model cache support this. With weights already there, this phase is skipped.',
+      ],
+      keyIdea: 'If every new replica downloads the weights again, scaling is bound by network speed. Pre-downloading is the first fix.',
+      flows: [{from: 'reg', to: 'disk', label: 'tens of GB+', type: 'request'}],
+      focus: ['reg', 'disk'],
+      badges: {disk: 'skipped if cached'},
+      values: {phase: 'fetching weights', slow: 'weight size · network'},
+    },
+    {
+      short: 'Load',
+      kind: '원리',
+      title: 'Read the weights from disk into accelerator memory',
+      text: [
+        'The engine reads the weights from disk and loads them into accelerator memory. Disk read speed and the path to the accelerator set the time.',
+        'If a replica uses several accelerators, the weights are split and loaded onto each one.',
+      ],
+      flows: [
+        {from: 'disk', to: 'pod', label: 'read weights', type: 'response'},
+        {from: 'pod', to: 'gpu', label: 'load to accel.', type: 'request'},
+      ],
+      focus: ['disk', 'gpu'],
+      badges: {disk: null, gpu: 'weights loaded'},
+      values: {phase: 'loading weights', slow: 'disk read speed'},
+    },
+    {
+      short: 'Warm up',
+      kind: '원리',
+      title: 'The engine reserves KV cache space and warms up',
+      text: [
+        'After loading weights, the engine still has work to do. It reserves the remaining accelerator memory for the KV cache and prepares frequent computations to run fast (graph capture, compilation, and so on).',
+        'Depending on the model and settings this takes tens of seconds to minutes. NPUs often use a model compiled ahead of deployment.',
+      ],
+      focus: ['pod', 'gpu'],
+      badges: {gpu: 'KV cache reserved'},
+      values: {phase: 'engine warm-up', slow: 'preparation work'},
+    },
+    {
+      short: 'Ready',
+      kind: '원리',
+      title: 'Once ready, the gateway starts sending requests',
+      text: [
+        'When the engine passes its readinessProbe, the gateway and endpoint picker add the replica to their targets and start sending requests.',
+        'No requests arrive before that. If a livenessProbe fails during startup, the kubelet restarts the container and the whole load begins again. Give the startupProbe more time than the startup takes.',
+      ],
+      flows: [
+        {from: 'pod', to: 'gw', label: 'ready', type: 'response'},
+        {from: 'gw', to: 'pod', label: 'first request', type: 'request', bend: 0.2},
+      ],
+      focus: ['pod', 'gw'],
+      status: {pod: 'ok'},
+      badges: {gpu: null},
+      values: {phase: 'serving', slow: '—', ready: {text: 'Yes', tone: 'good'}},
+    },
+    {
+      short: 'Slow scale',
+      kind: '주의',
+      title: 'A long cold start means a slow reaction to sudden load',
+      text: [
+        'When traffic spikes and you add replicas, each new one makes you wait out the cold start. Meanwhile queues build up on the existing replicas.',
+        'Even with autoscaling, a reaction that takes minutes misses short bursts. That is why LLM serving often keeps spare replicas ahead of expected peaks.',
+      ],
+      flows: [{from: 'gw', to: 'pod', label: 'traffic spike', type: 'request', bend: 0.2}],
+      focus: ['gw'],
+      status: {gw: 'warn'},
+      badges: {gw: 'queue growing'},
+    },
+    {
+      short: 'Shorten',
+      kind: '원리',
+      title: 'Common ways to shorten the cold start',
+      text: [
+        'Pre-download weights to the node (local model cache). Use faster storage (NVMe), or read straight from storage into accelerator memory without going through the CPU (GPUDirect Storage).',
+        'Save warm-up results (such as a compile cache) and reuse them on the next start. Pre-pull engine images to nodes. Some avoid the cold start entirely with always-on spare replicas.',
+      ],
+      flows: [{from: 'disk', to: 'gpu', label: 'fast path', type: 'response', bend: 0.15}],
+      focus: ['disk', 'gpu'],
+      status: {gw: null},
+      badges: {gw: null},
+    },
+    {
+      short: 'Recap',
+      kind: '정리',
+      title: 'Place → weights → load → warm up → serve',
+      text: [
+        'An LLM replica is up only after it is placed, gets its weights, loads them into accelerator memory, warms up the engine, and passes its readiness check. Weights take the most time.',
+        'Cold start sets both how fast scaling reacts and how fast you recover from failures. Pre-caching, fast storage paths, and reusing warm-up results shorten it.',
+      ],
+      keyIdea: 'When startup is slow, split it up: kubectl get events for image pull time, engine logs for weight loading and warm-up. Knowing which phase is long tells you which fix to use.',
+      focus: ['pod'],
+    },
+  ]}
+/>
+
+## What to check per phase
+
+| Phase | Where to look | How to shorten |
+| --- | --- | --- |
+| Image pull | Pod events (Pulling, Pulled) | Pre-pull images, nearby registry |
+| Weight fetch | Engine logs, network usage | Local model cache |
+| Load to accelerator | Load time in engine logs | NVMe, GPUDirect Storage |
+| Engine warm-up | Warm-up time in engine logs | Reuse compile cache, compile ahead |
+
+Further reading: [Liveness, Readiness, and Startup Probes](https://kubernetes.io/docs/concepts/configuration/liveness-readiness-startup-probes/) · [vLLM docs](https://docs.vllm.ai/) · [KServe](https://kserve.github.io/website/)

@@ -6,9 +6,9 @@ module.exports = {
     'index',
     ...TRACKS.map((t) => ({
       type: 'category',
-      label: t.en, // 한국어 이름은 i18n/ko/docusaurus-plugin-content-docs/current.json
+      label: t.en, // 한국어 이름은 i18n/ko/docusaurus-plugin-content-docs/current.json (scripts/build-lesson-index.js 가 채운다)
       collapsed: true,
-      items: t.lessons.map((id) => `${t.dir}/${id}`),
+      items: t.lessons,
     })),
   ],
 };

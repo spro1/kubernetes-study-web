@@ -3,6 +3,8 @@ id: etcd-quorum
 title: 컨트롤 플레인 고가용성과 etcd 쿼럼
 sidebar_label: 04 · 컨트롤 플레인과 etcd 쿼럼
 description: 마스터 3대의 etcd가 과반 합의로 쓰기를 완료하는 방식과, 1대 장애는 견디고 2대 장애에서는 쓰기가 멈추는 이유, 짝수 구성이 이득 없는 이유를 애니메이션으로 따라간다
+summary: '과반 합의로 쓰는 etcd, 몇 대까지 고장 나도 버티는지.'
+icon: db
 hide_table_of_contents: true
 ---
 
@@ -198,5 +200,3 @@ hide_table_of_contents: true
 | 5 | 3 | 2 |
 
 더 읽을거리: [쿠버네티스 컴포넌트](https://kubernetes.io/ko/docs/concepts/overview/components/) · [kubeadm으로 고가용성 클러스터 만들기](https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/high-availability/) · [etcd 클러스터 운영](https://kubernetes.io/docs/tasks/administer-cluster/configure-upgrade-etcd/)
-
-다음 레슨: [클러스터 인증서 만료](./cluster-cert.mdx)

@@ -3,6 +3,8 @@ id: deploy-strategies
 title: Blue/green and canary with core primitives (CKAD)
 sidebar_label: 04 · Blue/green and canary
 description: Follow an animation of a blue/green switch done with only two Deployments and a Service selector, no service mesh, and of a canary whose ratio is set and rolled back by the replica counts of two Deployments sharing a label
+summary: 'Deployment strategies with only Deployments and Service selectors, no mesh.'
+icon: split
 hide_table_of_contents: true
 ---
 
@@ -201,5 +203,3 @@ The default way a single Deployment replaces pods one by one is in [Zero-Downtim
 | Go back to the previous version within one Deployment | `kubectl rollout undo deployment <name>` | This is a rolling-update rollback. It differs from blue/green or canary rollback |
 
 Further reading: [CNCF certification curriculum](https://github.com/cncf/curriculum) · [Deployments](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/) · [Service](https://kubernetes.io/docs/concepts/services-networking/service/) · [Zero-Downtime Deploys (Rolling Update)](../k8s/rolling-update.mdx) · [Service Mesh ② Splitting Traffic](../feature/mesh-traffic.mdx)
-
-Next lesson: [Multi-container pods — init and sidecar (CKAD)](./multi-container.mdx)

@@ -1,0 +1,180 @@
+---
+id: inference-routing
+title: Which Replica Gets the Request (Inference Routing)
+sidebar_label: 10 · Inference Routing
+description: Follow an inference request through the gateway to the endpoint picker (EPP), which chooses a replica by prefix cache and load, and see how it differs from round-robin load balancing.
+summary: 'How the gateway and endpoint picker (EPP) choose a replica from prefix-cache hits and load.'
+icon: gate
+hide_table_of_contents: true
+---
+
+# Which Replica Gets the Request (Inference Routing)
+
+When one model runs as several replicas, every request needs a target replica. Round-robin is enough for a typical web service, but LLM requests vary hugely in length, and each replica holds a different **already-computed prefix (prefix cache)**. So an **endpoint picker (EPP)** sits behind the gateway and chooses a replica by looking at replica state.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~10 min', level: 'Intermediate'}}
+  groups={[
+    {label: 'Replicas of one model', x: 725, y: 30, w: 260, h: 405, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'app', label: 'Application', sub: 'OpenAI-compatible', icon: 'browser', tone: 'ext', x: 95, y: 225, w: 150, show: true},
+    {id: 'gw', label: 'Gateway', sub: 'auth · limits · model', icon: 'gate', tone: 'cp', x: 310, y: 225, w: 170, show: true},
+    {id: 'epp', label: 'Picker (EPP)', sub: 'chooses replica', icon: 'target', tone: 'cp', x: 545, y: 225, w: 160},
+    {id: 'r1', label: 'Replica 1', sub: 'idle', icon: 'server', tone: 'node', x: 855, y: 105, w: 160, show: true},
+    {id: 'r2', label: 'Replica 2', sub: 'has same prefix', icon: 'server', tone: 'node', x: 855, y: 240, w: 160, show: true},
+    {id: 'r3', label: 'Replica 3', sub: 'busy on long input', icon: 'server', tone: 'node', x: 855, y: 375, w: 160, show: true},
+  ]}
+  metrics={[
+    {id: 'model', label: 'Requested model'},
+    {id: 'pick', label: 'Chosen replica'},
+    {id: 'why', label: 'Why'},
+  ]}
+  learn={[
+    {text: 'Why round-robin does not fit LLMs', at: 0},
+    {text: 'The gateway picks the model; the EPP picks the replica', at: 2},
+    {text: 'Routing by prefix cache speeds up the first token', at: 4},
+    {text: 'Load must count too, or traffic piles onto one replica', at: 5},
+  ]}
+  steps={[
+    {
+      short: 'Round-robin',
+      kind: '시작',
+      title: 'Round-robin leaves it to luck',
+      text: [
+        'There are three replicas. Plain load balancing sends requests 1→2→3 in turn. For a web service with similar-sized requests, that is enough.',
+        'LLM requests range from a short question to summarizing a document of tens of thousands of tokens. Even while replica 3 is tied up with a long request, it gets another one when its turn comes.',
+      ],
+      flows: [{from: 'app', to: 'r3', label: 'its turn', type: 'request', bend: 0.12}],
+      focus: ['r3'],
+      status: {r3: 'warn'},
+      badges: {r3: 'long queue'},
+      values: {model: '—', pick: 'Replica 3', why: {text: 'turn order', tone: 'bad'}},
+    },
+    {
+      short: 'Gateway',
+      kind: '원리',
+      title: 'The gateway checks the request and picks the target model',
+      text: [
+        'The request first reaches the gateway. It checks the API key and enforces usage limits.',
+        'The model name in the request body decides which model’s replica set it goes to. That settles "which model", not yet "which replica".',
+      ],
+      flows: [{from: 'app', to: 'gw', label: 'model: chat-model', type: 'request'}],
+      focus: ['gw'],
+      status: {r3: null},
+      badges: {r3: null, gw: 'key · limits'},
+      values: {model: 'chat-model', pick: '—', why: '—'},
+    },
+    {
+      short: 'Ask EPP',
+      kind: '원리',
+      title: 'The gateway asks the picker "which replica?"',
+      text: [
+        'The gateway does not pick a replica itself. It asks the endpoint picker (EPP), which looks at the request and each replica’s state and returns one.',
+        'Separating the gateway from the choice lets you change or add picking rules independently of the gateway. The Kubernetes Gateway API Inference Extension standardizes this with a resource called InferencePool.',
+      ],
+      flows: [{from: 'gw', to: 'epp', label: 'where?', type: 'request'}],
+      focus: ['epp'],
+      badges: {gw: null},
+    },
+    {
+      short: 'Collect',
+      kind: '원리',
+      title: 'The picker keeps watching replica state',
+      text: [
+        'The picker keeps collecting metrics from each replica’s engine, such as the number of waiting requests and KV cache usage.',
+        'It also remembers which replica recently handled which prefix. That replica likely still holds the KV cache for it.',
+      ],
+      flows: [
+        {from: 'r1', to: 'epp', label: '0 waiting', type: 'watch'},
+        {from: 'r2', to: 'epp', label: 'has prefix', type: 'watch'},
+        {from: 'r3', to: 'epp', label: 'KV 90%', type: 'watch'},
+      ],
+      focus: ['epp'],
+    },
+    {
+      short: 'Prefix-aware',
+      kind: '원리',
+      title: 'Send it to the replica that has the same prefix',
+      text: [
+        'This request starts with the service’s common system prompt and the same document. Replica 2 just processed that same prefix.',
+        'If the picker chooses replica 2, the KV cache for that prefix is reused and most of the prompt reading (prefill) is skipped. The first token arrives sooner and accelerator compute is saved.',
+      ],
+      keyIdea: 'Each replica has its own prefix cache. Even if an engine holds the cache, it is useless when the request goes to another replica. Routing makes or breaks the cache benefit.',
+      flows: [
+        {from: 'epp', to: 'gw', label: 'Replica 2', type: 'response', bend: 0.15},
+        {from: 'gw', to: 'r2', label: 'forward', type: 'request', bend: -0.1},
+      ],
+      focus: ['r2'],
+      status: {r2: 'ok'},
+      badges: {r2: 'cache hit'},
+      values: {pick: 'Replica 2', why: {text: 'prefix cache hit', tone: 'good'}},
+    },
+    {
+      short: 'Load-aware',
+      kind: '주의',
+      title: 'Following the cache alone piles traffic onto one replica',
+      text: [
+        'If requests with the same system prompt keep coming, a cache-only picker sends them all to replica 2. Its queue grows while the others sit idle.',
+        'So load counts too. When replica 2 is too busy, giving up the cache and sending to idle replica 1 is faster overall.',
+      ],
+      flows: [
+        {from: 'epp', to: 'gw', label: 'Replica 1', type: 'response', bend: 0.15},
+        {from: 'gw', to: 'r1', label: 'forward', type: 'request', bend: 0.1},
+      ],
+      focus: ['r1', 'r2'],
+      status: {r2: 'warn', r1: 'ok'},
+      badges: {r2: 'long queue', r1: 'idle'},
+      values: {pick: 'Replica 1', why: 'low load (cache skipped)'},
+    },
+    {
+      short: 'Score',
+      kind: '원리',
+      title: 'Score several criteria and add them up',
+      text: [
+        'The picker first filters out replicas that cannot take the request (not ready, KV cache full, and so on). It then scores each remaining replica per criterion.',
+        'Scores such as "prefix cache hit", "short queue", and "free KV cache" are weighted and summed, and the highest replica wins. Tune the weights to the workload.',
+      ],
+      keyIdea: 'Workloads with many shared prefixes (same system prompt, questions on the same document) favor the cache score; workloads with wildly varying request lengths favor the load score.',
+      flows: [{from: 'gw', to: 'epp', label: 'next request', type: 'request'}],
+      focus: ['epp'],
+      status: {r1: null, r2: null},
+      badges: {r1: 'score 0.7', r2: 'score 0.6', r3: 'excluded'},
+      values: {pick: 'highest score', why: 'cache + load combined'},
+    },
+    {
+      short: 'Response',
+      kind: '원리',
+      title: 'The answer returns through the same gateway',
+      text: [
+        'Tokens from the chosen replica stream back through the gateway to the application. The application never needs to know which replica answered.',
+        'A gateway that enforces token-based limits counts the tokens used once the response ends.',
+      ],
+      flows: [
+        {from: 'r1', to: 'gw', label: 'answer tokens', type: 'response', bend: -0.1},
+        {from: 'gw', to: 'app', type: 'response'},
+      ],
+      focus: ['app'],
+      badges: {r1: null, r2: null, r3: null},
+    },
+    {
+      short: 'Recap',
+      kind: '정리',
+      title: 'Gateway picks the model, picker picks the replica',
+      text: [
+        'The gateway enforces auth and limits and picks the target by model name. The endpoint picker (EPP) watches replica state and chooses one per request.',
+        'Prefix cache hits speed up the first token; counting load prevents pile-ups. Weight the two by workload.',
+      ],
+      keyIdea: 'If adding replicas does not speed up the first token, suspect the routing rules first. Comparing waiting requests and prefix cache hit rate per replica separates pile-ups from a scattered cache.',
+      focus: ['epp'],
+    },
+  ]}
+/>
+
+## On Kubernetes
+
+In the Gateway API Inference Extension, the replicas of one model are defined as an **InferencePool**, and the endpoint picker (EPP) attached to it chooses a replica per request. The gateway is any implementation that supports the extension. Projects such as llm-d add prefix-cache and load-based scoring on top, and for prefill/decode disaggregated serving they choose a prefill replica and a decode replica together. For what the prefix cache is, see [How the KV Cache Fills Up](../llm/kv-cache.mdx); for split serving, see [Splitting Prefill and Decode (P/D Disaggregation)](../llm/pd-disaggregation.mdx).
+
+Further reading: [Gateway API Inference Extension](https://gateway-api-inference-extension.sigs.k8s.io/) · [llm-d](https://llm-d.ai/) · [vLLM docs](https://docs.vllm.ai/)

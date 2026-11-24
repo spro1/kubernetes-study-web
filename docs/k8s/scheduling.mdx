@@ -1,8 +1,10 @@
 ---
 id: scheduling
 title: Which Node Gets the Pod (Scheduling)
-sidebar_label: 12 · Which Node Gets the Pod
+sidebar_label: 01 · Which Node Gets the Pod
 description: Follow, step by step, how the scheduler filters nodes by requests and scores them, how taints, tolerations, node selectors, and anti-affinity change placement, and what Pending means when no node fits
+summary: 'Filtering by requests and scoring, and rules that pin Pods to nodes or keep them away.'
+icon: target
 hide_table_of_contents: true
 ---
 
@@ -168,5 +170,3 @@ A web pod and a GPU job pod arrive in a cluster with three nodes. Let's see whic
 | Pod anti-affinity | Pod avoids other pods | Puts replicas of the same app on different nodes | One web replica per node |
 
 Further reading: [Kubernetes Scheduler](https://kubernetes.io/docs/concepts/scheduling-eviction/kube-scheduler/) · [Assigning Pods to Nodes](https://kubernetes.io/docs/concepts/scheduling-eviction/assign-pod-node/) · [Taints and Tolerations](https://kubernetes.io/docs/concepts/scheduling-eviction/taint-and-toleration/)
-
-Next lesson: [Draining Nodes and Upgrading the Cluster](./node-drain.mdx)

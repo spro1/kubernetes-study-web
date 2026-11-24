@@ -4,7 +4,7 @@
 
 **See how Kubernetes actually works, one animated step at a time.**
 
-What happens after `kubectl apply`? 61 interactive lessons take you from cloud basics to Kubernetes internals and CKA/CKAD/CKS topics. Each step shows which components join in and where each request travels.
+What happens after `kubectl apply`? 75 interactive lessons take you from cloud basics to Kubernetes internals, GPUs/NPUs on Kubernetes and LLM serving. Each step shows which components join in and where each request travels.
 
 ### 👉 [Open the site: spro1.github.io/kubernetes-study-web](https://spro1.github.io/kubernetes-study-web/)
 
@@ -28,21 +28,26 @@ K8s Flow draws that order. Each click brings in the next component and shows the
 
 ## Tracks
 
+Tracks go from easy to hard. The [lessons page](https://spro1.github.io/kubernetes-study-web/lessons) also maps the KCNA, CKAD, CKA and CKS exams to tracks.
+
 | Track | Lessons | Covers |
 | --- | :-: | --- |
-| [Cloud basics](https://spro1.github.io/kubernetes-study-web/cloud/service-models) | 5 | IaaS/PaaS/SaaS, VPC request path, AZ failover, auto scaling groups, IAM |
-| [Foundations](https://spro1.github.io/kubernetes-study-web/basic/web-request) | 8 | Web requests, HTTPS certificates, servers to containers, images, desired state, Git, CI/CD |
-| [How Kubernetes works](https://spro1.github.io/kubernetes-study-web/k8s/pod-startup) | 14 | Pod startup, traffic, rolling updates, HPA, self-healing, ConfigMap/Secret, PVC, DNS, NetworkPolicy, RBAC, Jobs, scheduling, node drain, DRA |
-| [Networking, mesh & resources](https://spro1.github.io/kubernetes-study-web/feature/service-types) | 9 | Service types, Ingress and TLS, Istio sidecars, traffic splitting and gateways, quotas, GPU sharing, VPA |
-| [Intermediate](https://spro1.github.io/kubernetes-study-web/intermediate/probes) | 6 | Probes, requests and limits, reading Pod status, graceful shutdown, StatefulSets, GitOps |
-| [Advanced](https://spro1.github.io/kubernetes-study-web/advanced/api-request-path) | 12 | API request path, finalizers, CRDs and operators, etcd quorum, certificates, packet path, volume binding, preemption, Pod security, supply chain, audit logs, SLO alerts |
-| [Certification prep](https://spro1.github.io/kubernetes-study-web/cert/kubeadm-upgrade) | 7 | kubeadm upgrades, node troubleshooting, Kustomize, deployment strategies, multi-container Pods, runtime security, threat modeling |
+| [Foundations: web, servers, containers](https://spro1.github.io/kubernetes-study-web/basic/web-request) | 6 | Web requests and HTTPS, servers to containers, images, Git and CI/CD. What to know before Kubernetes. |
+| [Cloud basics](https://spro1.github.io/kubernetes-study-web/cloud/service-models) | 5 | IaaS/PaaS/SaaS, the VPC request path, availability-zone failover, auto scaling groups, IAM. |
+| [Kubernetes core](https://spro1.github.io/kubernetes-study-web/basic/desired-state) | 8 | Desired state, workload types, how a Pod starts, Services and DNS, config and volumes, Jobs. |
+| [Running workloads](https://spro1.github.io/kubernetes-study-web/intermediate/probes) | 11 | Probes, requests and limits, rolling updates, self-healing, graceful shutdown, HPA/VPA, StatefulSets, reading failures. |
+| [Networking & service mesh](https://spro1.github.io/kubernetes-study-web/feature/service-types) | 7 | Service types, Ingress and TLS, NetworkPolicy, Istio sidecars, traffic splitting and gateways, entry points compared. |
+| [Security & multi-tenancy](https://spro1.github.io/kubernetes-study-web/k8s/rbac) | 7 | RBAC, namespace quotas, Pod Security Standards, supply chain, runtime security, audit logs, threat modeling. |
+| [Cluster operations](https://spro1.github.io/kubernetes-study-web/k8s/scheduling) | 7 | Scheduling, node drains, kubeadm upgrades, node troubleshooting, Kustomize, GitOps, SLO alerts. |
+| [Kubernetes internals](https://spro1.github.io/kubernetes-study-web/advanced/api-request-path) | 8 | API request path, finalizers, CRDs and operators, etcd quorum, certificates, packet path, volume binding, preemption. |
+| [AI on Kubernetes · GPU/NPU](https://spro1.github.io/kubernetes-study-web/ai/device-plugin) | 10 | Device plugins and DRA, sharing GPUs, model packaging, training jobs, cold starts, inference requests and routing. |
+| [How LLM serving works](https://spro1.github.io/kubernetes-study-web/llm/token-generation) | 6 | Token generation, prefill and decode, KV cache, continuous batching, KV offloading, prefill/decode disaggregation. |
 
 ## Contributing
 
 Corrections, translations and new lesson ideas are all welcome. Open an [issue](https://github.com/spro1/kubernetes-study-web/issues) or send a PR.
 
-Each lesson is a single MDX file: `docs/<track>/<lesson>.mdx` for English and `i18n/ko/docusaurus-plugin-content-docs/current/<track>/<lesson>.mdx` for Korean. A lesson is one `<StepDiagram nodes={...} steps={...} />` element with node positions and per-step flows. Copying an existing lesson is the fastest way to start. The component's props are documented at the top of [`src/components/StepDiagram.jsx`](src/components/StepDiagram.jsx), and the track order lives in [`src/data/tracks.js`](src/data/tracks.js).
+Each lesson is a single MDX file: `docs/<track>/<lesson>.mdx` for English and `i18n/ko/docusaurus-plugin-content-docs/current/<track>/<lesson>.mdx` for Korean. A lesson is one `<StepDiagram nodes={...} steps={...} />` element with node positions and per-step flows. Copying an existing lesson is the fastest way to start. The component's props are documented at the top of [`src/components/StepDiagram.jsx`](src/components/StepDiagram.jsx). The curriculum lives in [`src/data/tracks.js`](src/data/tracks.js); after adding or reordering lessons run `node scripts/build-lesson-index.js` to regenerate the lesson list and numbering.
 
 ```bash
 npm install
@@ -56,7 +61,7 @@ Every push to `main` is built and deployed to GitHub Pages by GitHub Actions.
 
 ## 한국어
 
-**쿠버네티스가 실제로 움직이는 모습을 단계별 애니메이션으로 배운다.** 클라우드 기초부터 쿠버네티스 내부, 자격증 범위까지 61개 레슨이 있다. 설치 없이 [한국어 사이트](https://spro1.github.io/kubernetes-study-web/ko/)에서 바로 볼 수 있다. 틀린 내용 제보와 레슨 제안은 이슈로 남겨 주세요.
+**쿠버네티스가 실제로 움직이는 모습을 단계별 애니메이션으로 배운다.** 클라우드 기초부터 쿠버네티스 내부, GPU·NPU와 LLM 서빙까지 75개 레슨이 있다. 설치 없이 [한국어 사이트](https://spro1.github.io/kubernetes-study-web/ko/)에서 바로 볼 수 있다. 틀린 내용 제보와 레슨 제안은 이슈로 남겨 주세요.
 
 ---
 

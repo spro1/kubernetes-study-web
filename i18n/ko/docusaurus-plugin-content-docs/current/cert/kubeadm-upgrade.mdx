@@ -1,8 +1,10 @@
 ---
 id: kubeadm-upgrade
 title: kubeadm으로 클러스터 업그레이드 (CKA)
-sidebar_label: 01 · kubeadm 업그레이드
+sidebar_label: 03 · kubeadm 업그레이드
 description: kubeadm으로 만든 클러스터를 한 마이너 버전 올릴 때 컨트롤 플레인(kubeadm → plan → apply → kubelet)과 워커(kubeadm → upgrade node → drain → kubelet → uncordon)를 어떤 순서로 다루는지 애니메이션으로 따라간다
+summary: '컨트롤 플레인부터 워커까지, 마이너 버전 하나씩 올리는 순서.'
+icon: layers
 hide_table_of_contents: true
 ---
 
@@ -192,5 +194,3 @@ CKA의 Cluster Architecture, Installation and Configuration(25%) 영역 중 "클
 | 작업이 끝났다 | `kubectl uncordon`, `kubectl get nodes`로 Ready·VERSION 확인 | uncordon을 빼먹으면 노드가 SchedulingDisabled로 남는다 |
 
 더 읽을거리: [CNCF 자격증 출제 범위](https://github.com/cncf/curriculum) · [kubeadm 클러스터 업그레이드](https://kubernetes.io/docs/tasks/administer-cluster/kubeadm/kubeadm-upgrade/) · [버전 차이(skew) 정책](https://kubernetes.io/docs/setup/release/version-skew-policy/) · [노드 비우기와 클러스터 업그레이드](../k8s/node-drain.mdx)
-
-다음 레슨: [노드 NotReady와 구성요소 장애 (CKA)](./node-troubleshoot.mdx)

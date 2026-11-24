@@ -3,6 +3,8 @@ id: az-failover
 title: When One Availability Zone Goes Down
 sidebar_label: 03 · When One AZ Goes Down
 description: Follow in animation what happens to load balancer health checks, standby replica promotion, and RPO and RTO when one of two availability zones holding servers and a primary/standby DB goes down
+summary: 'How health checks pull traffic and a standby DB is promoted, and what RPO and RTO mean.'
+icon: alert
 hide_table_of_contents: true
 ---
 
@@ -181,5 +183,3 @@ The store's servers and DB are split across two availability zones within one re
 | Primary/standby DB across zones | RDS Multi-AZ deployment | Zone-redundant high availability (Flexible Server) | Cloud SQL high availability (regional instance) |
 
 Further reading: [Running in multiple zones (Kubernetes docs)](https://kubernetes.io/docs/setup/best-practices/multiple-zones/) · [Pod Topology Spread Constraints](https://kubernetes.io/docs/concepts/scheduling-eviction/topology-spread-constraints/) · [Regions and Availability Zones (AWS)](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/using-regions-availability-zones.html)
-
-Next lesson: [Auto-Scaling VMs (Auto Scaling Groups)](./auto-scaling-group.mdx)

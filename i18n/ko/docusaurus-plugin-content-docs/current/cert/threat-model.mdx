@@ -3,6 +3,8 @@ id: threat-model
 title: 4C와 위협 모델로 클러스터 보기 (KCSA·KCNA)
 sidebar_label: 07 · 4C와 위협 모델
 description: 공격자 한 명이 Code·Container·Cluster 경계를 차례로 넘으려 할 때 위협 모델의 각 항목이 어디서 생기고 어떤 장치가 막는지를 애니메이션으로 따라간다
+summary: '공격자가 경계를 넘는 길을 따라가며 경계마다의 방어를 본다.'
+icon: shield
 hide_table_of_contents: true
 ---
 
@@ -196,8 +198,6 @@ KCSA 출제 영역 중 Overview of Cloud Native Security(14%)의 4C와 Kubernete
 | 서비스 거부 | requests·limits, ResourceQuota, API 우선순위와 공정성 | limits가 없으면 한 파드가 노드의 이웃 파드까지 굶긴다 |
 | 지속성·침해 경로 추적 | 감사 로그에서 create·exec 요청과 사용자를 확인 | 감사 로그는 감사 정책을 설정해야 남는다 |
 
-경계별 방어를 하나씩 깊게 보려면 [통신 막고 열기](../k8s/network-policy.mdx), [누가 무엇을 할 수 있나 (RBAC)](../k8s/rbac.mdx), [파드 보안 기준과 securityContext](../advanced/pod-security.mdx), [감사 로그](../advanced/audit-log.mdx) 레슨을 이어서 본다.
+경계별 방어를 하나씩 깊게 보려면 [통신 막고 열기 (네트워크 정책)](../k8s/network-policy.mdx), [누가 무엇을 할 수 있나 (RBAC)](../k8s/rbac.mdx), [파드 보안 기준과 securityContext](../advanced/pod-security.mdx), [감사 로그](../advanced/audit-log.mdx) 레슨을 이어서 본다.
 
 더 읽을거리: [CNCF 자격증 출제 범위](https://github.com/cncf/curriculum) · [클라우드 네이티브 보안 개요](https://kubernetes.io/ko/docs/concepts/security/overview/) · [멀티 테넌시](https://kubernetes.io/docs/concepts/security/multi-tenancy/)
-
-다음 레슨: [누가 어디까지 맡나 — IaaS·PaaS·SaaS (클라우드 기초)](../cloud/service-models.mdx)

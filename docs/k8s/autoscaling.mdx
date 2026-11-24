@@ -1,8 +1,10 @@
 ---
 id: autoscaling
 title: Scaling with Load (HPA)
-sidebar_label: 04 · Scaling with Load
+sidebar_label: 08 · Scaling with Load
 description: Follow metric collection, the HPA's desired-replica calculation, the Deployment change, scheduling, and the point where Pods get stuck in Pending for lack of node capacity, step by step.
+summary: 'Measuring usage, computing the Pod count needed, and where it stops when node resources run out.'
+icon: scale
 hide_table_of_contents: true
 ---
 
@@ -176,5 +178,3 @@ A service that normally runs fine on two Pods suddenly gets a flood of requests.
 | Load dropped but Pods stay | Whether the scale-in stabilization window has passed, the minimum replica count |
 
 Further reading: [Horizontal Pod Autoscaling](https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/) · [HPA Walkthrough](https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale-walkthrough/)
-
-Next lesson: [When a Pod Dies (Self-Healing)](./self-healing.mdx)

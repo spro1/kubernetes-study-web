@@ -1,8 +1,10 @@
 ---
 id: job-cronjob
 title: Run Once and Finish (Job · CronJob)
-sidebar_label: 11 · Run Once and Finish
+sidebar_label: 08 · Run Once and Finish
 description: Follow how a Job creates a Pod, watches it to completion, and retries on failure, and how a CronJob creates Jobs on a schedule and handles overlapping runs and history.
+summary: 'Tasks that run to completion and stop, retries on failure, and tasks that run on a schedule.'
+icon: spark
 hide_table_of_contents: true
 ---
 
@@ -160,5 +162,3 @@ A program that builds a monthly report does not need to stay up. It just needs t
 | `Replace` | Deletes the running Job and starts a new one | Work where only the latest run matters |
 
 Further reading: [Jobs](https://kubernetes.io/docs/concepts/workloads/controllers/job/) · [CronJob](https://kubernetes.io/docs/concepts/workloads/controllers/cron-jobs/)
-
-Next lesson: [Which Node Gets the Pod (Scheduling)](./scheduling.mdx)

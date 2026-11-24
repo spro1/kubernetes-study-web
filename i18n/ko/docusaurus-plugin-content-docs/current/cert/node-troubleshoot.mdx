@@ -1,8 +1,10 @@
 ---
 id: node-troubleshoot
 title: 노드 NotReady와 구성요소 장애 (CKA)
-sidebar_label: 02 · 노드·구성요소 장애
+sidebar_label: 04 · 노드·구성요소 장애
 description: 노드가 NotReady일 때 kubelet 상태와 로그로 원인을 좁히는 순서, 그리고 정적 파드로 도는 API 서버가 죽어 kubectl이 안 될 때 crictl로 확인하고 매니페스트를 고치는 과정을 애니메이션으로 따라간다
+summary: 'kubelet·런타임·정적 파드를 차례로 확인하는 노드 장애 해결.'
+icon: alert
 hide_table_of_contents: true
 ---
 
@@ -186,5 +188,3 @@ CKA의 Troubleshooting(30%) 영역 중 "클러스터·노드"와 "클러스터 �
 | 정적 파드 설정이 틀렸다 | `/etc/kubernetes/manifests/` 아래 파일을 직접 수정 | `kubectl edit`·`kubectl delete`로는 고칠 수 없다. 파일을 고쳐야 kubelet이 다시 만든다 |
 
 더 읽을거리: [CNCF 자격증 출제 범위](https://github.com/cncf/curriculum) · [클러스터 트러블슈팅](https://kubernetes.io/docs/tasks/debug/debug-cluster/) · [crictl로 노드 디버깅](https://kubernetes.io/docs/tasks/debug/debug-cluster/crictl/) · [파드가 죽으면 (자가 치유)](../k8s/self-healing.mdx) · [클러스터 인증서 만료](../advanced/cluster-cert.mdx)
-
-다음 레슨: [Kustomize로 환경별 배포 (CKA·CKAD)](./kustomize.mdx)

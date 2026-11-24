@@ -1,8 +1,10 @@
 ---
 id: multi-container
 title: 멀티 컨테이너 파드 — init과 사이드카 (CKAD)
-sidebar_label: 05 · 멀티 컨테이너 파드
+sidebar_label: 07 · 멀티 컨테이너 파드
 description: init 컨테이너가 순서대로 끝난 뒤 사이드카와 앱 컨테이너가 시작되고, 같은 파드 안 컨테이너가 localhost와 emptyDir을 함께 쓰는 과정을 애니메이션으로 따라간다
+summary: 'init 컨테이너의 순서, 사이드카, 같은 파드 안에서 나눠 쓰는 것.'
+icon: pod
 hide_table_of_contents: true
 ---
 
@@ -199,5 +201,3 @@ CKAD 출제 영역 중 Application Design and Build(20%)의 "멀티 컨테이너
 | 두 컨테이너가 같은 포트를 연다 | 한쪽 포트를 바꾼다 | 같은 파드는 IP 하나를 함께 써서 포트가 겹친다 |
 
 더 읽을거리: [CNCF 자격증 출제 범위](https://github.com/cncf/curriculum) · [초기화 컨테이너](https://kubernetes.io/ko/docs/concepts/workloads/pods/init-containers/) · [사이드카 컨테이너](https://kubernetes.io/docs/concepts/workloads/pods/sidecar-containers/) · [볼륨](https://kubernetes.io/ko/docs/concepts/storage/volumes/) · [서비스 메시 ① 사이드카와 상호 인증](../feature/mesh-sidecar.mdx)
-
-다음 레슨: [런타임 보안 — 이상 행동 잡기 (CKS)](./runtime-security.mdx)

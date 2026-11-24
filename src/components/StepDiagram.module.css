@@ -922,3 +922,59 @@
     stroke-dashoffset: 0;
   }
 }
+
+/* ── 좁은 화면 ─────────────────────────
+   상태 값은 2열로 촘촘히, 도구 버튼은 아래 줄로. */
+@media (max-width: 700px) {
+  /* 이전/다음 버튼을 다이어그램 바로 아래(설명 위)로 올린다. */
+  .panel {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .nav {
+    order: -1;
+    margin: 0 0 12px;
+  }
+
+  .stageBar {
+    flex-direction: column;
+    align-items: stretch;
+    padding: 8px;
+  }
+
+  .metrics {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .metric {
+    min-width: 0;
+    padding: 3px 8px;
+  }
+
+  .metricLabel {
+    font-size: 10.5px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .metricValue {
+    font-size: 12.5px;
+  }
+
+  .stageTools {
+    justify-content: flex-end;
+  }
+
+  .legend {
+    gap: 4px 10px;
+    padding: 6px 10px;
+    font-size: 11.5px;
+  }
+
+  .keys {
+    display: none;
+  }
+}

@@ -3,6 +3,8 @@ id: crd-operator
 title: CRD와 오퍼레이터
 sidebar_label: 03 · CRD와 오퍼레이터
 description: CRD로 새 자원 종류를 등록하고, 오퍼레이터가 그 자원을 지켜보며 하위 자원을 만들고 상태를 보고하는 흐름과 CRD 삭제의 위험을 애니메이션으로 따라간다
+summary: '새 자원 종류를 등록하고 오퍼레이터가 하위 자원을 만들어 맞추는 흐름.'
+icon: gear
 hide_table_of_contents: true
 ---
 
@@ -188,5 +190,3 @@ hide_table_of_contents: true
 | 백업 일정이 한꺼번에 사라졌다 | CRD 삭제로 그 종류의 CR이 모두 삭제됨 | 도구 제거·업그레이드 이력 |
 
 더 읽을거리: [커스텀 리소스](https://kubernetes.io/ko/docs/concepts/extend-kubernetes/api-extension/custom-resources/) · [오퍼레이터 패턴](https://kubernetes.io/ko/docs/concepts/extend-kubernetes/operator/) · [Velero](https://velero.io/docs/) · 삭제가 멈추는 원리는 [삭제는 생각보다 복잡하다](./deletion-finalizer.mdx)
-
-다음 레슨: [컨트롤 플레인 고가용성과 etcd 쿼럼](./etcd-quorum.mdx)

@@ -1,8 +1,10 @@
 ---
 id: cicd-pipeline
 title: How a Pipeline Runs
-sidebar_label: 08 · Pipeline Order
+sidebar_label: 06 · Pipeline Order
 description: Follow in animation the general flow of a CI/CD pipeline, from trigger through build, test and artifact to deploys to dev, staging and production, stopping right where something fails
+summary: 'Trigger → build → test → artifact → deploy per environment, and where it stops on failure.'
+icon: hammer
 hide_table_of_contents: true
 ---
 
@@ -183,5 +185,3 @@ CI/CD means defining the build → test → deploy process for a code change in 
 | Rollback | You need earlier deploy records to roll back | Roll back to a previous revision with `kubectl rollout undo`, or with GitOps revert the Git commit |
 
 Further reading: [Deployment rollback](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/) · [Argo CD](https://argo-cd.readthedocs.io/) · [Tekton](https://tekton.dev/docs/) · [Helm and GitOps](../intermediate/gitops-sync.mdx)
-
-Next lesson: [Health checks — alive, and ready for requests?](../intermediate/probes.mdx)

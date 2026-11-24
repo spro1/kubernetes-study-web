@@ -1,8 +1,10 @@
 ---
 id: pod-security
 title: Pod Security Standards and securityContext
-sidebar_label: 09 · Pod Security Standards
+sidebar_label: 03 · Pod Security Standards
 description: Set Pod Security Standards with namespace labels, watch a privileged Pod get rejected at admission, and see a Pod fixed with securityContext pass, step by step with animation
+summary: 'How a namespace security standard rejects risky Pods, and securityContext.'
+icon: shield
 hide_table_of_contents: true
 ---
 
@@ -205,5 +207,3 @@ If a Pod runs as root (the admin account) or borrows node privileges, one breach
 The full set of API server gates (authentication, authorization, admission) is covered in [How an API Request Gets Stored](./api-request-path.mdx).
 
 Further reading: [Pod Security Standards](https://kubernetes.io/docs/concepts/security/pod-security-standards/) · [Pod Security Admission](https://kubernetes.io/docs/concepts/security/pod-security-admission/) · [Configure a security context for a Pod or container](https://kubernetes.io/docs/tasks/configure-pod-container/security-context/)
-
-Next lesson: [Image and Supply Chain Security](./supply-chain.mdx)

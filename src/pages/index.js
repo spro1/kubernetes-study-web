@@ -36,11 +36,12 @@ const LAYOUT = {
 const TEXT = {
   ko: {
     pageTitle: '쿠버네티스 동작 원리를 그림으로',
+    description: '쿠버네티스가 실제로 어떻게 움직이는지 단계별 애니메이션 다이어그램으로 배운다',
     eyebrow: '무료 · 오픈 소스 · 설치 없이 브라우저에서',
-    title: ['kubectl apply 한 줄 뒤에서', '무슨 일이 일어나는지 ', '눈으로 따라가 본다'],
-    lead: '클라우드 기초부터 쿠버네티스 내부, 자격증 범위까지 61개 레슨. 단계마다 구성요소가 나타나고 요청이 흐른다.',
+    title: ['kubectl apply 한 줄 뒤에서', '무슨 일이 일어나는지', '눈으로 따라가 본다'],
+    lead: (n) => `클라우드 기초부터 쿠버네티스 내부, GPU·NPU와 LLM 서빙, 자격증 범위까지 ${n}개 레슨. 단계마다 구성요소가 나타나고 요청이 흐른다.`,
     start: '첫 레슨 시작 →', all: '전체 레슨', star: '⭐ GitHub',
-    stats: [['61', '레슨'], ['7', '트랙'], ['10분', '레슨 하나']],
+    stats: (n, k) => [[n, '레슨'], [k, '트랙'], ['10분', '레슨 하나']],
     demoTitle: '여기서 바로 눌러 보자',
     demoLead: '오른쪽 다음 버튼을 누르거나 ▶ 자동 진행을 켜면 파드가 뜨는 과정이 이어진다.',
     resume: '이어서 학습하기 →', progressTitle: '내 진도', progress: (d, n) => `${n}개 중 ${d}개 완료`, reset: '진도 초기화', localNote: '진도는 이 브라우저에만 저장된다.',
@@ -52,16 +53,7 @@ const TEXT = {
       ['🎬', '움직이는 다이어그램', '요청이 어느 구성요소를 거치는지 패킷이 흐르는 모습으로 보여 준다.'],
       ['🪜', '한 단계씩, 10분 안팎', '레슨마다 8~9단계다. 직접 넘기거나 자동 진행으로 영상처럼 본다.'],
       ['🧭', '원리와 운영 포인트', '단계마다 핵심 개념, 주의할 점, 상태 값 변화가 함께 나온다.'],
-      ['🎓', 'CKA·CKAD·CKS 범위', '시험에 나오는 흐름을 따로 모아 그림으로 기억하게 했다.'],
-    ],
-    tracks: [
-      ['클라우드 기초', 'IaaS·PaaS·SaaS, VPC, 가용 영역 장애 조치, 오토스케일링 그룹, IAM.'],
-      ['기초 흐름', '웹 요청과 HTTPS, 서버에서 컨테이너로, 이미지, 원하는 상태, CI/CD.'],
-      ['쿠버네티스는 이렇게 움직인다', '파드 생성, 트래픽, 롤링 업데이트, HPA, 자가 치유, RBAC, 스케줄링, DRA.'],
-      ['네트워크·서비스 메시·자원', 'Service 종류, Ingress와 TLS, Istio 사이드카와 트래픽 분할, 쿼터, GPU 공유, VPA.'],
-      ['중급 흐름', 'Probe, requests와 limits, 상태로 장애 읽기, 정상 종료, StatefulSet, GitOps.'],
-      ['고급 흐름', 'API 요청 경로, 파이널라이저, 오퍼레이터, etcd 쿼럼, 패킷 경로, 공급망 보안.'],
-      ['자격증 대비 흐름', 'kubeadm 업그레이드, 노드 장애, Kustomize, 배포 전략, 런타임 보안.'],
+      ['🎓', 'KCNA·CKA·CKAD·CKS', '시험에 나오는 흐름 대부분을 다룬다. 시험별로 볼 트랙은 전체 레슨 페이지에 정리했다.'],
     ],
     demo: {
       meta: {duration: '약 2분', level: '맛보기'},
@@ -79,11 +71,12 @@ const TEXT = {
   },
   en: {
     pageTitle: 'See how Kubernetes works',
+    description: 'Learn how Kubernetes really works through step-by-step animated diagrams',
     eyebrow: 'Free · Open source · Runs in your browser',
-    title: ['What happens after', 'kubectl apply? ', 'Watch it, step by step'],
-    lead: '61 animated lessons, from cloud basics to Kubernetes internals and certification topics. Each step brings in components and sends requests across the diagram.',
+    title: ['What happens after', 'kubectl apply?', 'Watch it, step by step'],
+    lead: (n) => `${n} animated lessons, from cloud basics to Kubernetes internals, GPUs/NPUs, LLM serving and certification topics. Each step brings in components and sends requests across the diagram.`,
     start: 'Start the first lesson →', all: 'All lessons', star: '⭐ GitHub',
-    stats: [['61', 'lessons'], ['7', 'tracks'], ['10 min', 'per lesson']],
+    stats: (n, k) => [[n, 'lessons'], [k, 'tracks'], ['10 min', 'per lesson']],
     demoTitle: 'Try it right here',
     demoLead: 'Press Next on the right, or turn on ▶ Autoplay, to watch a Pod come to life.',
     resume: 'Continue learning →', progressTitle: 'Your progress', progress: (d, n) => `${d} of ${n} lessons done`, reset: 'Reset progress', localNote: 'Progress is saved in this browser only.',
@@ -95,16 +88,7 @@ const TEXT = {
       ['🎬', 'Animated diagrams', 'Watch packets travel through each component a request actually touches.'],
       ['🪜', 'One step at a time', 'Each lesson has 8–9 steps. Click through or let autoplay run it like a video.'],
       ['🧭', 'Concepts and operations', 'Every step shows the key idea, the pitfalls, and how state values change.'],
-      ['🎓', 'CKA · CKAD · CKS', 'Exam topics collected as flows you can picture, not just memorize.'],
-    ],
-    tracks: [
-      ['Cloud basics', 'IaaS/PaaS/SaaS, VPC, availability-zone failover, auto scaling groups, IAM.'],
-      ['Foundations', 'Web requests and HTTPS, servers to containers, images, desired state, CI/CD.'],
-      ['How Kubernetes works', 'Pod startup, traffic, rolling updates, HPA, self-healing, RBAC, scheduling, DRA.'],
-      ['Networking, mesh & resources', 'Service types, Ingress and TLS, Istio sidecars and traffic splitting, quotas, GPU sharing, VPA.'],
-      ['Intermediate', 'Probes, requests and limits, reading Pod status, graceful shutdown, StatefulSets, GitOps.'],
-      ['Advanced', 'API request path, finalizers, operators, etcd quorum, packet path, supply-chain security.'],
-      ['Certification prep', 'kubeadm upgrades, node troubleshooting, Kustomize, deployment strategies, runtime security.'],
+      ['🎓', 'KCNA · CKA · CKAD · CKS', 'Most exam flows are covered. The lessons page maps each exam to the tracks to start with.'],
     ],
     demo: {
       meta: {duration: '~2 min', level: 'Preview'},
@@ -147,17 +131,17 @@ export default function Home() {
   const total = TRACKS.reduce((n, tr) => n + tr.lessons.length, 0);
   const started = ready && (done.size > 0 || last);
   // 다음에 볼 레슨: 마지막으로 본 레슨이 끝났으면 순서상 다음 미완료 레슨.
-  const order = TRACKS.flatMap((tr) => tr.lessons.map((l) => `${tr.dir}/${l}`));
+  const order = TRACKS.flatMap((tr) => tr.lessons);
   const nextId = last && !done.has(last) ? last : order.find((id) => !done.has(id)) ?? order[0];
   const repo = `https://github.com/${siteConfig.organizationName}/${siteConfig.projectName}`;
   return (
-    <Layout title={t.pageTitle} description={siteConfig.tagline}>
+    <Layout title={t.pageTitle} description={t.description}>
       <header className={styles.hero}>
         <span className={styles.eyebrow}>{t.eyebrow}</span>
         <h1 className={styles.title}>
-          {t.title[0]}<br /><span className={styles.grad}>{t.title[1]}</span>{t.title[2]}
+          {t.title[0]}<br /><span className={styles.grad}>{t.title[1]}</span><br />{t.title[2]}
         </h1>
-        <p className={styles.lead}>{t.lead}</p>
+        <p className={styles.lead}>{t.lead(total)}</p>
         <div className={styles.ctas}>
           {started ? (
             <Link className={styles.primary} to={`/${nextId}`}>{t.resume}</Link>
@@ -181,7 +165,7 @@ export default function Home() {
           </div>
         )}
         <div className={styles.stats}>
-          {t.stats.map(([b, l]) => (
+          {t.stats(total, TRACKS.length).map(([b, l]) => (
             <div key={l} className={styles.stat}><b>{b}</b><span>{l}</span></div>
           ))}
         </div>
@@ -215,16 +199,17 @@ export default function Home() {
           </div>
           <div className={styles.tracks}>
             {TRACKS.map((tr, k) => {
-              const d = tr.lessons.filter((l) => done.has(`${tr.dir}/${l}`)).length;
-              const first = tr.lessons.find((l) => !done.has(`${tr.dir}/${l}`)) ?? tr.lessons[0];
+              const d = tr.lessons.filter((l) => done.has(l)).length;
+              const first = tr.lessons.find((l) => !done.has(l)) ?? tr.lessons[0];
+              const en = i18n.currentLocale !== 'ko';
               return (
-                <Link key={tr.dir} to={`/${tr.dir}/${first}`} className={styles.track} style={{'--c': tr.color}}>
+                <Link key={tr.key} to={`/${first}`} className={styles.track} style={{'--c': tr.color}}>
                   <div className={styles.trackTop}>
                     <span className={styles.trackNo}>{String(k + 1).padStart(2, '0')}</span>
                     <span className={styles.count}>{ready && d > 0 ? `${d}/${tr.lessons.length}` : t.lessons(tr.lessons.length)}</span>
                   </div>
-                  <h3>{t.tracks[k][0]}</h3>
-                  <p>{t.tracks[k][1]}</p>
+                  <h3>{en ? tr.en : tr.ko}</h3>
+                  <p>{en ? tr.enDesc : tr.koDesc}</p>
                   <div className={styles.trackMeter}><span style={{width: `${(d / tr.lessons.length) * 100}%`}} /></div>
                 </Link>
               );

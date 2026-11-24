@@ -3,6 +3,8 @@ id: volume-binding
 title: When Volumes Attach, and Failures
 sidebar_label: 07 · When Volumes Attach, and Failures
 description: Follow binding modes that decide when a volume is created, how local volumes and network storage differ when a node fails, the RWO multi-node trap, and volume expansion and snapshots, step by step with animation
+summary: 'Binding modes, and where local volumes and network storage part ways on node failure.'
+icon: disk
 hide_table_of_contents: true
 ---
 
@@ -192,5 +194,3 @@ The basic flow of requesting with a PVC and receiving a PV is in [How Storage Ge
 | With snapshots you do not need backups | Snapshots live on the same system and can be lost with it |
 
 Further reading: [Persistent volumes](https://kubernetes.io/docs/concepts/storage/persistent-volumes/) · [Storage classes](https://kubernetes.io/docs/concepts/storage/storage-classes/) · [Volume snapshots](https://kubernetes.io/docs/concepts/storage/volume-snapshots/)
-
-Next lesson: [Priority and Preemption](./priority-preemption.mdx)

@@ -1,8 +1,10 @@
 ---
 id: dra
 title: Requesting GPUs by Criteria (DRA)
-sidebar_label: 14 · GPUs by Criteria (DRA)
+sidebar_label: 02 · GPUs by Criteria (DRA)
 description: Follow Dynamic Resource Allocation (DRA), which requests a GPU as "a device matching these criteria" instead of "this many", through the driver, scheduler, and kubelet until the device is attached and released.
+summary: 'Dynamic resource allocation: requesting and getting GPUs as "devices that meet criteria", not "how many".'
+icon: disk
 hide_table_of_contents: true
 ---
 
@@ -190,5 +192,3 @@ Until now, Kubernetes could only request GPUs by count. **Dynamic Resource Alloc
 | Status in Kubernetes | Still widely used | Core API GA in 1.34; extra features graduate in later versions |
 
 Further reading: [Dynamic Resource Allocation](https://kubernetes.io/docs/concepts/scheduling-eviction/dynamic-resource-allocation/) · [Device Plugins](https://kubernetes.io/docs/concepts/extend-kubernetes/compute-storage-net/device-plugins/) · [Schedule GPUs](https://kubernetes.io/docs/tasks/manage-gpus/scheduling-gpus/)
-
-This is the last lesson in this track. Go back to the [lesson list](../index.mdx) and continue with another track.

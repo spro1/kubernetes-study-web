@@ -1,0 +1,209 @@
+---
+id: device-plugin
+title: How GPUs and NPUs become node resources (device plugins)
+sidebar_label: 01 · GPUs and NPUs as node resources
+description: Follow how a GPU or NPU in a server registers with the kubelet through a device plugin, becomes part of the node's allocatable resources, and gets attached to a Pod.
+summary: 'How drivers and device plugins register GPUs/NPUs with the kubelet, and how a Pod gets one by count.'
+icon: server
+hide_table_of_contents: true
+---
+
+# How GPUs and NPUs become node resources (device plugins)
+
+Out of the box, Kubernetes only knows about CPU and memory. Plugging a GPU or NPU into a server does not let Pods request it. A **device plugin** is what advertises the device to Kubernetes as a resource. Follow a device from the node until it is attached to a Pod.
+
+<StepDiagram
+  width={1000}
+  height={460}
+  meta={{duration: '~10 min', level: 'Intermediate'}}
+  groups={[
+    {label: 'Control plane', x: 200, y: 170, w: 370, h: 260, tone: 'mgmt'},
+    {label: 'GPU node · node-1', x: 595, y: 110, w: 390, h: 335, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'user', label: 'User', sub: 'Pod spec', icon: 'user', tone: 'ext', x: 90, y: 230, show: true},
+    {id: 'api', label: 'API server', sub: 'entry point', icon: 'gate', tone: 'cp', x: 290, y: 230, show: true},
+    {id: 'sched', label: 'Scheduler', sub: 'picks a node', icon: 'target', tone: 'cp', x: 290, y: 370, show: true},
+    {id: 'status', label: 'Node status', sub: 'capacity·allocatable', icon: 'db', tone: 'store', x: 480, y: 300, w: 170},
+    {id: 'kubelet', label: 'kubelet', sub: 'node-1', icon: 'agent', tone: 'node', x: 690, y: 185, w: 150, show: true},
+    {id: 'plugin', label: 'Device plugin', sub: 'DaemonSet Pod', icon: 'gear', tone: 'node', x: 690, y: 300, w: 160},
+    {id: 'driver', label: 'Driver·toolkit', sub: 'installed first', icon: 'layers', tone: 'node', x: 690, y: 400, w: 160},
+    {id: 'pod', label: 'train', sub: 'Pod', icon: 'pod', tone: 'app', size: 'sm', w: 100, x: 910, y: 160},
+    {id: 'gpu0', label: 'gpu-0', sub: 'accel', icon: 'disk', tone: 'node', size: 'sm', w: 100, x: 910, y: 270, show: true},
+    {id: 'gpu1', label: 'gpu-1', sub: 'accel', icon: 'disk', tone: 'node', size: 'sm', w: 100, x: 910, y: 370, show: true},
+  ]}
+  metrics={[
+    {id: 'alloc', label: 'Allocatable GPUs'},
+    {id: 'devs', label: 'Healthy devices'},
+    {id: 'state', label: 'Pod status'},
+  ]}
+  learn={[
+    {text: 'What the driver and the device plugin each do', at: 0},
+    {text: 'How a plugin registers and reports its devices', at: 1},
+    {text: 'How the device count lands in node allocatable', at: 3},
+    {text: 'Extended resource rules and the Allocate call', at: 4},
+    {text: 'What happens when a device fails', at: 8},
+  ]}
+  steps={[
+    {
+      short: 'Driver',
+      kind: '시작',
+      title: 'The driver and container toolkit come first',
+      text: [
+        'node-1 has two accelerators, gpu-0 and gpu-1. The OS needs a driver to use them, and the container runtime needs a toolkit that can inject the devices into containers.',
+        'For NVIDIA GPUs, the GPU Operator often installs the driver, container toolkit, device plugin and monitoring as DaemonSets in one go. NPU vendors ship their own driver and device plugin.',
+      ],
+      keyIdea: 'With only the driver, the OS sees the devices but Kubernetes does not. kubectl describe node shows no GPU entry yet.',
+      flows: [
+        {from: 'driver', to: 'gpu0', type: 'request'},
+        {from: 'driver', to: 'gpu1', type: 'request'},
+      ],
+      focus: ['driver', 'gpu0', 'gpu1'],
+      values: {alloc: '0', devs: '—', state: '—'},
+    },
+    {
+      short: 'Register',
+      kind: '원리',
+      title: 'The device plugin registers with the kubelet',
+      text: [
+        'A device plugin usually runs as a DaemonSet Pod, one per node. It first opens its own Unix socket under /var/lib/kubelet/device-plugins/ and serves gRPC on it.',
+        'It then calls Register on kubelet.sock in the same directory, sending its API version, socket name and resource name. NVIDIA uses nvidia.com/gpu; NPU vendors use a resource name under their own domain.',
+      ],
+      keyIdea: 'When the kubelet restarts it removes the sockets, so the plugin must register again. A crash-looping plugin Pod can make the node look like it has zero GPUs.',
+      flows: [{from: 'plugin', to: 'kubelet', label: 'Register', type: 'request'}],
+      focus: ['plugin', 'kubelet'],
+      badges: {plugin: 'nvidia.com/gpu'},
+    },
+    {
+      short: 'Device list',
+      kind: '원리',
+      title: 'ListAndWatch streams devices and their health',
+      text: [
+        'After registration, the kubelet connects to the plugin socket and calls ListAndWatch. The plugin streams a list of device IDs, each marked Healthy or Unhealthy.',
+        'The stream stays open. Whenever a device is added or fails, the plugin sends the updated list.',
+      ],
+      flows: [
+        {from: 'kubelet', to: 'plugin', label: 'ListAndWatch', type: 'request'},
+        {from: 'plugin', to: 'kubelet', label: '2 devices Healthy', type: 'response', bend: 0.25},
+      ],
+      focus: ['plugin', 'kubelet'],
+      values: {devs: '2 Healthy'},
+    },
+    {
+      short: 'Node resource',
+      kind: '원리',
+      title: 'The kubelet adds the GPU count to node status',
+      text: [
+        'The kubelet counts the devices and writes nvidia.com/gpu: 2 into the node status capacity and allocatable.',
+        'kubectl describe node node-1 now shows nvidia.com/gpu under Capacity and Allocatable. Kubernetes treats it as an extended resource.',
+      ],
+      flows: [{from: 'kubelet', to: 'status', label: 'nvidia.com/gpu: 2', type: 'request'}],
+      focus: ['status'],
+      badges: {status: 'gpu: 2'},
+      values: {alloc: '2'},
+    },
+    {
+      short: 'Pod request',
+      kind: '원리',
+      title: 'The Pod asks for a GPU count in resources.limits',
+      text: [
+        'The user creates a Pod with nvidia.com/gpu: 1 in the container resources.limits.',
+        'Extended resources are integers only and cannot be overcommitted. If requests is omitted it defaults to limits; if both are set they must be equal. A request like 0.5 GPU is rejected.',
+      ],
+      keyIdea: 'To share a GPU you need node-side sharing (MIG, time-slicing and so on). Changing the requested number to a fraction does not work.',
+      flows: [{from: 'user', to: 'api', label: 'limits gpu: 1', type: 'request'}],
+      focus: ['api'],
+      values: {state: 'Pending'},
+    },
+    {
+      short: 'Pick node',
+      kind: '원리',
+      title: 'The scheduler filters nodes by allocatable',
+      text: [
+        'For each node, the scheduler subtracts the requests of Pods already placed there from allocatable, and keeps only nodes with at least one nvidia.com/gpu left.',
+        'Nodes without GPUs, or with all GPUs in use, are filtered out. If none remain, the Pod stays Pending with an Insufficient nvidia.com/gpu event.',
+      ],
+      keyIdea: 'The scheduler only counts. It does not decide which device the Pod gets.',
+      flows: [
+        {from: 'status', to: 'sched', label: 'allocatable', type: 'response'},
+        {from: 'sched', to: 'api', label: 'bind: node-1', type: 'request'},
+      ],
+      focus: ['sched'],
+      badges: {sched: 'node-1'},
+    },
+    {
+      short: 'Allocate',
+      kind: '원리',
+      title: 'The kubelet picks a device and calls Allocate',
+      text: [
+        'The kubelet on node-1 picks gpu-1 from the free devices and, before creating the container, calls the plugin Allocate with that device ID.',
+        'The plugin returns environment variables, device nodes and mounts for the container. Newer setups can return CDI device names instead, and the runtime injects the device from the CDI spec.',
+      ],
+      flows: [
+        {from: 'kubelet', to: 'plugin', label: 'Allocate(gpu-1)', type: 'request'},
+        {from: 'plugin', to: 'kubelet', label: 'env·devices·mounts', type: 'response', bend: 0.25},
+      ],
+      focus: ['kubelet', 'plugin'],
+      badges: {gpu1: 'allocated'},
+    },
+    {
+      short: 'Run',
+      kind: '원리',
+      title: 'The container starts seeing only its device',
+      text: [
+        'The runtime creates the container from the Allocate response. Inside the container, only gpu-1 is visible.',
+        'On NVIDIA nodes, running nvidia-smi inside the container confirms that it sees one GPU.',
+      ],
+      flows: [
+        {from: 'kubelet', to: 'pod', label: 'start', type: 'request'},
+        {from: 'pod', to: 'gpu1', type: 'request'},
+      ],
+      focus: ['pod', 'gpu1'],
+      status: {pod: 'ok'},
+      badges: {pod: 'gpu-1'},
+      values: {state: {text: 'Running', tone: 'good'}},
+    },
+    {
+      short: 'Device fails',
+      kind: '장애',
+      title: 'A failed device lowers allocatable',
+      text: [
+        'The driver reports an error on the idle gpu-0. The plugin sends an updated list over the ListAndWatch stream with gpu-0 marked Unhealthy.',
+        'The kubelet keeps capacity at 2 but lowers allocatable to 1. That one GPU is used by train, so new GPU Pods go to other nodes or stay Pending.',
+      ],
+      keyIdea: 'The kubelet does not move a Pod that was already using a device when it failed. Watch the gap between capacity and allocatable, together with device metrics.',
+      flows: [
+        {from: 'plugin', to: 'kubelet', label: 'gpu-0 Unhealthy', type: 'response'},
+        {from: 'kubelet', to: 'status', label: 'allocatable: 1', type: 'request'},
+      ],
+      focus: ['gpu0', 'status'],
+      status: {gpu0: 'error'},
+      badges: {status: 'gpu: 1'},
+      values: {alloc: {text: '1 (capacity 2)', tone: 'bad'}, devs: {text: '1 Healthy', tone: 'bad'}},
+    },
+    {
+      short: 'Recap',
+      kind: '정리',
+      title: 'Device plugins advertise devices as a count',
+      text: [
+        'The driver and toolkit make the devices usable, the plugin registers with the kubelet and streams devices and health, and the kubelet publishes the count as a node resource. When a Pod asks for a count, the scheduler picks a node and the kubelet and plugin attach a device.',
+        'This model only says how many. To choose by attributes such as memory size or model, use DRA.',
+      ],
+      keyIdea: 'If a GPU Pod is Pending, check the GPU count under Allocatable with kubectl describe node, and check that the plugin Pod is running.',
+      focus: ['plugin', 'kubelet', 'status'],
+    },
+  ]}
+/>
+
+## Device plugins vs DRA
+
+| | Device plugin | DRA |
+| --- | --- | --- |
+| How you request | Count only (`nvidia.com/gpu: 1`) | Device class + attribute criteria |
+| What the node reports | Device count and health per resource name | Per-device attributes (ResourceSlice) |
+| Who picks the device | The kubelet on the node | The scheduler |
+| Sharing | Node-side settings (MIG, time-slicing, etc.) | Expressed in the claim, if the driver supports it |
+
+The basic DRA flow is covered in [Requesting GPUs by Criteria (DRA)](../k8s/dra.mdx). The next lesson, [Getting Accelerators by Criteria (DRA in Depth)](./accelerator-allocation.mdx), follows an AI workload that gets a GPU and a network card together by criteria.
+
+Further reading: [Device Plugins](https://kubernetes.io/docs/concepts/extend-kubernetes/compute-storage-net/device-plugins/) · [Schedule GPUs](https://kubernetes.io/docs/tasks/manage-gpus/scheduling-gpus/) · [NVIDIA GPU Operator overview](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/overview.html)

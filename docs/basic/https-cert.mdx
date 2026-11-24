@@ -3,6 +3,8 @@ id: https-cert
 title: HTTPS and Certificates
 sidebar_label: 02 · HTTPS and Certificates
 description: Follow step by step how a browser and a server verify each other with certificates, how private certificates and trust stores work, and what happens when a certificate expires
+summary: 'How certificates verify the other side, private certificates and the chain of trust, and what happens when they expire.'
+icon: shield
 hide_table_of_contents: true
 ---
 
@@ -184,5 +186,3 @@ An HTTPS connection starts by using a certificate to check "is this really that 
 | Node cannot pull images from Harbor | Node does not trust Harbor's private certificate | Register the private certificate in the node trust store |
 
 Further reading: [Ingress TLS (Kubernetes docs)](https://kubernetes.io/docs/concepts/services-networking/ingress/#tls) · [Certificate management with kubeadm](https://kubernetes.io/docs/tasks/administer-cluster/kubeadm/kubeadm-certs/) · [cert-manager](https://cert-manager.io/docs/)
-
-Next lesson: [From One Server to Containers](./server-to-container.mdx)

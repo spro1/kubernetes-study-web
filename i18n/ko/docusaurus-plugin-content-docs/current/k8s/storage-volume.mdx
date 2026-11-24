@@ -3,6 +3,8 @@ id: storage-volume
 title: 저장 공간이 붙기까지 (PVC·PV)
 sidebar_label: 07 · 저장 공간이 붙기까지
 description: PVC 신청이 스토리지 클래스와 CSI 프로비저너를 거쳐 PV가 되고, 파드가 뜰 노드에 연결·마운트되기까지와 PVC가 Pending에 머무는 이유를 애니메이션으로 따라간다
+summary: '저장 공간을 신청하면 볼륨이 만들어지고 파드에 붙기까지, 파드가 죽어도 데이터가 남는 이유.'
+icon: disk
 hide_table_of_contents: true
 ---
 
@@ -193,5 +195,3 @@ hide_table_of_contents: true
 | 6. 마운트 | 파드가 `ContainerCreating`에 머문다 | 파드 이벤트의 `FailedMount`(권한, 파일 시스템 오류, NFS 서버 접근 불가) |
 
 더 읽을거리: [퍼시스턴트 볼륨](https://kubernetes.io/ko/docs/concepts/storage/persistent-volumes/) · [스토리지 클래스](https://kubernetes.io/ko/docs/concepts/storage/storage-classes/)
-
-다음 레슨: [이름으로 찾아가기 (Service·DNS)](./service-dns.mdx)

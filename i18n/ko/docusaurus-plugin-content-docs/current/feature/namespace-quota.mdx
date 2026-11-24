@@ -1,8 +1,10 @@
 ---
 id: namespace-quota
 title: 네임스페이스와 리소스 쿼터
-sidebar_label: 07 · 네임스페이스와 쿼터
+sidebar_label: 02 · 네임스페이스와 쿼터
 description: 쿠버네티스가 네임스페이스로 구획을 나누고 상한을 넘는 파드 생성을 거절하는 과정을 단계별 애니메이션으로 따라간다
+summary: '구획을 나누고 상한을 거는 방법, 상한을 넘으면 파드가 늘지 않는 이유.'
+icon: box
 hide_table_of_contents: true
 ---
 
@@ -177,5 +179,3 @@ kubectl auth can-i create resourcequotas -n team-a
 ```
 
 더 읽을거리: [네임스페이스](https://kubernetes.io/ko/docs/concepts/overview/working-with-objects/namespaces/) · [리소스 쿼터](https://kubernetes.io/ko/docs/concepts/policy/resource-quotas/) · [리밋 레인지](https://kubernetes.io/ko/docs/concepts/policy/limit-range/) · [RBAC 인가 사용하기](https://kubernetes.io/ko/docs/reference/access-authn-authz/rbac/)
-
-다음 레슨: [GPU 나눠 쓰기](./gpu-sharing.mdx)

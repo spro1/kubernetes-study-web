@@ -1,8 +1,10 @@
 ---
 id: supply-chain
 title: 이미지와 공급망 보안
-sidebar_label: 10 · 이미지와 공급망 보안
+sidebar_label: 04 · 이미지와 공급망 보안
 description: 이미지가 빌드·취약점 검사·서명을 거쳐 레지스트리에 오르고, 배포 때 어드미션에서 서명을 확인받기까지와 다이제스트 고정·SBOM의 역할을 애니메이션으로 따라간다
+summary: '검사·서명·다이제스트 고정, 배포 시점에 출처를 확인하는 흐름.'
+icon: registry
 hide_table_of_contents: true
 ---
 
@@ -177,5 +179,3 @@ hide_table_of_contents: true
 예: Harbor 같은 이미지 저장소는 Trivy를 스캐너로 붙여 저장된 이미지의 취약점 검사를 실행하고, 결과(CVE 식별자·패키지명·설치 버전·수정 버전·심각도)를 보여 준다. 로컬에서는 `trivy image <이미지>`로 같은 검사를 해 볼 수 있다.
 
 더 읽을거리: [이미지](https://kubernetes.io/ko/docs/concepts/containers/images/) · [Harbor 문서](https://goharbor.io/docs/) · [Sigstore 문서](https://docs.sigstore.dev/) · [Trivy](https://trivy.dev/)
-
-다음 레슨: [감사 로그](./audit-log.mdx)

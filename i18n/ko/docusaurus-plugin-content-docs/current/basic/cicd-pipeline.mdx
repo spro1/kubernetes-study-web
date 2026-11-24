@@ -1,8 +1,10 @@
 ---
 id: cicd-pipeline
 title: 파이프라인이 도는 순서
-sidebar_label: 08 · 파이프라인 순서
+sidebar_label: 06 · 파이프라인 순서
 description: 트리거에서 빌드·테스트·아티팩트를 거쳐 개발·검증·운영 환경에 차례로 배포되고, 실패하면 그 자리에서 멈추는 CI/CD 파이프라인의 일반 흐름을 애니메이션으로 따라간다
+summary: '트리거 → 빌드 → 테스트 → 아티팩트 → 환경별 배포, 실패하면 멈추는 곳.'
+icon: hammer
 hide_table_of_contents: true
 ---
 
@@ -183,5 +185,3 @@ CI/CD는 코드 변경이 서비스에 반영되기까지의 빌드 → 테스�
 | 롤백 | 이전 배포 기록이 있어야 되돌릴 수 있다 | `kubectl rollout undo`로 이전 리비전으로 되돌리거나, GitOps라면 Git 커밋을 되돌린다 |
 
 더 읽을거리: [디플로이먼트 롤백](https://kubernetes.io/ko/docs/concepts/workloads/controllers/deployment/) · [Argo CD](https://argo-cd.readthedocs.io/) · [Tekton](https://tekton.dev/docs/) · [Helm과 GitOps](../intermediate/gitops-sync.mdx)
-
-다음 레슨: [헬스 체크 — 살아 있나, 받을 준비가 됐나](../intermediate/probes.mdx)

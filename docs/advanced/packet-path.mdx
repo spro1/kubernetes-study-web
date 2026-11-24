@@ -3,6 +3,8 @@ id: packet-path
 title: A Packet from Pod to Pod
 sidebar_label: 06 · A Packet from Pod to Pod
 description: Follow the Pod network model (every Pod gets an IP and talks without NAT), what CNI does, same-node and cross-node paths, overlays and MTU, and Service IP translation, step by step with animation
+summary: 'CNI, same-node and cross-node paths, and where a Service IP becomes a Pod IP.'
+icon: route
 hide_table_of_contents: true
 ---
 
@@ -190,5 +192,3 @@ Services and DNS decide "where to send". This lesson covers what comes next. We 
 | Works via Pod IP, fails via Service IP | NAT rules / Service | Whether the Service targets (endpoints) include ready Pods |
 
 Further reading: [Cluster networking](https://kubernetes.io/docs/concepts/cluster-administration/networking/) · [Service](https://kubernetes.io/docs/concepts/services-networking/service/) · [Virtual IPs and service proxies](https://kubernetes.io/docs/reference/networking/virtual-ips/)
-
-Next lesson: [When Volumes Attach, and Failures](./volume-binding.mdx)

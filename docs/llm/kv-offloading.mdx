@@ -1,0 +1,178 @@
+---
+id: kv-offloading
+title: Offloading Overflowing KV Cache
+sidebar_label: 05 · Offloading Overflowing KV Cache
+description: Follow KV cache offloading, which moves KV cache that no longer fits in accelerator memory down to CPU memory, NVMe or shared storage instead of discarding it, then loads it back when needed, and see where it falls short.
+summary: 'Moving evicted KV cache to CPU memory, NVMe or shared storage and bringing it back, with the limits.'
+icon: disk
+hide_table_of_contents: true
+---
+
+# Offloading Overflowing KV Cache
+
+Accelerator memory is fast but small and expensive. When the KV cache overflows, the engine discards old entries, and if that conversation comes back it recomputes everything from scratch. **KV cache offloading** moves the cache down to larger, slower storage tiers instead, and loads it back when it is needed.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~10 min', level: 'Advanced'}}
+  groups={[
+    {label: 'GPU server', x: 200, y: 30, w: 630, h: 405, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'user', label: 'User', sub: 'long chat', icon: 'user', tone: 'ext', x: 95, y: 225, w: 140, show: true},
+    {id: 'eng', label: 'Inference engine', sub: 'e.g. vLLM', icon: 'spark', tone: 'node', x: 310, y: 225, w: 150, show: true},
+    {id: 'hbm', label: 'Accel. memory', sub: 'fastest · small', icon: 'layers', tone: 'store', x: 530, y: 105, w: 170, show: true},
+    {id: 'cpu', label: 'CPU memory', sub: 'larger · a bit slower', icon: 'db', tone: 'store', x: 530, y: 345, w: 170},
+    {id: 'nvme', label: 'Local NVMe', sub: 'much larger · slow', icon: 'disk', tone: 'store', x: 735, y: 345, w: 160},
+    {id: 'shared', label: 'Shared storage', sub: 'used by many', icon: 'archive', tone: 'store', x: 915, y: 225, w: 140},
+  ]}
+  metrics={[
+    {id: 'use', label: 'KV cache on accel.'},
+    {id: 'where', label: 'This chat’s cache'},
+    {id: 'ttft', label: 'First token on return'},
+  ]}
+  learn={[
+    {text: 'When accelerator memory overflows, cache is dropped and recomputed', at: 1},
+    {text: 'Storage tiers run from fast and small to slow and large', at: 3},
+    {text: 'It pays off only when loading back beats recomputing', at: 4},
+    {text: 'Storage upkeep and failures become new risks', at: 7},
+  ]}
+  steps={[
+    {
+      short: 'Filling up',
+      kind: '시작',
+      title: 'Long chats and many users fill the KV cache',
+      text: [
+        'As conversations get longer and more users arrive, the KV cache quickly fills accelerator memory.',
+        'The model weights already take up much of it, so the space left for cache is smaller than you might expect.',
+      ],
+      flows: [
+        {from: 'user', to: 'eng', label: 'chat goes on', type: 'request'},
+        {from: 'eng', to: 'hbm', label: 'store KV', type: 'request'},
+      ],
+      focus: ['hbm'],
+      badges: {hbm: 'almost full'},
+      values: {use: '95%', where: 'accel. memory', ttft: '—'},
+    },
+    {
+      short: 'Dropped',
+      kind: '문제',
+      title: 'With no room left, old cache gets dropped',
+      text: [
+        'To make room for new requests, the engine evicts the least recently used cache first. The cache of a user who paused for a while is dropped too.',
+        'When that user asks again, the whole conversation so far has to be read again from the start (recomputation). The longer the conversation, the later the first token.',
+      ],
+      flows: [{from: 'user', to: 'eng', label: 'asks again', type: 'request'}],
+      focus: ['hbm', 'eng'],
+      status: {hbm: 'error'},
+      badges: {hbm: 'evicted'},
+      values: {where: 'none', ttft: {text: 'full recompute', tone: 'bad'}},
+    },
+    {
+      short: 'Move down',
+      kind: '원리',
+      title: 'Move it to CPU memory instead of dropping it',
+      text: [
+        'With offloading on, the engine moves evicted cache into the server’s CPU memory instead of deleting it. CPU memory is usually several times larger than accelerator memory.',
+        'Accelerator memory keeps only the cache needed for the answers being written now.',
+      ],
+      flows: [{from: 'hbm', to: 'cpu', label: 'evicted cache', type: 'request'}],
+      focus: ['cpu'],
+      status: {hbm: null},
+      badges: {hbm: 'room freed', cpu: 'stored'},
+      values: {use: '70%', where: 'CPU memory', ttft: '—'},
+    },
+    {
+      short: 'Lower tiers',
+      kind: '원리',
+      title: 'Still overflowing? On to NVMe and shared storage',
+      text: [
+        'Storage tiers run from fast and small to slow and large: accelerator memory, CPU memory, the server’s local NVMe, then shared storage used by many servers.',
+        'The longer a cache goes unused, the lower it moves. Lower tiers hold more but take longer to load back.',
+      ],
+      flows: [
+        {from: 'cpu', to: 'nvme', label: 'older entries', type: 'request'},
+        {from: 'nvme', to: 'shared', type: 'request'},
+      ],
+      focus: ['nvme', 'shared'],
+      badges: {hbm: null, nvme: 'stored', shared: 'stored'},
+      values: {where: 'NVMe'},
+    },
+    {
+      short: 'Load back',
+      kind: '원리',
+      title: 'When the chat returns, find the cache and load it back',
+      text: [
+        'When the user asks again, the engine finds which tier holds that conversation’s cache and loads it back into accelerator memory. Only the newly added prompt needs computing.',
+        'For a long conversation, loading is much faster than recomputing, so the first token is delayed less.',
+      ],
+      keyIdea: 'Offloading extends the KV cache idea of trading computation for storage by one more tier. It only pays off when loading back is faster than recomputing.',
+      flows: [
+        {from: 'nvme', to: 'hbm', label: 'load back', type: 'response'},
+        {from: 'hbm', to: 'eng', type: 'response'},
+      ],
+      focus: ['nvme', 'hbm', 'eng'],
+      badges: {nvme: null, hbm: 'restored'},
+      values: {where: 'accel. memory', ttft: {text: 'less delay', tone: 'good'}},
+    },
+    {
+      short: 'Sharing',
+      kind: '원리',
+      title: 'In shared storage, other servers can reuse it',
+      text: [
+        'Cache kept in shared storage can be read by engines on other servers. Requests starting with the same document or system prompt can skip recomputing that prefix even when they land on another replica.',
+        'But it goes over the network, so it is slower than local tiers, and sharing it across servers makes it harder to manage.',
+      ],
+      focus: ['shared'],
+      badges: {hbm: null, shared: 'other servers read'},
+    },
+    {
+      short: 'Fast path',
+      kind: '원리',
+      title: 'Read straight from storage into the accelerator',
+      text: [
+        'Normally, data from storage passes through CPU memory on its way to the accelerator. On NVIDIA GPUs, GDS (GPUDirect Storage) can skip that hop so storage and accelerator memory exchange data directly.',
+        'Loading cache back gets faster, which makes cache in lower tiers more useful. The same path can also speed up loading model weights.',
+      ],
+      flows: [{from: 'nvme', to: 'hbm', label: 'skips the CPU', type: 'response', bend: 0.2}],
+      focus: ['nvme', 'hbm'],
+      badges: {shared: null},
+    },
+    {
+      short: 'New risks',
+      kind: '주의',
+      title: 'Storage becomes something to manage, and a failure point',
+      text: [
+        'If you keep offloading cache, storage keeps filling up. Without a rule for deleting old cache, the disk eventually fills.',
+        'If shared storage stops responding, engines waiting on that cache can stall too. A storage failure now has a path to become a serving failure.',
+      ],
+      focus: ['shared', 'nvme'],
+      status: {shared: 'warn', nvme: 'warn'},
+      badges: {hbm: null, nvme: 'usage grows', shared: 'stalls if slow'},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Move it down tier by tier, then reuse it',
+      text: [
+        'KV cache offloading moves cache evicted from accelerator memory down to CPU memory, NVMe and shared storage, and loads it back when the same conversation or prefix returns.',
+        'The goal is to keep first-token time from growing for workloads with long conversations and shared prefixes. It also needs storage cleanup and a plan for storage failures.',
+      ],
+      keyIdea: 'Offloading lets you serve more concurrent users without buying more accelerators. How much it helps depends heavily on conversation length and how often users come back.',
+      status: {shared: null, nvme: null},
+      badges: {nvme: null, shared: null, hbm: null},
+      focus: ['eng'],
+    },
+  ]}
+/>
+
+## What to check on Kubernetes
+
+- Offloading is an engine feature; in vLLM, for example, you enable it by attaching a KV connector such as LMCache. Before turning it on, check KV cache usage and the preemption count to confirm the cache really is overflowing.
+- Cache offloaded to CPU memory counts against the Pod’s memory. If the Pod’s memory requests and limits do not include the offload size, the container gets OOMKilled.
+- If local NVMe is mounted as an emptyDir, the cache disappears with the Pod. That is fine for a cache, but exceeding the ephemeral-storage limit gets the Pod evicted by the kubelet. Put a cap and a cleanup rule on disk usage.
+- With shared storage, storage latency shows up directly in time to first token. Put storage response time and TTFT on the same dashboard.
+- The benefit depends on how often the same conversation or prefix comes back. Compare prefix cache hit rate and TTFT before and after enabling it.
+
+Further reading: [GPUDirect Storage](https://docs.nvidia.com/gpudirect-storage/) · [LMCache](https://github.com/LMCache/LMCache) · [Resource Management for Pods and Containers](https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/)

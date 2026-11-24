@@ -1,0 +1,176 @@
+---
+id: cold-start
+title: 모델이 처음 뜨기까지 (콜드 스타트)
+sidebar_label: 08 · 모델이 처음 뜨기까지 (콜드 스타트)
+description: 모델 레플리카가 노드에 배치되고, 가중치를 내려받아 가속기 메모리에 올리고, 엔진을 준비해 첫 요청을 받기까지의 콜드 스타트 과정과 이를 줄이는 방법을 단계별 애니메이션으로 따라간다
+summary: '가중치를 받고, 가속기에 올리고, 엔진을 준비해 첫 요청을 받기까지와 그 시간을 줄이는 방법.'
+icon: spark
+hide_table_of_contents: true
+---
+
+# 모델이 처음 뜨기까지 (콜드 스타트)
+
+일반 웹 서비스의 파드는 몇 초면 뜬다. LLM 레플리카는 수십 GB가 넘는 **모델 가중치**를 읽어 가속기 메모리에 올리고 엔진을 준비해야 해서 몇 분씩 걸리기도 한다. 이처럼 레플리카가 처음 기동해 첫 요청을 받을 수 있게 되기까지의 시간을 **콜드 스타트**라고 한다. 파드가 뜨는 일반 과정은 [파드가 뜨기까지](../k8s/pod-startup.mdx)에 있으니, 여기서는 LLM이라서 길어지는 부분에 집중한다.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '약 9분', level: '중급'}}
+  groups={[
+    {label: 'GPU 노드', x: 400, y: 30, w: 420, h: 405, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'user', label: '운영자', sub: '배포 · 레플리카 추가', icon: 'user', tone: 'ext', x: 95, y: 110, w: 150, show: true},
+    {id: 'reg', label: '모델 저장소', sub: '가중치 원본', icon: 'registry', tone: 'store', x: 95, y: 345, w: 150, show: true},
+    {id: 'sched', label: '스케줄러', sub: '노드 고르기', icon: 'target', tone: 'cp', x: 285, y: 225, w: 140},
+    {id: 'disk', label: '노드 로컬 디스크', sub: '모델 로컬 캐시', icon: 'disk', tone: 'store', x: 515, y: 345, w: 170},
+    {id: 'pod', label: '엔진 파드', sub: 'vLLM', icon: 'pod', tone: 'app', x: 515, y: 115, w: 150},
+    {id: 'gpu', label: '가속기 메모리', sub: '가중치 + KV 캐시', icon: 'layers', tone: 'node', x: 720, y: 230, w: 160},
+    {id: 'gw', label: '입구·분배기', sub: '요청 보내는 곳', icon: 'gate', tone: 'cp', x: 910, y: 115, w: 140},
+  ]}
+  metrics={[
+    {id: 'phase', label: '지금 단계'},
+    {id: 'slow', label: '이 단계가 길어지는 이유'},
+    {id: 'ready', label: '요청 받을 수 있나'},
+  ]}
+  learn={[
+    {text: 'LLM 레플리카는 가중치 때문에 기동이 오래 걸린다는 것', at: 0},
+    {text: '가장 큰 시간은 가중치를 내려받고 읽는 데 든다는 것', at: 2},
+    {text: '엔진도 첫 요청 전에 준비 시간이 필요하다는 것', at: 4},
+    {text: '콜드 스타트가 확장 반응 속도를 정한다는 것', at: 6},
+    {text: '미리 캐시·빠른 저장·준비 결과 재사용으로 줄인다는 것', at: 7},
+  ]}
+  steps={[
+    {
+      short: '배포 요청',
+      kind: '시작',
+      title: '레플리카 하나를 새로 띄운다',
+      text: [
+        '운영자가 모델을 배포하거나 레플리카를 하나 더 늘린다. 쿠버네티스에 엔진 파드가 하나 생긴다.',
+        '이때부터 이 레플리카가 첫 요청을 받을 수 있게 될 때까지가 콜드 스타트다. 그동안 이 레플리카는 아무 요청도 처리하지 못한다.',
+      ],
+      flows: [{from: 'user', to: 'sched', label: '레플리카 +1', type: 'request'}],
+      focus: ['sched'],
+      values: {phase: '배치 대기', slow: '—', ready: {text: '아니오', tone: 'bad'}},
+    },
+    {
+      short: '배치',
+      kind: '원리',
+      title: '가속기가 남은 노드에 배치하고 엔진 이미지를 받는다',
+      text: [
+        '스케줄러가 필요한 가속기가 남은 노드를 골라 파드를 놓는다. 노드는 엔진 컨테이너 이미지를 받아 실행한다.',
+        'CUDA 같은 라이브러리가 든 엔진 이미지는 수 GB에 이르기도 한다. 한 번 받아 두면 같은 노드에서는 다시 받지 않는다.',
+      ],
+      flows: [{from: 'sched', to: 'pod', label: '노드 결정', type: 'request'}],
+      focus: ['pod'],
+      values: {phase: '컨테이너 시작', slow: '엔진 이미지 크기'},
+    },
+    {
+      short: '가중치 받기',
+      kind: '원리',
+      title: '가장 오래 걸리는 일: 가중치를 노드로 가져온다',
+      text: [
+        '엔진은 모델 가중치 파일이 있어야 시작할 수 있다. 큰 모델은 가중치만 수십~수백 GB다. 오브젝트 스토리지나 모델 허브에서 네트워크로 받아 오면 이것만으로 몇 분이 걸릴 수 있다.',
+        '그래서 가중치를 노드의 로컬 디스크에 미리 내려받아 두는 방식(모델 로컬 캐시)을 많이 쓴다. KServe의 로컬 모델 캐시처럼 이를 지원하는 도구도 있다. 미리 받아 두면 이 단계를 건너뛴다.',
+      ],
+      keyIdea: '레플리카를 늘릴 때마다 가중치를 새로 받는다면, 확장은 네트워크 속도에 묶인다. 미리 받아 두기가 첫 번째 해결책이다.',
+      flows: [{from: 'reg', to: 'disk', label: '가중치 수십 GB+', type: 'request'}],
+      focus: ['reg', 'disk'],
+      badges: {disk: '미리 받아 두면 건너뜀'},
+      values: {phase: '가중치 준비', slow: '가중치 크기 · 네트워크'},
+    },
+    {
+      short: '메모리에 올리기',
+      kind: '원리',
+      title: '가중치를 디스크에서 읽어 가속기 메모리에 올린다',
+      text: [
+        '엔진은 디스크의 가중치를 읽어 가속기 메모리에 올린다. 디스크 읽기 속도와 가속기로 옮기는 경로가 시간을 정한다.',
+        '레플리카당 가속기가 여러 장이면 가중치를 나눠 각 가속기에 올린다.',
+      ],
+      flows: [
+        {from: 'disk', to: 'pod', label: '가중치 읽기', type: 'response'},
+        {from: 'pod', to: 'gpu', label: '가속기로 올림', type: 'request'},
+      ],
+      focus: ['disk', 'gpu'],
+      badges: {disk: null, gpu: '가중치 적재'},
+      values: {phase: '가중치 적재', slow: '디스크 읽기 속도'},
+    },
+    {
+      short: '엔진 준비',
+      kind: '원리',
+      title: '엔진이 KV 캐시 공간을 잡고 실행 준비를 한다',
+      text: [
+        '가중치를 올린 뒤에도 엔진은 할 일이 남았다. 남은 가속기 메모리를 KV 캐시 영역으로 미리 잡고, 자주 쓰는 계산을 빠르게 실행할 수 있게 미리 준비(그래프 캡처·컴파일 등)한다.',
+        '이 준비는 모델과 설정에 따라 수십 초에서 몇 분까지 걸린다. NPU는 모델을 배포 전에 미리 컴파일해 둔 결과물을 쓰는 경우가 많다.',
+      ],
+      focus: ['pod', 'gpu'],
+      badges: {gpu: 'KV 캐시 영역 확보'},
+      values: {phase: '엔진 준비', slow: '준비 작업'},
+    },
+    {
+      short: '준비 완료',
+      kind: '원리',
+      title: '준비가 끝나면 입구가 요청을 보내기 시작한다',
+      text: [
+        '엔진이 준비 상태 확인(readinessProbe)을 통과하면, 입구·분배기는 이 레플리카를 대상 목록에 넣고 요청을 보내기 시작한다.',
+        '준비 확인이 통과되기 전에는 요청을 보내지 않는다. 반대로 기동 중에 활성 확인(livenessProbe)이 실패하면 kubelet이 컨테이너를 재시작해 처음부터 다시 시작된다. 기동 확인(startupProbe)에 기동 시간보다 넉넉한 시간을 준다.',
+      ],
+      flows: [
+        {from: 'pod', to: 'gw', label: '준비 완료', type: 'response'},
+        {from: 'gw', to: 'pod', label: '첫 요청', type: 'request', bend: 0.2},
+      ],
+      focus: ['pod', 'gw'],
+      status: {pod: 'ok'},
+      badges: {gpu: null},
+      values: {phase: '서빙 중', slow: '—', ready: {text: '예', tone: 'good'}},
+    },
+    {
+      short: '확장이 느린 이유',
+      kind: '주의',
+      title: '콜드 스타트가 길면 갑작스러운 부하에 늦게 반응한다',
+      text: [
+        '요청이 몰려 레플리카를 늘려도, 새 레플리카가 요청을 받기까지 콜드 스타트만큼 기다려야 한다. 그동안 기존 레플리카에 대기 줄이 쌓인다.',
+        '자동 확장이 있어도 반응이 몇 분씩 늦으면 짧은 폭주는 놓친다. 그래서 LLM 서빙은 피크를 예상해 미리 여유 레플리카를 두는 경우가 많다.',
+      ],
+      flows: [{from: 'gw', to: 'pod', label: '요청 몰림', type: 'request', bend: 0.2}],
+      focus: ['gw'],
+      status: {gw: 'warn'},
+      badges: {gw: '대기 줄 증가'},
+    },
+    {
+      short: '줄이는 방법',
+      kind: '원리',
+      title: '콜드 스타트를 줄이는 대표적인 방법',
+      text: [
+        '가중치를 미리 노드에 받아 둔다(모델 로컬 캐시). 더 빠른 저장 장치(NVMe)를 쓰거나, 저장 장치에서 가속기 메모리로 CPU를 거치지 않고 직접 읽는다(GPUDirect Storage).',
+        '엔진 준비 결과(컴파일 캐시 등)를 저장해 다음 기동 때 재사용한다. 엔진 이미지는 노드에 미리 받아 둔다. 늘 켜 둔 여유 레플리카로 콜드 스타트를 아예 피하기도 한다.',
+      ],
+      flows: [{from: 'disk', to: 'gpu', label: '빠른 경로', type: 'response', bend: 0.15}],
+      focus: ['disk', 'gpu'],
+      status: {gw: null},
+      badges: {gw: null},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '배치 → 가중치 → 적재 → 엔진 준비 → 서빙',
+      text: [
+        'LLM 레플리카의 기동은 노드 배치, 가중치 준비, 가속기 메모리 적재, 엔진 준비를 거쳐 준비 확인이 통과돼야 끝난다. 가장 큰 시간은 가중치에 든다.',
+        '콜드 스타트는 확장 반응 속도와 장애 복구 시간을 함께 정한다. 미리 캐시, 빠른 저장 경로, 준비 결과 재사용이 이를 줄인다.',
+      ],
+      keyIdea: '기동이 느리면 kubectl get events로 이미지 받기 시간을, 엔진 로그로 가중치 적재와 준비 시간을 나눠 본다. 어느 단계가 긴지 알아야 맞는 해결책을 고른다.',
+      focus: ['pod'],
+    },
+  ]}
+/>
+
+## 단계별로 볼 것과 줄이는 방법
+
+| 단계 | 확인할 곳 | 줄이는 방법 |
+| --- | --- | --- |
+| 이미지 받기 | 파드 이벤트(Pulling, Pulled) | 이미지 미리 받기, 가까운 레지스트리 |
+| 가중치 받기 | 엔진 로그, 네트워크 사용량 | 모델 로컬 캐시 |
+| 가속기 적재 | 엔진 로그의 적재 시간 | NVMe, GPUDirect Storage |
+| 엔진 준비 | 엔진 로그의 준비 시간 | 컴파일 캐시 재사용, 미리 컴파일 |
+
+더 읽을거리: [활성·준비·기동 프로브](https://kubernetes.io/docs/concepts/configuration/liveness-readiness-startup-probes/) · [vLLM 문서](https://docs.vllm.ai/) · [KServe](https://kserve.github.io/website/)

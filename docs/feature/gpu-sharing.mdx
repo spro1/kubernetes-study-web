@@ -1,8 +1,10 @@
 ---
 id: gpu-sharing
 title: Sharing GPUs
-sidebar_label: 08 · Sharing GPUs
+sidebar_label: 04 · Sharing GPUs
 description: Step through how the NVIDIA GPU Operator hands out GPUs in dedicated (Pass-through), MIG, and Time-Slicing modes, and how the visible GPU metrics change with each mode
+summary: 'Splitting GPUs as dedicated, MIG or time-slicing, and how the visible metrics differ by method.'
+icon: server
 hide_table_of_contents: true
 ---
 
@@ -191,5 +193,3 @@ kubectl get pods -A -o wide | grep -i gpu            # Which node each GPU pod r
 ```
 
 Further reading: [Scheduling GPUs](https://kubernetes.io/docs/tasks/manage-gpus/scheduling-gpus/) · [Device plugins](https://kubernetes.io/docs/concepts/extend-kubernetes/compute-storage-net/device-plugins/) · [NVIDIA GPU Operator](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/index.html) · [Requesting GPUs by Criteria (DRA)](../k8s/dra.mdx)
-
-Next lesson: [Automatic Pod Sizing (VPA)](./vpa.mdx)

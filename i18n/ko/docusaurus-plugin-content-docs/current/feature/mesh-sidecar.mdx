@@ -1,8 +1,10 @@
 ---
 id: mesh-sidecar
 title: 서비스 메시 ① 사이드카와 상호 인증
-sidebar_label: 03 · 사이드카와 mTLS
+sidebar_label: 04 · 사이드카와 mTLS
 description: 네임스페이스에 Istio 사이드카 주입을 켜면 파드마다 사이드카 프록시가 붙고, istiod가 나눠 준 인증서로 프록시끼리 서로 확인하며 지표를 남기는 과정을 애니메이션으로 따라간다
+summary: '파드 옆 프록시가 모든 통신을 맡아 암호화·신원 확인·관측을 해 주는 원리.'
+icon: shield
 hide_table_of_contents: true
 ---
 
@@ -182,6 +184,4 @@ kubectl get pods -n shop                               # READY 2/2 이면 프록
 kubectl get peerauthentication -A                      # mTLS 모드(PERMISSIVE·STRICT)
 ```
 
-더 읽을거리: [Istio 개념](https://istio.io/latest/docs/concepts/) · [Istio 보안(mTLS)](https://istio.io/latest/docs/concepts/security/) · [Istio 관측](https://istio.io/latest/docs/concepts/observability/) · [Kiali](https://kiali.io/) · [네트워크 정책](../k8s/network-policy.mdx)
-
-다음 레슨: [서비스 메시 ② 트래픽 나누기](./mesh-traffic.mdx)
+더 읽을거리: [Istio 개념](https://istio.io/latest/docs/concepts/) · [Istio 보안(mTLS)](https://istio.io/latest/docs/concepts/security/) · [Istio 관측](https://istio.io/latest/docs/concepts/observability/) · [Kiali](https://kiali.io/) · [통신 막고 열기 (네트워크 정책)](../k8s/network-policy.mdx)

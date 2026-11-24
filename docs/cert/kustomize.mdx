@@ -1,8 +1,10 @@
 ---
 id: kustomize
 title: Per-environment deploys with Kustomize (CKA·CKAD)
-sidebar_label: 03 · Kustomize per environment
+sidebar_label: 05 · Kustomize per environment
 description: Follow an animation of applying per-environment overlays for dev and prod on top of shared manifests (base) to change name prefixes, replicas and image tags, previewing with kubectl kustomize and deploying with kubectl apply -k
+summary: 'Producing different manifests per environment with base and overlays.'
+icon: split
 hide_table_of_contents: true
 ---
 
@@ -181,5 +183,3 @@ Helm charts, values, revisions and GitOps sync are covered in [Helm and GitOps](
 | Delete what Kustomize deployed | `kubectl delete -k overlays/prod` | There is no separate `uninstall` or `rollback` command like Helm |
 
 Further reading: [CNCF certification curriculum](https://github.com/cncf/curriculum) · [Declarative management of Kubernetes objects using Kustomize](https://kubernetes.io/docs/tasks/manage-kubernetes-objects/kustomization/) · [Helm and GitOps](../intermediate/gitops-sync.mdx)
-
-Next lesson: [Blue/green and canary with core primitives (CKAD)](./deploy-strategies.mdx)

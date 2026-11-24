@@ -3,6 +3,8 @@ id: api-request-path
 title: API 요청이 저장되기까지
 sidebar_label: 01 · API 요청이 저장되기까지
 description: 요청 하나가 인증·인가·어드미션 웹훅·스키마 검증을 거쳐 etcd에 저장되고 watch로 퍼지기까지, 그리고 409 충돌이 나는 이유를 애니메이션으로 따라간다
+summary: '인증·인가·어드미션 웹훅·검증을 거쳐 etcd에 저장되고 watch로 퍼지기까지.'
+icon: shield
 hide_table_of_contents: true
 ---
 
@@ -196,5 +198,3 @@ hide_table_of_contents: true
 | 저장 | `409 Conflict` | 같은 이름이 이미 있거나, 다른 주체가 먼저 고쳤다 |
 
 더 읽을거리: [쿠버네티스 API 접근 제어](https://kubernetes.io/docs/concepts/security/controlling-access/) · [어드미션 컨트롤러](https://kubernetes.io/docs/reference/access-authn-authz/admission-controllers/) · [API 개념 — resourceVersion](https://kubernetes.io/docs/reference/using-api/api-concepts/)
-
-다음 레슨: [삭제는 생각보다 복잡하다](./deletion-finalizer.mdx)

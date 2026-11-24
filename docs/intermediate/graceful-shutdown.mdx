@@ -1,8 +1,10 @@
 ---
 id: graceful-shutdown
 title: Graceful shutdown — going down without losing requests
-sidebar_label: 04 · Graceful shutdown
+sidebar_label: 06 · Graceful shutdown
 description: Follow an animation of why removal from the request targets and the stop signal happen at the same time when a pod is deleted, and how preStop and the grace period protect in-flight requests
+summary: 'How endpoint removal, SIGTERM, preStop and the grace period line up.'
+icon: pod
 hide_table_of_contents: true
 ---
 
@@ -172,5 +174,3 @@ Rollouts, scale-downs and node drains all end with "delete one pod". Here we fol
 Set `terminationGracePeriodSeconds` and `preStop` in the pod template `spec`. Check the applied values with `kubectl get pod <name> -o yaml`.
 
 Further reading: [Pod lifecycle — termination of Pods](https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/#pod-termination) · [Container lifecycle hooks](https://kubernetes.io/docs/concepts/containers/container-lifecycle-hooks/)
-
-Next lesson: [StatefulSets and databases](./statefulset.mdx)

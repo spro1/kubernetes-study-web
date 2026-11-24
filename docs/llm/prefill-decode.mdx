@@ -1,0 +1,176 @@
+---
+id: prefill-decode
+title: Reading the Question, Writing the Answer (Prefill and Decode)
+sidebar_label: 02 · Prefill and Decode
+description: See how prefill, which reads the whole prompt at once, differs from decode, which writes one token at a time, and how each maps to time to first token (TTFT) and time per output token (TPOT).
+summary: 'Prefill reads the prompt at once, decode writes one token at a time, and how that shows up as TTFT and TPOT.'
+icon: layers
+hide_table_of_contents: true
+---
+
+# Reading the Question, Writing the Answer (Prefill and Decode)
+
+The previous lesson showed that answers are built one token at a time. But **the first step, reading the question**, behaves very differently. Splitting a request into **prefill**, which computes the whole prompt at once, and **decode**, which writes one token at a time, explains why "time to the first word" and "gap between words" move independently.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~10 min', level: 'Beginner'}}
+  groups={[
+    {label: 'One accelerator', x: 265, y: 30, w: 720, h: 405, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'user', label: 'User', sub: 'long prompt', icon: 'user', tone: 'ext', x: 110, y: 225, w: 150, show: true},
+    {id: 'pre', label: 'Prefill', sub: 'whole prompt at once', icon: 'layers', tone: 'node', x: 420, y: 120, w: 180},
+    {id: 'dec', label: 'Decode', sub: 'one token at a time', icon: 'spark', tone: 'node', x: 420, y: 340, w: 180},
+    {id: 'kv', label: 'KV cache', sub: 'results of reading', icon: 'db', tone: 'store', x: 680, y: 230, w: 170},
+    {id: 'w', label: 'Model weights', sub: 'accelerator memory', icon: 'disk', tone: 'store', x: 880, y: 340, w: 160, show: true},
+  ]}
+  metrics={[
+    {id: 'phase', label: 'Current phase'},
+    {id: 'ttft', label: 'Time to first token (TTFT)'},
+    {id: 'tpot', label: 'Time per token (TPOT)'},
+    {id: 'neck', label: 'Main bottleneck'},
+  ]}
+  learn={[
+    {text: 'Prefill computes the whole prompt at once', at: 1},
+    {text: 'TTFT is decided during prefill', at: 3},
+    {text: 'Decode is limited by memory reads, not compute', at: 4},
+    {text: 'Mixing both phases on one accelerator causes interference', at: 6},
+  ]}
+  steps={[
+    {
+      short: 'Request',
+      kind: '시작',
+      title: 'A long prompt arrives',
+      text: [
+        'A user pastes a few pages of a document and asks for a summary. The input is thousands of tokens.',
+        'The engine handles it in two phases: first read the whole prompt (prefill), then write the answer (decode).',
+      ],
+      flows: [{from: 'user', to: 'pre', label: 'thousands of tokens', type: 'request'}],
+      focus: ['pre'],
+      values: {phase: 'Waiting', ttft: '—', tpot: '—', neck: '—'},
+    },
+    {
+      short: 'Prefill',
+      kind: '원리',
+      title: 'Prefill computes the whole prompt at once',
+      text: [
+        'All prompt tokens are already known, so the engine batches thousands of them and computes them in parallel. The accelerator’s compute units are fully busy.',
+        'This phase grows with input length. Double the input and prefill takes roughly twice as long or more.',
+      ],
+      keyIdea: 'Prefill is compute-heavy. The accelerator’s compute throughput sets its duration.',
+      flows: [{from: 'w', to: 'pre', label: 'read weights', type: 'response', bend: -0.2}],
+      focus: ['pre'],
+      badges: {pre: 'thousands at once'},
+      values: {phase: 'Prefill', neck: 'Compute'},
+    },
+    {
+      short: 'Build KV',
+      kind: '원리',
+      title: 'What was read is kept as the KV cache',
+      text: [
+        'While computing each prompt token, prefill produces intermediate results (keys and values) that will be reused later. Together they form the KV cache.',
+        'Decode consults this cache to refer back to the prompt. Without it, every new token would require re-reading the prompt from scratch.',
+      ],
+      flows: [{from: 'pre', to: 'kv', label: 'store KV', type: 'request'}],
+      focus: ['kv'],
+      badges: {kv: 'prompt'},
+    },
+    {
+      short: 'First token',
+      kind: '원리',
+      title: 'The first token comes out at the end of prefill',
+      text: [
+        'The last computation of prefill yields the first answer token. The time from sending the request to receiving this token is TTFT (Time To First Token).',
+        'Longer inputs and more requests queued ahead both raise TTFT. During this time the user sees nothing.',
+      ],
+      flows: [{from: 'pre', to: 'user', label: 'first token', type: 'response'}],
+      focus: ['pre', 'user'],
+      badges: {pre: null},
+      values: {ttft: {text: 'grows with input', tone: 'bad'}},
+    },
+    {
+      short: 'Decode',
+      kind: '원리',
+      title: 'Decode makes only one token per step',
+      text: [
+        'The next token can only be computed once the previous one is known, so decode produces one token per step.',
+        'Even that single token requires reading all model weights and the KV cache from memory. Little compute, lots of reading: the compute units sit idle while memory read speed sets the pace.',
+      ],
+      keyIdea: 'Decode speed depends more on memory bandwidth (how much can be read per second) than on compute throughput.',
+      flows: [
+        {from: 'w', to: 'dec', label: 'all weights', type: 'response'},
+        {from: 'kv', to: 'dec', label: 'read KV', type: 'response'},
+      ],
+      focus: ['dec'],
+      values: {phase: 'Decode', neck: 'Memory reads'},
+    },
+    {
+      short: 'Repeat',
+      kind: '원리',
+      title: 'The same reads repeat for every token',
+      text: [
+        'Each new token’s keys and values are added to the KV cache, so the cache grows as the answer grows.',
+        'The gap between tokens is TPOT (Time Per Output Token). Users feel it as "how fast the text appears". Faster than human reading speed is usually enough.',
+      ],
+      flows: [
+        {from: 'dec', to: 'kv', label: 'new token KV', type: 'request', bend: 0.15},
+        {from: 'dec', to: 'user', label: 'token', type: 'response'},
+      ],
+      focus: ['dec', 'kv'],
+      badges: {kv: 'prompt + partial'},
+      values: {tpot: {text: 'set by mem bandwidth', tone: 'good'}},
+    },
+    {
+      short: 'Mixing',
+      kind: '주의',
+      title: 'Mixing both phases on one accelerator causes interference',
+      text: [
+        'When several requests are served together, another request’s long prefill can cut in while one request is decoding.',
+        'While prefill occupies the compute units, the in-progress answers stall briefly. Users see text that stops and starts.',
+      ],
+      keyIdea: 'To reduce this, engines split prefill into chunks and interleave them with decode steps (chunked prefill), or move prefill to separate accelerators (prefill/decode disaggregation).',
+      flows: [{from: 'user', to: 'pre', label: 'another prompt', type: 'request'}],
+      focus: ['pre', 'dec'],
+      status: {dec: 'warn'},
+      badges: {dec: 'stalled'},
+      values: {tpot: {text: 'uneven', tone: 'bad'}},
+    },
+    {
+      short: 'Workloads',
+      kind: '원리',
+      title: 'Different workloads stress different phases',
+      text: [
+        'Summarization and retrieval tasks (long input, short answer) are prefill-heavy, so TTFT matters most.',
+        'Writing and code generation tasks (short prompt, long answer) are decode-heavy, so TPOT and total response time matter most.',
+      ],
+      focus: ['pre', 'dec'],
+      status: {dec: null},
+      badges: {dec: null},
+      values: {phase: 'Done'},
+    },
+    {
+      short: 'Recap',
+      kind: '정리',
+      title: 'Read all at once, write one token at a time',
+      text: [
+        'Prefill computes the whole prompt in parallel, builds the KV cache, and emits the first token. Input length and compute throughput set its time (TTFT).',
+        'Decode reads the weights and KV cache for every token and produces one at a time. Memory bandwidth sets its time (TPOT). When the two mix, they interfere.',
+      ],
+      keyIdea: 'Measure TTFT and TPOT separately and set separate targets. Merged into one "response time", you cannot tell whether slowness comes from prefill or decode.',
+      focus: ['kv'],
+      badges: {kv: null},
+    },
+  ]}
+/>
+
+## Running it on Kubernetes
+
+- vLLM exposes a TTFT histogram (`vllm:time_to_first_token_seconds`) and a per-token latency histogram on `/metrics`. Look at p95 and p99 rather than the mean, and alert on TTFT and TPOT separately.
+- If only TTFT got worse, inputs usually got longer or the queue grew; check waiting requests (`vllm:num_requests_waiting`) alongside it. If only TPOT got worse, suspect more concurrent decoding or long prefills cutting in.
+- Decode is bound by memory bandwidth, so a high GPU utilization reading can still leave plenty of compute headroom. Do not size replicas on utilization alone.
+- Give models with very different workloads their own replicas, and run load tests with realistic input and output length distributions. Testing with short prompts only hides the prefill cost.
+- Splitting prefill and decode across separate Pods is covered in [Splitting Prefill and Decode (P/D Disaggregation)](../llm/pd-disaggregation.mdx).
+
+Further reading: [vLLM documentation](https://docs.vllm.ai/) · [llm-d](https://llm-d.ai/)

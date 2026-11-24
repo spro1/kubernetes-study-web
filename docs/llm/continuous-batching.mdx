@@ -1,0 +1,181 @@
+---
+id: continuous-batching
+title: Batching Requests (Continuous Batching)
+sidebar_label: 04 · Batching Requests (Continuous Batching)
+description: See why inference engines compute many requests as one batch, and how continuous batching, which drops finished requests and adds new ones every iteration, changes throughput and waiting time.
+summary: 'Why requests are computed together and how the batch is rebuilt on every iteration.'
+icon: layers
+hide_table_of_contents: true
+---
+
+# Batching Requests (Continuous Batching)
+
+One accelerator can serve dozens of users at once thanks to **batching**: computing many requests together as one batch. How you batch decides whether the accelerator sits idle or stays full. Follow what **continuous batching**, used by today’s engines, changed.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~10 min', level: 'Intermediate'}}
+  groups={[
+    {label: 'Inference engine', x: 210, y: 30, w: 775, h: 405, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'apps', label: 'Applications', sub: 'many users', icon: 'browser', tone: 'ext', x: 105, y: 225, w: 150, show: true},
+    {id: 'queue', label: 'Wait queue', sub: 'incoming requests', icon: 'layers', tone: 'store', x: 330, y: 225, w: 150},
+    {id: 'sched', label: 'Engine scheduler', sub: 'builds each batch', icon: 'target', tone: 'cp', x: 560, y: 110, w: 160},
+    {id: 'gpu', label: 'Accelerator', sub: 'computes the batch', icon: 'server', tone: 'node', x: 560, y: 345, w: 170, show: true},
+    {id: 'ra', label: 'Request A', sub: 'short', icon: 'pod', tone: 'app', size: 'sm', x: 860, y: 75},
+    {id: 'rb', label: 'Request B', sub: 'long', icon: 'pod', tone: 'app', size: 'sm', x: 860, y: 175},
+    {id: 'rc', label: 'Request C', sub: 'medium', icon: 'pod', tone: 'app', size: 'sm', x: 860, y: 275},
+    {id: 'rd', label: 'Request D', sub: 'just in', icon: 'pod', tone: 'app', size: 'sm', x: 860, y: 385},
+  ]}
+  metrics={[
+    {id: 'batch', label: 'Current batch'},
+    {id: 'util', label: 'Accelerator use'},
+    {id: 'wait', label: 'Waiting requests'},
+  ]}
+  learn={[
+    {text: 'Batching shares one read of the weights', at: 1},
+    {text: 'A static batch waits for its longest request', at: 3},
+    {text: 'Continuous batching rebuilds the batch every iteration', at: 4},
+    {text: 'Bigger batches raise throughput but can slow each user', at: 6},
+  ]}
+  steps={[
+    {
+      short: 'One by one',
+      kind: '시작',
+      title: 'One request at a time leaves the accelerator idle',
+      text: [
+        'In decode, every new token requires reading all model weights from memory. The actual math is small, so the compute units mostly wait.',
+        'Serving a single request leaves most of the compute idle while other users wait in line.',
+      ],
+      flows: [
+        {from: 'apps', to: 'queue', label: 'requests', type: 'request'},
+        {from: 'gpu', to: 'ra', label: 'one only', type: 'response'},
+      ],
+      focus: ['gpu'],
+      values: {batch: '1', util: {text: 'low', tone: 'bad'}, wait: '3'},
+    },
+    {
+      short: 'Batch',
+      kind: '원리',
+      title: 'A batch shares one read of the weights',
+      text: [
+        'Computing the "next token" of several requests as one batch reads the weights once and uses them for all of them. The read time barely changes, but you get several results.',
+        'So the larger the batch, the more tokens per second (throughput) you produce.',
+      ],
+      keyIdea: 'Batching is the most basic way to serve more users with the same accelerator, and a big driver of serving cost.',
+      flows: [
+        {from: 'gpu', to: 'ra', type: 'response'},
+        {from: 'gpu', to: 'rb', type: 'response'},
+        {from: 'gpu', to: 'rc', type: 'response'},
+      ],
+      focus: ['gpu', 'ra', 'rb', 'rc'],
+      values: {batch: 'A·B·C', util: 'high', wait: '0'},
+    },
+    {
+      short: 'Static batch',
+      kind: '원리',
+      title: 'The old way kept a batch fixed until it finished',
+      text: [
+        'With static batching, once A, B and C start as a batch, the batch does not change until all three are done.',
+        'But answer lengths differ. A might be a few lines, B a few pages.',
+      ],
+      flows: [{from: 'sched', to: 'gpu', label: 'A·B·C fixed', type: 'request'}],
+      focus: ['sched', 'gpu'],
+      badges: {ra: 'short', rb: 'long', rc: 'medium'},
+    },
+    {
+      short: 'Empty slot',
+      kind: '문제',
+      title: 'A finishes, but its slot stays empty until B is done',
+      text: [
+        'A finishes first, yet the batch stays the same. A’s slot is empty, and the newly arrived request D waits in the queue until B finishes.',
+        'The longest request sets the pace for the whole batch. The accelerator idles again, and D’s first token arrives much later.',
+      ],
+      flows: [{from: 'apps', to: 'queue', label: 'request D', type: 'request'}],
+      focus: ['ra', 'queue'],
+      status: {ra: 'off'},
+      badges: {ra: 'done · empty', queue: 'D waits'},
+      values: {util: {text: 'wasted slots', tone: 'bad'}, wait: '1'},
+    },
+    {
+      short: 'Continuous',
+      kind: '원리',
+      title: 'Continuous batching rebuilds the batch every token step',
+      text: [
+        'With continuous batching, the engine scheduler rebuilds the batch on every iteration (one step that produces one token per request).',
+        'Finished A leaves, and D from the queue takes its slot. The accelerator always computes a full batch. Modern engines such as vLLM do this by default.',
+      ],
+      keyIdea: 'Requests are batched per iteration, not per request. That is why it is also called iteration-level scheduling.',
+      flows: [
+        {from: 'queue', to: 'sched', label: 'D joins', type: 'request'},
+        {from: 'sched', to: 'gpu', label: 'B·C·D', type: 'request'},
+        {from: 'gpu', to: 'rd', type: 'response'},
+      ],
+      focus: ['sched', 'rd'],
+      status: {ra: 'gone'},
+      badges: {queue: null, ra: null, rd: 'starts now'},
+      values: {batch: 'B·C·D', util: {text: 'high', tone: 'good'}, wait: '0'},
+    },
+    {
+      short: 'New prompt',
+      kind: '원리',
+      title: 'A new prompt is read in small chunks',
+      text: [
+        'D first needs a prefill to read its prompt. Reading a long prompt in one go would pause B and C while it runs.',
+        'So the engine cuts D’s prefill into fixed-size chunks and computes one chunk per iteration alongside B and C’s decode (chunked prefill). Ongoing answers stutter less.',
+      ],
+      flows: [{from: 'sched', to: 'gpu', label: 'D chunk + B·C tokens', type: 'request'}],
+      focus: ['gpu'],
+      badges: {rd: 'reading prompt'},
+    },
+    {
+      short: 'How many',
+      kind: '주의',
+      title: 'Bigger batches raise throughput but can slow each user',
+      text: [
+        'As the batch grows, each iteration takes a bit longer. Total throughput rises, but the gap between tokens for each user (TPOT) grows too.',
+        'The KV cache sets the upper limit on batch size. Every request needs cache space, and once the cache is full, nothing more fits. The engine’s max concurrent requests setting (for example --max-num-seqs in vLLM) tunes this balance.',
+      ],
+      keyIdea: 'Throughput (total tokens per second) and per-user latency (TTFT, TPOT) pull against each other. Decide which one you are targeting before choosing settings.',
+      focus: ['sched', 'gpu'],
+      badges: {rd: null},
+      values: {batch: 'bigger = more tput'},
+    },
+    {
+      short: 'Load',
+      kind: '원리',
+      title: 'How the metrics move as concurrency grows',
+      text: [
+        'With few concurrent requests, batches are small: throughput is low and each user is fast. As requests grow, throughput climbs and then flattens out at some point.',
+        'Past that point the queue grows and TTFT rises sharply. That is why benchmarks raise concurrency step by step to find it.',
+      ],
+      flows: [{from: 'apps', to: 'queue', label: 'traffic spike', type: 'request'}],
+      focus: ['queue'],
+      badges: {queue: 'queue grows'},
+      values: {wait: {text: 'rising', tone: 'bad'}},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Compute in batches, rebuild the batch every iteration',
+      text: [
+        'Batching reads the weights once and uses them for many requests, which greatly raises throughput. A static batch wastes slots waiting for its longest request.',
+        'Continuous batching drops finished requests and adds new ones every iteration, keeping the accelerator full. Batch size is a trade-off between KV cache space and latency targets.',
+      ],
+      keyIdea: '"How many users per accelerator?" has no fixed answer. You need input/output lengths and latency targets first.',
+      focus: ['gpu'],
+      badges: {queue: null},
+    },
+  ]}
+/>
+
+## What to check on Kubernetes
+
+- Continuous batching happens inside the engine. Before adding Pods, measure how much concurrency one Pod can handle. Raise concurrency step by step and record throughput, TTFT and TPOT; the knee shows up clearly.
+- Watch running and waiting request counts together. In vLLM these are `vllm:num_requests_running` and `vllm:num_requests_waiting`. If waiting stays above zero, the batch is already full.
+- Waiting requests make a better scaling signal than accelerator utilization, which can read high during decode even with headroom left. You can feed it to HPA or KEDA as an external metric to adjust replicas.
+- Raising max concurrent requests increases throughput but can run the KV cache short and preempt requests. Check KV cache usage after changing it.
+
+Further reading: [Horizontal Pod Autoscaling](https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/) · [vLLM documentation](https://docs.vllm.ai/)

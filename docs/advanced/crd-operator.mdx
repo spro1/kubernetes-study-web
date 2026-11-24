@@ -3,6 +3,8 @@ id: crd-operator
 title: CRDs and Operators
 sidebar_label: 03 · CRDs and Operators
 description: Register a new resource kind with a CRD, watch an operator create child resources and report status, and see why deleting a CRD is risky, step by step with animation
+summary: 'Registering a new resource kind and how an operator creates and reconciles child resources.'
+icon: gear
 hide_table_of_contents: true
 ---
 
@@ -188,5 +190,3 @@ Built-in Kubernetes resources have no concept like "a database" or "a nightly ba
 | All backup schedules disappeared at once | A CRD deletion removed every CR of that kind | History of tool removal and upgrades |
 
 Further reading: [Custom resources](https://kubernetes.io/docs/concepts/extend-kubernetes/api-extension/custom-resources/) · [Operator pattern](https://kubernetes.io/docs/concepts/extend-kubernetes/operator/) · [Velero](https://velero.io/docs/) · Why deletion gets stuck: [Deletion Is More Complex Than You Think](./deletion-finalizer.mdx)
-
-Next lesson: [Control Plane HA and etcd Quorum](./etcd-quorum.mdx)

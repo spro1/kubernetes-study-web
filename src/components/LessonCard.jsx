@@ -3,6 +3,7 @@ import Link from '@docusaurus/Link';
 import useDocusaurusContext from '@docusaurus/useDocusaurusContext';
 import {Icon} from './lessonIcons';
 import {useProgress} from '../progress';
+import TRACKS from '../data/tracks';
 import styles from './LessonCard.module.css';
 
 /**
@@ -16,7 +17,7 @@ import styles from './LessonCard.module.css';
  *     </LessonCard>
  *   </LessonGrid>
  *
- * track: 'k8s' | 'feature' | 'learn' | 'cert' | 'cloud'   to 를 비우면 '준비 중' 카드가 된다.
+ * track: src/data/tracks.js 의 key. to 를 비우면 '준비 중' 카드가 된다.
  */
 export function LessonGrid({children}) {
   return <div className={styles.grid}>{children}</div>;
@@ -45,10 +46,13 @@ export default function LessonCard({no, to, track = 'k8s', icon, title, duration
     </>
   );
 
-  const cls = `${styles.card} ${styles[`track_${track}`]} ${to ? '' : styles.planned} ${done ? styles.isDone : ''}`;
+  const cls = `${styles.card} ${to ? '' : styles.planned} ${done ? styles.isDone : ''}`;
+  // 트랙 색은 src/data/tracks.js 한 곳에서 온다.
+  const color = TRACKS.find((t) => t.key === track)?.color ?? '#2f62c9';
+  const style = {'--lc-color': color, '--lc-soft': `color-mix(in srgb, ${color} 14%, var(--lc-bg))`};
   return to ? (
-    <Link to={to} className={cls}>{body}</Link>
+    <Link to={to} className={cls} style={style}>{body}</Link>
   ) : (
-    <div className={cls} aria-disabled="true">{body}</div>
+    <div className={cls} style={style} aria-disabled="true">{body}</div>
   );
 }

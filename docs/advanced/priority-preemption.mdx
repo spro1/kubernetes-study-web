@@ -3,6 +3,8 @@ id: priority-preemption
 title: Priority and Preemption
 sidebar_label: 08 · Priority and Preemption
 description: Follow how a high-priority Pod evicts lower-priority Pods when there is no room, how the evicted Pod shuts down gracefully and goes Pending, why PDBs are honored only on a best-effort basis, and system priority classes, step by step with animation
+summary: 'How a higher-priority Pod evicts lower ones when there is no room.'
+icon: scale
 hide_table_of_contents: true
 ---
 
@@ -176,5 +178,3 @@ When nodes are full, a new Pod usually waits in Pending ([Which Node Gets the Po
 The details of drain and PDBs are in [Draining Nodes and Upgrading the Cluster](../k8s/node-drain.mdx).
 
 Further reading: [Pod priority and preemption](https://kubernetes.io/docs/concepts/scheduling-eviction/pod-priority-preemption/) · [Disruptions](https://kubernetes.io/docs/concepts/workloads/pods/disruptions/)
-
-Next lesson: [Pod Security Standards and securityContext](./pod-security.mdx)

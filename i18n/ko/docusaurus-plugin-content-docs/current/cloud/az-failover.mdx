@@ -3,6 +3,8 @@ id: az-failover
 title: 가용 영역 하나가 멈추면
 sidebar_label: 03 · 가용 영역 하나가 멈추면
 description: 두 가용 영역에 나눠 둔 서버와 주·대기 DB에서 한 영역이 멈췄을 때 로드밸런서 헬스 체크, 대기 복제본 승격, RPO·RTO가 어떻게 움직이는지 애니메이션으로 따라간다
+summary: '헬스 체크로 빠지고 대기 DB가 승격되는 과정, RPO·RTO의 뜻.'
+icon: alert
 hide_table_of_contents: true
 ---
 
@@ -181,5 +183,3 @@ hide_table_of_contents: true
 | 영역을 나눈 주·대기 DB | RDS 다중 AZ 배포 | 영역 중복 고가용성 (Flexible Server) | Cloud SQL 고가용성 (리전 인스턴스) |
 
 더 읽을거리: [여러 영역에서 실행하기 (쿠버네티스 문서)](https://kubernetes.io/docs/setup/best-practices/multiple-zones/) · [파드 토폴로지 분배 제약 조건](https://kubernetes.io/ko/docs/concepts/scheduling-eviction/topology-spread-constraints/) · [리전과 가용 영역 (AWS)](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/using-regions-availability-zones.html)
-
-다음 레슨: [가상 머신 자동 증감 (오토스케일링 그룹)](./auto-scaling-group.mdx)

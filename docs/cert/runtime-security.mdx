@@ -1,8 +1,10 @@
 ---
 id: runtime-security
 title: Runtime security — catching abnormal behavior (CKS)
-sidebar_label: 06 · Runtime security
+sidebar_label: 05 · Runtime security
 description: Follow an animation of Falco catching a shell opened in a container and a sensitive file read through system calls, seccomp, AppArmor and a read-only filesystem blocking them, and audit logs used to investigate
+summary: 'Falco detection, seccomp and AppArmor blocking, and immutable containers.'
+icon: alert
 hide_table_of_contents: true
 ---
 
@@ -202,5 +204,3 @@ This covers the CKS Monitoring, Logging and Runtime Security (20%) domain and "k
 | Who ran exec? | Check the user on `pods/exec` requests in the audit log | Without a rule in the audit policy, nothing is recorded |
 
 Further reading: [CNCF certification curriculum](https://github.com/cncf/curriculum) · [Falco docs](https://falco.org/docs/) · [Restrict a container's syscalls with seccomp](https://kubernetes.io/docs/tutorials/security/seccomp/) · [Pod Security Standards and securityContext](../advanced/pod-security.mdx) · [Audit Logs](../advanced/audit-log.mdx)
-
-Next lesson: [Viewing the cluster through the 4Cs and a threat model (KCSA·KCNA)](./threat-model.mdx)

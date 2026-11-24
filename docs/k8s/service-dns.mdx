@@ -1,8 +1,10 @@
 ---
 id: service-dns
 title: Finding Services by Name (Service·DNS)
-sidebar_label: 08 · Finding Services by Name
+sidebar_label: 05 · Finding Services by Name
 description: Follow, step by step, how a pod calls another service by name through a CoreDNS lookup and the Service virtual IP to reach a target pod, and how name lookup fails across namespaces, with typos, or when DNS is down
+summary: 'What happens when a Pod calls another service by name, and what changes across namespaces.'
+icon: book
 hide_table_of_contents: true
 ---
 
@@ -185,5 +187,3 @@ The web pod in the `shop` namespace calls the order service `order-svc`. Let's f
 | Name resolves but connection fails | Service → pod | Selector and pod labels do not match so there are 0 target pods, port mismatch |
 
 Further reading: [Service](https://kubernetes.io/docs/concepts/services-networking/service/) · [DNS for Services and Pods](https://kubernetes.io/docs/concepts/services-networking/dns-pod-service/)
-
-Next lesson: [Blocking and Allowing Traffic (NetworkPolicy)](./network-policy.mdx)

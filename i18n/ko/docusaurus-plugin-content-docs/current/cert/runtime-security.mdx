@@ -1,8 +1,10 @@
 ---
 id: runtime-security
 title: 런타임 보안 — 이상 행동 잡기 (CKS)
-sidebar_label: 06 · 런타임 보안
+sidebar_label: 05 · 런타임 보안
 description: 컨테이너 안에서 셸을 열고 민감한 파일을 읽는 행동을 Falco가 시스템 콜로 잡아내고, seccomp·AppArmor·읽기 전용 파일 시스템으로 막고, 감사 로그로 조사하는 과정을 애니메이션으로 따라간다
+summary: 'Falco 탐지, seccomp·AppArmor 차단, 불변 컨테이너.'
+icon: alert
 hide_table_of_contents: true
 ---
 
@@ -202,5 +204,3 @@ CKS 출제 영역 중 Monitoring, Logging and Runtime Security(20%)와 System Ha
 | 누가 exec 했나 | 감사 로그에서 `pods/exec` 요청의 사용자 확인 | 감사 정책에 규칙이 없으면 남지 않는다 |
 
 더 읽을거리: [CNCF 자격증 출제 범위](https://github.com/cncf/curriculum) · [Falco 문서](https://falco.org/docs/) · [seccomp로 시스템 콜 제한](https://kubernetes.io/docs/tutorials/security/seccomp/) · [파드 보안 기준과 securityContext](../advanced/pod-security.mdx) · [감사 로그](../advanced/audit-log.mdx)
-
-다음 레슨: [4C와 위협 모델로 클러스터 보기 (KCSA·KCNA)](./threat-model.mdx)

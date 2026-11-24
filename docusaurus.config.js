@@ -2,14 +2,11 @@
 const GITHUB_USER = 'spro1';
 const REPO = 'kubernetes-study-web';
 const REPO_URL = `https://github.com/${GITHUB_USER}/${REPO}`;
-const KO = process.env.DOCUSAURUS_CURRENT_LOCALE === 'ko';
 
 /** @type {import('@docusaurus/types').Config} */
 const config = {
   title: 'K8s Flow',
-  tagline: KO
-    ? '쿠버네티스가 실제로 어떻게 움직이는지 단계별 애니메이션 다이어그램으로 배운다'
-    : 'Learn how Kubernetes really works through step-by-step animated diagrams',
+  tagline: 'Learn how Kubernetes really works through step-by-step animated diagrams',
   favicon: 'img/favicon.svg',
 
   url: `https://${GITHUB_USER}.github.io`,
@@ -107,7 +104,7 @@ const config = {
             ],
           },
         ],
-        copyright: KO ? '도움이 됐다면 GitHub에서 ⭐ 를 눌러 주세요. Built with Docusaurus.' : 'If this helped, a ⭐ on GitHub keeps it going. Built with Docusaurus.',
+        copyright: 'If this helped, a ⭐ on GitHub keeps it going. Built with Docusaurus.', // 한국어는 i18n/ko/docusaurus-theme-classic/footer.json
       },
       prism: {
         theme: require('prism-react-renderer').themes.github,

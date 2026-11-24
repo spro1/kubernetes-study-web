@@ -1,8 +1,10 @@
 ---
 id: network-policy
 title: 통신 막고 열기 (네트워크 정책)
-sidebar_label: 09 · 통신 막고 열기
+sidebar_label: 03 · 통신 막고 열기
 description: 모두 허용된 파드 통신을 기본 차단 정책으로 막고, 레이블로 frontend→backend, backend→db만 여는 과정과 차단된 요청이 시간 초과로 보이는 이유를 애니메이션으로 따라간다
+summary: '기본 차단에서 필요한 통신만 여는 방법과, 막힌 통신을 어디서 확인하는지.'
+icon: shield
 hide_table_of_contents: true
 ---
 
@@ -187,5 +189,3 @@ hide_table_of_contents: true
 | 정책을 만들었는데 아무 효과가 없다 | 셀렉터와 맞는 파드가 없다, 네트워크 플러그인이 정책을 지원하지 않는다 | 정책의 `파드 셀렉터`와 파드 레이블 비교 |
 
 더 읽을거리: [네트워크 정책](https://kubernetes.io/ko/docs/concepts/services-networking/network-policies/) · [Cilium 문서](https://docs.cilium.io/)
-
-다음 레슨: [누가 무엇을 할 수 있나 (RBAC)](./rbac.mdx)

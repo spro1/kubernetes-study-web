@@ -1,0 +1,189 @@
+---
+id: training-job
+title: 학습 작업이 모델이 되기까지
+sidebar_label: 07 · 학습 작업이 모델이 되기까지
+description: 학습·평가 Job이 Kueue 대기열에 들어가 GPU 쿼터가 비면 승인되고, GPU 노드에서 실행되어 체크포인트를 남긴 뒤 모델 레지스트리에 버전으로 등록되기까지를 애니메이션으로 따라간다
+summary: '학습 작업이 큐에서 GPU 쿼터를 기다렸다 실행되고, 체크포인트를 남겨 모델 버전이 되기까지.'
+icon: hammer
+hide_table_of_contents: true
+---
+
+# 학습 작업이 모델이 되기까지
+
+GPU는 여러 팀이 함께 쓴다. 학습·평가 Job을 바로 실행하지 않고 **대기열**에 넣어 두었다가, 팀에 배정된 GPU 쿼터가 비면 실행한다. 여기서는 Kueue를 예로 들어 Job이 대기하고, 실행되고, 산출물을 남기고, 모델 레지스트리에 버전으로 올라가기까지 따라간다.
+
+<StepDiagram
+  width={1000}
+  height={460}
+  meta={{duration: '약 10분', level: '중급'}}
+  groups={[
+    {label: '팀 네임스페이스', x: 170, y: 30, w: 250, h: 410, tone: 'biz'},
+    {label: '큐잉 · 스케줄링', x: 450, y: 30, w: 300, h: 410, tone: 'mgmt'},
+    {label: '모델 레지스트리', x: 780, y: 30, w: 205, h: 410, tone: 'plain'},
+  ]}
+  nodes={[
+    {id: 'dev', label: '개발자', sub: 'kubectl', icon: 'user', tone: 'ext', x: 85, y: 230, show: true},
+    {id: 'spec', label: 'Job 매니페스트', sub: 'queue-name 레이블', icon: 'book', tone: 'app', x: 295, y: 110, w: 160, show: true},
+    {id: 'job', label: '학습 Job', sub: 'GPU Pod', icon: 'hammer', tone: 'node', x: 295, y: 250},
+    {id: 'out', label: '체크포인트', sub: 'PVC · 객체 저장소', icon: 'archive', tone: 'store', x: 295, y: 385},
+    {id: 'kueue', label: 'Kueue', sub: '승인 판단', icon: 'gear', tone: 'cp', x: 600, y: 110, show: true},
+    {id: 'cq', label: 'ClusterQueue', sub: 'GPU 쿼터', icon: 'layers', tone: 'store', x: 600, y: 250},
+    {id: 'sched', label: '스케줄러', sub: 'kube-scheduler', icon: 'target', tone: 'cp', x: 600, y: 385},
+    {id: 'model', label: '모델 버전', sub: 'MLflow 등', icon: 'box', tone: 'store', x: 882, y: 140},
+    {id: 'eval', label: '평가 지표', sub: '실행 기록', icon: 'chart', tone: 'store', x: 882, y: 330},
+  ]}
+  metrics={[
+    {id: 'job', label: 'Job 상태'},
+    {id: 'quota', label: 'GPU 쿼터'},
+    {id: 'model', label: '모델 버전'},
+  ]}
+  learn={[
+    {text: 'Kueue가 Job을 멈춘 채로 받아 두는 방식', at: 1},
+    {text: '쿼터를 넘는 요청은 거절되지 않고 계속 대기한다는 것', at: 2},
+    {text: '선점되면 진행이 사라지므로 체크포인트가 필요하다는 것', at: 5},
+    {text: '산출물을 학습 이력과 함께 모델 버전으로 등록하는 방법', at: 7},
+  ]}
+  steps={[
+    {
+      short: 'Job 준비',
+      kind: '시작',
+      title: '대기열 이름을 붙인 Job을 만든다',
+      text: [
+        '개발자가 학습 Job 매니페스트를 쓴다. GPU 요청(nvidia.com/gpu 등)과 함께 kueue.x-k8s.io/queue-name 레이블로 팀의 LocalQueue를 적는다.',
+        '평가, 데이터 전처리처럼 끝나면 종료되는 일도 같은 방식으로 제출한다.',
+      ],
+      flows: [{from: 'dev', to: 'spec', label: '매니페스트 작성', type: 'request'}],
+      focus: ['spec'],
+      values: {job: '—', quota: '—', model: '—'},
+    },
+    {
+      short: '보류 상태',
+      kind: '원리',
+      title: '제출하면 Job은 멈춘 채로 접수된다',
+      text: [
+        'kubectl apply로 제출하면 Kueue가 Job을 suspend 상태로 만든다. Pod는 아직 하나도 생기지 않는다.',
+        'Kueue는 이 Job을 대표하는 Workload 오브젝트를 만들고, 필요한 GPU 수를 Job 전체 Pod 기준으로 계산한다.',
+      ],
+      flows: [{from: 'spec', to: 'kueue', label: 'kubectl apply', type: 'request'}],
+      focus: ['kueue'],
+      values: {job: '보류(suspend)', quota: '심사 중'},
+    },
+    {
+      short: '쿼터 초과',
+      kind: '주의',
+      title: '쿼터를 넘는 요청은 계속 대기만 한다',
+      text: [
+        'ClusterQueue가 빌려 올 수 있는 양까지 더해도 모자란 요청은 승인될 수 없다. 오류로 거절되지 않고 Pending으로 남는다.',
+        'LocalQueue 이름을 잘못 적어도 마찬가지다. kubectl describe workload의 상태 메시지에 이유가 적힌다.',
+      ],
+      flows: [{from: 'kueue', to: 'spec', label: '승인 불가', type: 'response', bend: 0.2}],
+      focus: ['kueue'],
+      status: {kueue: 'warn'},
+      badges: {kueue: '대기 이유 확인'},
+      values: {quota: {text: '초과 시 무기한 대기', tone: 'bad'}},
+    },
+    {
+      short: '대기열',
+      kind: '원리',
+      title: '승인 가능한 Job은 ClusterQueue에 줄을 선다',
+      text: [
+        '쿼터 안의 요청은 ClusterQueue에서 차례를 기다린다. 순서는 우선순위와 대기열 전략(BestEffortFIFO, StrictFIFO)에 따라 정해진다.',
+        '같은 코호트의 다른 대기열이 쓰지 않는 쿼터를 빌려 올 수도 있다. 빌린 쿼터로 돌던 Job은 주인이 쿼터를 되찾을 때 밀려날 수 있다.',
+      ],
+      flows: [{from: 'kueue', to: 'cq', label: '대기', type: 'request'}],
+      focus: ['cq'],
+      status: {kueue: null},
+      badges: {kueue: null},
+      values: {job: '대기', quota: '자리 기다림'},
+    },
+    {
+      short: '승인·실행',
+      kind: '원리',
+      title: '쿼터가 비면 승인되고 GPU 노드에서 실행된다',
+      text: [
+        'GPU 쿼터에 자리가 나면 Kueue가 Workload를 승인한다. 쿼터를 잡아 두고 ResourceFlavor의 노드 레이블을 Pod에 넣은 뒤 suspend를 푼다.',
+        '그제야 Job 컨트롤러가 Pod를 만들고, kube-scheduler가 GPU 노드에 배치한다.',
+      ],
+      flows: [
+        {from: 'cq', to: 'sched', label: '승인 (suspend 해제)', type: 'request'},
+        {from: 'sched', to: 'job', label: 'GPU 노드 배치', type: 'request'},
+      ],
+      focus: ['sched', 'job'],
+      values: {job: '실행 중', quota: {text: '할당됨', tone: 'good'}},
+    },
+    {
+      short: '선점',
+      kind: '주의',
+      title: '선점되면 Job이 대기열로 돌아간다',
+      text: [
+        '우선순위가 더 높은 Job이 오거나 빌려 준 쿼터를 되찾으면 Kueue가 실행 중인 Job을 선점한다. Pod는 종료되고 Job은 다시 suspend 상태로 대기열에 돌아간다.',
+        '노드 장애로 Pod가 사라질 때도 비슷하다. 체크포인트가 없으면 다시 처음부터 학습한다.',
+      ],
+      keyIdea: '긴 학습일수록 체크포인트 주기를 짧게 잡고, 다시 시작할 때 마지막 체크포인트에서 이어 가도록 코드를 짠다.',
+      focus: ['job'],
+      status: {job: 'warn'},
+      badges: {job: '선점 가능'},
+      values: {job: {text: '중단 대비', tone: 'bad'}},
+    },
+    {
+      short: '산출물',
+      kind: '원리',
+      title: 'Job이 체크포인트와 결과를 남기고 끝난다',
+      text: [
+        '학습 Job은 학습 중 체크포인트를, 끝에 최종 가중치를 PVC나 객체 저장소에 쓴다. 완료 조건을 채우면 Job은 Complete가 되고 Kueue는 쿼터를 돌려준다.',
+        'Pod 로그는 Pod가 지워지면 함께 사라진다. 로그와 학습 지표는 따로 모아 둔다.',
+      ],
+      flows: [{from: 'job', to: 'out', label: '체크포인트·가중치', type: 'request'}],
+      focus: ['out'],
+      status: {job: 'ok'},
+      badges: {job: null},
+      values: {job: {text: '완료', tone: 'good'}, quota: '반환됨'},
+    },
+    {
+      short: '모델 등록',
+      kind: '원리',
+      title: '산출물을 모델 버전으로 등록한다',
+      text: [
+        '학습 코드의 마지막 단계가 MLflow 같은 모델 레지스트리에 새 모델 버전을 등록한다. 산출물 위치, 학습 실행 ID, 하이퍼파라미터가 함께 기록되어 어떤 Job에서 나온 모델인지 추적할 수 있다.',
+        '여기서부터는 04 레슨과 같다. 배포용 아티팩트로 포장하고 노드에 캐시해야 빨리 서빙할 수 있다.',
+      ],
+      flows: [{from: 'job', to: 'model', label: '모델 버전 등록', type: 'request'}],
+      focus: ['model'],
+      status: {model: 'ok'},
+      values: {model: {text: '등록됨', tone: 'good'}},
+    },
+    {
+      short: '평가 지표',
+      kind: '원리',
+      title: '평가 Job의 점수는 실행 기록에 남는다',
+      text: [
+        '평가 Job도 같은 대기열을 거쳐 실행되고, 점수를 실행 기록에 남긴다. 이전 버전과 같은 평가셋으로 비교해야 의미가 있다.',
+        '기준을 넘은 버전에만 별칭(alias)을 붙여 서빙 쪽이 그 별칭을 따라가게 하면, 배포할 버전을 사람이 매번 고르지 않아도 된다.',
+      ],
+      flows: [{from: 'job', to: 'eval', label: '평가 점수', type: 'request', bend: 0.2}],
+      focus: ['eval'],
+      status: {eval: 'ok'},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '대기열에서 기다리고, 레지스트리로 끝난다',
+      text: [
+        '제출 → 보류 → 대기열 → 승인 → GPU 노드에서 실행 → 체크포인트 → 모델 버전 등록 순서다. 평가 점수는 실행 기록에 남아 버전끼리 비교된다.',
+        'Job이 오래 대기하면 쿼터 부족, 앞선 Job, 선점 중 무엇 때문인지 Workload 상태로 확인한다.',
+      ],
+      keyIdea: 'kubectl get workloads와 kubectl describe workload로 대기 이유를, kubectl get clusterqueue로 쿼터 사용량을 본다.',
+      focus: ['cq', 'job', 'model'],
+    },
+  ]}
+/>
+
+## 바로 실행 vs 대기열
+
+| | Job을 바로 실행 | Kueue 대기열 |
+| --- | --- | --- |
+| GPU가 모자랄 때 | 일부 Pod만 떠서 Pending으로 GPU를 붙잡는다 | Job 전체가 suspend로 기다린다 |
+| 팀 간 공정성 | 먼저 만든 쪽이 차지한다 | 팀별 쿼터, 빌려 쓰기, 선점 |
+| 대기 이유 확인 | Pod 이벤트를 하나씩 본다 | Workload 상태 메시지 |
+
+더 읽을거리: [잡](https://kubernetes.io/ko/docs/concepts/workloads/controllers/job/) · [Kueue 개요](https://kueue.sigs.k8s.io/docs/overview/)

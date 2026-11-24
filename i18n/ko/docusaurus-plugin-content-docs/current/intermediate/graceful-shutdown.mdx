@@ -1,14 +1,16 @@
 ---
 id: graceful-shutdown
 title: 정상 종료 — 요청을 잃지 않고 내려가기
-sidebar_label: 04 · 정상 종료
+sidebar_label: 06 · 정상 종료
 description: 파드를 지울 때 요청 대상에서 빠지는 일과 종료 신호가 동시에 일어나는 이유, preStop과 유예 시간이 처리 중인 요청을 지키는 원리를 애니메이션으로 따라간다
+summary: '엔드포인트 제외와 SIGTERM, preStop, 유예 시간이 맞물리는 순서.'
+icon: pod
 hide_table_of_contents: true
 ---
 
 # 정상 종료 — 요청을 잃지 않고 내려가기
 
-배포·축소·노드 비우기는 모두 결국 "파드 하나를 지운다"로 끝난다. 그 파드가 처리하던 요청을 잃지 않고 내려가는 순서를 따라가 본다. 배포 전체 흐름은 [무중단 배포](../k8s/rolling-update.mdx), 노드 정비 흐름은 [노드 비우기와 업그레이드](../k8s/node-drain.mdx)에서 다룬다.
+배포·축소·노드 비우기는 모두 결국 "파드 하나를 지운다"로 끝난다. 그 파드가 처리하던 요청을 잃지 않고 내려가는 순서를 따라가 본다. 배포 전체 흐름은 [무중단 배포 (롤링 업데이트)](../k8s/rolling-update.mdx), 노드 정비 흐름은 [노드 비우기와 클러스터 업그레이드](../k8s/node-drain.mdx)에서 다룬다.
 
 <StepDiagram
   width={1000}
@@ -172,5 +174,3 @@ hide_table_of_contents: true
 `terminationGracePeriodSeconds`와 `preStop`은 파드 템플릿의 `spec`에 적는다. 적용된 값은 `kubectl get pod <이름> -o yaml`로 확인한다.
 
 더 읽을거리: [파드 라이프사이클 — 파드의 종료](https://kubernetes.io/ko/docs/concepts/workloads/pods/pod-lifecycle/#pod-termination) · [컨테이너 라이프사이클 훅](https://kubernetes.io/ko/docs/concepts/containers/container-lifecycle-hooks/)
-
-다음 레슨: [스테이트풀셋과 데이터베이스](./statefulset.mdx)

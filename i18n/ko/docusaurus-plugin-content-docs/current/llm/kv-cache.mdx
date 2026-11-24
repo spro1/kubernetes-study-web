@@ -1,0 +1,173 @@
+---
+id: kv-cache
+title: KV 캐시가 차오르기까지
+sidebar_label: 03 · KV 캐시가 차오르기까지
+description: KV 캐시가 왜 필요하고, 대화 길이와 동시 요청 수에 따라 어떻게 가속기 메모리를 채우며, 같은 앞부분을 재사용하거나 가득 찼을 때 무슨 일이 생기는지 단계별 애니메이션으로 따라간다
+summary: '계산 결과를 저장해 다시 쓰는 원리, 블록 단위 배정과 프리픽스 캐시, 가득 찼을 때.'
+icon: db
+hide_table_of_contents: true
+---
+
+# KV 캐시가 차오르기까지
+
+**KV 캐시**는 모델이 앞에서 읽고 쓴 토큰의 계산 결과를 모아 둔 것이다. 이것 덕분에 답을 빠르게 이어 쓰지만, 대화가 길어지고 동시 요청이 많아질수록 가속기 메모리를 빠르게 채운다. 서빙에서 "몇 명까지 동시에 받을 수 있나"를 정하는 것이 대개 이 캐시다.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '약 10분', level: '중급'}}
+  groups={[
+    {label: '가속기 한 장', x: 255, y: 30, w: 730, h: 405, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'a', label: '요청 A', sub: '대화 1', icon: 'user', tone: 'ext', size: 'sm', w: 110, x: 105, y: 140, show: true},
+    {id: 'b', label: '요청 B', sub: '같은 시스템 지시', icon: 'user', tone: 'ext', size: 'sm', w: 130, x: 105, y: 330},
+    {id: 'model', label: '모델 연산', sub: '다음 토큰 계산', icon: 'spark', tone: 'node', x: 420, y: 230, w: 160, show: true},
+    {id: 'w', label: '모델 가중치', sub: '고정 크기', icon: 'disk', tone: 'store', x: 700, y: 110, w: 160, show: true},
+    {id: 'kv', label: 'KV 캐시 영역', sub: '남은 메모리 대부분', icon: 'db', tone: 'store', x: 700, y: 340, w: 170},
+    {id: 'q', label: '대기 줄', sub: '자리 날 때까지', icon: 'layers', tone: 'cp', size: 'sm', w: 120, x: 905, y: 230},
+  ]}
+  metrics={[
+    {id: 'use', label: 'KV 캐시 사용률'},
+    {id: 'calc', label: '토큰마다 새로 계산'},
+    {id: 'conc', label: '동시 처리 요청'},
+  ]}
+  learn={[
+    {text: 'KV 캐시가 없으면 매번 처음부터 다시 계산한다는 것', at: 1},
+    {text: '캐시는 대화 길이 × 동시 요청 수만큼 커진다는 것', at: 4},
+    {text: '블록 단위로 나눠 메모리 낭비를 줄인다는 것', at: 5},
+    {text: '같은 앞부분은 재사용할 수 있다는 것(프리픽스 캐시)', at: 6},
+    {text: '가득 차면 새 요청이 기다리거나 밀려난다는 것', at: 7},
+  ]}
+  steps={[
+    {
+      short: '앞을 다시 본다',
+      kind: '시작',
+      title: '다음 토큰을 만들려면 앞의 모든 토큰을 참고해야 한다',
+      text: [
+        '모델은 다음 토큰을 계산할 때 앞에 있는 모든 토큰과의 관계를 본다(어텐션). 1,000번째 토큰을 만들 때는 앞의 999개를 모두 참고한다.',
+        '이때 각 토큰마다 "키(Key)"와 "값(Value)"이라는 계산 결과가 필요하다.',
+      ],
+      flows: [{from: 'a', to: 'model', label: '대화 1', type: 'request'}],
+      focus: ['model'],
+      values: {use: '0%', calc: '—', conc: '1개'},
+    },
+    {
+      short: '캐시 없다면',
+      kind: '문제',
+      title: '캐시가 없으면 매 토큰마다 앞부분을 다시 계산한다',
+      text: [
+        '키·값을 버리면, 새 토큰 하나를 만들 때마다 앞의 모든 토큰의 키·값을 처음부터 다시 계산해야 한다.',
+        '답이 길어질수록 다시 계산할 양이 계속 늘어나 생성이 점점 느려진다.',
+      ],
+      focus: ['model'],
+      status: {model: 'warn'},
+      badges: {model: '앞부분 전부 재계산'},
+      values: {calc: {text: '앞 토큰 전부', tone: 'bad'}},
+    },
+    {
+      short: '저장',
+      kind: '원리',
+      title: '한 번 계산한 키·값을 가속기 메모리에 저장한다',
+      text: [
+        '엔진은 계산한 키·값을 KV 캐시에 저장해 둔다. 다음 토큰을 만들 때는 새 토큰의 키·값만 계산하고, 나머지는 캐시에서 읽는다.',
+        '계산을 메모리로 바꾼 셈이다. 속도는 빨라지지만 그만큼 메모리를 쓴다.',
+      ],
+      flows: [{from: 'model', to: 'kv', label: '키·값 저장', type: 'request'}],
+      focus: ['kv'],
+      status: {model: null},
+      badges: {model: null, kv: 'A'},
+      values: {use: '5%', calc: {text: '새 토큰 하나분', tone: 'good'}},
+    },
+    {
+      short: '메모리 배분',
+      kind: '원리',
+      title: '가중치를 올리고 남은 메모리가 KV 캐시 몫이다',
+      text: [
+        '가속기 메모리에는 먼저 모델 가중치가 올라간다. 크기가 고정이다. vLLM 같은 엔진은 남은 메모리의 대부분을 미리 KV 캐시 영역으로 잡아 둔다.',
+        '그래서 가속기 메모리 사용률은 처음부터 높게 보인다. 실제 여유는 메모리 사용률 대신 KV 캐시 사용률로 본다.',
+      ],
+      keyIdea: '"GPU 메모리 90% 사용"이 곧 "꽉 찼다"는 뜻은 아니다. 엔진이 미리 잡아 둔 영역일 수 있다.',
+      flows: [{from: 'w', to: 'model', label: '가중치 읽기', type: 'response'}],
+      focus: ['w', 'kv'],
+      badges: {w: '고정'},
+    },
+    {
+      short: '커진다',
+      kind: '원리',
+      title: '대화가 길어지고 요청이 늘수록 캐시가 커진다',
+      text: [
+        '캐시 크기는 토큰 수에 비례한다. 대화가 길어질수록, 동시에 처리하는 요청이 많을수록 커진다.',
+        '요청 B가 들어오면 B도 자기 몫의 캐시를 따로 가진다. 모델이 클수록 토큰 하나당 캐시도 크다.',
+      ],
+      flows: [
+        {from: 'b', to: 'model', label: '대화 2', type: 'request'},
+        {from: 'model', to: 'kv', label: 'B 저장', type: 'request'},
+      ],
+      focus: ['kv', 'b'],
+      badges: {w: null, kv: 'A · B'},
+      values: {use: '45%', conc: '2개'},
+    },
+    {
+      short: '블록 단위',
+      kind: '원리',
+      title: '캐시를 작은 블록으로 나눠 빈틈을 줄인다',
+      text: [
+        '예전 방식은 요청마다 최대 길이만큼 메모리를 미리 통째로 잡아, 짧게 끝난 요청의 빈자리가 낭비됐다.',
+        'vLLM은 캐시를 작은 고정 크기 블록으로 나눠 필요할 때마다 한 블록씩 준다(페이지드 어텐션). 운영체제가 메모리를 페이지로 나누는 방식과 같은 생각이다. 같은 메모리에 더 많은 요청을 담는다.',
+      ],
+      focus: ['kv'],
+      badges: {kv: '블록 단위 배정'},
+    },
+    {
+      short: '앞부분 재사용',
+      kind: '원리',
+      title: '같은 앞부분은 한 번만 계산해 함께 쓴다',
+      text: [
+        '요청 A와 B가 같은 시스템 지시문(서비스가 매 요청 앞에 붙이는 안내문)으로 시작한다면, 그 앞부분의 키·값은 똑같다.',
+        '엔진은 이미 있는 블록을 찾아 B에도 연결해 주고, 그 부분의 프리필을 건너뛴다. 이것이 프리픽스 캐시(prefix caching)다. 첫 토큰이 빨라지고 메모리도 아낀다.',
+      ],
+      keyIdea: '프리픽스 캐시는 같은 엔진(레플리카) 안에서만 쓸 수 있다. 그래서 같은 앞부분을 가진 요청을 같은 레플리카로 보내는 라우팅이 따로 나왔다.',
+      flows: [{from: 'kv', to: 'model', label: '공통 앞부분 재사용', type: 'response', bend: 0.15}],
+      focus: ['kv', 'b'],
+      badges: {kv: '공통 블록 공유'},
+      values: {use: '38%'},
+    },
+    {
+      short: '가득 참',
+      kind: '문제',
+      title: 'KV 캐시가 가득 차면 새 요청이 기다린다',
+      text: [
+        '동시 요청이 계속 늘어 캐시 영역이 가득 차면, 엔진은 새 요청을 대기 줄에 세운다. 첫 토큰 시간이 갑자기 길어진다.',
+        '진행 중인 요청조차 자리가 모자라면 일부를 잠시 내려놓았다가(선점) 나중에 다시 계산한다. 같은 일을 두 번 하게 된다.',
+      ],
+      flows: [{from: 'model', to: 'q', label: '자리 없음', type: 'request'}],
+      focus: ['kv', 'q'],
+      status: {kv: 'error'},
+      badges: {kv: '가득 참', q: '대기 중'},
+      values: {use: {text: '100%', tone: 'bad'}, conc: '더 못 늘림'},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '계산을 메모리로 바꾸는 장치, 그래서 메모리가 한계',
+      text: [
+        'KV 캐시는 앞 토큰의 계산 결과를 저장해 다시 계산하지 않게 한다. 대신 대화 길이와 동시 요청 수만큼 가속기 메모리를 쓴다.',
+        '블록 단위 배정과 프리픽스 캐시가 같은 메모리에 더 많이 담게 돕지만, 가득 차면 대기와 재계산이 생긴다. 넘치는 캐시를 아래 저장 계층으로 내리는 방법은 KV 캐시 오프로딩 레슨에서 본다.',
+      ],
+      keyIdea: '서버 용량은 가속기 장 수와 함께 KV 캐시 사용률로 판단한다. 캐시가 늘 가득하고 대기 요청이 쌓이면 레플리카를 늘릴 때다.',
+      status: {kv: null},
+      badges: {kv: null, q: null},
+      focus: ['kv'],
+    },
+  ]}
+/>
+
+## 쿠버네티스에서 운영할 때
+
+- `nvidia-smi`나 DCGM 익스포터의 GPU 메모리 사용률은 vLLM이 뜨자마자 높게 나온다. vLLM은 `--gpu-memory-utilization`(기본 0.9) 비율만큼 메모리를 잡고, 가중치를 뺀 나머지를 KV 캐시로 쓴다.
+- 실제 여유는 vLLM `/metrics`의 KV 캐시 사용률(`vllm:kv_cache_usage_perc`, 이전 버전은 `vllm:gpu_cache_usage_perc`)로 본다. 대기 요청 수(`vllm:num_requests_waiting`)와 선점 횟수가 함께 오르면 캐시가 모자란 상태다.
+- 캐시가 모자랄 때 손볼 곳은 `--max-model-len`(요청 하나의 최대 길이), `--max-num-seqs`(동시 처리 요청 수), 레플리카 수, 더 큰 메모리의 가속기다. HPA로 레플리카를 늘린다면 GPU 사용률 대신 대기 요청 수나 KV 캐시 사용률 같은 엔진 지표를 기준으로 삼는 편이 맞다.
+- 프리픽스 캐시 효과는 같은 앞부분을 가진 요청이 같은 레플리카로 갈 때 커진다. 이 내용은 [요청을 어느 레플리카로 보낼까 (추론 라우팅)](../ai/inference-routing.mdx)에서 다룬다. 넘치는 캐시를 CPU 메모리나 디스크로 내리는 방법은 [넘치는 KV 캐시 내려 두기 (오프로딩)](../llm/kv-offloading.mdx)에서 본다.
+
+더 읽을거리: [vLLM 문서](https://docs.vllm.ai/) · [PagedAttention 논문](https://arxiv.org/abs/2309.06180) · [Gateway API Inference Extension](https://gateway-api-inference-extension.sigs.k8s.io/)

@@ -3,12 +3,14 @@ id: priority-preemption
 title: 우선순위와 선점
 sidebar_label: 08 · 우선순위와 선점
 description: 자리가 없을 때 우선순위가 높은 파드가 낮은 파드를 밀어내는 선점의 순서, 밀려난 파드의 정상 종료와 Pending, PDB를 최선으로만 존중하는 이유, 시스템 우선순위 클래스를 애니메이션으로 따라간다
+summary: '자리가 없을 때 높은 우선순위 파드가 낮은 파드를 밀어내는 방식.'
+icon: scale
 hide_table_of_contents: true
 ---
 
 # 우선순위와 선점
 
-노드가 가득 차서 자리가 없으면 새 파드는 보통 Pending으로 기다린다([파드를 어느 노드에 둘까](../k8s/scheduling.mdx)). 그런데 기다리면 안 되는 중요한 파드라면 어떻게 될까. 자원이 모자랄 때 **누구를 먼저 살릴지** 정하는 우선순위와 선점을 따라가 본다.
+노드가 가득 차서 자리가 없으면 새 파드는 보통 Pending으로 기다린다([파드를 어느 노드에 둘까 (스케줄링)](../k8s/scheduling.mdx)). 그런데 기다리면 안 되는 중요한 파드라면 어떻게 될까. 자원이 모자랄 때 **누구를 먼저 살릴지** 정하는 우선순위와 선점을 따라가 본다.
 
 <StepDiagram
   width={1000}
@@ -176,5 +178,3 @@ hide_table_of_contents: true
 드레인과 PDB의 자세한 흐름은 [노드 비우기와 클러스터 업그레이드](../k8s/node-drain.mdx)에서 본다.
 
 더 읽을거리: [파드 우선순위와 선점](https://kubernetes.io/ko/docs/concepts/scheduling-eviction/pod-priority-preemption/) · [중단(disruption)](https://kubernetes.io/docs/concepts/workloads/pods/disruptions/)
-
-다음 레슨: [파드 보안 기준과 securityContext](./pod-security.mdx)

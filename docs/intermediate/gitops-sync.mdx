@@ -3,6 +3,8 @@ id: gitops-sync
 title: Helm and GitOps
 sidebar_label: 06 · Helm and GitOps
 description: Follow an animation of how a Helm chart and values become a release and revisions, and how a sync tool keeps the cluster matching Git as the source of truth and reverts drift
+summary: 'Charts and releases, syncing the cluster to Git as the source of truth, and drift.'
+icon: git
 hide_table_of_contents: true
 ---
 
@@ -177,5 +179,3 @@ With many manifests, you must track two things separately: "what did I install t
 | Direct edits | Stay until the next deploy | Detected as drift and may be reverted |
 
 Further reading: [Helm docs](https://helm.sh/docs/) · [OpenGitOps principles](https://opengitops.dev/) · [Argo CD docs](https://argo-cd.readthedocs.io/en/stable/) · [Flux docs](https://fluxcd.io/flux/)
-
-Next lesson: [How an API Request Gets Stored](../advanced/api-request-path.mdx)

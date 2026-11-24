@@ -3,6 +3,8 @@ id: ingress
 title: Ingress Rules and TLS
 sidebar_label: 02 · Ingress Rules and TLS
 description: Animated walkthrough of Ingress host and path rules, the IngressClass that picks the implementation, TLS termination with a certificate Secret, and common failures
+summary: 'Rules by domain and path, ingress classes, certificate handling, and overlapping rules or missing targets.'
+icon: route
 hide_table_of_contents: true
 ---
 
@@ -193,5 +195,3 @@ kubectl get secret shop-tls -o jsonpath='{.type}'    # Is it kubernetes.io/tls?
 ```
 
 Further reading: [Ingress](https://kubernetes.io/docs/concepts/services-networking/ingress/) · [Ingress controllers](https://kubernetes.io/docs/concepts/services-networking/ingress-controllers/) · [Gateway API](https://kubernetes.io/docs/concepts/services-networking/gateway/)
-
-Next lesson: [Service Mesh ① Sidecars and Mutual Authentication](./mesh-sidecar.mdx)

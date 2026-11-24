@@ -1,14 +1,16 @@
 ---
 id: audit-log
 title: 감사 로그
-sidebar_label: 11 · 감사 로그
+sidebar_label: 06 · 감사 로그
 description: API 서버가 요청마다 누가·언제·무엇을 했는지 남기는 감사 로그를, 감사 정책의 기록 수준과 시크릿 조회 추적 사례, 보관처 전송까지 애니메이션으로 따라간다
+summary: 'API 요청마다 누가·언제·무엇을 남기는지와 감사 정책의 기록 수준.'
+icon: book
 hide_table_of_contents: true
 ---
 
 # 감사 로그
 
-"어제 누가 운영 데이터베이스 비밀번호를 조회했나?" 이 질문에 답하려면 요청이 지나갈 때 기록이 남아 있어야 한다. 쿠버네티스 API 서버가 남기는 감사 로그(audit log)가 무엇을 어느 수준으로 기록하고, 어디로 보내 보관하는지 따라가 본다. 요청이 API 서버 안에서 거치는 관문은 [API 요청 경로](./api-request-path.mdx)에서 먼저 본다.
+"어제 누가 운영 데이터베이스 비밀번호를 조회했나?" 이 질문에 답하려면 요청이 지나갈 때 기록이 남아 있어야 한다. 쿠버네티스 API 서버가 남기는 감사 로그(audit log)가 무엇을 어느 수준으로 기록하고, 어디로 보내 보관하는지 따라가 본다. 요청이 API 서버 안에서 거치는 관문은 [API 요청이 저장되기까지](./api-request-path.mdx)에서 먼저 본다.
 
 <StepDiagram
   width={1000}
@@ -170,5 +172,3 @@ hide_table_of_contents: true
 | RequestResponse | 위 + 응답 본문 | 꼭 필요한 대상만. 저장량이 크고 비밀이 남을 수 있다 |
 
 더 읽을거리: [감사(Auditing)](https://kubernetes.io/docs/tasks/debug/debug-cluster/audit/) · [RBAC 인가 사용](https://kubernetes.io/ko/docs/reference/access-authn-authz/rbac/)
-
-다음 레슨: [SLO와 알람 설계](./slo-alert.mdx)

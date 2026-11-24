@@ -3,6 +3,8 @@ id: service-types
 title: Service Types (ClusterIP · NodePort · LoadBalancer)
 sidebar_label: 01 · Service Types
 description: Animated walkthrough of how a Service selector groups pods, and how the Service type decides whether it is reachable inside the cluster, on a node port, or at an external address
+summary: 'Three ways to put a fixed address in front of a group of Pods, and why a mismatched selector leaves zero targets.'
+icon: target
 hide_table_of_contents: true
 ---
 
@@ -189,5 +191,3 @@ kubectl get svc shop-svc -o yaml                       # type, selector, ports, 
 ```
 
 Further reading: [Service](https://kubernetes.io/docs/concepts/services-networking/service/) · [EndpointSlices](https://kubernetes.io/docs/concepts/services-networking/endpoint-slices/) · [Finding Services by Name (Service·DNS)](../k8s/service-dns.mdx)
-
-Next lesson: [Ingress Rules and TLS](./ingress.mdx)

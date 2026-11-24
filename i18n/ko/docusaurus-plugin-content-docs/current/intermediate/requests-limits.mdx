@@ -3,6 +3,8 @@ id: requests-limits
 title: 요청값과 상한값
 sidebar_label: 02 · 요청값과 상한값
 description: 스케줄러는 요청값으로 배치하고, 실행 중에는 상한값이 CPU는 느리게(스로틀링), 메모리는 강제 종료(OOMKilled)로 막는 과정과 요청값을 비웠을 때 생기는 일을 애니메이션으로 따라간다
+summary: '요청값으로 배치하고 상한값으로 막는다. 스로틀링·OOMKilled·QoS 축출.'
+icon: chart
 hide_table_of_contents: true
 ---
 
@@ -176,5 +178,3 @@ hide_table_of_contents: true
 | 요청값은 넉넉할수록 안전하다 | 자리가 있는데도 배치되지 않고 자원이 낭비된다 |
 
 더 읽을거리: [파드 및 컨테이너 리소스 관리](https://kubernetes.io/ko/docs/concepts/configuration/manage-resources-containers/) · [쿠버네티스 스케줄러](https://kubernetes.io/ko/docs/concepts/scheduling-eviction/kube-scheduler/) · [파드에 대한 서비스 품질(QoS) 구성](https://kubernetes.io/ko/docs/tasks/configure-pod-container/quality-service-pod/) · [파드를 어느 노드에 둘까 (스케줄링)](../k8s/scheduling.mdx)
-
-다음 레슨: [상태를 세 단계로 읽고 문제 확인하기](./troubleshoot-status.mdx)

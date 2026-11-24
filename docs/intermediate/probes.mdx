@@ -3,6 +3,8 @@ id: probes
 title: Health checks — alive, and ready for requests?
 sidebar_label: 01 · Health checks
 description: Follow an animation of what the startup, readiness and liveness probes each ask, whether a failure removes the pod from the Service list or restarts it, and how a bad setup causes restart loops
+summary: 'What startup, readiness and liveness probes each change, and the result of misconfiguring them.'
+icon: heart
 hide_table_of_contents: true
 ---
 
@@ -186,5 +188,3 @@ A running container does not guarantee that the application works. Here we follo
 | startup | Missing on a slow-starting app | Liveness fails first and restarts it mid-start | Allow the maximum startup time |
 
 Further reading: [Configure liveness, readiness and startup probes](https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/) · [Pod lifecycle — container probes](https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/#container-probes) · [When a Pod Dies (Self-Healing)](../k8s/self-healing.mdx) · [How a Request Reaches a Pod](../k8s/traffic.mdx)
-
-Next lesson: [Requests and limits](./requests-limits.mdx)

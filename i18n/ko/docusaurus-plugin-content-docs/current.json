@@ -3,32 +3,44 @@
     "message": "Next",
     "description": "The label for version current"
   },
+  "sidebar.lessons.category.Foundations: web, servers, containers": {
+    "message": "기초: 웹·서버·컨테이너",
+    "description": "The label for category 'Foundations: web, servers, containers' in sidebar 'lessons'"
+  },
   "sidebar.lessons.category.Cloud basics": {
     "message": "클라우드 기초",
     "description": "The label for category 'Cloud basics' in sidebar 'lessons'"
   },
-  "sidebar.lessons.category.Foundations": {
-    "message": "기초 흐름",
-    "description": "The label for category 'Foundations' in sidebar 'lessons'"
+  "sidebar.lessons.category.Kubernetes core": {
+    "message": "쿠버네티스 핵심",
+    "description": "The label for category 'Kubernetes core' in sidebar 'lessons'"
   },
-  "sidebar.lessons.category.How Kubernetes works": {
-    "message": "쿠버네티스는 이렇게 움직인다",
-    "description": "The label for category 'How Kubernetes works' in sidebar 'lessons'"
+  "sidebar.lessons.category.Running workloads": {
+    "message": "워크로드 운영",
+    "description": "The label for category 'Running workloads' in sidebar 'lessons'"
   },
-  "sidebar.lessons.category.Networking, mesh & resources": {
-    "message": "네트워크·서비스 메시·자원",
-    "description": "The label for category 'Networking, mesh & resources' in sidebar 'lessons'"
+  "sidebar.lessons.category.Networking & service mesh": {
+    "message": "네트워크와 서비스 메시",
+    "description": "The label for category 'Networking & service mesh' in sidebar 'lessons'"
   },
-  "sidebar.lessons.category.Intermediate": {
-    "message": "중급 흐름",
-    "description": "The label for category 'Intermediate' in sidebar 'lessons'"
+  "sidebar.lessons.category.Security & multi-tenancy": {
+    "message": "보안과 멀티테넌시",
+    "description": "The label for category 'Security & multi-tenancy' in sidebar 'lessons'"
   },
-  "sidebar.lessons.category.Advanced": {
-    "message": "고급 흐름",
-    "description": "The label for category 'Advanced' in sidebar 'lessons'"
+  "sidebar.lessons.category.Cluster operations": {
+    "message": "클러스터 운영",
+    "description": "The label for category 'Cluster operations' in sidebar 'lessons'"
   },
-  "sidebar.lessons.category.Certification prep": {
-    "message": "자격증 대비 흐름",
-    "description": "The label for category 'Certification prep' in sidebar 'lessons'"
+  "sidebar.lessons.category.Kubernetes internals": {
+    "message": "쿠버네티스 내부",
+    "description": "The label for category 'Kubernetes internals' in sidebar 'lessons'"
+  },
+  "sidebar.lessons.category.AI on Kubernetes · GPU/NPU": {
+    "message": "쿠버네티스 위의 AI · GPU/NPU",
+    "description": "The label for category 'AI on Kubernetes · GPU/NPU' in sidebar 'lessons'"
+  },
+  "sidebar.lessons.category.How LLM serving works": {
+    "message": "LLM 서빙은 이렇게 움직인다",
+    "description": "The label for category 'How LLM serving works' in sidebar 'lessons'"
   }
 }
