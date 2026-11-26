@@ -184,4 +184,14 @@ CI/CD means defining the build → test → deploy process for a code change in 
 | Production approval | Many places require approval | Use a manual approval stage or merge request approval as the gate |
 | Rollback | You need earlier deploy records to roll back | Roll back to a previous revision with `kubectl rollout undo`, or with GitOps revert the Git commit |
 
+## Try it yourself
+
+```bash
+git log -1 --format='%H %s'                          # Commit the pipeline built
+docker image inspect <image> --format '{{.RepoDigests}}'   # Digest of the stored artifact
+kubectl get deploy <name> -n <namespace> -o jsonpath='{.spec.template.spec.containers[*].image}{"\n"}'   # Same image in dev, stg, prod?
+kubectl rollout history deploy/<name> -n <namespace>   # Deploy history
+kubectl rollout status deploy/<name> -n <namespace>   # Did the deploy finish?
+```
+
 Further reading: [Deployment rollback](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/) · [Argo CD](https://argo-cd.readthedocs.io/) · [Tekton](https://tekton.dev/docs/) · [Helm and GitOps](../intermediate/gitops-sync.mdx)

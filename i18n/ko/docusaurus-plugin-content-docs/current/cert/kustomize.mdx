@@ -182,4 +182,13 @@ Helm 차트·values·리비전과 GitOps 동기화는 [Helm과 GitOps](../interm
 | 레플리카 등 일부 필드만 바꿔라 | 바꿀 필드만 담은 패치 파일을 `patches:`에 건다 | 패치의 kind·name이 base 자원과 맞아야 겹쳐진다 |
 | Kustomize로 배포한 것을 지워라 | `kubectl delete -k overlays/prod` | Helm처럼 `uninstall`·`rollback` 명령이 따로 없다 |
 
+## 직접 확인해 보기
+
+```bash
+kubectl kustomize overlays/prod                      # 합친 YAML, 클러스터엔 안 보낸다
+kubectl kustomize overlays/prod | grep -E 'replicas|image:'   # 패치와 새 태그가 들어갔는지
+kubectl kustomize overlays/dev | grep -E 'name: dev-|namespace:'   # namePrefix와 namespace
+kubectl diff -k overlays/prod                        # apply -k가 바꿀 내용
+```
+
 더 읽을거리: [CNCF 자격증 출제 범위](https://github.com/cncf/curriculum) · [Kustomize를 이용한 쿠버네티스 오브젝트의 선언형 관리](https://kubernetes.io/ko/docs/tasks/manage-kubernetes-objects/kustomization/) · [Helm과 GitOps](../intermediate/gitops-sync.mdx)

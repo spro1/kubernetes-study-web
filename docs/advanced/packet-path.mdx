@@ -191,4 +191,14 @@ Services and DNS decide "where to send". This lesson covers what comes next. We 
 | Small requests work, large responses get cut | Overlay MTU | Whether the Pod-side MTU is smaller than the physical MTU |
 | Works via Pod IP, fails via Service IP | NAT rules / Service | Whether the Service targets (endpoints) include ready Pods |
 
+## Try it yourself
+
+```bash
+kubectl get pods -o wide                                             # Pod IP and node
+kubectl get nodes -o custom-columns=NAME:.metadata.name,PODCIDR:.spec.podCIDR   # Pod range per node (empty with some CNIs)
+ip route                                                             # (On a node) routes to other nodes' Pod ranges
+kubectl get endpointslices -l kubernetes.io/service-name=<service>   # Pod IPs behind the Service IP
+kubectl get configmap kube-proxy -n kube-system -o jsonpath='{.data.config\.conf}' | grep mode   # kube-proxy mode (empty = iptables)
+```
+
 Further reading: [Cluster networking](https://kubernetes.io/docs/concepts/cluster-administration/networking/) · [Service](https://kubernetes.io/docs/concepts/services-networking/service/) · [Virtual IPs and service proxies](https://kubernetes.io/docs/reference/networking/virtual-ips/)

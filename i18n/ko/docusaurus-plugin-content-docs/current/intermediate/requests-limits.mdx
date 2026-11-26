@@ -177,4 +177,14 @@ hide_table_of_contents: true
 | HPA CPU 80%는 상한값의 80%다 | 요청값 기준이다 |
 | 요청값은 넉넉할수록 안전하다 | 자리가 있는데도 배치되지 않고 자원이 낭비된다 |
 
+## 직접 확인해 보기
+
+```bash
+kubectl get pod <파드> -o jsonpath='{.spec.containers[*].resources}'   # requests와 limits
+kubectl get pod <파드> -o jsonpath='{.status.qosClass}'   # QoS 클래스(축출 순서)
+kubectl top pod                                      # 실제 사용량(metrics-server 필요)
+kubectl describe node <노드> | grep -A 8 'Allocated resources'   # 노드의 requests 합계
+kubectl get pod <파드> -o jsonpath='{.status.containerStatuses[*].lastState.terminated.reason}'   # OOMKilled인지
+```
+
 더 읽을거리: [파드 및 컨테이너 리소스 관리](https://kubernetes.io/ko/docs/concepts/configuration/manage-resources-containers/) · [쿠버네티스 스케줄러](https://kubernetes.io/ko/docs/concepts/scheduling-eviction/kube-scheduler/) · [파드에 대한 서비스 품질(QoS) 구성](https://kubernetes.io/ko/docs/tasks/configure-pod-container/quality-service-pod/) · [파드를 어느 노드에 둘까 (스케줄링)](../k8s/scheduling.mdx)

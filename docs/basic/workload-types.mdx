@@ -178,4 +178,14 @@ A Pod is the smallest unit of execution, but users rarely create Pods directly. 
 
 The Job and CronJob flow continues in [Run Once and Finish (Job · CronJob)](../k8s/job-cronjob.mdx), and Deployment version changes in [Zero-Downtime Deploys (Rolling Update)](../k8s/rolling-update.mdx).
 
+## Try it yourself
+
+```bash
+kubectl get deploy,rs,pod -n <namespace>             # Deployment → ReplicaSet → Pod chain
+kubectl get pod <pod> -o jsonpath='{.metadata.ownerReferences[0].kind}{"\n"}'   # Who created this Pod
+kubectl get statefulset,pvc -n <namespace>           # Ordinal Pods and their volumes
+kubectl get daemonset -A                             # DESIRED/READY vs node count
+kubectl logs deploy/<name>                           # Logs by the higher resource name
+```
+
 Further reading: [Workloads (Kubernetes docs)](https://kubernetes.io/docs/concepts/workloads/) · [Deployments](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/) · [StatefulSets](https://kubernetes.io/docs/concepts/workloads/controllers/statefulset/) · [DaemonSet](https://kubernetes.io/docs/concepts/workloads/controllers/daemonset/)

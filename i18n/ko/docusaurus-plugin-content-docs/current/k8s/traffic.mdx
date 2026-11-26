@@ -162,4 +162,14 @@ hide_table_of_contents: true
 | 3 | Service가 가리키는 레이블과 포트가 맞는가 | 레이블 불일치로 대상 파드 0개 |
 | 4 | Ready 파드가 하나 이상 있는가 | 준비 상태 검사 실패, 파드 전부 재시작 중 |
 
+## 직접 확인해 보기
+
+```bash
+kubectl get ingress -A                               # HOSTS와 로드밸런서 ADDRESS
+kubectl describe ingress <이름>                      # 호스트·경로 → 서비스 규칙
+kubectl get svc <서비스> -o wide                    # SELECTOR와 포트
+kubectl get endpointslices -l kubernetes.io/service-name=<서비스> -o yaml   # 파드별 conditions.ready
+kubectl get pods -o wide                             # 파드별 READY
+```
+
 더 읽을거리: [인그레스](https://kubernetes.io/ko/docs/concepts/services-networking/ingress/) · [서비스](https://kubernetes.io/ko/docs/concepts/services-networking/service/) · [엔드포인트슬라이스](https://kubernetes.io/ko/docs/concepts/services-networking/endpoint-slices/)

@@ -173,4 +173,14 @@ Rollouts, scale-downs and node drains all end with "delete one pod". Here we fol
 
 Set `terminationGracePeriodSeconds` and `preStop` in the pod template `spec`. Check the applied values with `kubectl get pod <name> -o yaml`.
 
+## Try it yourself
+
+```bash
+kubectl get pod <pod> -o jsonpath='{.spec.terminationGracePeriodSeconds}'   # Grace period (default 30)
+kubectl get pod <pod> -o jsonpath='{.spec.containers[*].lifecycle.preStop}'   # preStop hook
+kubectl get pods -w                                  # Watch a deleted pod go Terminating
+kubectl get endpointslices -l kubernetes.io/service-name=<service> -w   # Watch it leave the targets
+kubectl get events --field-selector reason=Killing   # When the kubelet stopped the container
+```
+
 Further reading: [Pod lifecycle — termination of Pods](https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/#pod-termination) · [Container lifecycle hooks](https://kubernetes.io/docs/concepts/containers/container-lifecycle-hooks/)

@@ -182,4 +182,15 @@ nginx 1.26으로 돌던 파드 세 개를 1.27로 바꾼다. 그동안 사용자
 | `maxUnavailable` | 원하는 개수보다 잠시 모자라도 되는 파드 수 | 빨리 끝나지만 처리 용량이 잠시 줄어든다 |
 | `readinessProbe` | 새 파드가 요청을 받아도 되는지 확인하는 검사 | 없으면 시작만 해도 요청을 받아 오류가 날 수 있다 |
 
+## 직접 확인해 보기
+
+```bash
+kubectl create deployment try-web --image=nginx:1.26 --replicas=3   # 연습용 Deployment
+kubectl set image deployment/try-web nginx=nginx:1.27   # 이미지 바꾸기
+kubectl rollout status deployment/try-web            # 끝날 때까지 지켜보기
+kubectl get rs -l app=try-web                        # 옛 ReplicaSet은 0으로 남는다
+kubectl rollout undo deployment/try-web              # 1.26으로 되돌리기
+kubectl delete deployment try-web                    # 정리
+```
+
 더 읽을거리: [디플로이먼트](https://kubernetes.io/ko/docs/concepts/workloads/controllers/deployment/) · [롤링 업데이트 수행하기](https://kubernetes.io/ko/docs/tutorials/kubernetes-basics/update/update-intro/)

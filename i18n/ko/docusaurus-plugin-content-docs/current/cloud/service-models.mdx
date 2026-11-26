@@ -177,4 +177,14 @@ hide_table_of_contents: true
 | PaaS | 앱·데이터 | 하드웨어·가상화·운영체제·런타임 | Elastic Beanstalk · App Service · App Engine |
 | SaaS | 데이터·계정·권한 | 앱까지 전부 | Microsoft 365 · Google Workspace 같은 업무용 서비스 |
 
+## 직접 확인해 보기
+
+```bash
+cat /etc/os-release                                  # OS 버전: IaaS면 패치는 내 몫
+uname -r                                             # 커널 버전
+kubectl version                                      # 컨트롤 플레인 버전 (관리형이면 제공자 몫)
+kubectl get nodes -o wide                            # 노드 OS 이미지와 커널: 누가 패치하나
+aws s3api get-public-access-block --bucket <버킷>    # 스토리지가 누구에게나 열렸는지 (AWS 예시)
+```
+
 더 읽을거리: [클라우드 컴퓨팅 정의 (NIST SP 800-145)](https://csrc.nist.gov/pubs/sp/800/145/final) · [공동 책임 모델 (AWS)](https://aws.amazon.com/compliance/shared-responsibility-model/) · [서버 한 대에서 컨테이너까지](../basic/server-to-container.mdx)

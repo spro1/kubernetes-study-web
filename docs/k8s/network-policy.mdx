@@ -188,4 +188,13 @@ The `shop` namespace has frontend, backend, and db Pods. At first anyone can con
 | Every external call fails with "name not found" | Egress is blocked and DNS (port 53) was not opened | Egress rules in `kubectl describe networkpolicy` |
 | The policy has no effect at all | No Pod matches the selector, or the network plugin does not support policies | Compare the policy’s Pod selector with the Pod labels |
 
+## Try it yourself
+
+```bash
+kubectl get networkpolicy -n <namespace>             # POD-SELECTOR of each policy
+kubectl describe networkpolicy <name> -n <namespace>   # Allowed Ingress and Egress
+kubectl get pods -n <namespace> -l app=backend --show-labels   # Pods the selector matches
+kubectl get pods -n kube-system -l k8s-app=cilium    # Is the enforcing CNI (Cilium) running?
+```
+
 Further reading: [Network Policies](https://kubernetes.io/docs/concepts/services-networking/network-policies/) · [Cilium docs](https://docs.cilium.io/)

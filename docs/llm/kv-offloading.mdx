@@ -175,4 +175,14 @@ Accelerator memory is fast but small and expensive. When the KV cache overflows,
 - With shared storage, storage latency shows up directly in time to first token. Put storage response time and TTFT on the same dashboard.
 - The benefit depends on how often the same conversation or prefix comes back. Compare prefix cache hit rate and TTFT before and after enabling it.
 
+## Try it yourself
+
+```bash
+curl -s http://<engine>:8000/metrics | grep -E 'vllm:(kv|gpu)_cache_usage_perc|vllm:num_preemptions'   # e.g. vLLM: really overflowing? (step 2)
+curl -s http://<engine>:8000/metrics | grep vllm:prefix_cache   # Hit rate before vs after (step 5)
+kubectl get pod <pod> -o jsonpath='{.spec.containers[*].resources}'   # Memory limit includes offload size?
+kubectl get pod <pod> -o jsonpath='{.status.containerStatuses[*].lastState.terminated.reason}'   # OOMKilled?
+kubectl get events -n <namespace> --field-selector reason=Evicted   # ephemeral-storage evictions
+```
+
 Further reading: [GPUDirect Storage](https://docs.nvidia.com/gpudirect-storage/) · [LMCache](https://github.com/LMCache/LMCache) · [Resource Management for Pods and Containers](https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/)

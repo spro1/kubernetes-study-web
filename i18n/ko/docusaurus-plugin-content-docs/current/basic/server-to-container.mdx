@@ -177,4 +177,14 @@ hide_table_of_contents: true
 
 이렇게 만든 컨테이너의 원본(이미지)이 어디서 오는지는 다음 레슨에서, 컨테이너가 노드에서 실제로 시작되는 과정은 [파드가 뜨기까지](../k8s/pod-startup.mdx)에서 본다.
 
+## 직접 확인해 보기
+
+```bash
+nproc; free -h; df -h                                # CPU, 메모리, 디스크 (리눅스 서버에서)
+ps -ef | head                                        # 프로세스와 PID
+kubectl get nodes -o custom-columns=NAME:.metadata.name,CPU:.status.capacity.cpu,MEMORY:.status.capacity.memory   # 노드 크기
+kubectl top nodes                                    # 노드별 CPU·메모리 사용량 (metrics-server 필요)
+kubectl get pod <파드> -o jsonpath='{.status.containerStatuses[*].lastState.terminated.reason}'   # 메모리 한도를 넘어 OOMKilled 됐는지
+```
+
 더 읽을거리: [컨테이너 (쿠버네티스 문서)](https://kubernetes.io/ko/docs/concepts/containers/) · [노드](https://kubernetes.io/ko/docs/concepts/architecture/nodes/) · [파드 및 컨테이너 리소스 관리](https://kubernetes.io/ko/docs/concepts/configuration/manage-resources-containers/)

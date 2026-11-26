@@ -201,4 +201,14 @@ hide_table_of_contents: true
 
 업그레이드 순서와 노드 교체는 [노드 비우기와 클러스터 업그레이드](../k8s/node-drain.mdx)에서 이어 본다.
 
+## 직접 확인해 보기
+
+```bash
+sudo kubeadm certs check-expiration   # 인증서별 만료일
+sudo openssl x509 -in /etc/kubernetes/pki/apiserver.crt -noout -enddate   # API 서버 인증서 파일
+kubectl config view --raw -o jsonpath='{.users[0].user.client-certificate-data}' | base64 -d | openssl x509 -noout -enddate   # 내 kubeconfig 인증서
+sudo openssl x509 -in /var/lib/kubelet/pki/kubelet-client-current.pem -noout -enddate   # kubelet 클라이언트 인증서(노드에서)
+echo | openssl s_client -connect <API-서버>:6443 2>/dev/null | openssl x509 -noout -dates   # 떠 있는 API 서버가 실제로 내미는 인증서(재시작했나)
+```
+
 더 읽을거리: [kubeadm을 사용한 인증서 관리](https://kubernetes.io/docs/tasks/administer-cluster/kubeadm/kubeadm-certs/) · [PKI 인증서와 요구 사항](https://kubernetes.io/docs/setup/best-practices/certificates/) · [cert-manager](https://cert-manager.io/docs/)

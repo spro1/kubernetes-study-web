@@ -197,4 +197,14 @@ hide_table_of_contents: true
 | PDB를 걸면 노드 고장에도 안전하다 | PDB는 drain 같은 정비 작업에만 효력이 있다 |
 | 엔진 업그레이드가 성공하면 애플리케이션도 문제없다 | 새 버전에서 제거된 API를 쓰는 배포는 다음 배포 때 실패한다 |
 
+## 직접 확인해 보기
+
+```bash
+kubectl version                                      # 서버(컨트롤 플레인) 버전
+kubectl get nodes                                    # 노드별 kubelet VERSION, SchedulingDisabled
+kubectl get pdb -A                                   # ALLOWED DISRUPTIONS가 0이면 drain이 멈춘다
+kubectl get pods -A -o wide --field-selector spec.nodeName=<노드>   # 그 노드에 있는 파드
+kubectl drain <노드> --ignore-daemonsets --dry-run=client   # 내보낼 파드 미리 보기, 바꾸는 것 없음
+```
+
 더 읽을거리: [노드를 안전하게 드레인하기](https://kubernetes.io/docs/tasks/administer-cluster/safely-drain-node/) · [중단(disruption)](https://kubernetes.io/ko/docs/concepts/workloads/pods/disruptions/) · [kubeadm 클러스터 업그레이드](https://kubernetes.io/docs/tasks/administer-cluster/kubeadm/kubeadm-upgrade/)

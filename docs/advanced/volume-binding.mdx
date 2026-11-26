@@ -193,4 +193,15 @@ The basic flow of requesting with a PVC and receiving a PV is in [How Storage Ge
 | You can shrink volume size later | It can only grow |
 | With snapshots you do not need backups | Snapshots live on the same system and can be lost with it |
 
+## Try it yourself
+
+```bash
+kubectl get storageclass                                 # VOLUMEBINDINGMODE and ALLOWVOLUMEEXPANSION
+kubectl describe pvc <name> -n <namespace>               # Events: normal wait or failure?
+kubectl get pvc -n <namespace>                           # Access modes and capacity
+kubectl get pv <pv> -o jsonpath='{.spec.nodeAffinity}'   # Local volume tied to one node
+kubectl get volumeattachments                            # Which node an RWO volume is attached to
+kubectl get volumesnapshotclass                          # Can snapshots work here?
+```
+
 Further reading: [Persistent volumes](https://kubernetes.io/docs/concepts/storage/persistent-volumes/) · [Storage classes](https://kubernetes.io/docs/concepts/storage/storage-classes/) · [Volume snapshots](https://kubernetes.io/docs/concepts/storage/volume-snapshots/)

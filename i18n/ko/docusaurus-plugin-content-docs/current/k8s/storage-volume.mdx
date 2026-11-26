@@ -194,4 +194,15 @@ hide_table_of_contents: true
 | 6. 노드 연결 | 파드가 `ContainerCreating`에 머문다 | 파드 이벤트의 `FailedAttachVolume`. 볼륨이 아직 다른 노드에 붙어 있는 경우가 많다 |
 | 6. 마운트 | 파드가 `ContainerCreating`에 머문다 | 파드 이벤트의 `FailedMount`(권한, 파일 시스템 오류, NFS 서버 접근 불가) |
 
+## 직접 확인해 보기
+
+```bash
+kubectl get storageclass                             # PROVISIONER와 VOLUMEBINDINGMODE
+kubectl get pvc                                      # Pending인지 Bound인지
+kubectl describe pvc <PVC>                           # Pending인 이유(Events)
+kubectl get pv                                       # PVC 지우기 전 RECLAIM POLICY
+kubectl get volumeattachments                        # 볼륨이 붙은 노드
+kubectl describe pod <파드>                           # FailedAttachVolume 또는 FailedMount
+```
+
 더 읽을거리: [퍼시스턴트 볼륨](https://kubernetes.io/ko/docs/concepts/storage/persistent-volumes/) · [스토리지 클래스](https://kubernetes.io/ko/docs/concepts/storage/storage-classes/)

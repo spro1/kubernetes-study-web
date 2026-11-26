@@ -176,4 +176,15 @@ The single "status" column in the pod list mixes three different layers of infor
 
 See events with `kubectl describe pod <name>` and the previous container's logs with `kubectl logs <name> --previous`. Logs exist only on pods, so when you spot a problem on a Deployment, drill down to its pods. See all events in a namespace with `kubectl get events --sort-by=.lastTimestamp`.
 
+## Try it yourself
+
+```bash
+kubectl get pods                                     # STATUS: one merged value
+kubectl get pod <pod> -o jsonpath='{.status.phase}'   # The phase on its own
+kubectl describe pod <pod>                           # Events and Last State
+kubectl get events --sort-by=.metadata.creationTimestamp   # Recent events (gone after ~1 hour)
+kubectl logs <pod> --previous                        # Logs of the exited container
+kubectl describe node <node>                         # Node Conditions when many pods fail
+```
+
 Further reading: [Debug pods](https://kubernetes.io/docs/tasks/debug/debug-application/debug-pods/) · [kubectl cheat sheet](https://kubernetes.io/docs/reference/kubectl/cheatsheet/) · [Pod lifecycle](https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/) · [When a Pod Dies (Self-Healing)](../k8s/self-healing.mdx)

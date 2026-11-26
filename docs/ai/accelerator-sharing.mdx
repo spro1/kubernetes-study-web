@@ -175,4 +175,14 @@ When a small model holds a whole GPU, most of it sits idle. With DRA you can wri
 | How | Whole GPU | Take turns in time | Run at once under caps |
 | Isolation | No interference | No memory isolation or performance guarantee | Concurrent within caps; weak fault isolation |
 
+## Try it yourself
+
+```bash
+kubectl get resourceclaims -n <namespace>            # Named claim shared by several Pods (step 3)
+kubectl get resourceclaim <name> -n <namespace> -o jsonpath='{.status.reservedFor[*].name}'   # Pods using this claim
+kubectl get resourceclaim <name> -n <namespace> -o jsonpath='{.spec.devices.config}'   # TimeSlicing or MPS settings
+kubectl exec <pod> -- nvidia-smi                     # e.g. NVIDIA: shared GPU memory and processes (step 5)
+kubectl describe quota -n <namespace>                # Charged per claim, not per Pod (step 8)
+```
+
 Further reading: [Dynamic Resource Allocation](https://kubernetes.io/docs/concepts/resource-management/dynamic-resource-allocation/) · [DRA Driver for NVIDIA GPUs](https://dra-driver-nvidia-gpu.sigs.k8s.io/docs/) · [Time-slicing with the DRA driver](https://dra-driver-nvidia-gpu.sigs.k8s.io/docs/guides/gpu-allocation/time-slicing/) · [MPS with the DRA driver](https://dra-driver-nvidia-gpu.sigs.k8s.io/docs/guides/mps/) · [NVIDIA MPS](https://docs.nvidia.com/deploy/mps/latest/index.html)

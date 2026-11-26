@@ -181,4 +181,14 @@ hide_table_of_contents: true
 | 노드 | 컨트롤러 + 스케줄러 | 다른 노드에 새 파드 생성 | 수 분 (기본 대기 5분 포함) |
 | 파드를 직접 지움 | ReplicaSet 컨트롤러 | 새 파드 생성 | 수 초 |
 
+## 직접 확인해 보기
+
+```bash
+kubectl get pods -o wide                             # 파드별 RESTARTS와 노드
+kubectl logs <파드> --previous                        # 직전 실행의 로그
+kubectl describe pod <파드>                           # Last State와 Back-off 이벤트
+kubectl get nodes                                    # NotReady 노드
+kubectl get pod <파드> -o jsonpath='{.spec.tolerations}'   # not-ready 대기 시간(기본 300초)
+```
+
 더 읽을거리: [파드 라이프사이클](https://kubernetes.io/ko/docs/concepts/workloads/pods/pod-lifecycle/) · [활성·준비·시작 프로브 구성](https://kubernetes.io/ko/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/)

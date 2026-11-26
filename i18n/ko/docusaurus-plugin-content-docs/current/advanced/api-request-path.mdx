@@ -197,4 +197,14 @@ hide_table_of_contents: true
 | 웹훅 서버 무응답 | `failed calling webhook` | 시간 초과. 그 웹훅이 걸린 범위의 생성이 전부 실패할 수 있다 |
 | 저장 | `409 Conflict` | 같은 이름이 이미 있거나, 다른 주체가 먼저 고쳤다 |
 
+## 직접 확인해 보기
+
+```bash
+kubectl get pods -n kube-system -v=6                                    # 요청 하나가 HTTP 한 번: 메서드·URL·응답 코드
+kubectl auth can-i create deployments -n <네임스페이스>                 # 인가를 통과하는지, 403인지
+kubectl get mutatingwebhookconfigurations,validatingwebhookconfigurations -o custom-columns=NAME:.metadata.name,FAILURE:.webhooks[*].failurePolicy   # 길목의 웹훅과 failurePolicy
+kubectl create deployment demo --image=nginx --dry-run=server -o yaml   # 관문은 다 거치되 저장은 안 한다. 붙은 필드를 본다
+kubectl get deployment <이름> -o jsonpath='{.metadata.resourceVersion}'   # 저장될 때마다 바뀐다
+```
+
 더 읽을거리: [쿠버네티스 API 접근 제어](https://kubernetes.io/docs/concepts/security/controlling-access/) · [어드미션 컨트롤러](https://kubernetes.io/docs/reference/access-authn-authz/admission-controllers/) · [API 개념 — resourceVersion](https://kubernetes.io/docs/reference/using-api/api-concepts/)

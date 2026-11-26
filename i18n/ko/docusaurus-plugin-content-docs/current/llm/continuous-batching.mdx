@@ -178,4 +178,14 @@ hide_table_of_contents: true
 - 대기 요청 수는 가속기 사용률보다 확장 기준으로 쓰기 좋다. 디코드 중에는 사용률이 높게 찍혀도 여유가 있을 수 있다. HPA나 KEDA에 외부 지표로 연결해 레플리카 수를 조정할 수 있다.
 - 최대 동시 요청 수를 올리면 처리량은 늘지만 KV 캐시가 부족해져 요청이 밀려날 수 있다. 설정을 바꾼 뒤에는 KV 캐시 사용률도 함께 확인한다.
 
+## 직접 확인해 보기
+
+```bash
+curl -s http://<엔진>:8000/metrics | grep -E 'vllm:num_requests_(running|waiting)'   # 예: vLLM. 묶음 크기와 대기 줄 (5단계)
+curl -s http://<엔진>:8000/metrics | grep -E 'vllm:(kv|gpu)_cache_usage_perc'   # KV 캐시가 묶음 크기의 상한 (7단계)
+curl -s http://<엔진>:8000/metrics | grep vllm:num_preemptions   # 동시 요청 수를 올린 뒤 선점 횟수
+vllm serve <모델> --max-num-seqs 128 --max-num-batched-tokens 8192   # 최대 동시 요청 수, 한 번에 처리할 토큰 예산
+kubectl get hpa -n <네임스페이스>                       # 대기 요청 수로 늘리는지
+```
+
 더 읽을거리: [Horizontal Pod Autoscaling](https://kubernetes.io/ko/docs/concepts/workloads/autoscaling/horizontal-pod-autoscale/) · [vLLM 문서](https://docs.vllm.ai/)

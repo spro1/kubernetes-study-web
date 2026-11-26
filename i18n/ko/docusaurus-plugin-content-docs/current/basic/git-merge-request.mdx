@@ -186,4 +186,14 @@ CI/CD의 모든 흐름은 Git 저장소에 기록된 변경 하나(커밋)에서
 
 이미지 태그에 커밋 해시나 Git 태그를 넣어 두면, 클러스터에서 도는 이미지가 어느 코드에서 나왔는지 바로 따라갈 수 있다. 지금 도는 이미지는 `kubectl describe deployment <이름>`의 Image 항목에서 본다.
 
+## 직접 확인해 보기
+
+```bash
+git log --oneline --graph --all -n 20                # 커밋, 브랜치, 머지 흐름
+git branch -a                                        # 로컬과 원격 브랜치
+git show --stat HEAD                                 # 커밋 하나: 해시, 작성자, 메시지, 파일
+git diff main...<브랜치>                             # 머지 리퀘스트에 보일 변경
+git tag -n                                           # 릴리스 태그
+```
+
 더 읽을거리: [Pro Git (한국어)](https://git-scm.com/book/ko/v2) · [GitLab 머지 리퀘스트](https://docs.gitlab.com/ee/user/project/merge_requests/) · [GitHub 풀 리퀘스트](https://docs.github.com/ko/pull-requests)

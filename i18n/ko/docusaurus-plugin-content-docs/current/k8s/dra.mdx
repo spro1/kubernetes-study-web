@@ -191,4 +191,14 @@ hide_table_of_contents: true
 | 누가 고르나 | 노드의 kubelet이 남은 장치 중 아무거나 | 스케줄러가 조건에 맞는 장치를 골라 기록 |
 | 쿠버네티스 상태 | 계속 쓰인다 | 핵심 API는 1.34에서 정식, 부가 기능은 이후 버전에서 차례로 정식 |
 
+## 직접 확인해 보기
+
+```bash
+kubectl get deviceclasses                            # 장치 종류(DeviceClass)
+kubectl get resourceslices                           # 드라이버가 노드별로 올린 장치 목록
+kubectl get resourceclaims -A                        # 요청서와 할당 상태
+kubectl get resourceclaim <이름> -o jsonpath='{.status.allocation.devices.results}'   # 요청서에 기록된 장치
+kubectl describe pod <파드>                           # FailedScheduling(cannot allocate all claims)
+```
+
 더 읽을거리: [동적 리소스 할당](https://kubernetes.io/docs/concepts/resource-management/dynamic-resource-allocation/) · [장치 플러그인](https://kubernetes.io/ko/docs/concepts/extend-kubernetes/compute-storage-net/device-plugins/) · [GPU 스케줄링](https://kubernetes.io/ko/docs/tasks/manage-gpus/scheduling-gpus/)

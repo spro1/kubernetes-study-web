@@ -183,4 +183,14 @@ A model on Hugging Face does not make a serving Pod start fast. Tens to hundreds
 | Versioning | Depends on pinned revision | Managed by path conventions | Tags and digests |
 | What to watch | External network, tokens | Storage readable from many nodes | Node disk size, image GC |
 
+## Try it yourself
+
+```bash
+kubectl get jobs -n <namespace>                      # Import and build Job progress (steps 2, 5)
+kubectl get job <name> -n <namespace> -o jsonpath='{.spec.backoffLimit} {.spec.activeDeadlineSeconds}'   # Retry count and time limit
+kubectl get daemonsets -A -o wide                    # Pre-pull DaemonSet ready on GPU nodes (step 7)
+kubectl describe pod <pod> | grep -iE 'pulling|pulled'   # Model pull time (step 8)
+crictl images                                        # On the node: is the cache there?
+```
+
 Further reading: [Images](https://kubernetes.io/docs/concepts/containers/images/) · [Image volumes](https://kubernetes.io/docs/tasks/configure-pod-container/image-volumes/) · [KServe OCI model storage](https://kserve.github.io/website/docs/model-serving/storage/providers/oci) · [Garbage Collection](https://kubernetes.io/docs/concepts/architecture/garbage-collection/) · [Jobs](https://kubernetes.io/docs/concepts/workloads/controllers/job/)

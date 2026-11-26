@@ -187,4 +187,15 @@ How pods get recreated on other nodes when a node stops is in [When a Pod Dies (
 | kubectl says connection refused | On the control plane node: `crictl ps -a`, `crictl logs <container ID>` | `kubectl logs` needs the API server to work |
 | A static pod config is wrong | Edit the file under `/etc/kubernetes/manifests/` directly | `kubectl edit` or `kubectl delete` cannot fix it. Only editing the file makes the kubelet recreate it |
 
+## Try it yourself
+
+```bash
+kubectl get nodes                                    # Which node is NotReady
+kubectl describe node <node>                         # Conditions and events
+systemctl status kubelet                             # On the node: is the kubelet running?
+sudo journalctl -u kubelet -n 50 --no-pager          # Most recent kubelet errors
+sudo crictl ps -a --name kube-apiserver              # API server container Exited?
+sudo crictl logs <container-id>                      # Its last error
+```
+
 Further reading: [CNCF certification curriculum](https://github.com/cncf/curriculum) · [Troubleshooting clusters](https://kubernetes.io/docs/tasks/debug/debug-cluster/) · [Debugging nodes with crictl](https://kubernetes.io/docs/tasks/debug/debug-cluster/crictl/) · [When a Pod Dies (Self-Healing)](../k8s/self-healing.mdx) · [Cluster Certificate Expiry](../advanced/cluster-cert.mdx)

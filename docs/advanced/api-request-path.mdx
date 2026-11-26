@@ -197,4 +197,14 @@ A request sent by a dashboard `[Create]` button or by `kubectl apply` passes sev
 | Webhook server not answering | `failed calling webhook` | Timeout. Every create in that webhook's scope can fail |
 | Storage | `409 Conflict` | The name already exists, or someone else changed it first |
 
+## Try it yourself
+
+```bash
+kubectl get pods -n kube-system -v=6                                    # One HTTP request: method, URL, response code
+kubectl auth can-i create deployments -n <namespace>                    # Would authorization pass, or 403?
+kubectl get mutatingwebhookconfigurations,validatingwebhookconfigurations -o custom-columns=NAME:.metadata.name,FAILURE:.webhooks[*].failurePolicy   # Webhooks in the path and their failurePolicy
+kubectl create deployment demo --image=nginx --dry-run=server -o yaml   # Passes every gate but is not stored; see added fields
+kubectl get deployment <name> -o jsonpath='{.metadata.resourceVersion}'   # Changes on every write
+```
+
 Further reading: [Controlling Access to the Kubernetes API](https://kubernetes.io/docs/concepts/security/controlling-access/) · [Admission controllers](https://kubernetes.io/docs/reference/access-authn-authz/admission-controllers/) · [API concepts — resourceVersion](https://kubernetes.io/docs/reference/using-api/api-concepts/)

@@ -179,4 +179,14 @@ Follow what an image, the source of a container, is made of, what name it carrie
 | Not scanned / 0 vulnerabilities | No result because there is no scanner is not the same as scanned and found none |
 | EXPOSE / actual exposure | EXPOSE only documents a port. It does not make the port reachable from outside |
 
+## Try it yourself
+
+```bash
+docker image history <image>                         # Layers and the line that made each
+docker image inspect <image> --format '{{.RepoDigests}}'   # Digest: the content fingerprint
+docker pull <image>                                  # Layers already present are skipped
+trivy image <image>                                  # Vulnerabilities by severity (if Trivy is installed)
+kubectl get pod <pod> -o jsonpath='{.status.containerStatuses[*].imageID}'   # Digest the node actually pulled
+```
+
 Further reading: [Images (Kubernetes docs)](https://kubernetes.io/docs/concepts/containers/images/) · [Docker Build](https://docs.docker.com/build/) · [Harbor](https://goharbor.io/docs/) · [How a Pod Starts](../k8s/pod-startup.mdx)

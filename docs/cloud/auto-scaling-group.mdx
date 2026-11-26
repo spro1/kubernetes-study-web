@@ -185,4 +185,14 @@ An online store runs on two virtual machines. An auto scaling group adds VMs aut
 | VM blueprint | Launch template | Scale set VM model | Instance template |
 | Replace VMs failing health checks | Health check-based replacement | Automatic instance repairs | Autohealing |
 
+## Try it yourself
+
+```bash
+aws autoscaling describe-auto-scaling-groups --auto-scaling-group-names <asg> --query 'AutoScalingGroups[].[MinSize,DesiredCapacity,MaxSize]'   # min/desired/max (AWS example)
+aws autoscaling describe-auto-scaling-groups --auto-scaling-group-names <asg> --query 'AutoScalingGroups[].Instances[].[InstanceId,LifecycleState,HealthStatus]' --output table   # VMs and their health
+aws ec2 describe-launch-template-versions --launch-template-id <lt-id> --versions '$Latest'   # The launch template blueprint
+aws autoscaling describe-policies --auto-scaling-group-name <asg>   # Scaling policies tied to alarms
+aws autoscaling describe-scaling-activities --auto-scaling-group-name <asg> --max-items 5   # Recent scale out/in and replacements
+```
+
 Further reading: [Amazon EC2 Auto Scaling (AWS)](https://docs.aws.amazon.com/autoscaling/ec2/userguide/what-is-amazon-ec2-auto-scaling.html) · [Node Autoscaling (Kubernetes docs)](https://kubernetes.io/docs/concepts/cluster-administration/node-autoscaling/) · [Scaling with Load (HPA)](../k8s/autoscaling.mdx)

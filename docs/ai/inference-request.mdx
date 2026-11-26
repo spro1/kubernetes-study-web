@@ -191,4 +191,14 @@ Once a model server is ready, clients call it through an OpenAI-compatible API. 
 | All replicas busy | Model server queue | Slow first token |
 | Bypassing the gateway | Not stopped without a NetworkPolicy | Passes through |
 
+## Try it yourself
+
+```bash
+curl -s http://<gateway>/v1/models -H "Authorization: Bearer $API_KEY"   # OpenAI-compatible API, e.g. vLLM (step 2)
+curl -s -o /dev/null -w '%{http_code}\n' http://<gateway>/v1/models   # No key: expect 401 (step 3)
+curl -sN http://<gateway>/v1/completions -H "Authorization: Bearer $API_KEY" -H 'Content-Type: application/json' -d '{"model":"<model>","prompt":"Hello","max_tokens":32,"stream":true}'   # Tokens stream back (step 7)
+kubectl get networkpolicy -n <namespace>             # Only the gateway reaches model Pods (step 4)
+curl -s http://<engine>:8000/metrics | grep -E 'vllm:(num_requests_waiting|time_to_first_token_seconds)'   # Replica queue and TTFT
+```
+
 Further reading: [Network Policies](https://kubernetes.io/docs/concepts/services-networking/network-policies/) · [Gateway API](https://gateway-api.sigs.k8s.io/) · [Gateway API Inference Extension](https://gateway-api-inference-extension.sigs.k8s.io/)

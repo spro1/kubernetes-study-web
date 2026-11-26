@@ -188,4 +188,13 @@ hide_table_of_contents: true
 | 모든 외부 호출이 "이름을 찾을 수 없음" | Egress를 막고 DNS(53번 포트)를 열지 않았다 | `kubectl describe networkpolicy`의 Egress 규칙 |
 | 정책을 만들었는데 아무 효과가 없다 | 셀렉터와 맞는 파드가 없다, 네트워크 플러그인이 정책을 지원하지 않는다 | 정책의 `파드 셀렉터`와 파드 레이블 비교 |
 
+## 직접 확인해 보기
+
+```bash
+kubectl get networkpolicy -n <네임스페이스>             # 정책마다 POD-SELECTOR
+kubectl describe networkpolicy <이름> -n <네임스페이스>   # 허용된 Ingress·Egress
+kubectl get pods -n <네임스페이스> -l app=backend --show-labels   # 선택자에 걸리는 파드
+kubectl get pods -n kube-system -l k8s-app=cilium    # 정책을 집행하는 CNI(Cilium)가 도는지
+```
+
 더 읽을거리: [네트워크 정책](https://kubernetes.io/ko/docs/concepts/services-networking/network-policies/) · [Cilium 문서](https://docs.cilium.io/)

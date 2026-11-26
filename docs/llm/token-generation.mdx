@@ -172,4 +172,13 @@ An LLM does not write its answer all at once. It turns the question into **token
 - vLLM exposes cumulative input tokens (`vllm:prompt_tokens_total`) and output tokens (`vllm:generation_tokens_total`) on `/metrics`. Comparing their rates shows whether load comes from long prompts or long answers.
 - When users report answers cut off mid-sentence, check the client’s `max_tokens` and the server’s maximum context length first.
 
+## Try it yourself
+
+```bash
+curl -s http://<engine>:8000/v1/models               # Served model name, e.g. vLLM
+curl -sN http://<engine>:8000/v1/completions -H 'Content-Type: application/json' -d '{"model":"<model>","prompt":"What is Kubernetes?","max_tokens":50,"stream":true}'   # One token per SSE event (step 6)
+curl -sN http://<engine>:8000/v1/completions -H 'Content-Type: application/json' -d '{"model":"<model>","prompt":"What is Kubernetes?","max_tokens":5}' | grep -o '"finish_reason":"[a-z]*"'   # "length": cut by max_tokens (step 8)
+curl -s http://<engine>:8000/metrics | grep -E 'vllm:(prompt|generation)_tokens_total'   # Input vs output tokens so far
+```
+
 Further reading: [vLLM documentation](https://docs.vllm.ai/) · [KServe documentation](https://kserve.github.io/website/)

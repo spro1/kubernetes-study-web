@@ -202,4 +202,14 @@ CKAD의 Application Deployment(20%) 영역 중 "쿠버네티스 기본 요소로
 | 카나리를 되돌려라 | `kubectl scale deployment <카나리> --replicas=0` | 기존 디플로이먼트를 고치거나 롤백할 필요는 없다 |
 | 디플로이먼트 하나에서 이전 버전으로 | `kubectl rollout undo deployment <이름>` | 이것은 롤링 업데이트의 되돌리기다. 블루/그린·카나리의 되돌리기와 다르다 |
 
+## 직접 확인해 보기
+
+```bash
+kubectl get pods -L version                          # 버전별 파드 수
+kubectl get svc web -o jsonpath='{.spec.selector}'   # 서비스가 고르는 파드
+kubectl get endpointslices -l kubernetes.io/service-name=web   # 실제로 요청을 받는 파드
+kubectl get deploy -l app=web                        # blue와 green의 레플리카
+kubectl port-forward deploy/web-green 8080:<포트>    # 전환 전에 green만 시험
+```
+
 더 읽을거리: [CNCF 자격증 출제 범위](https://github.com/cncf/curriculum) · [디플로이먼트](https://kubernetes.io/ko/docs/concepts/workloads/controllers/deployment/) · [서비스](https://kubernetes.io/ko/docs/concepts/services-networking/service/) · [무중단 배포 (롤링 업데이트)](../k8s/rolling-update.mdx) · [서비스 메시 ② 트래픽 나누기](../feature/mesh-traffic.mdx)

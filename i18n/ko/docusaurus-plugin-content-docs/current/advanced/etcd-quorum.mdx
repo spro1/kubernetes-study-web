@@ -199,4 +199,14 @@ hide_table_of_contents: true
 | 4 | 3 | **1** |
 | 5 | 3 | 2 |
 
+## 직접 확인해 보기
+
+```bash
+kubectl get pods -n kube-system -l component=etcd -o wide   # 컨트롤 플레인 노드마다 etcd 하나
+kubectl get --raw='/readyz?verbose' | grep etcd             # API 서버가 etcd에 닿는지
+export ETCDCTL_ENDPOINTS=<엔드포인트> ETCDCTL_CACERT=<CA-인증서> ETCDCTL_CERT=<클라이언트-인증서> ETCDCTL_KEY=<클라이언트-키>   # 인증서 옵션을 한 번만 지정한다
+etcdctl endpoint status --cluster -w table                  # 리더가 누구인지, Raft term과 index
+etcdctl endpoint health --cluster -w table                  # 살아 있는 멤버: 과반이 되는지
+```
+
 더 읽을거리: [쿠버네티스 컴포넌트](https://kubernetes.io/ko/docs/concepts/overview/components/) · [kubeadm으로 고가용성 클러스터 만들기](https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/high-availability/) · [etcd 클러스터 운영](https://kubernetes.io/docs/tasks/administer-cluster/configure-upgrade-etcd/)

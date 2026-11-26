@@ -178,4 +178,14 @@ One accelerator can serve dozens of users at once thanks to **batching**: comput
 - Waiting requests make a better scaling signal than accelerator utilization, which can read high during decode even with headroom left. You can feed it to HPA or KEDA as an external metric to adjust replicas.
 - Raising max concurrent requests increases throughput but can run the KV cache short and preempt requests. Check KV cache usage after changing it.
 
+## Try it yourself
+
+```bash
+curl -s http://<engine>:8000/metrics | grep -E 'vllm:num_requests_(running|waiting)'   # e.g. vLLM: batch size and queue (step 5)
+curl -s http://<engine>:8000/metrics | grep -E 'vllm:(kv|gpu)_cache_usage_perc'   # KV cache caps the batch size (step 7)
+curl -s http://<engine>:8000/metrics | grep vllm:num_preemptions   # Preemptions after raising concurrency
+vllm serve <model> --max-num-seqs 128 --max-num-batched-tokens 8192   # Max concurrent requests, per-step token budget
+kubectl get hpa -n <namespace>                       # Scaling on waiting requests?
+```
+
 Further reading: [Horizontal Pod Autoscaling](https://kubernetes.io/docs/concepts/workloads/autoscaling/horizontal-pod-autoscale/) · [vLLM documentation](https://docs.vllm.ai/)

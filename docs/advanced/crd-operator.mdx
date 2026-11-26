@@ -189,4 +189,14 @@ Built-in Kubernetes resources have no concept like "a database" or "a nightly ba
 | After removing a tool, the namespace never leaves Terminating | The operator that clears CR finalizers was deleted first | Finalizers on the remaining CRs |
 | All backup schedules disappeared at once | A CRD deletion removed every CR of that kind | History of tool removal and upgrades |
 
+## Try it yourself
+
+```bash
+kubectl get crd                                 # Registered resource kinds
+kubectl api-resources --api-group=<group>       # Served like built-in resources
+kubectl explain <kind>.spec                     # Schema the CRD registered
+kubectl get pods -A | grep -i <operator>        # Is the operator handling it running?
+kubectl describe <kind> <name> -n <namespace>   # Status conditions and events
+```
+
 Further reading: [Custom resources](https://kubernetes.io/docs/concepts/extend-kubernetes/api-extension/custom-resources/) · [Operator pattern](https://kubernetes.io/docs/concepts/extend-kubernetes/operator/) · [Velero](https://velero.io/docs/) · Why deletion gets stuck: [Deletion Is More Complex Than You Think](./deletion-finalizer.mdx)

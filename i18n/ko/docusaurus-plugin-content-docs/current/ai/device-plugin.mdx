@@ -206,4 +206,14 @@ hide_table_of_contents: true
 
 DRA의 기본 흐름은 [조건으로 GPU 받기 (DRA)](../k8s/dra.mdx)에서 다룬다. 다음 레슨 [가속기를 조건으로 받기 (DRA 심화)](./accelerator-allocation.mdx)에서는 AI 워크로드가 GPU와 네트워크 카드를 조건으로 함께 받는 흐름을 본다.
 
+## 직접 확인해 보기
+
+```bash
+kubectl get pods -A -o wide | grep -i device-plugin   # 노드마다 뜬 플러그인 DaemonSet 파드 (2단계)
+kubectl describe node <GPU-노드> | grep -A8 -E '^(Capacity|Allocatable)'   # nvidia.com/gpu 개수 (4단계)
+kubectl get nodes -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.status.capacity.nvidia\.com/gpu}{"\t"}{.status.allocatable.nvidia\.com/gpu}{"\n"}{end}'   # capacity와 allocatable 차이 (9단계)
+kubectl get events -A --field-selector reason=FailedScheduling   # Insufficient nvidia.com/gpu (6단계)
+kubectl exec <파드> -- nvidia-smi -L                  # 예: NVIDIA. 컨테이너에 GPU 하나만 보인다 (8단계)
+```
+
 더 읽을거리: [장치 플러그인](https://kubernetes.io/ko/docs/concepts/extend-kubernetes/compute-storage-net/device-plugins/) · [GPU 스케줄링](https://kubernetes.io/ko/docs/tasks/manage-gpus/scheduling-gpus/) · [NVIDIA GPU Operator 개요](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/overview.html)

@@ -194,4 +194,14 @@ After you run a single `kubectl apply`, what happens inside the cluster before a
 | ImagePullBackOff | 6. Image | Typo in image name or tag, registry auth or access failure |
 | CrashLoopBackOff | After 7. Run | Container keeps exiting right after start (config or code error) |
 
+## Try it yourself
+
+```bash
+kubectl create deployment try-nginx --image=nginx --replicas=3   # Throwaway Deployment
+kubectl get rs -l app=try-nginx                      # ReplicaSet the controller created
+kubectl get pods -l app=try-nginx -o wide -w         # Pending → ContainerCreating → Running
+kubectl describe pod <pod>                           # Events: Scheduled, Pulling, Started
+kubectl delete deployment try-nginx                  # Clean up
+```
+
 Further reading: [Kubernetes Overview](https://kubernetes.io/docs/concepts/overview/) · [Pod Lifecycle](https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/) · [Debug Pods](https://kubernetes.io/docs/tasks/debug/debug-application/debug-pods/)

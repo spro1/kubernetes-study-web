@@ -193,4 +193,14 @@ hide_table_of_contents: true
 | `RoleBinding` | 권한 묶음을 사용자·그룹·서비스 어카운트에 연결한다 | 네임스페이스 하나 |
 | `ClusterRoleBinding` | ClusterRole을 클러스터 전체에 걸쳐 연결한다 | 클러스터 |
 
+## 직접 확인해 보기
+
+```bash
+kubectl auth whoami                                  # 인증이 본 내 이름
+kubectl get rolebindings -n <네임스페이스> -o wide      # 어떤 Role이 누구에게 연결됐는지
+kubectl auth can-i delete pods -n <네임스페이스> --as <사용자>   # no면 403 Forbidden
+kubectl auth can-i list pods -n <네임스페이스> --as system:serviceaccount:<네임스페이스>:<서비스어카운트>   # 서비스 어카운트도 같은 검사
+kubectl auth can-i list nodes                        # 클러스터 범위라 ClusterRole이 필요하다
+```
+
 더 읽을거리: [RBAC 인가 사용](https://kubernetes.io/docs/reference/access-authn-authz/rbac/) · [네임스페이스](https://kubernetes.io/ko/docs/concepts/overview/working-with-objects/namespaces/)

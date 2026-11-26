@@ -178,4 +178,14 @@ hide_table_of_contents: true
 
 예: Harbor 같은 이미지 저장소는 Trivy를 스캐너로 붙여 저장된 이미지의 취약점 검사를 실행하고, 결과(CVE 식별자·패키지명·설치 버전·수정 버전·심각도)를 보여 준다. 로컬에서는 `trivy image <이미지>`로 같은 검사를 해 볼 수 있다.
 
+## 직접 확인해 보기
+
+```bash
+kubectl get pods -n <네임스페이스> -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.status.containerStatuses[*].imageID}{"\n"}{end}'   # 파드마다 실제로 실행 중인 다이제스트
+trivy image --format cyclonedx --output sbom.json <이미지>      # SBOM 만들기
+trivy image --severity HIGH,CRITICAL --ignore-unfixed <이미지>   # 수정 버전이 있는 높은 심각도부터
+cosign verify --key <공개키> <이미지>                           # 누가 만들었고 바뀌지 않았는지
+kubectl get validatingwebhookconfigurations                     # 배포 때 서명을 확인하는 정책이 있는지
+```
+
 더 읽을거리: [이미지](https://kubernetes.io/ko/docs/concepts/containers/images/) · [Harbor 문서](https://goharbor.io/docs/) · [Sigstore 문서](https://docs.sigstore.dev/) · [Trivy](https://trivy.dev/)

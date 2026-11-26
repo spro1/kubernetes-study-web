@@ -206,4 +206,14 @@ If a Pod runs as root (the admin account) or borrows node privileges, one breach
 
 The full set of API server gates (authentication, authorization, admission) is covered in [How an API Request Gets Stored](./api-request-path.mdx).
 
+## Try it yourself
+
+```bash
+kubectl get namespaces -L pod-security.kubernetes.io/enforce,pod-security.kubernetes.io/warn   # Level and mode per namespace
+kubectl run psa-test --image=nginx --privileged -n <namespace> --dry-run=server   # baseline rejects it; nothing is stored
+kubectl get events -n <namespace> --field-selector reason=FailedCreate   # Deployed but no Pods: rejection events
+kubectl get pod <pod> -n <namespace> -o jsonpath='{.spec.containers[*].securityContext}'   # Current securityContext
+kubectl label --dry-run=server --overwrite namespace <namespace> pod-security.kubernetes.io/enforce=restricted   # Which Pods break before raising enforce
+```
+
 Further reading: [Pod Security Standards](https://kubernetes.io/docs/concepts/security/pod-security-standards/) · [Pod Security Admission](https://kubernetes.io/docs/concepts/security/pod-security-admission/) · [Configure a security context for a Pod or container](https://kubernetes.io/docs/tasks/configure-pod-container/security-context/)

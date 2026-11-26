@@ -170,4 +170,14 @@ hide_table_of_contents: true
 - 캐시가 모자랄 때 손볼 곳은 `--max-model-len`(요청 하나의 최대 길이), `--max-num-seqs`(동시 처리 요청 수), 레플리카 수, 더 큰 메모리의 가속기다. HPA로 레플리카를 늘린다면 GPU 사용률 대신 대기 요청 수나 KV 캐시 사용률 같은 엔진 지표를 기준으로 삼는 편이 맞다.
 - 프리픽스 캐시 효과는 같은 앞부분을 가진 요청이 같은 레플리카로 갈 때 커진다. 이 내용은 [요청을 어느 레플리카로 보낼까 (추론 라우팅)](../ai/inference-routing.mdx)에서 다룬다. 넘치는 캐시를 CPU 메모리나 디스크로 내리는 방법은 [넘치는 KV 캐시 내려 두기 (오프로딩)](../llm/kv-offloading.mdx)에서 본다.
 
+## 직접 확인해 보기
+
+```bash
+kubectl exec <파드> -- nvidia-smi --query-gpu=memory.used,memory.total --format=csv   # 예: NVIDIA. 처음부터 꽉 차 보인다 (4단계)
+curl -s http://<엔진>:8000/metrics | grep -E 'vllm:(kv|gpu)_cache_usage_perc'   # 예: vLLM. 실제 여유
+curl -s http://<엔진>:8000/metrics | grep -E 'vllm:(num_requests_waiting|num_preemptions)'   # 캐시가 차면 대기·선점 (8단계)
+curl -s http://<엔진>:8000/metrics | grep vllm:prefix_cache   # 프리픽스 캐시 조회·적중 (7단계)
+vllm serve <모델> --gpu-memory-utilization 0.9 --max-model-len 8192 --max-num-seqs 64 --enable-prefix-caching   # 손볼 곳
+```
+
 더 읽을거리: [vLLM 문서](https://docs.vllm.ai/) · [PagedAttention 논문](https://arxiv.org/abs/2309.06180) · [Gateway API Inference Extension](https://gateway-api-inference-extension.sigs.k8s.io/)

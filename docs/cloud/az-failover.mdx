@@ -182,4 +182,14 @@ The store's servers and DB are split across two availability zones within one re
 | Load balancer health check | Target group health check | Health probe | Health check |
 | Primary/standby DB across zones | RDS Multi-AZ deployment | Zone-redundant high availability (Flexible Server) | Cloud SQL high availability (regional instance) |
 
+## Try it yourself
+
+```bash
+kubectl get nodes -L topology.kubernetes.io/zone     # Zone of each node
+kubectl get pods -o wide -n <namespace>              # Which node each Pod runs on
+kubectl get deploy <name> -o jsonpath='{.spec.template.spec.topologySpreadConstraints}'   # Spread evenly across zones?
+aws rds describe-db-instances --db-instance-identifier <db> --query 'DBInstances[].[MultiAZ,AvailabilityZone,SecondaryAvailabilityZone]'   # Primary and standby zones (AWS example)
+aws elbv2 describe-target-health --target-group-arn <tg-arn>   # Health check result per target
+```
+
 Further reading: [Running in multiple zones (Kubernetes docs)](https://kubernetes.io/docs/setup/best-practices/multiple-zones/) · [Pod Topology Spread Constraints](https://kubernetes.io/docs/concepts/scheduling-eviction/topology-spread-constraints/) · [Regions and Availability Zones (AWS)](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/using-regions-availability-zones.html)

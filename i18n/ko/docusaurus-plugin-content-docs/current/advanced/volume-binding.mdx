@@ -193,4 +193,15 @@ PVC로 신청하고 PV로 받는 기본 순서는 [저장 공간이 붙기까지
 | 볼륨 용량은 나중에 줄이면 된다 | 늘리기만 된다 |
 | 스냅샷이 있으니 백업은 필요 없다 | 스냅샷은 같은 장비 안에 있어 장비 고장 때 함께 잃을 수 있다 |
 
+## 직접 확인해 보기
+
+```bash
+kubectl get storageclass                                 # VOLUMEBINDINGMODE와 ALLOWVOLUMEEXPANSION
+kubectl describe pvc <이름> -n <네임스페이스>            # 이벤트: 정상 대기인지 실패인지
+kubectl get pvc -n <네임스페이스>                        # 접근 모드와 용량
+kubectl get pv <pv> -o jsonpath='{.spec.nodeAffinity}'   # 특정 노드에 묶인 로컬 볼륨인지
+kubectl get volumeattachments                            # RWO 볼륨이 붙어 있는 노드
+kubectl get volumesnapshotclass                          # 스냅샷이 동작할 준비가 됐는지
+```
+
 더 읽을거리: [퍼시스턴트 볼륨](https://kubernetes.io/ko/docs/concepts/storage/persistent-volumes/) · [스토리지 클래스](https://kubernetes.io/docs/concepts/storage/storage-classes/) · [볼륨 스냅샷](https://kubernetes.io/docs/concepts/storage/volume-snapshots/)

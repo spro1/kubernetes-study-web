@@ -173,4 +173,13 @@ hide_table_of_contents: true
 - 업무 성격이 크게 다른 모델은 레플리카를 나누고, 부하 테스트도 실제 입력·출력 길이 분포로 돌린다. 짧은 질문만으로 측정하면 프리필 부담이 가려진다.
 - 프리필과 디코드를 서로 다른 파드로 나누는 방법은 [읽는 곳과 쓰는 곳 나누기 (프리필·디코드 분리)](../llm/pd-disaggregation.mdx)에서 다룬다.
 
+## 직접 확인해 보기
+
+```bash
+curl -s http://<엔진>:8000/metrics | grep vllm:time_to_first_token_seconds   # TTFT 히스토그램: 프리필 (4단계), 예: vLLM
+curl -s http://<엔진>:8000/metrics | grep vllm:request_time_per_output_token_seconds   # 요청별 TPOT: 디코드 (6단계)
+curl -s http://<엔진>:8000/metrics | grep vllm:inter_token_latency_seconds   # 스트리밍 토큰 사이 간격
+curl -s http://<엔진>:8000/metrics | grep vllm:num_requests_waiting   # TTFT가 늘 때 대기 줄
+```
+
 더 읽을거리: [vLLM 문서](https://docs.vllm.ai/) · [llm-d](https://llm-d.ai/)

@@ -182,4 +182,14 @@ hide_table_of_contents: true
 | 로드밸런서의 상태 확인 | 대상 그룹 헬스 체크 | 상태 프로브 (health probe) | 헬스 체크 |
 | 영역을 나눈 주·대기 DB | RDS 다중 AZ 배포 | 영역 중복 고가용성 (Flexible Server) | Cloud SQL 고가용성 (리전 인스턴스) |
 
+## 직접 확인해 보기
+
+```bash
+kubectl get nodes -L topology.kubernetes.io/zone     # 노드별 영역
+kubectl get pods -o wide -n <네임스페이스>           # 파드가 뜬 노드
+kubectl get deploy <이름> -o jsonpath='{.spec.template.spec.topologySpreadConstraints}'   # 영역에 고르게 퍼지게 했는지
+aws rds describe-db-instances --db-instance-identifier <DB> --query 'DBInstances[].[MultiAZ,AvailabilityZone,SecondaryAvailabilityZone]'   # 주 DB와 대기 DB의 영역 (AWS 예시)
+aws elbv2 describe-target-health --target-group-arn <대상그룹-ARN>   # 대상별 헬스 체크 결과
+```
+
 더 읽을거리: [여러 영역에서 실행하기 (쿠버네티스 문서)](https://kubernetes.io/docs/setup/best-practices/multiple-zones/) · [파드 토폴로지 분배 제약 조건](https://kubernetes.io/ko/docs/concepts/scheduling-eviction/topology-spread-constraints/) · [리전과 가용 영역 (AWS)](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/using-regions-availability-zones.html)

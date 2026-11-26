@@ -178,4 +178,14 @@ The software supply chain is the whole path from source → dependencies → bui
 
 Example: an image registry like Harbor can attach Trivy as a scanner to scan stored images and show the results (CVE ID, package name, installed version, fixed version, severity). Locally you can run the same scan with `trivy image <image>`.
 
+## Try it yourself
+
+```bash
+kubectl get pods -n <namespace> -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.status.containerStatuses[*].imageID}{"\n"}{end}'   # Digest each Pod actually runs
+trivy image --format cyclonedx --output sbom.json <image>       # Generate an SBOM
+trivy image --severity HIGH,CRITICAL --ignore-unfixed <image>   # High severity with a fixed version first
+cosign verify --key <cosign.pub> <image>                        # Who built it, and is it unchanged?
+kubectl get validatingwebhookconfigurations                     # Is a policy verifying signatures at deploy?
+```
+
 Further reading: [Images](https://kubernetes.io/docs/concepts/containers/images/) · [Harbor docs](https://goharbor.io/docs/) · [Sigstore docs](https://docs.sigstore.dev/) · [Trivy](https://trivy.dev/)

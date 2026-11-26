@@ -193,4 +193,14 @@ Developer kim and a pod run by a deploy tool both work with pods in the shop-dev
 | `RoleBinding` | Binds a permission set to users, groups, or ServiceAccounts | One namespace |
 | `ClusterRoleBinding` | Binds a ClusterRole across the whole cluster | Cluster |
 
+## Try it yourself
+
+```bash
+kubectl auth whoami                                  # Who authentication says you are
+kubectl get rolebindings -n <namespace> -o wide      # Which Role is bound to whom
+kubectl auth can-i delete pods -n <namespace> --as <user>   # no means 403 Forbidden
+kubectl auth can-i list pods -n <namespace> --as system:serviceaccount:<namespace>:<sa>   # Same check for a ServiceAccount
+kubectl auth can-i list nodes                        # Cluster-scoped, needs a ClusterRole
+```
+
 Further reading: [Using RBAC Authorization](https://kubernetes.io/docs/reference/access-authn-authz/rbac/) · [Namespaces](https://kubernetes.io/docs/concepts/overview/working-with-objects/namespaces/)

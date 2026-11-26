@@ -186,4 +186,14 @@ The web pod in the `shop` namespace calls the order service `order-svc`. Let's f
 | Name lookup fails with no response, but the IP works | DNS server | CoreDNS outage, a network policy blocking DNS (port 53) lookups |
 | Name resolves but connection fails | Service → pod | Selector and pod labels do not match so there are 0 target pods, port mismatch |
 
+## Try it yourself
+
+```bash
+kubectl get svc -n <namespace>                       # Service names and CLUSTER-IP
+kubectl get endpointslices -n <namespace> -l kubernetes.io/service-name=<service>   # Pod IPs behind the Service
+kubectl exec <pod> -- cat /etc/resolv.conf           # search list, own namespace first
+kubectl run dns-test --image=busybox:1.36 --rm -it --restart=Never -- nslookup <service>.<namespace>   # Throwaway Pod, removed on exit
+kubectl get pods -n kube-system -l k8s-app=kube-dns   # Is CoreDNS healthy?
+```
+
 Further reading: [Service](https://kubernetes.io/docs/concepts/services-networking/service/) · [DNS for Services and Pods](https://kubernetes.io/docs/concepts/services-networking/dns-pod-service/)

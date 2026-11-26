@@ -178,4 +178,13 @@ Prefill (reading the prompt) is compute-heavy; decode (writing the answer) is me
 - Treat RDMA (InfiniBand, RoCE, EFA) as a prerequisite for production. NIXL can run over TCP, but much slower. Nodes need RDMA-capable NICs, and those devices must be attached to the Pods. Check the engine logs to confirm the KV transfer uses RDMA and has not fallen back to TCP.
 - Before switching, measure TTFT and TPOT for single and disaggregated serving side by side at your real concurrency. If TTFT gets worse at low load, the case for splitting is weak.
 
+## Try it yourself
+
+```bash
+kubectl get pods -n <namespace> -L llm-d.ai/role     # e.g. llm-d: prefill and decode Pods (step 3)
+kubectl get deployments -n <namespace>               # Replica count per side
+kubectl get inferencepools -n <namespace>            # Pool the EPP picks from (step 4)
+curl -s http://<engine>:8000/metrics | grep -E 'vllm:(time_to_first_token_seconds|inter_token_latency_seconds)_sum'   # e.g. vLLM: TTFT and TPOT side by side
+```
+
 Further reading: [Gateway API Inference Extension](https://gateway-api-inference-extension.sigs.k8s.io/) · [llm-d](https://llm-d.ai/) · [NIXL](https://github.com/ai-dynamo/nixl)

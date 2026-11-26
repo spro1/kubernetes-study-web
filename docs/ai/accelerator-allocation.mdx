@@ -188,4 +188,15 @@ For a long time Kubernetes handed out accelerators only as "N GPUs". **Dynamic R
 | Check before deploy | None | ResourceQuota caps device count; Kueue can queue |
 | Why a Pod waits | Criteria mismatch | Tell quota exceeded apart from devices exhausted |
 
+## Try it yourself
+
+```bash
+kubectl get deviceclasses                            # Device classes the drivers offer
+kubectl get resourceslices                           # Device lists per node (step 2)
+kubectl describe resourceslice <name>                # Per-device attributes (model, memory, pcieRoot)
+kubectl describe quota -n <namespace>                # DRA device usage vs cap (step 3)
+kubectl get resourceclaims -A                        # Per-Pod claims and allocation state (steps 4, 6)
+kubectl get events -n <namespace> --field-selector reason=FailedScheduling   # cannot allocate all claims (step 8)
+```
+
 Further reading: [Dynamic Resource Allocation](https://kubernetes.io/docs/concepts/resource-management/dynamic-resource-allocation/) · [Resource Quotas](https://kubernetes.io/docs/concepts/policy/resource-quotas/) · [Kueue](https://kueue.sigs.k8s.io/docs/overview/)

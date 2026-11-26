@@ -175,4 +175,14 @@ hide_table_of_contents: true
 - 공유 저장소를 쓰면 저장소 지연이 첫 토큰 시간에 그대로 나타난다. 저장소 응답 시간과 TTFT를 같은 대시보드에서 본다.
 - 효과는 같은 대화나 같은 앞부분이 얼마나 자주 다시 오는지에 달렸다. 켜기 전후로 프리픽스 캐시 적중률과 TTFT를 비교한다.
 
+## 직접 확인해 보기
+
+```bash
+curl -s http://<엔진>:8000/metrics | grep -E 'vllm:(kv|gpu)_cache_usage_perc|vllm:num_preemptions'   # 예: vLLM. 정말 넘치는지 (2단계)
+curl -s http://<엔진>:8000/metrics | grep vllm:prefix_cache   # 켜기 전후 적중률 (5단계)
+kubectl get pod <파드> -o jsonpath='{.spec.containers[*].resources}'   # 메모리 제한에 오프로드 크기가 들어갔는지
+kubectl get pod <파드> -o jsonpath='{.status.containerStatuses[*].lastState.terminated.reason}'   # OOMKilled인지
+kubectl get events -n <네임스페이스> --field-selector reason=Evicted   # ephemeral-storage 축출
+```
+
 더 읽을거리: [GPUDirect Storage](https://docs.nvidia.com/gpudirect-storage/) · [LMCache](https://github.com/LMCache/LMCache) · [파드 및 컨테이너 리소스 관리](https://kubernetes.io/ko/docs/concepts/configuration/manage-resources-containers/)

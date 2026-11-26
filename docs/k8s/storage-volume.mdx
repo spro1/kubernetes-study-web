@@ -194,4 +194,15 @@ We request 10Gi of storage for a database pod. Let's follow how one request turn
 | 6. Attach to node | Pod stays in `ContainerCreating` | `FailedAttachVolume` in pod events — often the volume is still attached to another node |
 | 6. Mount | Pod stays in `ContainerCreating` | `FailedMount` in pod events — permissions, file system errors, NFS server unreachable |
 
+## Try it yourself
+
+```bash
+kubectl get storageclass                             # PROVISIONER and VOLUMEBINDINGMODE
+kubectl get pvc                                      # Pending or Bound
+kubectl describe pvc <pvc>                           # Why it stays Pending (Events)
+kubectl get pv                                       # RECLAIM POLICY before deleting a PVC
+kubectl get volumeattachments                        # Which node a volume is attached to
+kubectl describe pod <pod>                           # FailedAttachVolume or FailedMount
+```
+
 Further reading: [Persistent Volumes](https://kubernetes.io/docs/concepts/storage/persistent-volumes/) · [Storage Classes](https://kubernetes.io/docs/concepts/storage/storage-classes/)

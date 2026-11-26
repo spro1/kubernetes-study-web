@@ -177,4 +177,14 @@ Build it up one step at a time: how one physical server is split into virtual ma
 
 Where a container's source (the image) comes from is the next lesson. How a container actually starts on a node is in [How a Pod Starts](../k8s/pod-startup.mdx).
 
+## Try it yourself
+
+```bash
+nproc; free -h; df -h                                # CPU, memory, disk (on a Linux server)
+ps -ef | head                                        # Processes and their PIDs
+kubectl get nodes -o custom-columns=NAME:.metadata.name,CPU:.status.capacity.cpu,MEMORY:.status.capacity.memory   # Node size
+kubectl top nodes                                    # CPU and memory use per node (needs metrics-server)
+kubectl get pod <pod> -o jsonpath='{.status.containerStatuses[*].lastState.terminated.reason}'   # OOMKilled after a memory limit?
+```
+
 Further reading: [Containers (Kubernetes docs)](https://kubernetes.io/docs/concepts/containers/) · [Nodes](https://kubernetes.io/docs/concepts/architecture/nodes/) · [Resource Management for Pods and Containers](https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/)

@@ -186,4 +186,14 @@ Every CI/CD flow starts from one change (a commit) recorded in a Git repository.
 
 If you put the commit hash or Git tag in the image tag, you can trace which code an image running in the cluster came from. See the running image in the Image field of `kubectl describe deployment <name>`.
 
+## Try it yourself
+
+```bash
+git log --oneline --graph --all -n 20                # Commits, branches and merges
+git branch -a                                        # Local and remote branches
+git show --stat HEAD                                 # One commit: hash, author, message, files
+git diff main...<branch>                             # What the merge request would show
+git tag -n                                           # Release tags
+```
+
 Further reading: [Pro Git](https://git-scm.com/book/en/v2) · [GitLab merge requests](https://docs.gitlab.com/ee/user/project/merge_requests/) · [GitHub pull requests](https://docs.github.com/en/pull-requests)

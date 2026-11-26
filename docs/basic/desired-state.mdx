@@ -185,4 +185,15 @@ You do not tell Kubernetes "do this". You write down "it should look like this",
 
 The control loop actually bringing a Pod back continues in [When a Pod Dies (Self-Healing)](../k8s/self-healing.mdx).
 
+## Try it yourself
+
+```bash
+kubectl create deployment demo-web --image=nginx --replicas=3   # Submit the desired state (throwaway)
+kubectl get deploy demo-web                          # READY: current/desired
+kubectl get deploy demo-web -o jsonpath='{.spec.replicas} {.status.readyReplicas}{"\n"}'   # spec vs status
+kubectl get svc <service> -o jsonpath='{.spec.selector}'   # Which labels the Service selects
+kubectl get endpointslices -l kubernetes.io/service-name=<service>   # 0 endpoints? Suspect the selector
+kubectl delete deployment demo-web                   # Cleanup
+```
+
 Further reading: [Controllers (Kubernetes docs)](https://kubernetes.io/docs/concepts/architecture/controller/) · [Labels and Selectors](https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/) · [How a Pod Starts](../k8s/pod-startup.mdx) · [When a Pod Dies (Self-Healing)](../k8s/self-healing.mdx)

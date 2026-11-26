@@ -178,4 +178,14 @@ hide_table_of_contents: true
 
 잡과 크론잡의 흐름은 [한 번 돌고 끝나는 일 (Job·CronJob)](../k8s/job-cronjob.mdx), 디플로이먼트의 버전 교체는 [무중단 배포 (롤링 업데이트)](../k8s/rolling-update.mdx)에서 이어서 본다.
 
+## 직접 확인해 보기
+
+```bash
+kubectl get deploy,rs,pod -n <네임스페이스>          # Deployment → ReplicaSet → Pod 사슬
+kubectl get pod <파드> -o jsonpath='{.metadata.ownerReferences[0].kind}{"\n"}'   # 이 파드를 만든 상위 리소스
+kubectl get statefulset,pvc -n <네임스페이스>        # 순번 파드와 전용 볼륨
+kubectl get daemonset -A                             # DESIRED/READY와 노드 수 비교
+kubectl logs deploy/<이름>                           # 상위 리소스 이름으로 로그 보기
+```
+
 더 읽을거리: [워크로드 (쿠버네티스 문서)](https://kubernetes.io/ko/docs/concepts/workloads/) · [디플로이먼트](https://kubernetes.io/ko/docs/concepts/workloads/controllers/deployment/) · [스테이트풀셋](https://kubernetes.io/ko/docs/concepts/workloads/controllers/statefulset/) · [데몬셋](https://kubernetes.io/ko/docs/concepts/workloads/controllers/daemonset/)

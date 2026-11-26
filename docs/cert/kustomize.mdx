@@ -182,4 +182,13 @@ Helm charts, values, revisions and GitOps sync are covered in [Helm and GitOps](
 | Change only some fields, like replicas | List a patch file with only those fields under `patches:` | The patch kind and name must match the base resource to merge |
 | Delete what Kustomize deployed | `kubectl delete -k overlays/prod` | There is no separate `uninstall` or `rollback` command like Helm |
 
+## Try it yourself
+
+```bash
+kubectl kustomize overlays/prod                      # Merged YAML; sends nothing
+kubectl kustomize overlays/prod | grep -E 'replicas|image:'   # Patch and new tag applied?
+kubectl kustomize overlays/dev | grep -E 'name: dev-|namespace:'   # namePrefix and namespace
+kubectl diff -k overlays/prod                        # What apply -k would change
+```
+
 Further reading: [CNCF certification curriculum](https://github.com/cncf/curriculum) · [Declarative management of Kubernetes objects using Kustomize](https://kubernetes.io/docs/tasks/manage-kubernetes-objects/kustomization/) · [Helm and GitOps](../intermediate/gitops-sync.mdx)

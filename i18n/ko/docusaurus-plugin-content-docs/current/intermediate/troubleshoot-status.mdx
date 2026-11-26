@@ -176,4 +176,15 @@ hide_table_of_contents: true
 
 이벤트는 `kubectl describe pod <이름>`, 직전 컨테이너 로그는 `kubectl logs <이름> --previous`로 본다. 로그는 파드에만 있으므로 디플로이먼트에서 문제를 발견하면 그 아래 파드로 내려간다. 네임스페이스 전체 이벤트는 `kubectl get events --sort-by=.lastTimestamp`로 본다.
 
+## 직접 확인해 보기
+
+```bash
+kubectl get pods                                     # STATUS: 세 계층을 합친 값
+kubectl get pod <파드> -o jsonpath='{.status.phase}'   # phase만 따로
+kubectl describe pod <파드>                          # 이벤트와 Last State
+kubectl get events --sort-by=.metadata.creationTimestamp   # 최근 이벤트(약 1시간 뒤 사라진다)
+kubectl logs <파드> --previous                       # 직전에 종료된 컨테이너 로그
+kubectl describe node <노드>                         # 여러 파드가 실패할 때 노드 Conditions
+```
+
 더 읽을거리: [파드 디버깅](https://kubernetes.io/docs/tasks/debug/debug-application/debug-pods/) · [kubectl 치트 시트](https://kubernetes.io/ko/docs/reference/kubectl/cheatsheet/) · [파드 라이프사이클](https://kubernetes.io/ko/docs/concepts/workloads/pods/pod-lifecycle/) · [파드가 죽으면 (자가 치유)](../k8s/self-healing.mdx)

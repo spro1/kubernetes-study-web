@@ -177,4 +177,14 @@ When nodes are full, a new Pod usually waits in Pending ([Which Node Gets the Po
 
 The details of drain and PDBs are in [Draining Nodes and Upgrading the Cluster](../k8s/node-drain.mdx).
 
+## Try it yourself
+
+```bash
+kubectl get priorityclasses                                       # Grades and values, including system-*
+kubectl get pods -A -o custom-columns=NAME:.metadata.name,CLASS:.spec.priorityClassName,PRIORITY:.spec.priority   # Grade each Pod uses
+kubectl get events -A --field-selector reason=Preempted           # Pods evicted by preemption
+kubectl get pod <pod> -o jsonpath='{.status.nominatedNodeName}'   # Node the waiting Pod is headed for
+kubectl get pdb -A                                                # Disruption budgets (best-effort only)
+```
+
 Further reading: [Pod priority and preemption](https://kubernetes.io/docs/concepts/scheduling-eviction/pod-priority-preemption/) · [Disruptions](https://kubernetes.io/docs/concepts/workloads/pods/disruptions/)

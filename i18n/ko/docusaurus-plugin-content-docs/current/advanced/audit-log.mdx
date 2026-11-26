@@ -171,4 +171,14 @@ hide_table_of_contents: true
 | Request | 위 + 요청 본문 | 무엇을 바꾸려 했는지가 중요한 변경 요청 |
 | RequestResponse | 위 + 응답 본문 | 꼭 필요한 대상만. 저장량이 크고 비밀이 남을 수 있다 |
 
+## 직접 확인해 보기
+
+```bash
+kubectl get pod -n kube-system -l component=kube-apiserver -o yaml | grep audit   # 감사 정책과 로그 경로가 걸려 있는지
+sudo cat <감사-정책-파일>                                       # 규칙 순서와 자원별 수준
+sudo grep '"resource":"secrets"' <감사-로그-파일> | tail -n 3   # 누가 언제 어떤 시크릿을 읽었는지
+sudo grep '"resource":"secrets"' <감사-로그-파일> | grep -c '"level":"RequestResponse"'   # 0이어야 한다. 비밀 값이 로그에 없다
+kubectl auth can-i get secrets -n <네임스페이스> --as=<사용자>   # 그 주체에게 조회 권한이 정말 필요한지
+```
+
 더 읽을거리: [감사(Auditing)](https://kubernetes.io/docs/tasks/debug/debug-cluster/audit/) · [RBAC 인가 사용](https://kubernetes.io/docs/reference/access-authn-authz/rbac/)

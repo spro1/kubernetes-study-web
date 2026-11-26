@@ -187,4 +187,13 @@ A running container does not guarantee that the application works. Here we follo
 | readiness | Always returns success | Takes requests even when a dependency is down, returning errors to users | Check needed dependencies here |
 | startup | Missing on a slow-starting app | Liveness fails first and restarts it mid-start | Allow the maximum startup time |
 
+## Try it yourself
+
+```bash
+kubectl get pods                                     # READY (readiness) vs RESTARTS (liveness)
+kubectl describe pod <pod>                           # Liveness/Readiness/Startup settings
+kubectl get events --field-selector reason=Unhealthy   # Probe failed messages
+kubectl get endpointslices -l kubernetes.io/service-name=<service>   # Is the pod in the list?
+```
+
 Further reading: [Configure liveness, readiness and startup probes](https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/) · [Pod lifecycle — container probes](https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/#container-probes) · [When a Pod Dies (Self-Healing)](../k8s/self-healing.mdx) · [How a Request Reaches a Pod](../k8s/traffic.mdx)

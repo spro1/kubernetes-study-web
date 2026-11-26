@@ -185,4 +185,14 @@ hide_table_of_contents: true
 | VM 설계도 | 시작 템플릿 (launch template) | 스케일 세트의 VM 모델 | 인스턴스 템플릿 |
 | 헬스 체크 실패 VM 교체 | 헬스 체크 기반 교체 | 자동 인스턴스 복구 | 자동 복구 (autohealing) |
 
+## 직접 확인해 보기
+
+```bash
+aws autoscaling describe-auto-scaling-groups --auto-scaling-group-names <그룹> --query 'AutoScalingGroups[].[MinSize,DesiredCapacity,MaxSize]'   # 최소/원하는/최대 개수 (AWS 예시)
+aws autoscaling describe-auto-scaling-groups --auto-scaling-group-names <그룹> --query 'AutoScalingGroups[].Instances[].[InstanceId,LifecycleState,HealthStatus]' --output table   # VM과 상태
+aws ec2 describe-launch-template-versions --launch-template-id <lt-id> --versions '$Latest'   # 시작 템플릿 설계도
+aws autoscaling describe-policies --auto-scaling-group-name <그룹>   # 알람에 묶인 스케일링 정책
+aws autoscaling describe-scaling-activities --auto-scaling-group-name <그룹> --max-items 5   # 최근 확장·축소·교체 기록
+```
+
 더 읽을거리: [Amazon EC2 Auto Scaling (AWS)](https://docs.aws.amazon.com/autoscaling/ec2/userguide/what-is-amazon-ec2-auto-scaling.html) · [노드 오토스케일링 (쿠버네티스 문서)](https://kubernetes.io/docs/concepts/cluster-administration/node-autoscaling/) · [부하에 맞춰 늘어나기 (HPA)](../k8s/autoscaling.mdx)

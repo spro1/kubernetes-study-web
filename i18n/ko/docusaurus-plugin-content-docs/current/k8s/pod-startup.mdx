@@ -194,4 +194,14 @@ hide_table_of_contents: true
 | ImagePullBackOff | 6. 이미지 | 이미지 이름·태그 오타, 저장소 인증·접근 실패 |
 | CrashLoopBackOff | 7. 컨테이너 실행 이후 | 컨테이너가 시작 직후 계속 종료됨 (설정·코드 오류) |
 
+## 직접 확인해 보기
+
+```bash
+kubectl create deployment try-nginx --image=nginx --replicas=3   # 연습용 Deployment
+kubectl get rs -l app=try-nginx                      # 컨트롤러가 만든 ReplicaSet
+kubectl get pods -l app=try-nginx -o wide -w         # Pending → ContainerCreating → Running
+kubectl describe pod <파드>                           # Events: Scheduled, Pulling, Started
+kubectl delete deployment try-nginx                  # 정리
+```
+
 더 읽을거리: [쿠버네티스 개요](https://kubernetes.io/ko/docs/concepts/overview/) · [파드 라이프사이클](https://kubernetes.io/ko/docs/concepts/workloads/pods/pod-lifecycle/) · [파드 디버깅](https://kubernetes.io/docs/tasks/debug/debug-application/debug-pods/)

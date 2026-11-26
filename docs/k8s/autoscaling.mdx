@@ -177,4 +177,13 @@ A service that normally runs fine on two Pods suddenly gets a flood of requests.
 | Desired Pods went up but the Pod is Pending | Free resources on nodes, namespace quota |
 | Load dropped but Pods stay | Whether the scale-in stabilization window has passed, the minimum replica count |
 
+## Try it yourself
+
+```bash
+kubectl top pods                                     # Per-Pod usage metrics-server collected
+kubectl get hpa -A                                   # Target vs current usage, current Pod count
+kubectl describe hpa <name>                          # Scaling events and conditions
+kubectl get pods -A --field-selector=status.phase=Pending   # Pods stuck for lack of node room
+```
+
 Further reading: [Horizontal Pod Autoscaling](https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/) · [HPA Walkthrough](https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale-walkthrough/)

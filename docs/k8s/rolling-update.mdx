@@ -182,4 +182,15 @@ Three pods running nginx 1.26 move to 1.27. During the change, user requests are
 | `maxUnavailable` | How many pods may briefly be missing below the desired count | Finishes faster, but capacity drops for a while |
 | `readinessProbe` | Checks whether a new pod may receive requests | Without it, pods get requests as soon as they start, which can cause errors |
 
+## Try it yourself
+
+```bash
+kubectl create deployment try-web --image=nginx:1.26 --replicas=3   # Throwaway Deployment
+kubectl set image deployment/try-web nginx=nginx:1.27   # Change the image
+kubectl rollout status deployment/try-web            # Watch until done
+kubectl get rs -l app=try-web                        # Old ReplicaSet stays at 0
+kubectl rollout undo deployment/try-web              # Roll back to 1.26
+kubectl delete deployment try-web                    # Clean up
+```
+
 Further reading: [Deployments](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/) · [Performing a Rolling Update](https://kubernetes.io/docs/tutorials/kubernetes-basics/update/update-intro/)

@@ -178,4 +178,15 @@ With many manifests, you must track two things separately: "what did I install t
 | Reverting | Pick an earlier version from history and reapply | Revert to an earlier commit in Git and the tool follows |
 | Direct edits | Stay until the next deploy | Detected as drift and may be reverted |
 
+## Try it yourself
+
+```bash
+helm list -A                                         # Releases and their current revision
+helm history <release> -n <namespace>                # Revisions, rollbacks included
+helm get values <release> -n <namespace>             # values that filled the chart
+argocd app get <app>                                 # Argo CD: Synced or OutOfSync
+argocd app diff <app>                                # Drift between Git and the cluster
+flux get kustomizations -A                           # Flux: ready state and applied revision
+```
+
 Further reading: [Helm docs](https://helm.sh/docs/) · [OpenGitOps principles](https://opengitops.dev/) · [Argo CD docs](https://argo-cd.readthedocs.io/en/stable/) · [Flux docs](https://fluxcd.io/flux/)

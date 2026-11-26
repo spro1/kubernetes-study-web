@@ -200,4 +200,14 @@ This covers the 4Cs in Overview of Cloud Native Security (14%) and the Kubernete
 
 To go deeper into each boundary's defenses, continue with the lessons [Blocking and Allowing Traffic (NetworkPolicy)](../k8s/network-policy.mdx), [Who Can Do What (RBAC)](../k8s/rbac.mdx), [Pod Security Standards and securityContext](../advanced/pod-security.mdx) and [Audit Logs](../advanced/audit-log.mdx).
 
+## Try it yourself
+
+```bash
+kubectl get networkpolicy -A                         # Default-deny in each namespace?
+kubectl get ns -L pod-security.kubernetes.io/enforce   # Pod Security Standard per namespace
+kubectl auth can-i --list --as=system:serviceaccount:<namespace>:<sa>   # What a pod's token can do
+kubectl get resourcequota -A                         # Quotas that cap denial of service
+sudo grep -E 'encryption-provider-config|audit-policy-file' /etc/kubernetes/manifests/kube-apiserver.yaml   # Secret encryption and audit on? (kubeadm)
+```
+
 Further reading: [CNCF certification curriculum](https://github.com/cncf/curriculum) · [Overview of cloud native security](https://kubernetes.io/docs/concepts/security/overview/) · [Multi-tenancy](https://kubernetes.io/docs/concepts/security/multi-tenancy/)

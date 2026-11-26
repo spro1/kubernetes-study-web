@@ -186,4 +186,14 @@ GPUs are shared by many teams. Instead of running training and evaluation Jobs r
 | Fairness across teams | First come, first served | Per-team quota, borrowing, preemption |
 | Finding the waiting reason | Read Pod events one by one | Workload status message |
 
+## Try it yourself
+
+```bash
+kubectl get localqueues -n <namespace>               # Team queue the Job names (step 1)
+kubectl get job <name> -n <namespace> -o jsonpath='{.spec.suspend}'   # true until Kueue admits it (step 2)
+kubectl get workloads -n <namespace>                 # One Workload per Job, admitted or not
+kubectl describe workload <name> -n <namespace>      # Why it waits: quota, queue, preemption
+kubectl describe clusterqueue <name>                 # Quota usage and borrowing (step 4)
+```
+
 Further reading: [Jobs](https://kubernetes.io/docs/concepts/workloads/controllers/job/) · [Kueue overview](https://kueue.sigs.k8s.io/docs/overview/)

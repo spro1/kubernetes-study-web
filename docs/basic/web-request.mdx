@@ -178,4 +178,13 @@ Type `https://portal.example.com` into the address bar and wait for the page. Fo
 | 504 | Response (timeout) | Check backend response time and health. The request may actually have been processed |
 | Broken fonts or slow page rendering | Air-gapped network | Check for external CDN resources and host them internally |
 
+## Try it yourself
+
+```bash
+dig +short <domain>                                  # Step 2: name to IP address
+nc -zv <domain> 443                                  # Step 3: is port 443 reachable?
+curl -v -o /dev/null https://<domain>/               # Connect, certificate, request, status code
+curl -s -o /dev/null -w '%{http_code} %{time_total}s\n' https://<domain>/   # Status code and response time
+```
+
 Further reading: [An overview of HTTP (MDN)](https://developer.mozilla.org/en-US/docs/Web/HTTP/Overview) · [HTTP response status codes (MDN)](https://developer.mozilla.org/en-US/docs/Web/HTTP/Status) · [Service (Kubernetes docs)](https://kubernetes.io/docs/concepts/services-networking/service/) · [DNS for Services and Pods](https://kubernetes.io/docs/concepts/services-networking/dns-pod-service/)

@@ -171,4 +171,14 @@ hide_table_of_contents: true
 | Request | Above + request body | Changes where what they tried to change matters |
 | RequestResponse | Above + response body | Only where truly needed. Large storage, and secrets may be kept |
 
+## Try it yourself
+
+```bash
+kubectl get pod -n kube-system -l component=kube-apiserver -o yaml | grep audit   # Is an audit policy and log path set?
+sudo cat <audit-policy-file>                                    # Rule order and level per resource
+sudo grep '"resource":"secrets"' <audit-log-file> | tail -n 3   # Who read which Secret, and when
+sudo grep '"resource":"secrets"' <audit-log-file> | grep -c '"level":"RequestResponse"'   # Should be 0: no secret values in the log
+kubectl auth can-i get secrets -n <namespace> --as=<user>       # Did that user really need read access?
+```
+
 Further reading: [Auditing](https://kubernetes.io/docs/tasks/debug/debug-cluster/audit/) · [Using RBAC authorization](https://kubernetes.io/docs/reference/access-authn-authz/rbac/)

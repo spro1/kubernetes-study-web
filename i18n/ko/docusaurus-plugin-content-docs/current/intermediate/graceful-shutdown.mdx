@@ -173,4 +173,14 @@ hide_table_of_contents: true
 
 `terminationGracePeriodSeconds`와 `preStop`은 파드 템플릿의 `spec`에 적는다. 적용된 값은 `kubectl get pod <이름> -o yaml`로 확인한다.
 
+## 직접 확인해 보기
+
+```bash
+kubectl get pod <파드> -o jsonpath='{.spec.terminationGracePeriodSeconds}'   # 유예 시간(기본 30)
+kubectl get pod <파드> -o jsonpath='{.spec.containers[*].lifecycle.preStop}'   # preStop 훅
+kubectl get pods -w                                  # 지운 파드가 Terminating이 되는 모습
+kubectl get endpointslices -l kubernetes.io/service-name=<서비스> -w   # 요청 대상에서 빠지는 모습
+kubectl get events --field-selector reason=Killing   # kubelet이 컨테이너를 멈춘 시점
+```
+
 더 읽을거리: [파드 라이프사이클 — 파드의 종료](https://kubernetes.io/ko/docs/concepts/workloads/pods/pod-lifecycle/#pod-termination) · [컨테이너 라이프사이클 훅](https://kubernetes.io/ko/docs/concepts/containers/container-lifecycle-hooks/)

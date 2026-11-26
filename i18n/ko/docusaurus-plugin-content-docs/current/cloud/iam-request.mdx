@@ -179,4 +179,15 @@ hide_table_of_contents: true
 | 조직 전체에 거는 거부 | 서비스 제어 정책 (SCP) | 거부 할당 (deny assignment) | IAM 거부 정책 |
 | API 호출 기록 | CloudTrail | 활동 로그 (Activity Log) | Cloud Audit Logs |
 
+## 직접 확인해 보기
+
+```bash
+aws sts get-caller-identity                          # 인증: 나는 누구인가 (AWS 예시)
+aws iam list-attached-user-policies --user-name <사용자>   # 호출자에 붙은 정책
+aws iam simulate-principal-policy --policy-source-arn <사용자-ARN> --action-names s3:PutObject rds:DeleteDBInstance   # 허용, 명시적 거부, 기본 거부 중 무엇인지
+aws iam list-access-keys --user-name <사용자>        # 장기 키와 생성일
+aws sts assume-role --role-arn <역할-ARN> --role-session-name demo   # 만료 시각이 있는 임시 자격 증명
+aws cloudtrail lookup-events --lookup-attributes AttributeKey=AccessKeyId,AttributeValue=<키-ID> --max-results 10   # 키 하나의 감사 로그
+```
+
 더 읽을거리: [IAM이란 무엇인가 (AWS)](https://docs.aws.amazon.com/IAM/latest/UserGuide/introduction.html) · [정책 평가 로직 (AWS)](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_evaluation-logic.html) · [누가 무엇을 할 수 있나 (RBAC)](../k8s/rbac.mdx)

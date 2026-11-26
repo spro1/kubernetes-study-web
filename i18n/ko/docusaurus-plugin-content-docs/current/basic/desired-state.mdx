@@ -185,4 +185,15 @@ hide_table_of_contents: true
 
 컨트롤 루프가 실제로 파드를 되살리는 장면은 [파드가 죽으면 (자가 치유)](../k8s/self-healing.mdx)에서 이어진다.
 
+## 직접 확인해 보기
+
+```bash
+kubectl create deployment demo-web --image=nginx --replicas=3   # 원하는 상태 제출 (연습용)
+kubectl get deploy demo-web                          # READY: 현재/원하는 개수
+kubectl get deploy demo-web -o jsonpath='{.spec.replicas} {.status.readyReplicas}{"\n"}'   # spec과 status 비교
+kubectl get svc <서비스> -o jsonpath='{.spec.selector}'   # Service가 고르는 레이블
+kubectl get endpointslices -l kubernetes.io/service-name=<서비스>   # 엔드포인트가 0개면 셀렉터부터 의심
+kubectl delete deployment demo-web                   # 정리
+```
+
 더 읽을거리: [컨트롤러 (쿠버네티스 문서)](https://kubernetes.io/ko/docs/concepts/architecture/controller/) · [레이블과 셀렉터](https://kubernetes.io/ko/docs/concepts/overview/working-with-objects/labels/) · [파드가 뜨기까지](../k8s/pod-startup.mdx) · [파드가 죽으면 (자가 치유)](../k8s/self-healing.mdx)

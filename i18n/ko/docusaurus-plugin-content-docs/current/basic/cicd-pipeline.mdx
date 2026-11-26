@@ -184,4 +184,14 @@ CI/CD는 코드 변경이 서비스에 반영되기까지의 빌드 → 테스�
 | 운영 반영 승인 | 승인 절차를 두는 곳이 많다 | 수동 승인 단계나 머지 리퀘스트 승인을 관문으로 둔다 |
 | 롤백 | 이전 배포 기록이 있어야 되돌릴 수 있다 | `kubectl rollout undo`로 이전 리비전으로 되돌리거나, GitOps라면 Git 커밋을 되돌린다 |
 
+## 직접 확인해 보기
+
+```bash
+git log -1 --format='%H %s'                          # 파이프라인이 빌드한 커밋
+docker image inspect <이미지> --format '{{.RepoDigests}}'   # 저장된 산출물의 다이제스트
+kubectl get deploy <이름> -n <네임스페이스> -o jsonpath='{.spec.template.spec.containers[*].image}{"\n"}'   # dev, stg, prod가 같은 이미지인지
+kubectl rollout history deploy/<이름> -n <네임스페이스>   # 배포 이력
+kubectl rollout status deploy/<이름> -n <네임스페이스>   # 배포가 끝났는지
+```
+
 더 읽을거리: [디플로이먼트 롤백](https://kubernetes.io/ko/docs/concepts/workloads/controllers/deployment/) · [Argo CD](https://argo-cd.readthedocs.io/) · [Tekton](https://tekton.dev/docs/) · [Helm과 GitOps](../intermediate/gitops-sync.mdx)

@@ -185,4 +185,14 @@ An HTTPS connection starts by using a certificate to check "is this really that 
 | Connections suddenly fail one day | Certificate expired | Renew the certificate. Automate renewal and set up expiry alerts |
 | Node cannot pull images from Harbor | Node does not trust Harbor's private certificate | Register the private certificate in the node trust store |
 
+## Try it yourself
+
+```bash
+openssl s_client -connect <domain>:443 -servername <domain> -showcerts </dev/null   # Certificate chain the server shows
+openssl s_client -connect <domain>:443 -servername <domain> </dev/null 2>/dev/null | openssl x509 -noout -subject -issuer -dates   # Domain, issuer, validity
+curl -v -o /dev/null https://<domain>/               # Does the trust check pass?
+kubectl get secret -A --field-selector type=kubernetes.io/tls   # TLS certificates stored in the cluster
+kubectl get certificate -A                           # Renewal status (if cert-manager is installed)
+```
+
 Further reading: [Ingress TLS (Kubernetes docs)](https://kubernetes.io/docs/concepts/services-networking/ingress/#tls) · [Certificate management with kubeadm](https://kubernetes.io/docs/tasks/administer-cluster/kubeadm/kubeadm-certs/) · [cert-manager](https://cert-manager.io/docs/)

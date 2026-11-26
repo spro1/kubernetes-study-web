@@ -173,4 +173,15 @@ hide_table_of_contents: true
 | 가속기 적재 | 엔진 로그의 적재 시간 | NVMe, GPUDirect Storage |
 | 엔진 준비 | 엔진 로그의 준비 시간 | 컴파일 캐시 재사용, 미리 컴파일 |
 
+## 직접 확인해 보기
+
+```bash
+kubectl get pod <파드> -w                             # Pending → ContainerCreating → Running → Ready
+kubectl get events -n <네임스페이스> --field-selector involvedObject.name=<파드>   # 이미지 Pulling/Pulled 시간 (2단계)
+kubectl logs -f <파드>                                # 가중치 적재·준비 시간 (3~5단계)
+kubectl get pod <파드> -o jsonpath='{.spec.containers[*].startupProbe}'   # 기동 프로브가 적재 시간을 덮는지 (6단계)
+kubectl get pod <파드> -o jsonpath='{.status.containerStatuses[*].restartCount}'   # 재시작이 있으면 활성 프로브가 적재를 끊은 것
+curl -s -o /dev/null -w '%{http_code}\n' http://<엔진>:8000/health   # 예: vLLM. 엔진이 준비되면 200
+```
+
 더 읽을거리: [활성·준비·기동 프로브](https://kubernetes.io/docs/concepts/workloads/pods/probes/) · [vLLM 문서](https://docs.vllm.ai/) · [KServe 모델 캐시](https://kserve.github.io/website/docs/model-serving/generative-inference/modelcache/localmodel)

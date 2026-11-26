@@ -200,4 +200,14 @@ This covers "multi-container pod design patterns (e.g. sidecar, init and others)
 | The sidecar must start before the app | Put it in `initContainers` with `restartPolicy: Always` | In `containers`, start order is not guaranteed |
 | Two containers open the same port | Change one port | A pod shares one IP, so the ports collide |
 
+## Try it yourself
+
+```bash
+kubectl get pod web                                  # STATUS like Init:0/2
+kubectl get pod web -o jsonpath='{.spec.initContainers[*].restartPolicy}'   # Always = native sidecar
+kubectl describe pod web                             # Per-container state and mounts
+kubectl logs web -c init-2                           # Why the init container failed
+kubectl logs web -c log-agent                        # Sidecar logs
+```
+
 Further reading: [CNCF certification curriculum](https://github.com/cncf/curriculum) · [Init containers](https://kubernetes.io/docs/concepts/workloads/pods/init-containers/) · [Sidecar containers](https://kubernetes.io/docs/concepts/workloads/pods/sidecar-containers/) · [Volumes](https://kubernetes.io/docs/concepts/storage/volumes/) · [Service Mesh ① Sidecars and Mutual Authentication](../feature/mesh-sidecar.mdx)

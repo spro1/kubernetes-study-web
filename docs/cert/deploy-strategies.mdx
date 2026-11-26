@@ -202,4 +202,14 @@ The default way a single Deployment replaces pods one by one is in [Zero-Downtim
 | Roll back the canary | `kubectl scale deployment <canary> --replicas=0` | No need to edit or roll back the existing Deployment |
 | Go back to the previous version within one Deployment | `kubectl rollout undo deployment <name>` | This is a rolling-update rollback. It differs from blue/green or canary rollback |
 
+## Try it yourself
+
+```bash
+kubectl get pods -L version                          # Pod count per version
+kubectl get svc web -o jsonpath='{.spec.selector}'   # Which pods the Service picks
+kubectl get endpointslices -l kubernetes.io/service-name=web   # Pods that actually get requests
+kubectl get deploy -l app=web                        # Replicas of blue and green
+kubectl port-forward deploy/web-green 8080:<port>    # Test green before switching
+```
+
 Further reading: [CNCF certification curriculum](https://github.com/cncf/curriculum) · [Deployments](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/) · [Service](https://kubernetes.io/docs/concepts/services-networking/service/) · [Zero-Downtime Deploys (Rolling Update)](../k8s/rolling-update.mdx) · [Service Mesh ② Splitting Traffic](../feature/mesh-traffic.mdx)

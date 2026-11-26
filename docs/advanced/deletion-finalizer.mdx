@@ -188,4 +188,14 @@ In Kubernetes, a "delete" request does not make an object vanish at once. If cle
 | `kubernetes` on a namespace | Every object in the namespace deleted | One object inside is stuck on a finalizer |
 | Names added by each tool | The tool cleaning up its external resources | The tool's controller was removed or stopped |
 
+## Try it yourself
+
+```bash
+kubectl get pvc -A -o custom-columns=NAME:.metadata.name,FINALIZERS:.metadata.finalizers   # pvc-protection on every PVC
+kubectl get <kind> <name> -n <namespace> -o jsonpath='{.metadata.deletionTimestamp} {.metadata.finalizers}'   # Terminating: when, and waiting on what
+kubectl get pod <pod> -o jsonpath='{.metadata.ownerReferences}'        # Owner of this Pod
+kubectl get namespace <namespace> -o jsonpath='{.status.conditions}'   # Why the namespace deletion is stuck
+kubectl api-resources --verbs=list --namespaced -o name | xargs -n 1 kubectl get --show-kind --ignore-not-found -n <namespace>   # What is left inside
+```
+
 Further reading: [Finalizers](https://kubernetes.io/docs/concepts/overview/working-with-objects/finalizers/) · [Garbage collection](https://kubernetes.io/docs/concepts/architecture/garbage-collection/) · [Owners and dependents](https://kubernetes.io/docs/concepts/overview/working-with-objects/owners-dependents/)

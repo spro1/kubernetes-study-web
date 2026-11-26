@@ -177,4 +177,14 @@ A web service that ran in the company server room is moving to the cloud. Depend
 | PaaS | App, data | Hardware, virtualization, OS, runtime | Elastic Beanstalk · App Service · App Engine |
 | SaaS | Data, accounts, permissions | Everything up to the app | Business services like Microsoft 365 and Google Workspace |
 
+## Try it yourself
+
+```bash
+cat /etc/os-release                                  # OS version: yours to patch on IaaS
+uname -r                                             # Kernel version
+kubectl version                                      # Control plane version (provider-run if managed)
+kubectl get nodes -o wide                            # Node OS image and kernel: who patches these?
+aws s3api get-public-access-block --bucket <bucket>   # Is storage open to anyone? (AWS example)
+```
+
 Further reading: [The NIST Definition of Cloud Computing (SP 800-145)](https://csrc.nist.gov/pubs/sp/800/145/final) · [Shared Responsibility Model (AWS)](https://aws.amazon.com/compliance/shared-responsibility-model/) · [From One Server to Containers](../basic/server-to-container.mdx)

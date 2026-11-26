@@ -193,4 +193,15 @@ Why the control plane goes first, and how drain respects PDBs, are covered in [D
 | Upgrade a worker node | Install kubeadm → `kubeadm upgrade node` → `kubectl drain <node> --ignore-daemonsets` → install and restart kubelet → `kubectl uncordon <node>` | Do not run `upgrade apply` on a worker. Run drain where kubectl is available, and install packages on the node itself |
 | The job is done | `kubectl uncordon`, then check Ready and VERSION with `kubectl get nodes` | Forget uncordon and the node stays SchedulingDisabled |
 
+## Try it yourself
+
+```bash
+kubectl get nodes                                    # VERSION = kubelet version per node
+apt-cache madison kubeadm                            # Versions in the current repository
+kubeadm version                                      # kubeadm upgraded first?
+sudo kubeadm upgrade plan                            # Component versions; changes nothing
+sudo kubeadm certs check-expiration                  # Certificates renewed by apply
+kubelet --version                                    # This node's kubelet
+```
+
 Further reading: [CNCF certification curriculum](https://github.com/cncf/curriculum) · [Upgrading kubeadm clusters](https://kubernetes.io/docs/tasks/administer-cluster/kubeadm/kubeadm-upgrade/) · [Version skew policy](https://kubernetes.io/docs/setup/release/version-skew-policy/) · [Draining Nodes and Upgrading the Cluster](../k8s/node-drain.mdx)

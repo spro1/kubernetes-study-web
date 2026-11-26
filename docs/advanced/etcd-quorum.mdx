@@ -199,4 +199,14 @@ Production clusters run an odd number of control plane (master) nodes, such as t
 | 4 | 3 | **1** |
 | 5 | 3 | 2 |
 
+## Try it yourself
+
+```bash
+kubectl get pods -n kube-system -l component=etcd -o wide   # One etcd member per control plane node
+kubectl get --raw='/readyz?verbose' | grep etcd             # Can the API server reach etcd?
+export ETCDCTL_ENDPOINTS=<endpoint> ETCDCTL_CACERT=<ca.crt> ETCDCTL_CERT=<client.crt> ETCDCTL_KEY=<client.key>   # Cert flags once, for the commands below
+etcdctl endpoint status --cluster -w table                  # Who is leader, Raft term and index
+etcdctl endpoint health --cluster -w table                  # Members alive: is a majority up?
+```
+
 Further reading: [Kubernetes components](https://kubernetes.io/docs/concepts/overview/components/) · [Creating highly available clusters with kubeadm](https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/high-availability/) · [Operating etcd clusters](https://kubernetes.io/docs/tasks/administer-cluster/configure-upgrade-etcd/)

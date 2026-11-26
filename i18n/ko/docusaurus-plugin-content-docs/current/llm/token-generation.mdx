@@ -172,4 +172,13 @@ LLM은 답을 한 번에 쓰지 않는다. 질문을 **토큰**(모델이 읽는
 - vLLM은 `/metrics`로 입력 토큰 누적(`vllm:prompt_tokens_total`)과 출력 토큰 누적(`vllm:generation_tokens_total`)을 내보낸다. 두 값의 증가 속도를 나눠 보면 부하가 긴 질문에서 오는지 긴 답에서 오는지 알 수 있다.
 - 답이 문장 중간에 끊긴다는 문의가 오면 클라이언트의 `max_tokens`와 서버의 최대 문맥 길이 설정부터 확인한다.
 
+## 직접 확인해 보기
+
+```bash
+curl -s http://<엔진>:8000/v1/models               # 서빙 중인 모델 이름, 예: vLLM
+curl -sN http://<엔진>:8000/v1/completions -H 'Content-Type: application/json' -d '{"model":"<모델>","prompt":"What is Kubernetes?","max_tokens":50,"stream":true}'   # SSE 이벤트마다 토큰 하나 (6단계)
+curl -sN http://<엔진>:8000/v1/completions -H 'Content-Type: application/json' -d '{"model":"<모델>","prompt":"What is Kubernetes?","max_tokens":5}' | grep -o '"finish_reason":"[a-z]*"'   # "length"면 max_tokens에서 끊김 (8단계)
+curl -s http://<엔진>:8000/metrics | grep -E 'vllm:(prompt|generation)_tokens_total'   # 지금까지의 입력·출력 토큰 수
+```
+
 더 읽을거리: [vLLM 문서](https://docs.vllm.ai/) · [KServe 문서](https://kserve.github.io/website/)

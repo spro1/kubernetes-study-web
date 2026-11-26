@@ -181,4 +181,14 @@ When the desired state and the actual state drift apart, Kubernetes brings them 
 | Node | Controllers + scheduler | New pod created on another node | Minutes (includes the default 5 min wait) |
 | Pod deleted manually | ReplicaSet controller | New pod created | Seconds |
 
+## Try it yourself
+
+```bash
+kubectl get pods -o wide                             # RESTARTS and node per Pod
+kubectl logs <pod> --previous                        # Logs from the last run
+kubectl describe pod <pod>                           # Last State and Back-off events
+kubectl get nodes                                    # NotReady nodes
+kubectl get pod <pod> -o jsonpath='{.spec.tolerations}'   # not-ready wait (300s by default)
+```
+
 Further reading: [Pod Lifecycle](https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/) · [Configure Liveness, Readiness and Startup Probes](https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/)

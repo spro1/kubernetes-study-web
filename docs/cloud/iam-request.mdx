@@ -179,4 +179,15 @@ A deploy script asks the cloud: "upload this file to storage". For every single 
 | Organization-wide deny | Service control policy (SCP) | Deny assignment | IAM deny policy |
 | API call records | CloudTrail | Activity Log | Cloud Audit Logs |
 
+## Try it yourself
+
+```bash
+aws sts get-caller-identity                          # Authentication: who am I? (AWS example)
+aws iam list-attached-user-policies --user-name <user>   # Policies attached to the caller
+aws iam simulate-principal-policy --policy-source-arn <user-arn> --action-names s3:PutObject rds:DeleteDBInstance   # Allowed, explicit deny, or implicit deny
+aws iam list-access-keys --user-name <user>          # Long-term keys and when they were made
+aws sts assume-role --role-arn <role-arn> --role-session-name demo   # Temporary credentials with an expiry
+aws cloudtrail lookup-events --lookup-attributes AttributeKey=AccessKeyId,AttributeValue=<key-id> --max-results 10   # Audit log for one key
+```
+
 Further reading: [What is IAM? (AWS)](https://docs.aws.amazon.com/IAM/latest/UserGuide/introduction.html) · [Policy evaluation logic (AWS)](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_evaluation-logic.html) · [Who Can Do What (RBAC)](../k8s/rbac.mdx)

@@ -179,4 +179,14 @@ hide_table_of_contents: true
 | 검사 안 함 / 취약점 0개 | 검사 도구가 없어 결과가 없는 것과 검사했더니 없는 것은 다른 상태 |
 | EXPOSE / 실제 노출 | EXPOSE는 포트를 문서처럼 적어 둘 뿐, 이것만으로 바깥에서 접속되지 않는다 |
 
+## 직접 확인해 보기
+
+```bash
+docker image history <이미지>                        # 레이어와 각 레이어를 만든 줄
+docker image inspect <이미지> --format '{{.RepoDigests}}'   # 다이제스트: 내용의 고유 지문
+docker pull <이미지>                                 # 이미 있는 레이어는 건너뜀
+trivy image <이미지>                                 # 심각도별 취약점 (Trivy가 있을 때)
+kubectl get pod <파드> -o jsonpath='{.status.containerStatuses[*].imageID}'   # 노드가 실제로 받은 다이제스트
+```
+
 더 읽을거리: [이미지 (쿠버네티스 문서)](https://kubernetes.io/ko/docs/concepts/containers/images/) · [Docker 빌드](https://docs.docker.com/build/) · [Harbor](https://goharbor.io/docs/) · [파드가 뜨기까지](../k8s/pod-startup.mdx)

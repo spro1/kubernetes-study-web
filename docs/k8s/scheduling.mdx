@@ -169,4 +169,14 @@ A web pod and a GPU job pod arrive in a cluster with three nodes. Let's see whic
 | Node selector · node affinity | Pod chooses nodes | Goes only to nodes with matching labels | Only nodes with `gpu: "true"` |
 | Pod anti-affinity | Pod avoids other pods | Puts replicas of the same app on different nodes | One web replica per node |
 
+## Try it yourself
+
+```bash
+kubectl describe pod <pod>                           # Events: 0/3 nodes are available: ...
+kubectl describe node <node> | grep -A 8 'Allocated resources'   # Sum of requests, not usage
+kubectl get nodes -o custom-columns=NAME:.metadata.name,TAINTS:.spec.taints   # Node taints
+kubectl get nodes --show-labels                      # Labels a nodeSelector matches
+kubectl get pods -o wide                             # Which node each replica landed on
+```
+
 Further reading: [Kubernetes Scheduler](https://kubernetes.io/docs/concepts/scheduling-eviction/kube-scheduler/) · [Assigning Pods to Nodes](https://kubernetes.io/docs/concepts/scheduling-eviction/assign-pod-node/) · [Taints and Tolerations](https://kubernetes.io/docs/concepts/scheduling-eviction/taint-and-toleration/)

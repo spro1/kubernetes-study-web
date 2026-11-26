@@ -179,4 +179,14 @@ hide_table_of_contents: true
 
 Prometheus를 쓴다면 알람 조건은 알림 규칙(alerting rule)으로 쓰고, 묶기·반복 주기·수신처는 Alertmanager에서 정한다.
 
+## 직접 확인해 보기
+
+```bash
+kubectl get --raw /metrics | grep '^apiserver_request_total' | head    # 응답 코드별 요청 수: SLI의 재료
+curl -s <프로메테우스>/api/v1/query --data-urlencode 'query=sum(rate(apiserver_request_total{code=~"5.."}[5m])) / sum(rate(apiserver_request_total[5m]))'   # 5분 창의 오류 비율
+kubectl get prometheusrules -A                                         # 알람 규칙(Prometheus Operator)
+curl -s <프로메테우스>/api/v1/rules | jq '.data.groups[].rules[].name'   # 프로메테우스가 실제로 읽은 규칙
+curl -s <얼럿매니저>/api/v2/alerts/groups                              # 한 통으로 묶인 알림
+```
+
 더 읽을거리: [Google SRE Workbook — Alerting on SLOs](https://sre.google/workbook/alerting-on-slos/) · [Prometheus 알림 개요](https://prometheus.io/docs/alerting/latest/overview/) · [쿠버네티스 시스템 지표](https://kubernetes.io/docs/concepts/cluster-administration/system-metrics/)

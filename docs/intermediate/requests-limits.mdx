@@ -177,4 +177,14 @@ Each container declares resources as two values: "I need at least this much" (re
 | HPA CPU 80% means 80% of the limit | It is measured against requests |
 | Generous requests are safer | Pods fail to place even with room, and resources are wasted |
 
+## Try it yourself
+
+```bash
+kubectl get pod <pod> -o jsonpath='{.spec.containers[*].resources}'   # Requests and limits
+kubectl get pod <pod> -o jsonpath='{.status.qosClass}'   # QoS class (eviction order)
+kubectl top pod                                      # Actual usage (needs metrics-server)
+kubectl describe node <node> | grep -A 8 'Allocated resources'   # Request totals on the node
+kubectl get pod <pod> -o jsonpath='{.status.containerStatuses[*].lastState.terminated.reason}'   # OOMKilled?
+```
+
 Further reading: [Resource management for Pods and containers](https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/) · [Kubernetes scheduler](https://kubernetes.io/docs/concepts/scheduling-eviction/kube-scheduler/) · [Configure Quality of Service for Pods](https://kubernetes.io/docs/tasks/configure-pod-container/quality-service-pod/) · [Which Node Gets the Pod (Scheduling)](../k8s/scheduling.mdx)

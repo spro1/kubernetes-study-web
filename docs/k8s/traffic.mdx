@@ -162,4 +162,14 @@ When a user opens `shop.example.com`, let's follow how that request arrives at a
 | 3 | Do the Service labels and ports match? | Label mismatch leaves 0 target pods |
 | 4 | Is at least one pod Ready? | Readiness probe failing, all pods restarting |
 
+## Try it yourself
+
+```bash
+kubectl get ingress -A                               # HOSTS and load balancer ADDRESS
+kubectl describe ingress <name>                      # Host and path → Service rules
+kubectl get svc <service> -o wide                    # SELECTOR and ports
+kubectl get endpointslices -l kubernetes.io/service-name=<service> -o yaml   # conditions.ready per Pod
+kubectl get pods -o wide                             # READY column per Pod
+```
+
 Further reading: [Ingress](https://kubernetes.io/docs/concepts/services-networking/ingress/) · [Service](https://kubernetes.io/docs/concepts/services-networking/service/) · [EndpointSlices](https://kubernetes.io/docs/concepts/services-networking/endpoint-slices/)

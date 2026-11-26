@@ -179,4 +179,14 @@ A "CPU over 80%" alert fires 30 times a day, yet users have no complaints. Meanw
 
 With Prometheus, write alert conditions as alerting rules, and set grouping, repeat intervals and receivers in Alertmanager.
 
+## Try it yourself
+
+```bash
+kubectl get --raw /metrics | grep '^apiserver_request_total' | head    # Request counts by code: raw material for an SLI
+curl -s <prometheus>/api/v1/query --data-urlencode 'query=sum(rate(apiserver_request_total{code=~"5.."}[5m])) / sum(rate(apiserver_request_total[5m]))'   # Error ratio over 5 minutes
+kubectl get prometheusrules -A                                         # Alerting rules (Prometheus Operator)
+curl -s <prometheus>/api/v1/rules | jq '.data.groups[].rules[].name'   # Rules Prometheus actually loaded
+curl -s <alertmanager>/api/v2/alerts/groups                            # Alerts grouped into notifications
+```
+
 Further reading: [Google SRE Workbook — Alerting on SLOs](https://sre.google/workbook/alerting-on-slos/) · [Prometheus alerting overview](https://prometheus.io/docs/alerting/latest/overview/) · [Kubernetes system metrics](https://kubernetes.io/docs/concepts/cluster-administration/system-metrics/)

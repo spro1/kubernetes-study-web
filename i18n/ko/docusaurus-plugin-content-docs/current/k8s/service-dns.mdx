@@ -186,4 +186,14 @@ hide_table_of_contents: true
 | 이름 조회가 응답 없이 실패, IP로는 접속됨 | DNS 서버 | CoreDNS 장애, 네트워크 정책이 DNS(53번 포트) 조회를 막음 |
 | 이름은 찾았는데 접속 실패 | 서비스 → 파드 | 셀렉터와 파드 레이블 불일치로 대상 파드 0개, 포트 불일치 |
 
+## 직접 확인해 보기
+
+```bash
+kubectl get svc -n <네임스페이스>                       # 서비스 이름과 CLUSTER-IP
+kubectl get endpointslices -n <네임스페이스> -l kubernetes.io/service-name=<서비스>   # 서비스 뒤의 파드 IP
+kubectl exec <파드> -- cat /etc/resolv.conf           # search 목록, 자기 네임스페이스가 먼저
+kubectl run dns-test --image=busybox:1.36 --rm -it --restart=Never -- nslookup <서비스>.<네임스페이스>   # 연습용 파드, 끝나면 지워진다
+kubectl get pods -n kube-system -l k8s-app=kube-dns   # CoreDNS가 정상인지
+```
+
 더 읽을거리: [서비스](https://kubernetes.io/ko/docs/concepts/services-networking/service/) · [서비스 및 파드용 DNS](https://kubernetes.io/ko/docs/concepts/services-networking/dns-pod-service/)

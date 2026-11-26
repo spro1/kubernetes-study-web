@@ -164,4 +164,15 @@ hide_table_of_contents: true
 
 딸린 파드는 `kubectl get pods -l <셀렉터>`, PVC는 `kubectl get pvc`로 확인한다. 줄이거나 지울 때 PVC를 함께 지울지는 `persistentVolumeClaimRetentionPolicy`로 정할 수 있다.
 
+## 직접 확인해 보기
+
+```bash
+kubectl get statefulset -A                           # StatefulSet과 준비된 개수
+kubectl get pods -o wide                             # 순번 이름 db-0, db-1, db-2
+kubectl get pvc                                      # data-db-N, 축소 뒤에도 남아 있다
+kubectl get svc <서비스> -o jsonpath='{.spec.clusterIP}'   # None이면 헤드리스
+kubectl get sts <이름> -o jsonpath='{.spec.persistentVolumeClaimRetentionPolicy}'   # PVC를 남길지 지울지
+kubectl run dns-test --rm -it --image=busybox:1.36 --restart=Never -- nslookup <파드>.<서비스>   # 고정 DNS 이름(끝나면 지워진다)
+```
+
 더 읽을거리: [스테이트풀셋](https://kubernetes.io/ko/docs/concepts/workloads/controllers/statefulset/) · [퍼시스턴트 볼륨](https://kubernetes.io/ko/docs/concepts/storage/persistent-volumes/) · [이름으로 찾아가기 (Service·DNS)](../k8s/service-dns.mdx)

@@ -191,4 +191,14 @@ hide_table_of_contents: true
 | 레플리카가 모두 바쁨 | 모델 서버 대기열 | 늦은 첫 토큰 |
 | 게이트웨이 우회 | NetworkPolicy가 없으면 걸리지 않는다 | 그대로 통과 |
 
+## 직접 확인해 보기
+
+```bash
+curl -s http://<게이트웨이>/v1/models -H "Authorization: Bearer $API_KEY"   # OpenAI 호환 API, 예: vLLM (2단계)
+curl -s -o /dev/null -w '%{http_code}\n' http://<게이트웨이>/v1/models   # 키 없이: 401이어야 한다 (3단계)
+curl -sN http://<게이트웨이>/v1/completions -H "Authorization: Bearer $API_KEY" -H 'Content-Type: application/json' -d '{"model":"<모델>","prompt":"Hello","max_tokens":32,"stream":true}'   # 토큰이 흘러 돌아온다 (7단계)
+kubectl get networkpolicy -n <네임스페이스>             # 모델 파드에는 게이트웨이만 닿는지 (4단계)
+curl -s http://<엔진>:8000/metrics | grep -E 'vllm:(num_requests_waiting|time_to_first_token_seconds)'   # 레플리카 대기열과 TTFT
+```
+
 더 읽을거리: [네트워크 정책](https://kubernetes.io/ko/docs/concepts/services-networking/network-policies/) · [Gateway API](https://gateway-api.sigs.k8s.io/) · [Gateway API Inference Extension](https://gateway-api-inference-extension.sigs.k8s.io/)

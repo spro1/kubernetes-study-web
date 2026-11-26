@@ -185,4 +185,14 @@ HTTPS 연결은 "상대가 정말 그 서버가 맞는가"를 인증서로 확�
 | 어느 날 갑자기 접속·통신 실패 | 인증서 만료 | 인증서 갱신. 갱신 자동화·만료 알림 마련 |
 | 노드가 Harbor에서 이미지를 못 받음 | 노드가 Harbor의 사설 인증서를 믿지 않음 | 노드 신뢰 목록에 사설 인증서 등록 |
 
+## 직접 확인해 보기
+
+```bash
+openssl s_client -connect <도메인>:443 -servername <도메인> -showcerts </dev/null   # 서버가 내미는 인증서 체인
+openssl s_client -connect <도메인>:443 -servername <도메인> </dev/null 2>/dev/null | openssl x509 -noout -subject -issuer -dates   # 도메인, 발급자, 유효 기간
+curl -v -o /dev/null https://<도메인>/               # 신뢰 검사를 통과하는지
+kubectl get secret -A --field-selector type=kubernetes.io/tls   # 클러스터에 저장된 TLS 인증서
+kubectl get certificate -A                           # 갱신 상태 (cert-manager가 있을 때)
+```
+
 더 읽을거리: [인그레스 TLS (쿠버네티스 문서)](https://kubernetes.io/ko/docs/concepts/services-networking/ingress/#tls) · [kubeadm 인증서 관리](https://kubernetes.io/docs/tasks/administer-cluster/kubeadm/kubeadm-certs/) · [cert-manager](https://cert-manager.io/docs/)

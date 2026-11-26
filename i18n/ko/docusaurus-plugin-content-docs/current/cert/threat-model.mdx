@@ -200,4 +200,14 @@ KCSA 출제 영역 중 Overview of Cloud Native Security(14%)의 4C와 Kubernete
 
 경계별 방어를 하나씩 깊게 보려면 [통신 막고 열기 (네트워크 정책)](../k8s/network-policy.mdx), [누가 무엇을 할 수 있나 (RBAC)](../k8s/rbac.mdx), [파드 보안 기준과 securityContext](../advanced/pod-security.mdx), [감사 로그](../advanced/audit-log.mdx) 레슨을 이어서 본다.
 
+## 직접 확인해 보기
+
+```bash
+kubectl get networkpolicy -A                         # 네임스페이스마다 기본 거부가 있는지
+kubectl get ns -L pod-security.kubernetes.io/enforce   # 네임스페이스별 Pod Security Standard
+kubectl auth can-i --list --as=system:serviceaccount:<네임스페이스>:<서비스어카운트>   # 파드 토큰으로 할 수 있는 일
+kubectl get resourcequota -A                         # 서비스 거부를 막는 쿼터
+sudo grep -E 'encryption-provider-config|audit-policy-file' /etc/kubernetes/manifests/kube-apiserver.yaml   # Secret 암호화와 감사가 켜졌는지(kubeadm)
+```
+
 더 읽을거리: [CNCF 자격증 출제 범위](https://github.com/cncf/curriculum) · [클라우드 네이티브 보안 개요](https://kubernetes.io/ko/docs/concepts/security/overview/) · [멀티 테넌시](https://kubernetes.io/docs/concepts/security/multi-tenancy/)

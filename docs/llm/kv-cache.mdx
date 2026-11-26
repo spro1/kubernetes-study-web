@@ -170,4 +170,14 @@ The **KV cache** holds the computed results for every token the model has alread
 - Levers when the cache runs short: `--max-model-len` (maximum length of one request), `--max-num-seqs` (concurrent requests), replica count, or accelerators with more memory. If an HPA scales replicas, base it on engine metrics such as waiting requests or KV cache usage rather than GPU utilization.
 - Prefix caching pays off most when requests with the same prefix reach the same replica; see [Which Replica Gets the Request (Inference Routing)](../ai/inference-routing.mdx). Moving overflow cache to CPU memory or disk is covered in [Offloading Overflowing KV Cache](../llm/kv-offloading.mdx).
 
+## Try it yourself
+
+```bash
+kubectl exec <pod> -- nvidia-smi --query-gpu=memory.used,memory.total --format=csv   # e.g. NVIDIA: looks full from the start (step 4)
+curl -s http://<engine>:8000/metrics | grep -E 'vllm:(kv|gpu)_cache_usage_perc'   # e.g. vLLM: real headroom
+curl -s http://<engine>:8000/metrics | grep -E 'vllm:(num_requests_waiting|num_preemptions)'   # Cache full: queue and preemptions (step 8)
+curl -s http://<engine>:8000/metrics | grep vllm:prefix_cache   # Prefix cache queries and hits (step 7)
+vllm serve <model> --gpu-memory-utilization 0.9 --max-model-len 8192 --max-num-seqs 64 --enable-prefix-caching   # Levers
+```
+
 Further reading: [vLLM documentation](https://docs.vllm.ai/) · [PagedAttention paper](https://arxiv.org/abs/2309.06180) · [Gateway API Inference Extension](https://gateway-api-inference-extension.sigs.k8s.io/)

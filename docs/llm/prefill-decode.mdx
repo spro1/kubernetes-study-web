@@ -173,4 +173,13 @@ The previous lesson showed that answers are built one token at a time. But **the
 - Give models with very different workloads their own replicas, and run load tests with realistic input and output length distributions. Testing with short prompts only hides the prefill cost.
 - Splitting prefill and decode across separate Pods is covered in [Splitting Prefill and Decode (P/D Disaggregation)](../llm/pd-disaggregation.mdx).
 
+## Try it yourself
+
+```bash
+curl -s http://<engine>:8000/metrics | grep vllm:time_to_first_token_seconds   # TTFT histogram: prefill (step 4), e.g. vLLM
+curl -s http://<engine>:8000/metrics | grep vllm:request_time_per_output_token_seconds   # Per-request TPOT: decode (step 6)
+curl -s http://<engine>:8000/metrics | grep vllm:inter_token_latency_seconds   # Gap between streamed tokens
+curl -s http://<engine>:8000/metrics | grep vllm:num_requests_waiting   # Queue behind a TTFT rise
+```
+
 Further reading: [vLLM documentation](https://docs.vllm.ai/) · [llm-d](https://llm-d.ai/)

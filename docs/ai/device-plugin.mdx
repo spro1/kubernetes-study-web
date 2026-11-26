@@ -206,4 +206,14 @@ Out of the box, Kubernetes only knows about CPU and memory. Plugging a GPU or NP
 
 The basic DRA flow is covered in [Requesting GPUs by Criteria (DRA)](../k8s/dra.mdx). The next lesson, [Getting Accelerators by Criteria (DRA in Depth)](./accelerator-allocation.mdx), follows an AI workload that gets a GPU and a network card together by criteria.
 
+## Try it yourself
+
+```bash
+kubectl get pods -A -o wide | grep -i device-plugin   # Plugin DaemonSet Pod per node (step 2)
+kubectl describe node <gpu-node> | grep -A8 -E '^(Capacity|Allocatable)'   # nvidia.com/gpu count (step 4)
+kubectl get nodes -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.status.capacity.nvidia\.com/gpu}{"\t"}{.status.allocatable.nvidia\.com/gpu}{"\n"}{end}'   # Capacity vs allocatable (step 9)
+kubectl get events -A --field-selector reason=FailedScheduling   # Insufficient nvidia.com/gpu (step 6)
+kubectl exec <pod> -- nvidia-smi -L                  # e.g. NVIDIA: the container sees one GPU (step 8)
+```
+
 Further reading: [Device Plugins](https://kubernetes.io/docs/concepts/extend-kubernetes/compute-storage-net/device-plugins/) · [Schedule GPUs](https://kubernetes.io/docs/tasks/manage-gpus/scheduling-gpus/) · [NVIDIA GPU Operator overview](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/overview.html)

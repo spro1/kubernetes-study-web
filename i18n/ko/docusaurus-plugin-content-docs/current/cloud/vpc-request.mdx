@@ -184,4 +184,14 @@ hide_table_of_contents: true
 | 서버 앞 상태 유지 방화벽 | Security Group | Network Security Group (NSG) | VPC 방화벽 규칙 |
 | 로드밸런서 | Elastic Load Balancing | Load Balancer · Application Gateway | Cloud Load Balancing |
 
+## 직접 확인해 보기
+
+```bash
+aws ec2 describe-vpcs --query 'Vpcs[].[VpcId,CidrBlock]' --output table   # VPC 목록 (AWS 예시)
+aws ec2 describe-subnets --filters Name=vpc-id,Values=<vpc-id> --query 'Subnets[].[SubnetId,AvailabilityZone,CidrBlock]' --output table   # 서브넷
+aws ec2 describe-route-tables --filters Name=vpc-id,Values=<vpc-id> --query 'RouteTables[].Routes[].[DestinationCidrBlock,GatewayId,NatGatewayId]' --output table   # igw 경로면 퍼블릭, nat 경로면 프라이빗
+aws ec2 describe-security-groups --group-ids <sg-id> --query 'SecurityGroups[].IpPermissions'   # 인바운드 허용 규칙
+aws ec2 describe-nat-gateways --filter Name=vpc-id,Values=<vpc-id>   # 나가는 길의 NAT 게이트웨이
+```
+
 더 읽을거리: [Amazon VPC란 무엇인가 (AWS)](https://docs.aws.amazon.com/vpc/latest/userguide/what-is-amazon-vpc.html) · [보안 그룹 (AWS)](https://docs.aws.amazon.com/vpc/latest/userguide/vpc-security-groups.html) · [서비스 (쿠버네티스 문서)](https://kubernetes.io/ko/docs/concepts/services-networking/service/) · [주소창에 주소를 입력하면](../basic/web-request.mdx)

@@ -177,4 +177,14 @@ hide_table_of_contents: true
 
 드레인과 PDB의 자세한 흐름은 [노드 비우기와 클러스터 업그레이드](../k8s/node-drain.mdx)에서 본다.
 
+## 직접 확인해 보기
+
+```bash
+kubectl get priorityclasses                                       # 등급과 값, system-* 포함
+kubectl get pods -A -o custom-columns=NAME:.metadata.name,CLASS:.spec.priorityClassName,PRIORITY:.spec.priority   # 파드마다 쓰는 등급
+kubectl get events -A --field-selector reason=Preempted           # 선점으로 밀려난 파드
+kubectl get pod <파드> -o jsonpath='{.status.nominatedNodeName}'   # 기다리는 파드가 들어갈 노드
+kubectl get pdb -A                                                # 중단 예산(최선으로만 지켜진다)
+```
+
 더 읽을거리: [파드 우선순위와 선점](https://kubernetes.io/ko/docs/concepts/scheduling-eviction/pod-priority-preemption/) · [중단(disruption)](https://kubernetes.io/docs/concepts/workloads/pods/disruptions/)

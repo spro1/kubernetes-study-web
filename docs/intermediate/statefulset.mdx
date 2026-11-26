@@ -164,4 +164,15 @@ Apps like databases, where each pod has its own identity and data, are hard to r
 
 Check the pods with `kubectl get pods -l <selector>` and PVCs with `kubectl get pvc`. Whether PVCs are deleted on scale-down or delete can be set with `persistentVolumeClaimRetentionPolicy`.
 
+## Try it yourself
+
+```bash
+kubectl get statefulset -A                           # StatefulSets and ready counts
+kubectl get pods -o wide                             # Ordinal names db-0, db-1, db-2
+kubectl get pvc                                      # data-db-N, still there after scale-down
+kubectl get svc <service> -o jsonpath='{.spec.clusterIP}'   # None means headless
+kubectl get sts <name> -o jsonpath='{.spec.persistentVolumeClaimRetentionPolicy}'   # What happens to PVCs
+kubectl run dns-test --rm -it --image=busybox:1.36 --restart=Never -- nslookup <pod>.<service>   # Fixed DNS name (removed on exit)
+```
+
 Further reading: [StatefulSets](https://kubernetes.io/docs/concepts/workloads/controllers/statefulset/) · [Persistent volumes](https://kubernetes.io/docs/concepts/storage/persistent-volumes/) · [Finding Services by Name (Service·DNS)](../k8s/service-dns.mdx)

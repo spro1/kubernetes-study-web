@@ -188,4 +188,15 @@ hide_table_of_contents: true
 | 배포 전 확인 | 없음 | ResourceQuota로 장치 수 상한, 필요하면 Kueue로 줄 세우기 |
 | 대기 원인 | 조건 불일치 | 할당량 초과와 장치 부족을 구분해서 본다 |
 
+## 직접 확인해 보기
+
+```bash
+kubectl get deviceclasses                            # 드라이버가 내놓은 장치 종류
+kubectl get resourceslices                           # 노드별 장치 목록 (2단계)
+kubectl describe resourceslice <이름>                # 장치별 속성 (모델, 메모리, pcieRoot)
+kubectl describe quota -n <네임스페이스>                # DRA 장치 사용량과 상한 (3단계)
+kubectl get resourceclaims -A                        # 파드별 요청서와 할당 상태 (4·6단계)
+kubectl get events -n <네임스페이스> --field-selector reason=FailedScheduling   # cannot allocate all claims (8단계)
+```
+
 더 읽을거리: [동적 리소스 할당](https://kubernetes.io/docs/concepts/resource-management/dynamic-resource-allocation/) · [리소스 쿼터](https://kubernetes.io/docs/concepts/policy/resource-quotas/) · [Kueue](https://kueue.sigs.k8s.io/docs/overview/)

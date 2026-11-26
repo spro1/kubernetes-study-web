@@ -178,4 +178,15 @@ hide_table_of_contents: true
 | 되돌리기 | 이력에서 이전 판을 골라 다시 적용 | Git에서 이전 커밋으로 되돌리면 도구가 따라간다 |
 | 직접 수정 | 다음 배포 전까지 그대로 남는다 | 드리프트로 감지되고 되돌려질 수 있다 |
 
+## 직접 확인해 보기
+
+```bash
+helm list -A                                         # 릴리스와 현재 리비전
+helm history <릴리스> -n <네임스페이스>              # 롤백까지 포함한 리비전 이력
+helm get values <릴리스> -n <네임스페이스>           # 차트를 채운 values
+argocd app get <앱>                                  # Argo CD: Synced인지 OutOfSync인지
+argocd app diff <앱>                                 # Git과 클러스터의 어긋남
+flux get kustomizations -A                           # Flux: 준비 상태와 적용된 리비전
+```
+
 더 읽을거리: [Helm 문서](https://helm.sh/docs/) · [OpenGitOps 원칙](https://opengitops.dev/) · [Argo CD 문서](https://argo-cd.readthedocs.io/en/stable/) · [Flux 문서](https://fluxcd.io/flux/)

@@ -177,4 +177,13 @@ hide_table_of_contents: true
 | 필요 파드 수는 늘었는데 파드가 Pending이다 | 노드 남은 자원, 네임스페이스 쿼터 |
 | 부하가 줄었는데 파드가 그대로다 | 스케일 인 대기 시간(안정화 시간)이 지났는지, 최소 레플리카 수 |
 
+## 직접 확인해 보기
+
+```bash
+kubectl top pods                                     # metrics-server가 모은 파드별 사용량
+kubectl get hpa -A                                   # 목표·현재 사용량과 현재 파드 수
+kubectl describe hpa <이름>                          # 늘리고 줄인 이벤트와 상태
+kubectl get pods -A --field-selector=status.phase=Pending   # 노드 자리가 없어 멈춘 파드
+```
+
 더 읽을거리: [Horizontal Pod Autoscaling](https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/) · [HPA 연습](https://kubernetes.io/ko/docs/tasks/run-application/horizontal-pod-autoscale-walkthrough/)

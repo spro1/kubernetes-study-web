@@ -161,4 +161,14 @@ A program that builds a monthly report does not need to stay up. It just needs t
 | `Forbid` | Skips this scheduled run | Work on the same data that must not overlap |
 | `Replace` | Deletes the running Job and starts a new one | Work where only the latest run matters |
 
+## Try it yourself
+
+```bash
+kubectl get cronjob -A                               # SCHEDULE and LAST SCHEDULE
+kubectl create job try-job --image=busybox -- sh -c 'echo done'   # Throwaway Job
+kubectl get job try-job                              # COMPLETIONS reaches 1/1
+kubectl logs job/try-job                             # Logs live in the Job's Pod
+kubectl delete job try-job                           # Clean up (deletes its Pod too)
+```
+
 Further reading: [Jobs](https://kubernetes.io/docs/concepts/workloads/controllers/job/) · [CronJob](https://kubernetes.io/docs/concepts/workloads/controllers/cron-jobs/)

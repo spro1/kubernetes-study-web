@@ -189,4 +189,14 @@ hide_table_of_contents: true
 | 도구를 지운 뒤 네임스페이스가 Terminating에서 끝나지 않는다 | CR의 파이널라이저를 치울 오퍼레이터가 먼저 지워짐 | 남은 CR의 finalizers |
 | 백업 일정이 한꺼번에 사라졌다 | CRD 삭제로 그 종류의 CR이 모두 삭제됨 | 도구 제거·업그레이드 이력 |
 
+## 직접 확인해 보기
+
+```bash
+kubectl get crd                                 # 등록된 자원 종류
+kubectl api-resources --api-group=<그룹>        # 기본 자원처럼 제공되는지
+kubectl explain <종류>.spec                     # CRD가 등록한 스키마
+kubectl get pods -A | grep -i <오퍼레이터>      # 처리할 오퍼레이터가 떠 있는지
+kubectl describe <종류> <이름> -n <네임스페이스>   # status 조건과 이벤트
+```
+
 더 읽을거리: [커스텀 리소스](https://kubernetes.io/ko/docs/concepts/extend-kubernetes/api-extension/custom-resources/) · [오퍼레이터 패턴](https://kubernetes.io/ko/docs/concepts/extend-kubernetes/operator/) · [Velero](https://velero.io/docs/) · 삭제가 멈추는 원리는 [삭제는 생각보다 복잡하다](./deletion-finalizer.mdx)

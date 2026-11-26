@@ -191,4 +191,14 @@ hide_table_of_contents: true
 | 작은 요청은 되는데 큰 응답만 끊긴다 | 오버레이 MTU | 파드 쪽 MTU가 물리 네트워크 MTU보다 작은지 |
 | 파드 IP로는 되는데 서비스 IP로는 안 된다 | 변환 규칙·서비스 | 서비스 대상(엔드포인트)에 준비된 파드가 있는지 |
 
+## 직접 확인해 보기
+
+```bash
+kubectl get pods -o wide                                             # 파드 IP와 노드
+kubectl get nodes -o custom-columns=NAME:.metadata.name,PODCIDR:.spec.podCIDR   # 노드별 파드 대역(CNI에 따라 비어 있다)
+ip route                                                             # (노드에서) 다른 노드 파드 대역으로 가는 경로
+kubectl get endpointslices -l kubernetes.io/service-name=<서비스>    # 서비스 IP 뒤의 파드 IP
+kubectl get configmap kube-proxy -n kube-system -o jsonpath='{.data.config\.conf}' | grep mode   # kube-proxy 방식(비어 있으면 iptables)
+```
+
 더 읽을거리: [클러스터 네트워킹](https://kubernetes.io/ko/docs/concepts/cluster-administration/networking/) · [서비스](https://kubernetes.io/ko/docs/concepts/services-networking/service/) · [가상 IP와 서비스 프록시](https://kubernetes.io/docs/reference/networking/virtual-ips/)
