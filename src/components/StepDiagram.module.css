@@ -978,3 +978,59 @@
     display: none;
   }
 }
+
+/* ── 단축키 도움말 (? 키) ─────────────────────────── */
+.help {
+  position: fixed;
+  z-index: 300;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(320px, calc(100vw - 32px));
+  padding: 16px 18px;
+  background: var(--sd-bg);
+  color: var(--sd-ink);
+  border: 1px solid var(--sd-line);
+  border-radius: 12px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.2);
+}
+
+.helpHead {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.helpHead button {
+  border: 0;
+  background: none;
+  color: var(--sd-muted);
+  font-size: 16px;
+  cursor: pointer;
+}
+
+.help dl {
+  margin: 0;
+}
+
+.help dl > div {
+  display: flex;
+  gap: 12px;
+  padding: 4px 0;
+}
+
+.help dt {
+  width: 36px;
+  margin: 0;
+}
+
+.help dd {
+  margin: 0;
+}
+
+.help p {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: var(--sd-muted);
+}

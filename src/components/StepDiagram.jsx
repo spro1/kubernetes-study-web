@@ -38,14 +38,14 @@ const TEXT = {
     region: '기술 흐름', autoOn: '▶ 자동 진행', autoOff: '■ 자동 진행 끄기', replay: '↻ 다시 보기', play: '▶ 재생', pause: 'Ⅱ 일시정지',
     diagram: (n, t) => `${n}단계 다이어그램: ${t}`, request: '요청', response: '응답·보고', watch: '상태 지켜보기', upcoming: '다음 단계에서 등장',
     warn: '주의할 점', ok: '정리', key: '핵심', changes: '이번 단계에서 바뀐 것', back: '← 이전', next: '다음', restart: '처음부터 ↺',
-    keys: ['단계', '자동 진행', '다시 보기', '일시정지'], steps: '이 레슨의 단계', stepsNav: '레슨 단계', nSteps: (n) => `${n}단계`, learn: '이 레슨에서 배우는 것',
+    keys: ['단계', '자동 진행', '다시 보기', '일시정지'], help: '단축키', helpTitle: '키보드 단축키', helpKeys: ['이전 단계', '다음 단계', '자동 진행 켜기·끄기', '애니메이션 다시 보기', '일시정지·재생', '이 도움말 열기·닫기'], close: '닫기', helpHint: '레슨 영역을 한 번 클릭한 뒤 누른다.', steps: '이 레슨의 단계', stepsNav: '레슨 단계', nSteps: (n) => `${n}단계`, learn: '이 레슨에서 배우는 것',
     kinds: {},
   },
   en: {
     region: 'Animated flow', autoOn: '▶ Autoplay', autoOff: '■ Stop autoplay', replay: '↻ Replay', play: '▶ Play', pause: 'Ⅱ Pause',
     diagram: (n, t) => `Step ${n} diagram: ${t}`, request: 'Request', response: 'Response / report', watch: 'Watch', upcoming: 'Appears in a later step',
     warn: 'Watch out', ok: 'Summary', key: 'Key idea', changes: 'What changed in this step', back: '← Back', next: 'Next', restart: 'Start over ↺',
-    keys: ['steps', 'autoplay', 'replay', 'pause'], steps: 'Steps in this lesson', stepsNav: 'Lesson steps', nSteps: (n) => `${n} steps`, learn: 'What you will learn',
+    keys: ['steps', 'autoplay', 'replay', 'pause'], help: 'shortcuts', helpTitle: 'Keyboard shortcuts', helpKeys: ['Previous step', 'Next step', 'Autoplay on/off', 'Replay the animation', 'Pause/play', 'Open/close this help'], close: 'Close', helpHint: 'Click inside the lesson once, then press a key.', steps: 'Steps in this lesson', stepsNav: 'Lesson steps', nSteps: (n) => `${n} steps`, learn: 'What you will learn',
     kinds: {시작: 'Start', 원리: 'How it works', 주의: 'Caution', 문제: 'Problem', 장애: 'Failure', 정리: 'Summary'},
   },
 };
@@ -132,6 +132,7 @@ export default function StepDiagram({nodes, steps, groups = [], metrics = [], le
   const [replay, setReplay] = useState(0);
   const [paused, setPaused] = useState(false);
   const [auto, setAuto] = useState(false);
+  const [help, setHelp] = useState(false);
   const svgRef = useRef(null);
   const reduced = usePrefersReducedMotion();
   const t = TEXT[useDocusaurusContext().i18n.currentLocale] ?? TEXT.ko;
@@ -235,7 +236,9 @@ export default function StepDiagram({nodes, steps, groups = [], metrics = [], le
   // 키보드는 레슨 영역에 포커스가 있을 때만 받는다. 페이지 스크롤 키를 가로채지 않기 위해서다.
   const onKeyDown = (e) => {
     if (e.altKey || e.ctrlKey || e.metaKey) return;
-    if (e.key === 'ArrowRight') go(i + 1);
+    if (e.key === '?') setHelp(!help);
+    else if (e.key === 'Escape' && help) setHelp(false);
+    else if (e.key === 'ArrowRight') go(i + 1);
     else if (e.key === 'ArrowLeft') go(i - 1);
     else if (e.key === 'r' || e.key === 'R') setReplay(replay + 1);
     else if (e.key === 'p' || e.key === 'P') setPaused(!paused);
@@ -455,8 +458,23 @@ export default function StepDiagram({nodes, steps, groups = [], metrics = [], le
             <button type="button" className={styles.next} onClick={() => go(0)}>{t.restart}</button>
           )}
         </div>
-        <p className={styles.keys}><kbd>←</kbd><kbd>→</kbd> {t.keys[0]} · <kbd>A</kbd> {t.keys[1]} · <kbd>R</kbd> {t.keys[2]} · <kbd>P</kbd> {t.keys[3]}</p>
+        <p className={styles.keys}><kbd>←</kbd><kbd>→</kbd> {t.keys[0]} · <kbd>A</kbd> {t.keys[1]} · <kbd>R</kbd> {t.keys[2]} · <kbd>P</kbd> {t.keys[3]} · <kbd>?</kbd> {t.help}</p>
       </aside>
+
+      {help && (
+        <div className={styles.help} role="dialog" aria-label={t.helpTitle}>
+          <div className={styles.helpHead}>
+            <strong>{t.helpTitle}</strong>
+            <button type="button" onClick={() => setHelp(false)} aria-label={t.close} autoFocus>✕</button>
+          </div>
+          <dl>
+            {['←', '→', 'A', 'R', 'P', '?'].map((k, n) => (
+              <div key={k}><dt><kbd>{k}</kbd></dt><dd>{t.helpKeys[n]}</dd></div>
+            ))}
+          </dl>
+          <p>{t.helpHint} <kbd>Esc</kbd> {t.close}</p>
+        </div>
+      )}
 
       <nav className={styles.timeline} aria-label={t.stepsNav}>
         <div className={styles.timelineHead}>
