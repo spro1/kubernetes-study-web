@@ -1,0 +1,218 @@
+---
+id: gateway-api
+title: 게이트웨이 API HTTPRoute가 파드에 닿기까지
+sidebar_label: 03 · 게이트웨이 API HTTPRoute
+description: GatewayClass에서 Gateway 리스너, HTTPRoute의 parentRefs·backendRefs, ReferenceGrant까지 게이트웨이 API를 따라가고, 경로가 붙지 않을 때 status.parents를 읽는 법을 애니메이션으로 본다
+summary: '담당자가 다른 GatewayClass·Gateway·HTTPRoute, 경로가 리스너에 붙는 방식, 붙지 않을 때 status.parents가 알려 주는 것.'
+icon: route
+hide_table_of_contents: true
+---
+
+# 게이트웨이 API HTTPRoute가 파드에 닿기까지
+
+요청 하나를 게이트웨이 API로 따라간다. **GatewayClass → Gateway → HTTPRoute → 서비스 → 파드** 순서다. 경로(HTTPRoute)가 리스너에 어떻게 붙는지, 붙지 않을 때 `status.parents`가 무엇을 말하는지 본다.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '약 12분', level: '중급'}}
+  groups={[
+    {label: '쿠버네티스 클러스터', x: 250, y: 30, w: 725, h: 410, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'user', label: '클라이언트', sub: 'HTTPS 요청', icon: 'browser', tone: 'ext', x: 110, y: 245, show: true},
+    {id: 'route', label: 'HTTPRoute', sub: '앱 개발자 · ns shop', icon: 'route', tone: 'store', x: 400, y: 105},
+    {id: 'gw', label: 'Gateway', sub: '운영자 · 리스너', icon: 'gate', tone: 'node', x: 400, y: 245},
+    {id: 'gwc', label: 'GatewayClass', sub: '인프라 제공자', icon: 'gear', tone: 'cp', x: 400, y: 380, w: 160},
+    {id: 'svc', label: '서비스 store', sub: 'ns shop', icon: 'target', tone: 'cp', x: 650, y: 170, w: 150},
+    {id: 'svc2', label: 'store-v2', sub: 'ns backend', icon: 'target', tone: 'cp', x: 650, y: 300, w: 150},
+    {id: 'grant', label: 'ReferenceGrant', sub: 'ns backend', icon: 'shield', tone: 'store', x: 650, y: 405, w: 170},
+    {id: 'pod1', label: '파드', sub: 'store', icon: 'pod', tone: 'app', size: 'sm', x: 880, y: 170},
+    {id: 'pod2', label: '파드', sub: 'store-v2', icon: 'pod', tone: 'app', size: 'sm', x: 880, y: 300},
+  ]}
+  metrics={[
+    {id: 'path', label: '요청'},
+    {id: 'accepted', label: 'Accepted'},
+    {id: 'refs', label: 'ResolvedRefs'},
+    {id: 'backend', label: '백엔드'},
+  ]}
+  learn={[
+    {text: '자원 셋, 담당자 셋: GatewayClass·Gateway·HTTPRoute', at: 1},
+    {text: '리스너와 allowedRoutes가 붙을 수 있는 경로를 정한다는 것', at: 2},
+    {text: 'HTTPRoute의 parentRefs·hostnames·rules·backendRefs', at: 3},
+    {text: '경로가 붙지 않는 이유와 Accepted=False가 그것을 알리는 방식', at: 4},
+    {text: '다른 네임스페이스의 백엔드에는 ReferenceGrant가 필요하다는 것', at: 6},
+  ]}
+  steps={[
+    {
+      short: '시작',
+      kind: '시작',
+      title: '요청 하나, 담당자 셋',
+      text: [
+        '클라이언트가 https://shop.example.com/ 을 연다. 응답은 네임스페이스 shop의 store 서비스 뒤에 있는 파드가 준다.',
+        '게이트웨이 API는 입구를 담당자가 다른 자원 셋으로 나눈다. 인프라 제공자는 GatewayClass를, 클러스터 운영자는 Gateway를, 앱 개발자는 HTTPRoute를 맡는다.',
+      ],
+      flows: [{from: 'user', to: 'gw', label: 'HTTPS', type: 'request'}],
+      focus: ['user', 'gw'],
+      values: {path: 'shop.example.com/'},
+    },
+    {
+      short: '클래스',
+      kind: '원리',
+      title: 'GatewayClass가 컨트롤러를 지정한다',
+      text: [
+        'GatewayClass는 클러스터 범위 자원이다. controllerName 필드가 이 클래스의 Gateway를 어느 컨트롤러(예: Envoy Gateway, Istio, Cilium, 클라우드 로드밸런서)가 처리할지 정한다.',
+        '그 컨트롤러가 클래스를 받아들이면 Accepted 조건을 True로 쓴다. 아무 컨트롤러도 맡지 않으면 이 클래스의 Gateway는 주소를 받지 못한다.',
+      ],
+      keyIdea: 'kubectl get gatewayclass 로 컨트롤러와 ACCEPTED를 본다. 아무것도 안 될 때 가장 먼저 확인한다.',
+      flows: [{from: 'gwc', to: 'gw', label: '구현', type: 'watch'}],
+      focus: ['gwc'],
+      badges: {gwc: 'Accepted'},
+    },
+    {
+      short: '게이트웨이',
+      kind: '원리',
+      title: 'Gateway가 리스너를 열고 누가 붙을지 정한다',
+      text: [
+        '운영자가 gatewayClassName과 리스너 하나 이상을 적은 Gateway를 만든다. 여기서 리스너 https는 443 포트에서 *.example.com 호스트의 HTTPS를 받고, 인증서 시크릿으로 TLS를 푼다.',
+        '리스너마다 allowedRoutes가 있다. 기본값은 namespaces from: Same이라 Gateway와 같은 네임스페이스의 경로만 붙는다. 이 Gateway는 네임스페이스 infra에 있고, from: Selector로 shop용 레이블이 붙은 네임스페이스를 허용한다.',
+      ],
+      keyIdea: '컨트롤러가 입구를 다 꾸리면 Gateway에 Programmed=True와 주소가 뜬다. 리스너마다 붙은 경로 수가 attachedRoutes로 나온다.',
+      flows: [{from: 'gwc', to: 'gw', label: '구성', type: 'watch'}],
+      focus: ['gw'],
+      badges: {gwc: null, gw: 'https :443'},
+    },
+    {
+      short: 'HTTPRoute',
+      kind: '원리',
+      title: 'HTTPRoute는 parentRefs로 붙여 달라고 요청한다',
+      text: [
+        '앱 개발자가 네임스페이스 shop에 HTTPRoute를 쓴다. parentRefs에 Gateway(name infra-gw, namespace infra, 리스너 하나를 고르는 sectionName https)를 적고, hostnames에 shop.example.com을 적는다.',
+        'rules에는 matches(PathPrefix /)와 backendRefs(서비스 store, 포트 8080)가 들어간다. parentRef는 붙여 달라는 요청일 뿐이다. Gateway 쪽에서도 허용해야 붙는다.',
+      ],
+      flows: [{from: 'route', to: 'gw', label: 'parentRefs', type: 'watch'}],
+      focus: ['route', 'gw'],
+      badges: {gw: null, route: 'shop.example.com'},
+    },
+    {
+      short: '안 붙음',
+      kind: '문제',
+      title: '경로는 있는데 리스너가 받지 않는다',
+      text: [
+        '처음에는 네임스페이스 shop에 리스너가 고르는 레이블이 없다. 컨트롤러는 HTTPRoute의 status.parents에 Accepted=False, reason NotAllowedByListeners를 쓴다. 리스너의 attachedRoutes는 0에 머문다.',
+        '호스트 이름이 어긋나도 비슷하다. 경로가 shop.example.org만 적으면 맞는 리스너 호스트가 없어 reason이 NoMatchingListenerHostname이 된다. sectionName이나 포트가 틀리면 NoMatchingParent다.',
+      ],
+      keyIdea: '어느 경우든 kubectl apply는 성공한다. 객체가 있는지만 보지 말고 경로의 status.parents를 꼭 읽는다.',
+      flows: [{from: 'route', to: 'gw', label: '거절', type: 'watch'}],
+      focus: ['route', 'gw'],
+      status: {route: 'error'},
+      badges: {route: '붙지 않음'},
+      values: {accepted: {text: 'False · NotAllowedByListeners', tone: 'bad'}, refs: '—', backend: '—'},
+    },
+    {
+      short: '붙음',
+      kind: '원리',
+      title: '붙으면 컨트롤러가 데이터 플레인을 구성한다',
+      text: [
+        '운영자가 네임스페이스 shop에 레이블을 달면 경로가 붙는다. status.parents에 Accepted=True와 ResolvedRefs=True가 뜨고 attachedRoutes는 1이 된다.',
+        '컨트롤러는 경로를 프록시 설정으로 바꾼다. 요청은 리스너 호스트, 그다음 규칙에 맞춰 store 서비스의 엔드포인트로 간다. 많은 구현체는 EndpointSlice의 파드 IP로 바로 보낸다.',
+      ],
+      flows: [
+        {from: 'user', to: 'gw', label: 'HTTPS', type: 'request'},
+        {from: 'gw', to: 'svc', label: 'PathPrefix /', type: 'request'},
+        {from: 'svc', to: 'pod1', label: '엔드포인트', type: 'request'},
+      ],
+      focus: ['gw', 'svc', 'pod1'],
+      status: {route: 'ok'},
+      badges: {route: 'Accepted'},
+      values: {accepted: {text: 'True', tone: 'good'}, refs: {text: 'True', tone: 'good'}, backend: 'store'},
+    },
+    {
+      short: '다른 ns 참조',
+      kind: '문제',
+      title: '허락 없이는 다른 네임스페이스의 백엔드를 쓰지 못한다',
+      text: [
+        '개발자가 네임스페이스 backend의 서비스 store-v2를 weight 10으로, store를 weight 90으로 backendRefs에 적는다. 경로는 여전히 Accepted지만 ResolvedRefs=False, reason RefNotPermitted가 뜬다.',
+        '다른 네임스페이스를 가리키려면 대상 네임스페이스의 동의가 필요하다. 컨트롤러는 그 백엔드를 구성하지 않고, 그쪽으로 갈 몫의 요청은 HTTP 500을 받는다.',
+      ],
+      keyIdea: 'Accepted는 Gateway에 붙었는지, ResolvedRefs는 백엔드를 쓸 수 있는지를 말한다. 부모마다 두 조건을 다 본다.',
+      flows: [
+        {from: 'route', to: 'svc2', label: '허락 없음', type: 'watch'},
+        {from: 'gw', to: 'svc', label: '90', type: 'request'},
+      ],
+      focus: ['route', 'svc2'],
+      status: {route: 'warn', svc2: 'error'},
+      badges: {route: 'RefNotPermitted'},
+      values: {refs: {text: 'False · RefNotPermitted', tone: 'bad'}, backend: {text: 'store 90 · v2 → 500', tone: 'bad'}},
+    },
+    {
+      short: '허락',
+      kind: '원리',
+      title: 'ReferenceGrant로 허락하고, 가중치로 트래픽을 나눈다',
+      text: [
+        '네임스페이스 backend의 담당자가 ReferenceGrant를 만든다. from은 네임스페이스 shop의 HTTPRoute, to는 Service다. 허락은 대상 네임스페이스에 두므로 대상 쪽 담당자가 통제권을 쥔다.',
+        'ResolvedRefs가 True로 바뀐다. 이제 트래픽은 weight를 전체 합으로 나눈 비율로 갈린다. 약 90%는 store로, 10%는 store-v2로 간다. weight는 비율이라 합이 100일 필요는 없다.',
+      ],
+      flows: [
+        {from: 'grant', to: 'svc2', label: '허락', type: 'watch'},
+        {from: 'gw', to: 'svc', label: '90', type: 'request'},
+        {from: 'gw', to: 'svc2', label: '10', type: 'request'},
+        {from: 'svc2', to: 'pod2', label: '엔드포인트', type: 'request'},
+      ],
+      focus: ['grant', 'svc2'],
+      status: {route: 'ok', svc2: 'ok'},
+      badges: {route: 'Accepted', grant: 'shop → Service'},
+      values: {refs: {text: 'True', tone: 'good'}, backend: {text: 'store 90 · store-v2 10', tone: 'good'}},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '양쪽이 동의해야 붙고, 어긋난 쪽은 상태가 알려 준다',
+      text: [
+        'GatewayClass는 컨트롤러를 고른다. Gateway는 리스너를 열고 어느 네임스페이스가 붙을지 정한다. HTTPRoute는 parentRefs로 붙여 달라고 요청하고 backendRefs로 트래픽을 보낸다.',
+        '붙으려면 양쪽이 동의해야 한다. 경로는 Gateway를 지목하고, 리스너는 그 경로를 허용해야 한다. 다른 네임스페이스의 백엔드는 대상 네임스페이스의 ReferenceGrant도 필요하다.',
+      ],
+      keyIdea: '경로가 아무 일도 안 하면 status.parents를 읽는다. Accepted=False면 Gateway가 받지 않은 것이고, ResolvedRefs=False면 백엔드를 쓰지 못한 것이다. 이유는 reason 필드에 있다.',
+      flows: [
+        {from: 'user', to: 'gw', label: 'HTTPS', type: 'request'},
+        {from: 'gw', to: 'svc', label: '90', type: 'request'},
+        {from: 'gw', to: 'svc2', label: '10', type: 'request'},
+      ],
+      focus: ['gwc', 'gw', 'route'],
+      status: {svc2: null, route: null},
+      badges: {grant: null},
+    },
+  ]}
+/>
+
+## status.parents 읽기
+
+HTTPRoute의 `status.parents` 항목 하나는 `parentRef` 하나에 대응하고, 그 Gateway의 컨트롤러가 쓴 조건을 담는다.
+
+| 조건 | reason | 뜻 | 고치는 법 |
+|---|---|---|---|
+| Accepted=True | Accepted | Gateway가 경로를 받았다 | — |
+| Accepted=False | NotAllowedByListeners | 어느 리스너의 `allowedRoutes`도 이 경로(네임스페이스·종류)를 허용하지 않는다 | 리스너의 `allowedRoutes`를 바꾸거나, 경로의 네임스페이스에 셀렉터와 맞는 레이블을 단다 |
+| Accepted=False | NoMatchingListenerHostname | 경로의 `hostnames`와 맞는 리스너 호스트가 없다 | 경로 호스트를 리스너 호스트(예: `*.example.com`)에 맞춘다 |
+| Accepted=False | NoMatchingParent | parentRef의 `sectionName`이나 `port`와 맞는 리스너가 없다 | 있는 리스너를 가리키도록 parentRef를 고친다 |
+| Accepted=Unknown | Pending | 컨트롤러가 아직 경로를 처리하지 않았다 | GatewayClass가 Accepted인지, 컨트롤러가 살아 있는지 본다 |
+| ResolvedRefs=True | ResolvedRefs | 모든 backendRef를 찾았다 | — |
+| ResolvedRefs=False | RefNotPermitted | backendRef가 ReferenceGrant 없이 다른 네임스페이스를 가리킨다 | 대상 네임스페이스에 ReferenceGrant를 만든다 |
+| ResolvedRefs=False | BackendNotFound | 가리킨 서비스가 없다 | 이름·네임스페이스·포트를 고치거나 서비스를 만든다 |
+| ResolvedRefs=False | InvalidKind | backendRef의 group이나 kind를 모르거나 지원하지 않는다 | 서비스나 구현체가 지원하는 종류를 가리킨다 |
+
+`status.parents`가 비어 있으면 어느 컨트롤러도 경로를 처리하지 않은 것이다. parentRef의 이름·네임스페이스와 GatewayClass를 확인한다.
+
+## 직접 확인해 보기
+
+```bash
+kubectl get gatewayclass                             # CONTROLLER와 ACCEPTED
+kubectl get gateway -A                               # CLASS, ADDRESS, PROGRAMMED
+kubectl describe gateway infra-gw -n infra           # 리스너, allowedRoutes, attachedRoutes
+kubectl get httproute -A                             # 경로별 HOSTNAMES
+kubectl get httproute store -n shop \
+  -o jsonpath='{range .status.parents[*].conditions[*]}{.type}={.status} {.reason}{"\n"}{end}'   # Accepted / ResolvedRefs
+kubectl get referencegrant -A                        # 다른 네임스페이스 참조를 누가 허락했는지
+```
+
+더 읽을거리: [게이트웨이 API 문서](https://gateway-api.sigs.k8s.io/) · [HTTPRoute](https://gateway-api.sigs.k8s.io/reference/api-types/httproute/) · [ReferenceGrant](https://gateway-api.sigs.k8s.io/reference/api-types/referencegrant/) · [쿠버네티스 문서의 게이트웨이 API](https://kubernetes.io/docs/concepts/services-networking/gateway/) · [인그레스 규칙과 TLS](../feature/ingress.mdx) · [입구 셋 비교](../feature/entry-compare.mdx)

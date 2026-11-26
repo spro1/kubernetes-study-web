@@ -133,7 +133,7 @@ Probes, requests and limits, rolling updates, self-healing, graceful shutdown, H
 
 ## Networking & service mesh
 
-Service types, Ingress and TLS, NetworkPolicy, Istio sidecars, traffic splitting and gateways, entry points compared.
+Service types, Ingress and TLS, Gateway API, NetworkPolicy, Istio sidecars, traffic splitting and gateways, entry points compared.
 
 <LessonGrid>
   <LessonCard no="01" to="/feature/service-types" track="networking" icon="target" title="Service Types (ClusterIP · NodePort · LoadBalancer)" duration="~10 min" steps={9} level="Beginner">
@@ -142,19 +142,22 @@ Service types, Ingress and TLS, NetworkPolicy, Istio sidecars, traffic splitting
   <LessonCard no="02" to="/feature/ingress" track="networking" icon="route" title="Ingress Rules and TLS" duration="~10 min" steps={9} level="Beginner">
     Rules by domain and path, ingress classes, certificate handling, and overlapping rules or missing targets.
   </LessonCard>
-  <LessonCard no="03" to="/k8s/network-policy" track="networking" icon="shield" title="Blocking and Allowing Traffic (NetworkPolicy)" duration="~10 min" steps={9} level="Intermediate">
+  <LessonCard no="03" to="/feature/gateway-api" track="networking" icon="route" title="How a Gateway API HTTPRoute Reaches a Pod" duration="~12 min" steps={9} level="Intermediate">
+    GatewayClass, Gateway and HTTPRoute owned by different teams, how a route attaches to a listener, and what status.parents says when it does not.
+  </LessonCard>
+  <LessonCard no="04" to="/k8s/network-policy" track="networking" icon="shield" title="Blocking and Allowing Traffic (NetworkPolicy)" duration="~10 min" steps={9} level="Intermediate">
     Opening only needed traffic from a default deny, and where to check blocked traffic.
   </LessonCard>
-  <LessonCard no="04" to="/feature/mesh-sidecar" track="networking" icon="shield" title="Service Mesh ① Sidecars and Mutual Authentication" duration="~10 min" steps={9} level="Intermediate">
+  <LessonCard no="05" to="/feature/mesh-sidecar" track="networking" icon="shield" title="Service Mesh ① Sidecars and Mutual Authentication" duration="~10 min" steps={9} level="Intermediate">
     How a proxy next to each Pod handles all traffic for encryption, identity and observability.
   </LessonCard>
-  <LessonCard no="05" to="/feature/mesh-traffic" track="networking" icon="split" title="Service Mesh ② Splitting Traffic" duration="~10 min" steps={9} level="Intermediate">
+  <LessonCard no="06" to="/feature/mesh-traffic" track="networking" icon="split" title="Service Mesh ② Splitting Traffic" duration="~10 min" steps={9} level="Intermediate">
     Sending a share to a new version with virtual services and traffic policies, plus retries and timeouts.
   </LessonCard>
-  <LessonCard no="06" to="/feature/mesh-gateway" track="networking" icon="gate" title="Service Mesh ③ Mesh Gateway" duration="~8 min" steps={8} level="Intermediate">
+  <LessonCard no="07" to="/feature/mesh-gateway" track="networking" icon="gate" title="Service Mesh ③ Mesh Gateway" duration="~8 min" steps={8} level="Intermediate">
     How an outside request reaches a Pod through the mesh ingress gateway and a virtual service.
   </LessonCard>
-  <LessonCard no="07" to="/feature/entry-compare" track="networking" icon="layers" title="Three Entry Points Compared (Ingress · Mesh Gateway · Gateway API)" duration="~12 min" steps={9} level="Intermediate">
+  <LessonCard no="08" to="/feature/entry-compare" track="networking" icon="layers" title="Three Entry Points Compared (Ingress · Mesh Gateway · Gateway API)" duration="~12 min" steps={9} level="Intermediate">
     What Ingress, the mesh gateway and the Gateway API each handle, compared with the same request.
   </LessonCard>
 </LessonGrid>

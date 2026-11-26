@@ -1,0 +1,218 @@
+---
+id: gateway-api
+title: How a Gateway API HTTPRoute Reaches a Pod
+sidebar_label: 03 · Gateway API HTTPRoute
+description: Animated walkthrough of the Gateway API from GatewayClass to Gateway listeners, HTTPRoute parentRefs and backendRefs, ReferenceGrant, and reading status.parents when a route does not attach
+summary: 'GatewayClass, Gateway and HTTPRoute owned by different teams, how a route attaches to a listener, and what status.parents says when it does not.'
+icon: route
+hide_table_of_contents: true
+---
+
+# How a Gateway API HTTPRoute Reaches a Pod
+
+Follow one request through the Gateway API: **GatewayClass → Gateway → HTTPRoute → Service → Pod**. Watch how the route attaches to a listener, and read what `status.parents` says when it does not.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~12 min', level: 'Intermediate'}}
+  groups={[
+    {label: 'Kubernetes cluster', x: 250, y: 30, w: 725, h: 410, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'user', label: 'Client', sub: 'HTTPS request', icon: 'browser', tone: 'ext', x: 110, y: 245, show: true},
+    {id: 'route', label: 'HTTPRoute', sub: 'App dev · ns shop', icon: 'route', tone: 'store', x: 400, y: 105},
+    {id: 'gw', label: 'Gateway', sub: 'Operator · listeners', icon: 'gate', tone: 'node', x: 400, y: 245},
+    {id: 'gwc', label: 'GatewayClass', sub: 'Infra provider', icon: 'gear', tone: 'cp', x: 400, y: 380, w: 160},
+    {id: 'svc', label: 'Service store', sub: 'ns shop', icon: 'target', tone: 'cp', x: 650, y: 170, w: 150},
+    {id: 'svc2', label: 'store-v2', sub: 'ns backend', icon: 'target', tone: 'cp', x: 650, y: 300, w: 150},
+    {id: 'grant', label: 'ReferenceGrant', sub: 'ns backend', icon: 'shield', tone: 'store', x: 650, y: 405, w: 170},
+    {id: 'pod1', label: 'Pod', sub: 'store', icon: 'pod', tone: 'app', size: 'sm', x: 880, y: 170},
+    {id: 'pod2', label: 'Pod', sub: 'store-v2', icon: 'pod', tone: 'app', size: 'sm', x: 880, y: 300},
+  ]}
+  metrics={[
+    {id: 'path', label: 'Request'},
+    {id: 'accepted', label: 'Accepted'},
+    {id: 'refs', label: 'ResolvedRefs'},
+    {id: 'backend', label: 'Backends'},
+  ]}
+  learn={[
+    {text: 'Three resources, three owners: GatewayClass, Gateway, HTTPRoute', at: 1},
+    {text: 'Listeners and allowedRoutes decide which routes may attach', at: 2},
+    {text: 'parentRefs, hostnames, rules and backendRefs in an HTTPRoute', at: 3},
+    {text: 'Why a route fails to attach and how Accepted=False says so', at: 4},
+    {text: 'Cross-namespace backends need a ReferenceGrant', at: 6},
+  ]}
+  steps={[
+    {
+      short: 'Start',
+      kind: '시작',
+      title: 'One request, three owners',
+      text: [
+        'A client opens https://shop.example.com/. The answer comes from Pods behind the store Service in namespace shop.',
+        'In the Gateway API, the entry is split into three resources with different owners. The infrastructure provider owns the GatewayClass, the cluster operator owns the Gateway, and the app developer owns the HTTPRoute.',
+      ],
+      flows: [{from: 'user', to: 'gw', label: 'HTTPS', type: 'request'}],
+      focus: ['user', 'gw'],
+      values: {path: 'shop.example.com/'},
+    },
+    {
+      short: 'Class',
+      kind: '원리',
+      title: 'The GatewayClass names the controller',
+      text: [
+        'A GatewayClass is cluster-scoped. Its controllerName field says which controller (for example, Envoy Gateway, Istio, Cilium or a cloud load balancer) handles Gateways of this class.',
+        'When that controller picks up the class, it sets the Accepted condition to True. If no controller claims it, Gateways of this class never get an address.',
+      ],
+      keyIdea: 'kubectl get gatewayclass shows the controller and ACCEPTED. Check this first when nothing works at all.',
+      flows: [{from: 'gwc', to: 'gw', label: 'Implements', type: 'watch'}],
+      focus: ['gwc'],
+      badges: {gwc: 'Accepted'},
+    },
+    {
+      short: 'Gateway',
+      kind: '원리',
+      title: 'The Gateway opens listeners and says who may attach',
+      text: [
+        'The operator creates a Gateway with gatewayClassName and one or more listeners. Here, listener https takes HTTPS on port 443 for hostname *.example.com and terminates TLS with a certificate Secret.',
+        'Each listener has allowedRoutes. The default is namespaces from: Same, so only routes in the Gateway\'s own namespace may attach. This Gateway sits in namespace infra and uses from: Selector to allow namespaces labeled for shop traffic.',
+      ],
+      keyIdea: 'When the controller has set up the entry, the Gateway shows Programmed=True and an address. Each listener reports attachedRoutes, the number of routes bound to it.',
+      flows: [{from: 'gwc', to: 'gw', label: 'Programs', type: 'watch'}],
+      focus: ['gw'],
+      badges: {gwc: null, gw: 'https :443'},
+    },
+    {
+      short: 'HTTPRoute',
+      kind: '원리',
+      title: 'The HTTPRoute asks to attach with parentRefs',
+      text: [
+        'The app developer writes an HTTPRoute in namespace shop. parentRefs names the Gateway (name infra-gw, namespace infra, sectionName https to pick one listener). hostnames lists shop.example.com.',
+        'rules hold matches (PathPrefix /) and backendRefs (Service store, port 8080). A parentRef is only a request to attach. The Gateway side still has to allow it.',
+      ],
+      flows: [{from: 'route', to: 'gw', label: 'parentRefs', type: 'watch'}],
+      focus: ['route', 'gw'],
+      badges: {gw: null, route: 'shop.example.com'},
+    },
+    {
+      short: 'Not attached',
+      kind: '문제',
+      title: 'The route exists but the listener does not take it',
+      text: [
+        'At first, namespace shop is missing the label the listener selects. The controller writes status.parents on the HTTPRoute: Accepted=False with reason NotAllowedByListeners. The listener\'s attachedRoutes stays 0.',
+        'A hostname mismatch looks similar. If the route only lists shop.example.org, no listener hostname matches, and the reason is NoMatchingListenerHostname. A wrong sectionName or port gives NoMatchingParent.',
+      ],
+      keyIdea: 'kubectl apply succeeds either way. Always read status.parents on the route, not just whether the object exists.',
+      flows: [{from: 'route', to: 'gw', label: 'Rejected', type: 'watch'}],
+      focus: ['route', 'gw'],
+      status: {route: 'error'},
+      badges: {route: 'Not attached'},
+      values: {accepted: {text: 'False · NotAllowedByListeners', tone: 'bad'}, refs: '—', backend: '—'},
+    },
+    {
+      short: 'Attached',
+      kind: '원리',
+      title: 'Attached: the controller programs the data plane',
+      text: [
+        'After the operator labels namespace shop, the route attaches. status.parents shows Accepted=True and ResolvedRefs=True, and attachedRoutes becomes 1.',
+        'The controller turns the route into proxy configuration. The request matches the listener hostname, then the rule, and goes to the store Service\'s endpoints. Many implementations send it straight to Pod IPs from the EndpointSlices.',
+      ],
+      flows: [
+        {from: 'user', to: 'gw', label: 'HTTPS', type: 'request'},
+        {from: 'gw', to: 'svc', label: 'PathPrefix /', type: 'request'},
+        {from: 'svc', to: 'pod1', label: 'Endpoint', type: 'request'},
+      ],
+      focus: ['gw', 'svc', 'pod1'],
+      status: {route: 'ok'},
+      badges: {route: 'Accepted'},
+      values: {accepted: {text: 'True', tone: 'good'}, refs: {text: 'True', tone: 'good'}, backend: 'store'},
+    },
+    {
+      short: 'Cross-ns ref',
+      kind: '문제',
+      title: 'A backend in another namespace is refused without a grant',
+      text: [
+        'The developer adds a second backendRef to Service store-v2 in namespace backend with weight 10, next to store with weight 90. The route stays Accepted, but ResolvedRefs=False with reason RefNotPermitted.',
+        'A cross-namespace reference needs consent from the target namespace. The controller does not configure that backend, and the share of requests meant for it gets HTTP 500.',
+      ],
+      keyIdea: 'Accepted is about attaching to the Gateway. ResolvedRefs is about the backends. Check both conditions, per parent.',
+      flows: [
+        {from: 'route', to: 'svc2', label: 'Not permitted', type: 'watch'},
+        {from: 'gw', to: 'svc', label: '90', type: 'request'},
+      ],
+      focus: ['route', 'svc2'],
+      status: {route: 'warn', svc2: 'error'},
+      badges: {route: 'RefNotPermitted'},
+      values: {refs: {text: 'False · RefNotPermitted', tone: 'bad'}, backend: {text: 'store 90 · v2 → 500', tone: 'bad'}},
+    },
+    {
+      short: 'Grant',
+      kind: '원리',
+      title: 'A ReferenceGrant lets the route reach in, and weights split traffic',
+      text: [
+        'The owner of namespace backend creates a ReferenceGrant: from HTTPRoute in namespace shop, to Service. The grant lives in the target namespace, so the target owner stays in control.',
+        'ResolvedRefs turns True. Traffic now splits by weight: weight divided by the sum of weights, so about 90% goes to store and 10% to store-v2. Weights are proportions and need not add up to 100.',
+      ],
+      flows: [
+        {from: 'grant', to: 'svc2', label: 'Allows', type: 'watch'},
+        {from: 'gw', to: 'svc', label: '90', type: 'request'},
+        {from: 'gw', to: 'svc2', label: '10', type: 'request'},
+        {from: 'svc2', to: 'pod2', label: 'Endpoint', type: 'request'},
+      ],
+      focus: ['grant', 'svc2'],
+      status: {route: 'ok', svc2: 'ok'},
+      badges: {route: 'Accepted', grant: 'shop → Service'},
+      values: {refs: {text: 'True', tone: 'good'}, backend: {text: 'store 90 · store-v2 10', tone: 'good'}},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Both sides must agree, and status tells you which one did not',
+      text: [
+        'The GatewayClass picks the controller. The Gateway opens listeners and decides which namespaces may attach. The HTTPRoute asks to attach with parentRefs and sends traffic to backendRefs.',
+        'Attachment needs agreement from both sides: the route names the Gateway, and the listener allows the route. Cross-namespace backends also need a ReferenceGrant from the target namespace.',
+      ],
+      keyIdea: 'When a route does nothing, read status.parents: Accepted=False means the Gateway did not take it, and ResolvedRefs=False means a backend could not be used. The reason field says why.',
+      flows: [
+        {from: 'user', to: 'gw', label: 'HTTPS', type: 'request'},
+        {from: 'gw', to: 'svc', label: '90', type: 'request'},
+        {from: 'gw', to: 'svc2', label: '10', type: 'request'},
+      ],
+      focus: ['gwc', 'gw', 'route'],
+      status: {svc2: null, route: null},
+      badges: {grant: null},
+    },
+  ]}
+/>
+
+## Reading status.parents
+
+Each entry in an HTTPRoute's `status.parents` matches one `parentRef` and holds the conditions written by that Gateway's controller.
+
+| Condition | Reason | Meaning | Fix |
+|---|---|---|---|
+| Accepted=True | Accepted | The Gateway took the route | — |
+| Accepted=False | NotAllowedByListeners | No listener's `allowedRoutes` permits this route (namespace or kind) | Change the listener's `allowedRoutes`, or label the route's namespace to match its selector |
+| Accepted=False | NoMatchingListenerHostname | No listener hostname matches the route's `hostnames` | Align the route hostnames with the listener hostname (for example `*.example.com`) |
+| Accepted=False | NoMatchingParent | `sectionName` or `port` in the parentRef matches no listener | Fix the parentRef to name an existing listener |
+| Accepted=Unknown | Pending | The controller has not reconciled the route yet | Check that the GatewayClass is Accepted and the controller is running |
+| ResolvedRefs=True | ResolvedRefs | All backendRefs could be resolved | — |
+| ResolvedRefs=False | RefNotPermitted | A backendRef points to another namespace with no ReferenceGrant | Create a ReferenceGrant in the target namespace |
+| ResolvedRefs=False | BackendNotFound | The referenced Service does not exist | Fix the name, namespace or port, or create the Service |
+| ResolvedRefs=False | InvalidKind | The backendRef group or kind is unknown or unsupported | Point to a Service, or a kind the implementation supports |
+
+If `status.parents` is empty, no controller has handled the route at all. Check the parentRef name and namespace, and the GatewayClass.
+
+## Try it yourself
+
+```bash
+kubectl get gatewayclass                             # CONTROLLER and ACCEPTED
+kubectl get gateway -A                               # CLASS, ADDRESS, PROGRAMMED
+kubectl describe gateway infra-gw -n infra           # Listeners, allowedRoutes, attachedRoutes
+kubectl get httproute -A                             # HOSTNAMES per route
+kubectl get httproute store -n shop \
+  -o jsonpath='{range .status.parents[*].conditions[*]}{.type}={.status} {.reason}{"\n"}{end}'   # Accepted / ResolvedRefs
+kubectl get referencegrant -A                        # Who allows cross-namespace refs
+```
+
+Further reading: [Gateway API docs](https://gateway-api.sigs.k8s.io/) · [HTTPRoute](https://gateway-api.sigs.k8s.io/reference/api-types/httproute/) · [ReferenceGrant](https://gateway-api.sigs.k8s.io/reference/api-types/referencegrant/) · [Gateway API on kubernetes.io](https://kubernetes.io/docs/concepts/services-networking/gateway/) · [Ingress Rules and TLS](../feature/ingress.mdx) · [Three Entry Points Compared](../feature/entry-compare.mdx)
