@@ -181,4 +181,10 @@ sudo grep '"resource":"secrets"' <audit-log-file> | grep -c '"level":"RequestRes
 kubectl auth can-i get secrets -n <namespace> --as=<user>       # Did that user really need read access?
 ```
 
+<Quiz questions={[
+  {q: 'An audit policy has a rule for Secrets at Metadata and, below it, a catch-all rule at RequestResponse. Which level applies to a get on a Secret?', options: ['RequestResponse, because it records the most', 'Both, so two entries are written', 'Metadata, because the first matching rule\'s level applies'], answer: 2, why: 'Rules are matched from the top and the first matching rule wins. So rule order changes the outcome.'},
+  {q: 'Why should Secret requests not be logged at RequestResponse?', options: ['The response body, the secret value, would be written into the audit log, making the log a new leak path', 'RequestResponse does not record who made the request', 'Secrets cannot be audited at all', 'It turns off RBAC for Secrets'], answer: 0, why: 'At RequestResponse the response body is recorded as is. Log Secrets at Metadata, which records who, when and what but not the value.'},
+  {q: 'Audit records are written only to a file on the control plane node. What is the risk?', options: ['The API server slows down', 'The records vanish if the node is lost or an attacker deletes them', 'Failed requests are not recorded'], answer: 1, why: 'Records that stay only on the node disappear with it. Ship them to log storage outside the cluster and search there.'},
+]} />
+
 Further reading: [Auditing](https://kubernetes.io/docs/tasks/debug/debug-cluster/audit/) · [Using RBAC authorization](https://kubernetes.io/docs/reference/access-authn-authz/rbac/)

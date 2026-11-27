@@ -211,4 +211,10 @@ sudo openssl x509 -in /var/lib/kubelet/pki/kubelet-client-current.pem -noout -en
 echo | openssl s_client -connect <api-server>:6443 2>/dev/null | openssl x509 -noout -dates   # What the running API server serves (restarted?)
 ```
 
+<Quiz questions={[
+  {q: 'A cluster that ran fine for over a year suddenly fails kubectl with certificate has expired (x509). Why was there no earlier warning?', options: ['Certificate expiry happens at the exact moment, with no warnings or slowdowns beforehand', 'The warnings were sent only to the kubelet log', 'kubeadm disables warnings by default', 'The certificate expired gradually over the last month'], answer: 0, why: 'Until the expiry moment the cluster is perfectly healthy; then connections are refused at once. That is why expiry dates must be tracked with metrics and alerts.'},
+  {q: 'You ran kubeadm certs renew, but kubectl still fails with the same expiry error. What was most likely missed?', options: ['Upgrading Kubernetes first', 'Restarting the control plane components and handing out a new admin kubeconfig', 'Installing cert-manager'], answer: 1, why: 'Components load certificates at startup and keep using the old ones until restarted. Renewal and restart are one task.'},
+  {q: 'Only one node turns NotReady while the rest of the cluster works. Which certificate should you suspect?', options: ['The etcd certificate', 'The API server certificate', 'That node\'s kubelet certificate', 'The admin kubeconfig'], answer: 2, why: 'If a kubelet certificate expires, that node becomes NotReady. Check the node\'s kubelet log.'},
+]} />
+
 Further reading: [Certificate management with kubeadm](https://kubernetes.io/docs/tasks/administer-cluster/kubeadm/kubeadm-certs/) · [PKI certificates and requirements](https://kubernetes.io/docs/setup/best-practices/certificates/) · [cert-manager](https://cert-manager.io/docs/)

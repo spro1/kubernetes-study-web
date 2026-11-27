@@ -188,4 +188,10 @@ vllm serve <model> --max-num-seqs 128 --max-num-batched-tokens 8192   # Max conc
 kubectl get hpa -n <namespace>                       # Scaling on waiting requests?
 ```
 
+<Quiz questions={[
+  {q: 'With static batching, request A finishes early but new request D still waits. Why?', options: ['D\'s prompt is too long', 'The KV cache is full', 'The batch does not change until its longest request finishes', 'The engine processes one request at a time'], answer: 2, why: 'A static batch stays fixed until all its requests are done. A\'s slot sits empty, and D waits until the longest request, B, finishes.'},
+  {q: 'What does continuous batching change compared with static batching?', options: ['It rebuilds the batch on every iteration, dropping finished requests and adding waiting ones', 'It runs each request on its own accelerator', 'It waits until a full batch of requests arrives before starting', 'It skips prefill for new requests'], answer: 0, why: 'The scheduler rebuilds the batch every token step, so finished requests leave and queued ones take their slots. The accelerator always computes a full batch.'},
+  {q: 'You raise --max-num-seqs to fit more concurrent requests. What should you check afterwards?', options: ['The tokenizer vocabulary size', 'Nothing: a bigger batch only helps', 'The model weight size', 'KV cache usage and preemptions, plus per-user TPOT'], answer: 3, why: 'Bigger batches raise throughput but lengthen each iteration, so TPOT grows. Every request needs KV cache space, so the cache can run short and requests get preempted.'},
+]} />
+
 Further reading: [Horizontal Pod Autoscaling](https://kubernetes.io/docs/concepts/workloads/autoscaling/horizontal-pod-autoscale/) · [vLLM documentation](https://docs.vllm.ai/)

@@ -190,4 +190,10 @@ kubectl get endpointslices -l kubernetes.io/service-name=shop-svc   # 대상 파
 kubectl get svc shop-svc -o yaml                       # type, selector, ports, sessionAffinity
 ```
 
+<Quiz questions={[
+  {q: '외부 사용자가 ClusterIP 유형의 서비스에 닿지 못한다. 왜 그런가?', options: ['서비스 뒤에 파드가 없다', 'ClusterIP는 클러스터 안에서만 닿는 주소다', 'ClusterIP는 30000~32767 포트만 연다'], answer: 1, why: 'ClusterIP 주소는 클러스터 안쪽 네트워크에서만 의미가 있기 때문이다. 바깥에 열려면 유형을 바꾸거나 앞에 인그레스를 둔다.'},
+  {q: '온프레미스에서 LoadBalancer 서비스의 EXTERNAL-IP가 <pending>으로 남아 있다. 무엇을 확인해야 하는가?', options: ['MetalLB 같은 로드밸런서 구현과 주소 풀이 있는지', '셀렉터가 파드와 맞는지', 'NodePort 범위가 다 찼는지', '파드가 준비 검사를 통과했는지'], answer: 0, why: '로드밸런서 구현이 없거나 나눠 줄 여유 주소가 없으면 서비스는 만들어져도 외부 주소가 붙지 않기 때문이다.'},
+  {q: '서비스는 오류 없이 만들어졌는데 접속이 안 되고 엔드포인트가 비어 있다. 가장 그럴듯한 원인은 무엇인가?', options: ['서비스 유형이 잘못됐다', '엔드포인트를 받으려면 LoadBalancer 유형이어야 한다', '셀렉터가 파드 레이블과 맞지 않는다'], answer: 2, why: '셀렉터가 어긋나면 오류 없이 대상이 0개가 되기 때문이다. 셀렉터와 파드 레이블을 나란히 놓고 비교한다.'},
+]} />
+
 더 읽을거리: [서비스](https://kubernetes.io/ko/docs/concepts/services-networking/service/) · [엔드포인트슬라이스](https://kubernetes.io/ko/docs/concepts/services-networking/endpoint-slices/) · [이름으로 찾아가기 (Service·DNS)](../k8s/service-dns.mdx)

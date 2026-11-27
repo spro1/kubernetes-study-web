@@ -215,4 +215,10 @@ kubectl get httproute store -n shop \
 kubectl get referencegrant -A                        # Who allows cross-namespace refs
 ```
 
+<Quiz questions={[
+  {q: 'kubectl apply of an HTTPRoute succeeds, but status.parents shows Accepted=False with reason NotAllowedByListeners. What is the fix?', options: ['Create a ReferenceGrant in the backend namespace', 'Change the listener\'s allowedRoutes, or label the route\'s namespace to match its selector', 'Fix the backendRef port', 'Recreate the GatewayClass'], answer: 1, why: 'NotAllowedByListeners means no listener\'s allowedRoutes permits this route. Either widen allowedRoutes or give the namespace the label the listener selects.'},
+  {q: 'A route is Accepted, but ResolvedRefs=False with reason RefNotPermitted, and part of the traffic gets HTTP 500. What is missing?', options: ['A ReferenceGrant in the target namespace', 'A matching listener hostname', 'The Gateway\'s Programmed condition'], answer: 0, why: 'A backendRef to another namespace needs consent from that namespace. Without a ReferenceGrant there, the controller does not configure that backend.'},
+  {q: 'backendRefs list store with weight 90 and store-v2 with weight 10. How is traffic split?', options: ['Evenly, until the weights add up to 100', 'All to store, because it has the larger weight', 'About 90% to store and 10% to store-v2', 'By the number of pods behind each Service'], answer: 2, why: 'Each backend gets its weight divided by the sum of weights. Weights are proportions and need not add up to 100.'},
+]} />
+
 Further reading: [Gateway API docs](https://gateway-api.sigs.k8s.io/) · [HTTPRoute](https://gateway-api.sigs.k8s.io/reference/api-types/httproute/) · [ReferenceGrant](https://gateway-api.sigs.k8s.io/reference/api-types/referencegrant/) · [Gateway API on kubernetes.io](https://kubernetes.io/docs/concepts/services-networking/gateway/) · [Ingress Rules and TLS](../feature/ingress.mdx) · [Three Entry Points Compared](../feature/entry-compare.mdx)

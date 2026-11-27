@@ -210,4 +210,10 @@ kubectl get resourcequota -A                         # Quotas that cap denial of
 sudo grep -E 'encryption-provider-config|audit-policy-file' /etc/kubernetes/manifests/kube-apiserver.yaml   # Secret encryption and audit on? (kubeadm)
 ```
 
+<Quiz questions={[
+  {q: 'An attacker controls the web container and tries to connect straight to the DB Pod. Which control stops this lateral movement?', options: ['RBAC least privilege', 'A default-deny NetworkPolicy with only needed traffic allowed', 'etcd encryption at rest'], answer: 1, why: 'By default every Pod can talk to every Pod. A default-deny NetworkPolicy with no web to DB allow rule blocks the connection.'},
+  {q: 'The attacker uses the ServiceAccount token mounted in web to create Pods through the API server. What reduces this privilege escalation?', options: ['A read-only root filesystem', 'API Priority and Fairness', 'A resource quota on the namespace', 'Least-privilege RBAC for the ServiceAccount, and automountServiceAccountToken: false where no token is needed'], answer: 3, why: 'RBAC rejects API requests the ServiceAccount is not allowed to make, and Pods that need no token should not get one mounted.'},
+  {q: 'After the attack, you want to trace which ServiceAccount did what, and when. What must have been set up in advance?', options: ['An audit policy on the API server, because audit logging is off by default', 'A NetworkPolicy in each namespace', 'The restricted Pod Security Standard'], answer: 0, why: 'Attempts through the API server are recorded only if an audit policy is configured. Without it there is no trail to follow.'},
+]} />
+
 Further reading: [CNCF certification curriculum](https://github.com/cncf/curriculum) · [Overview of cloud native security](https://kubernetes.io/docs/concepts/security/overview/) · [Multi-tenancy](https://kubernetes.io/docs/concepts/security/multi-tenancy/)

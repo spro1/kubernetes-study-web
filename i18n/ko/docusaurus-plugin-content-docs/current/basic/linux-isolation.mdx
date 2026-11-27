@@ -1,7 +1,7 @@
 ---
 id: linux-isolation
 title: 리눅스는 컨테이너를 어떻게 격리하나
-sidebar_label: 06 · 리눅스의 컨테이너 격리
+sidebar_label: 09 · 리눅스의 컨테이너 격리
 description: 컨테이너의 정체를 단계별 애니메이션으로 따라간다. 네임스페이스(pid, net, mnt, uts, ipc, user)에 들어간 평범한 호스트 프로세스가 cpu.max·memory.max 같은 cgroup v2 파일로 제한되고, CPU 스로틀링과 OOM 강제 종료, 종료 코드 137이 생기는 과정
 summary: '컨테이너는 호스트 프로세스다. 네임스페이스는 보이는 것을, cgroup은 쓸 수 있는 양을 바꾼다.'
 icon: layers
@@ -207,5 +207,11 @@ cat /proc/$PID/cgroup                                # /sys/fs/cgroup 아래 cgr
 cat /sys/fs/cgroup/<그 경로>/{cpu.max,memory.max,cpu.stat,memory.events}   # 한도, 스로틀링, oom_kill
 kubectl get pod <파드> -o jsonpath='{.status.containerStatuses[*].lastState.terminated.exitCode}'   # OOM 뒤에는 137
 ```
+
+<Quiz questions={[
+  {q: 'CPU 상한이 0.5인 컨테이너가 부하를 받으면 응답 지연이 튀지만 재시작되지는 않는다. 무슨 일이 일어나는가?', options: ['OOM 킬러가 SIGKILL을 보내고 있다', '주기마다 할당량을 다 쓰면 커널이 다음 주기까지 멈춰 세우는 스로틀링이다', '네트워크 네임스페이스가 패킷을 버리고 있다'], answer: 1, why: 'cpu.max를 넘으면 프로세스는 죽지 않고 다음 주기까지 붙잡혀 기다리기 때문이다. cpu.stat의 nr_throttled와 throttled_usec가 이를 센다.'},
+  {q: '컨테이너가 종료 코드 137로 끝나고 쿠버네티스는 OOMKilled를 보여 준다. 137은 무슨 뜻인가?', options: ['앱의 main 함수가 137을 돌려줬다', '컨테이너가 137번 스로틀링됐다', 'CPU 상한에 닿았다', 'memory.max에 닿아 SIGKILL(128 + 9)로 죽었다'], answer: 3, why: '시그널로 죽은 프로세스는 128에 시그널 번호를 더한 값을 보고한다. cgroup이 memory.max 아래로 버티지 못하면 OOM 킬러가 9번인 SIGKILL을 보내기 때문이다.'},
+  {q: '컨테이너 안에서 PID 1로 도는 앱에 SIGTERM 핸들러가 없다. 쿠버네티스가 파드를 멈추면 어떻게 되는가?', options: ['SIGTERM이 무시되어 쿠버네티스가 유예 시간을 다 기다린 뒤 SIGKILL을 보낸다', '다른 프로세스처럼 SIGTERM에 곧바로 멈춘다', '호스트 커널이 컨테이너를 다시 시작한다'], answer: 0, why: '커널은 PID 1이 핸들러를 달지 않은 시그널을 무시하기 때문이다. 앱에서 SIGTERM을 처리하거나 tini 같은 작은 init을 PID 1로 둔다.'},
+]} />
 
 더 읽을거리: [namespaces(7)](https://man7.org/linux/man-pages/man7/namespaces.7.html) · [pid_namespaces(7)](https://man7.org/linux/man-pages/man7/pid_namespaces.7.html) · [user_namespaces(7)](https://man7.org/linux/man-pages/man7/user_namespaces.7.html) · [Control Group v2 (커널 문서)](https://docs.kernel.org/admin-guide/cgroup-v2.html) · [cgroup v2 (쿠버네티스 문서)](https://kubernetes.io/docs/concepts/architecture/cgroups/) · [사용자 네임스페이스 (쿠버네티스 문서)](https://kubernetes.io/docs/concepts/workloads/pods/user-namespaces/) · [서버 한 대에서 컨테이너까지](../basic/server-to-container.mdx) · [요청값과 상한값](../intermediate/requests-limits.mdx)

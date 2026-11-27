@@ -1,0 +1,260 @@
+---
+id: roadmap
+title: 학습 경로와 자격증
+description: 목표 다섯 가지에 맞춘 레슨 순서, 그리고 K8s Flow 레슨이 CKA·CKAD·CKS·KCNA 공식 시험 영역 중 어디에 해당하는지 정리한다.
+displayed_sidebar: lessons
+---
+
+# 학습 경로와 자격증
+
+전체 트랙은 쉬운 것에서 어려운 것 순서지만 전부 볼 필요는 거의 없다. 아래에서 목표에 맞는 경로를 고르거나, 자격증 지도를 보고 시험 영역별로 어떤 레슨이 있는지 확인한다.
+
+## 목표별 학습 경로
+
+### 처음 시작 → 첫 배포
+
+컨테이너를 한 번도 띄워 본 적이 없다. 끝나면 앱을 배포하고, 밖에 공개하고, 무중단으로 업데이트할 수 있다.
+
+1. [주소창에 주소를 입력하면](./basic/web-request.mdx): 이후 모든 레슨이 이 요청 위에 쌓인다.
+2. [DNS가 주소를 찾아가는 길](./basic/dns-resolution.mdx): 클러스터 안팎에서 모든 것은 이름으로 서로를 찾는다.
+3. [쿠버네티스를 위한 리눅스 기초](./basic/linux-basics.mdx): 실습마다 쓰는 프로세스, 파일, 셸.
+4. [서버 한 대에서 컨테이너까지](./basic/server-to-container.mdx): 컨테이너가 왜 생겼나.
+5. [이미지가 만들어지고 실행되기까지](./basic/container-image.mdx): 실제로 배포하는 것이 무엇인가.
+6. [노트북에 실습 클러스터 만들기](./basic/lab-cluster.mdx): 모든 "직접 해 보기"를 돌릴 클러스터를 준비한다.
+7. [원하는 상태와 컨트롤 루프](./basic/desired-state.mdx): 쿠버네티스 전체가 기대는 단 하나의 생각.
+8. [매니페스트 읽고 적용하기](./k8s/manifest-anatomy.mdx): YAML은 쓰기 전에 읽을 줄 알아야 한다.
+9. [워크로드 종류](./basic/workload-types.mdx): Deployment, StatefulSet, DaemonSet, Job을 언제 쓰나.
+10. [파드가 뜨기까지](./k8s/pod-startup.mdx): `kubectl apply` 다음에 일어나는 일.
+11. [요청이 파드에 닿기까지](./k8s/traffic.mdx): 사용자가 앱에 닿는 길.
+12. [설정과 비밀값 (ConfigMap·Secret)](./k8s/config-secret.mdx): 설정을 이미지 밖으로 뺀다.
+13. [무중단 배포 (롤링 업데이트)](./k8s/rolling-update.mdx): 두 번째 버전을 안전하게 내보낸다.
+14. [상태를 세 단계로 읽고 문제 확인하기](./intermediate/troubleshoot-status.mdx): 안 뜰 때 무엇부터 볼까.
+
+### 쿠버네티스 위의 백엔드 개발자
+
+서비스를 만들고, 그 서비스가 클러스터에서 제대로 동작하게 하고 싶다.
+
+1. [매니페스트 읽고 적용하기](./k8s/manifest-anatomy.mdx): 다른 모든 레슨이 쓰는 형식.
+2. [파드가 뜨기까지](./k8s/pod-startup.mdx): 기동 시간과 기동 실패가 어디서 오나.
+3. [이름으로 찾아가기 (Service·DNS)](./k8s/service-dns.mdx): 내 서비스가 다른 서비스를 부르는 방법.
+4. [설정과 비밀값 (ConfigMap·Secret)](./k8s/config-secret.mdx): 환경마다 다른 설정.
+5. [헬스 체크 — 살아 있나, 받을 준비가 됐나](./intermediate/probes.mdx): 준비 안 된 파드로 트래픽이 가지 않게 한다.
+6. [요청값과 상한값](./intermediate/requests-limits.mdx): OOM 종료와 CPU 스로틀링을 피한다.
+7. [정상 종료 — 요청을 잃지 않고 내려가기](./intermediate/graceful-shutdown.mdx): 배포 중에 요청을 떨어뜨리지 않는다.
+8. [무중단 배포 (롤링 업데이트)](./k8s/rolling-update.mdx): 새 버전이 옛 버전을 바꾸는 방식.
+9. [블루/그린과 카나리를 기본 요소로 (CKAD)](./cert/deploy-strategies.mdx): 더 안전한 배포 방식.
+10. [멀티 컨테이너 파드 — init과 사이드카 (CKAD)](./cert/multi-container.mdx): 앱 옆에 붙는 도우미.
+11. [한 번 돌고 끝나는 일 (Job·CronJob)](./k8s/job-cronjob.mdx): 배치 작업과 예약 작업.
+12. [부하에 맞춰 늘어나기 (HPA)](./k8s/autoscaling.mdx): 부하가 오면 레플리카를 늘린다.
+13. [인그레스 규칙과 TLS](./feature/ingress.mdx): API를 도메인과 HTTPS로 공개한다.
+14. [로그·메트릭·트레이스가 파드를 떠나는 길](./k8s/observability-pipeline.mdx): 서비스가 무엇을 하는지 본다.
+15. [kubectl debug로 실행 중인 파드 디버깅하기](./k8s/kubectl-debug.mdx): 로그만으로 모자랄 때 실행 중인 파드 안으로 들어간다.
+
+### 플랫폼·SRE 엔지니어
+
+다른 팀이 배포하는 클러스터를 운영한다.
+
+1. [API 요청이 저장되기까지](./advanced/api-request-path.mdx): 요청마다 거치는 인증, 어드미션, etcd.
+2. [파드를 어느 노드에 둘까 (스케줄링)](./k8s/scheduling.mdx): 어피니티, 테인트, 배치가 정해지는 방식.
+3. [누가 무엇을 할 수 있나 (RBAC)](./k8s/rbac.mdx): 팀마다 꼭 필요한 권한만 준다.
+4. [네임스페이스와 리소스 쿼터](./feature/namespace-quota.mdx): 테넌트끼리 자원을 빼앗지 않게 한다.
+5. [CEL과 웹훅으로 거는 어드미션 정책](./advanced/admission-policy.mdx): API 단에서 규칙을 강제한다.
+6. [노드 비우기와 클러스터 업그레이드](./k8s/node-drain.mdx): 장애 없이 점검한다.
+7. [kubeadm으로 클러스터 업그레이드 (CKA)](./cert/kubeadm-upgrade.mdx): 업그레이드의 정확한 순서.
+8. [노드 NotReady와 구성요소 장애 (CKA)](./cert/node-troubleshoot.mdx): 당직 때 가장 자주 받는 호출.
+9. [컨트롤 플레인 고가용성과 etcd 쿼럼](./advanced/etcd-quorum.mdx): 컨트롤 플레인을 살려 두는 것.
+10. [클러스터 인증서 만료](./advanced/cluster-cert.mdx): 미리 막을 수 있는 장애.
+11. [Helm과 GitOps](./intermediate/gitops-sync.mdx): 클러스터 상태를 Git에 둔다.
+12. [클러스터 백업과 복구](./advanced/cluster-backup.mdx): 되살릴 수 있어야 한다.
+13. [SLO와 알람 설계](./advanced/slo-alert.mdx): 사용자가 느끼는 것에 알람을 건다.
+14. [장애 대응: 알람에서 포스트모템까지](./advanced/incident-response.mdx): 호출부터 회고까지 장애를 이끈다.
+15. [쿠버네티스 카오스 엔지니어링](./advanced/chaos-engineering.mdx): 약한 곳을 먼저 찾아낸다.
+
+### 클라우드 엔지니어
+
+클러스터가 올라가는 네트워크, 신원, 관리형 서비스를 만든다.
+
+1. [누가 어디까지 맡나 (IaaS·PaaS·SaaS)](./cloud/service-models.mdx): 책임이 나뉘는 선.
+2. [VPC 안에서 요청이 가는 길](./cloud/vpc-request.mdx): 서브넷, 라우팅, 보안 그룹.
+3. [가용 영역 하나가 멈추면](./cloud/az-failover.mdx): 영역 장애를 견디는 설계.
+4. [API 요청 하나의 권한 검사 (IAM)](./cloud/iam-request.mdx): 클라우드 권한이 정해지는 방식.
+5. [사람을 위한 싱글 사인온 (SSO와 페더레이션)](./cloud/sso-federation.mdx): 계정과 도구를 하나의 신원으로 묶는다.
+6. [클라우드 KMS가 데이터를 암호화하는 방식 (봉투 암호화)](./cloud/kms-encryption.mdx): 데이터의 키를 누가 쥐나.
+7. [매니지드 데이터베이스가 대신 해 주는 일](./cloud/managed-database.mdx): 클라우드가 대신 해 주는 것과 안 해 주는 것.
+8. [네트워크 잇기: 피어링·트랜짓·VPN·프라이빗 엔드포인트](./cloud/hybrid-network.mdx): VPC끼리, 그리고 온프레미스와 잇는다.
+9. [공개 엔드포인트 지키기 (WAF와 DDoS)](./cloud/waf-ddos.mdx): 나쁜 트래픽을 가장자리에서 거른다.
+10. [리전 전체가 멈추면](./cloud/multi-region-dr.mdx): 재해 복구 방식 고르기.
+11. [테라폼으로 하는 코드형 인프라](./cloud/infra-as-code.mdx): 위의 모든 것을 반복 가능하게 만든다.
+12. [클라우드 청구서는 어디서 나오나](./cloud/cloud-cost.mdx): 설계마다 드는 비용을 안다.
+13. [관리형 쿠버네티스 — 누가 무엇을 운영하나](./cloud/managed-kubernetes.mdx): 클라우드가 끝나고 쿠버네티스가 시작되는 곳.
+
+### AI·LLM 인프라 엔지니어
+
+쿠버네티스에서 GPU와 모델 서버를 운영한다. 파드와 서비스가 처음이면 "처음 시작" 경로부터 본다.
+
+1. [GPU·NPU가 노드 자원이 되기까지 (디바이스 플러그인)](./ai/device-plugin.mdx): GPU가 스케줄링 대상이 되는 과정.
+2. [조건으로 GPU 받기 (DRA)](./k8s/dra.mdx): 장치를 더 정확하게 요청하는 새 방식.
+3. [GPU 나눠 쓰기](./feature/gpu-sharing.mdx): MIG, 시분할, 언제 나눠 쓰나.
+4. [쿠버네티스에서 GPU 모니터링](./ai/gpu-monitoring.mdx): 사용률, 메모리, 중요한 메트릭.
+5. [답이 한 토큰씩 만들어지기까지](./llm/token-generation.mdx): 모든 LLM 서버가 도는 반복.
+6. [질문 읽기와 답 쓰기 (프리필·디코드)](./llm/prefill-decode.mdx): 두 단계가 왜 그렇게 다르게 움직이나.
+7. [KV 캐시가 차오르기까지](./llm/kv-cache.mdx): 동시 처리량을 막는 메모리.
+8. [요청을 묶어 처리하기 (연속 배칭)](./llm/continuous-batching.mdx): 서버가 GPU를 쉬지 않게 하는 방법.
+9. [모델을 작게 만들기 (양자화)](./llm/quantization.mdx): 더 큰 모델을 더 적은 GPU에 싣는다.
+10. [모델을 여러 GPU에 나눠 싣기 (TP·PP·EP)](./llm/model-parallelism.mdx): GPU 하나로 모자랄 때.
+11. [모델이 처음 뜨기까지 (콜드 스타트)](./ai/cold-start.mdx): 첫 레플리카가 왜 몇 분씩 걸리나.
+12. [요청을 어느 레플리카로 보낼까 (추론 라우팅)](./ai/inference-routing.mdx): 캐시를 고려한 라우팅.
+13. [LLM 추론 오토스케일링](./ai/llm-autoscaling.mdx): 맞는 신호로 늘리고 줄인다.
+14. [베이스 모델 하나로 LoRA 어댑터 여러 개 서빙하기](./ai/lora-serving.mdx): 기본 모델 하나에 여러 미세 조정 모델을 올린다.
+15. [배포 전후에 모델 평가하기](./ai/model-evaluation.mdx): 배포 전후로 품질을 확인한다.
+
+## 자격증 지도
+
+이 지도는 CNCF 커리큘럼 저장소([github.com/cncf/curriculum](https://github.com/cncf/curriculum))의 공식 커리큘럼을 2026-11-27에 확인해 만들었다.
+
+- CKA: [CKA_Curriculum_v1.37.pdf](https://github.com/cncf/curriculum/blob/master/CKA_Curriculum_v1.37.pdf) (2026-10-15 추가)
+- CKAD: [CKAD_Curriculum_v1.37.pdf](https://github.com/cncf/curriculum/blob/master/CKAD_Curriculum_v1.37.pdf) (2026-10-01 추가)
+- CKS: [CKS_Curriculum v1.37.pdf](https://github.com/cncf/curriculum/blob/master/CKS_Curriculum%20v1.37.pdf) (2026-11-03 추가)
+- KCNA: [KCNA_Curriculum.pdf](https://github.com/cncf/curriculum/blob/master/KCNA_Curriculum.pdf) (버전 표기 없음, 2025-11-24 게시)
+
+커리큘럼은 쿠버네티스 릴리스에 맞춰 바뀐다. 시험을 예약하기 전에 시험마다 걸어 둔 공식 페이지를 다시 확인한다.
+
+레슨은 동작 원리를 보여 준다. 시험은 `kubectl`과 공식 문서를 얼마나 빨리 다루는지도 보는데, 이것은 연습으로만 는다. 각 시험의 "여기서 다루지 않는 것"에 따로 공부할 주제를 적어 두었다.
+
+### KCNA: Kubernetes and Cloud Native Associate (입문)
+
+[공식 페이지](https://training.linuxfoundation.org/certification/kubernetes-cloud-native-associate/). 온라인 감독형 객관식 시험이고 90분이다. 타자 속도가 아니라 개념을 보므로 첫 자격증으로 알맞다.
+
+**Kubernetes Fundamentals: 44%** (핵심 개념, 관리, 스케줄링, 컨테이너화)
+- [원하는 상태와 컨트롤 루프](./basic/desired-state.mdx), [워크로드 종류](./basic/workload-types.mdx), [파드가 뜨기까지](./k8s/pod-startup.mdx), [매니페스트 읽고 적용하기](./k8s/manifest-anatomy.mdx)
+- [파드를 어느 노드에 둘까 (스케줄링)](./k8s/scheduling.mdx), [API 요청이 저장되기까지](./advanced/api-request-path.mdx)
+- [리눅스는 컨테이너를 어떻게 격리하나](./basic/linux-isolation.mdx), [이미지가 만들어지고 실행되기까지](./basic/container-image.mdx)
+
+**Container Orchestration: 28%** (네트워크, 보안, 문제 해결, 스토리지)
+- [요청이 파드에 닿기까지](./k8s/traffic.mdx), [이름으로 찾아가기 (Service·DNS)](./k8s/service-dns.mdx), [통신 막고 열기 (네트워크 정책)](./k8s/network-policy.mdx)
+- [누가 무엇을 할 수 있나 (RBAC)](./k8s/rbac.mdx), [4C와 위협 모델로 클러스터 보기 (KCSA·KCNA)](./cert/threat-model.mdx)
+- [상태를 세 단계로 읽고 문제 확인하기](./intermediate/troubleshoot-status.mdx)
+- [저장 공간이 붙기까지 (PVC·PV)](./k8s/storage-volume.mdx)
+
+**Cloud Native Application Delivery: 16%** (애플리케이션 배포, 디버깅)
+- [파이프라인이 도는 순서](./basic/cicd-pipeline.mdx), [Helm과 GitOps](./intermediate/gitops-sync.mdx), [헬름 릴리스의 설치·업그레이드·롤백](./k8s/helm-release.mdx), [무중단 배포 (롤링 업데이트)](./k8s/rolling-update.mdx)
+- [kubectl debug로 실행 중인 파드 디버깅하기](./k8s/kubectl-debug.mdx)
+
+**Cloud Native Architecture: 12%** (관측성, 생태계와 원칙, 커뮤니티와 협업)
+- [로그·메트릭·트레이스가 파드를 떠나는 길](./k8s/observability-pipeline.mdx), [부하에 맞춰 늘어나기 (HPA)](./k8s/autoscaling.mdx), [서버리스 함수는 이렇게 실행된다](./cloud/serverless.mdx), [서비스 메시 ① 사이드카와 상호 인증](./feature/mesh-sidecar.mdx)
+
+**여기서 다루지 않는 것:** CNCF 프로젝트 성숙도 단계(샌드박스, 인큐베이팅, 졸업), CNCF 랜드스케이프, 쿠버네티스 커뮤니티와 SIG가 일하는 방식, 개방형 표준(OCI, CNI, CSI, CRI) 자체.
+
+### CKA: Certified Kubernetes Administrator
+
+[공식 페이지](https://training.linuxfoundation.org/certification/certified-kubernetes-administrator-cka/). 온라인 감독형 실기 시험이다. 명령줄에서 과제를 풀고, 2시간이며, 쿠버네티스 v1.37 기준이다.
+
+**Troubleshooting: 30%**
+- [노드 NotReady와 구성요소 장애 (CKA)](./cert/node-troubleshoot.mdx): 클러스터, 노드, 컨트롤 플레인 구성요소.
+- [상태를 세 단계로 읽고 문제 확인하기](./intermediate/troubleshoot-status.mdx), [kubectl debug로 실행 중인 파드 디버깅하기](./k8s/kubectl-debug.mdx): 애플리케이션 장애.
+- [로그·메트릭·트레이스가 파드를 떠나는 길](./k8s/observability-pipeline.mdx), [요청값과 상한값](./intermediate/requests-limits.mdx): 자원 사용량과 컨테이너 출력.
+- [파드에서 파드로 가는 패킷](./advanced/packet-path.mdx), [이름으로 찾아가기 (Service·DNS)](./k8s/service-dns.mdx): 서비스와 네트워크.
+
+**Cluster Architecture, Installation and Configuration: 25%**
+- [누가 무엇을 할 수 있나 (RBAC)](./k8s/rbac.mdx)
+- [kubeadm으로 클러스터 업그레이드 (CKA)](./cert/kubeadm-upgrade.mdx), [노드 비우기와 클러스터 업그레이드](./k8s/node-drain.mdx), [클러스터 인증서 만료](./advanced/cluster-cert.mdx): 클러스터 생명주기.
+- [컨트롤 플레인 고가용성과 etcd 쿼럼](./advanced/etcd-quorum.mdx), [클러스터 백업과 복구](./advanced/cluster-backup.mdx): 고가용성 컨트롤 플레인.
+- [헬름 릴리스의 설치·업그레이드·롤백](./k8s/helm-release.mdx), [Kustomize로 환경별 배포 (CKA·CKAD)](./cert/kustomize.mdx)
+- [CRD와 오퍼레이터](./advanced/crd-operator.mdx)
+
+**Services and Networking: 20%**
+- [파드에서 파드로 가는 패킷](./advanced/packet-path.mdx): 파드 사이 연결.
+- [통신 막고 열기 (네트워크 정책)](./k8s/network-policy.mdx)
+- [서비스 종류 (ClusterIP · NodePort · LoadBalancer)](./feature/service-types.mdx), [요청이 파드에 닿기까지](./k8s/traffic.mdx)
+- [게이트웨이 API HTTPRoute가 파드에 닿기까지](./feature/gateway-api.mdx), [인그레스 규칙과 TLS](./feature/ingress.mdx)
+- [이름으로 찾아가기 (Service·DNS)](./k8s/service-dns.mdx): CoreDNS.
+
+**Workloads and Scheduling: 15%**
+- [무중단 배포 (롤링 업데이트)](./k8s/rolling-update.mdx): 롤링 업데이트와 롤백.
+- [설정과 비밀값 (ConfigMap·Secret)](./k8s/config-secret.mdx)
+- [부하에 맞춰 늘어나기 (HPA)](./k8s/autoscaling.mdx), [파드 크기 자동 조정 (VPA)](./feature/vpa.mdx): 워크로드 오토스케일링.
+- [파드가 죽으면 (자가 치유)](./k8s/self-healing.mdx), [헬스 체크 — 살아 있나, 받을 준비가 됐나](./intermediate/probes.mdx)
+- [파드를 어느 노드에 둘까 (스케줄링)](./k8s/scheduling.mdx), [요청값과 상한값](./intermediate/requests-limits.mdx), [파드를 존에 고르게 펼치기 (토폴로지 분산 제약)](./k8s/topology-spread.mdx): 어드미션과 스케줄링.
+
+**Storage: 10%**
+- [저장 공간이 붙기까지 (PVC·PV)](./k8s/storage-volume.mdx), [볼륨이 붙는 시점과 장애](./advanced/volume-binding.mdx): 스토리지 클래스, 동적 프로비저닝, PV와 PVC.
+
+**여기서 다루지 않는 것:** `kubeadm init`과 `kubeadm join`으로 새 클러스터 만들기, 설치 전 기반 준비(컨테이너 런타임, 커널 모듈, 스왑), 설치할 수 있는 인터페이스로서의 CNI·CSI·CRI, 회수 정책(접근 모드는 잠깐만 나온다).
+
+### CKAD: Certified Kubernetes Application Developer
+
+[공식 페이지](https://training.linuxfoundation.org/certification/certified-kubernetes-application-developer-ckad/). 온라인 감독형 실기 시험이고, 2시간이며, 쿠버네티스 v1.37 기준이다.
+
+**Application Environment, Configuration and Security: 25%**
+- [CRD와 오퍼레이터](./advanced/crd-operator.mdx)
+- [API 요청이 저장되기까지](./advanced/api-request-path.mdx), [CEL과 웹훅으로 거는 어드미션 정책](./advanced/admission-policy.mdx): 인증, 인가, 어드미션.
+- [요청값과 상한값](./intermediate/requests-limits.mdx), [네임스페이스와 리소스 쿼터](./feature/namespace-quota.mdx)
+- [설정과 비밀값 (ConfigMap·Secret)](./k8s/config-secret.mdx)
+- [파드는 자신을 어떻게 증명하나 (서비스 어카운트 토큰)](./advanced/serviceaccount-token.mdx)
+- [파드 보안 기준과 securityContext](./advanced/pod-security.mdx): SecurityContext와 capabilities.
+
+**Application Design and Build: 20%**
+- [이미지가 만들어지고 실행되기까지](./basic/container-image.mdx)
+- [워크로드 종류](./basic/workload-types.mdx), [한 번 돌고 끝나는 일 (Job·CronJob)](./k8s/job-cronjob.mdx)
+- [멀티 컨테이너 파드 — init과 사이드카 (CKAD)](./cert/multi-container.mdx)
+- [저장 공간이 붙기까지 (PVC·PV)](./k8s/storage-volume.mdx)
+
+**Application Deployment: 20%**
+- [블루/그린과 카나리를 기본 요소로 (CKAD)](./cert/deploy-strategies.mdx)
+- [무중단 배포 (롤링 업데이트)](./k8s/rolling-update.mdx)
+- [헬름 릴리스의 설치·업그레이드·롤백](./k8s/helm-release.mdx)
+- [Kustomize로 환경별 배포 (CKA·CKAD)](./cert/kustomize.mdx)
+
+**Services and Networking: 20%**
+- [통신 막고 열기 (네트워크 정책)](./k8s/network-policy.mdx)
+- [서비스 종류 (ClusterIP · NodePort · LoadBalancer)](./feature/service-types.mdx), [이름으로 찾아가기 (Service·DNS)](./k8s/service-dns.mdx)
+- [인그레스 규칙과 TLS](./feature/ingress.mdx)
+
+**Application Observability and Maintenance: 15%**
+- [헬스 체크 — 살아 있나, 받을 준비가 됐나](./intermediate/probes.mdx)
+- [로그·메트릭·트레이스가 파드를 떠나는 길](./k8s/observability-pipeline.mdx): `kubectl logs`, `kubectl top`.
+- [상태를 세 단계로 읽고 문제 확인하기](./intermediate/troubleshoot-status.mdx), [kubectl debug로 실행 중인 파드 디버깅하기](./k8s/kubectl-debug.mdx)
+
+**여기서 다루지 않는 것:** API 지원 중단과 매니페스트 이전(`kubectl convert`, 지원 중단된 API 버전), `emptyDir` 같은 임시 볼륨 종류(지나가며 언급하는 정도).
+
+### CKS: Certified Kubernetes Security Specialist
+
+[공식 페이지](https://training.linuxfoundation.org/certification/certified-kubernetes-security-specialist/). 온라인 감독형 실기 시험이고, 2시간이며, 쿠버네티스 v1.37 기준이다. CKA에 합격해야 CKS를 볼 수 있다.
+
+**Cluster Setup: 15%**
+- [통신 막고 열기 (네트워크 정책)](./k8s/network-policy.mdx)
+- [인그레스 규칙과 TLS](./feature/ingress.mdx), [cert-manager로 TLS 인증서 자동 발급하기](./advanced/cert-manager.mdx)
+
+**Cluster Hardening: 15%**
+- [누가 무엇을 할 수 있나 (RBAC)](./k8s/rbac.mdx)
+- [파드는 자신을 어떻게 증명하나 (서비스 어카운트 토큰)](./advanced/serviceaccount-token.mdx)
+- [API 요청이 저장되기까지](./advanced/api-request-path.mdx): API 접근 제한.
+- [kubeadm으로 클러스터 업그레이드 (CKA)](./cert/kubeadm-upgrade.mdx)
+
+**System Hardening: 10%**
+- [런타임 보안 — 이상 행동 잡기 (CKS)](./cert/runtime-security.mdx), [파드 보안 기준과 securityContext](./advanced/pod-security.mdx): AppArmor와 seccomp.
+- [API 요청 하나의 권한 검사 (IAM)](./cloud/iam-request.mdx): 최소 권한 신원.
+
+**Minimize Microservice Vulnerabilities: 20%**
+- [파드 보안 기준과 securityContext](./advanced/pod-security.mdx), [CEL과 웹훅으로 거는 어드미션 정책](./advanced/admission-policy.mdx)
+- [시크릿을 안전하게 지키기](./advanced/secret-management.mdx)
+- [네임스페이스와 리소스 쿼터](./feature/namespace-quota.mdx): 멀티테넌시.
+- [서비스 메시 ① 사이드카와 상호 인증](./feature/mesh-sidecar.mdx): Istio로 하는 파드 간 암호화.
+
+**Supply Chain Security: 20%**
+- [이미지와 공급망 보안](./advanced/supply-chain.mdx): SBOM, 서명, 스캔.
+- [이미지가 만들어지고 실행되기까지](./basic/container-image.mdx): 베이스 이미지 줄이기.
+- [사설 레지스트리에서 이미지 받기](./k8s/private-registry.mdx): 허용된 레지스트리.
+
+**Monitoring, Logging and Runtime Security: 20%**
+- [런타임 보안 — 이상 행동 잡기 (CKS)](./cert/runtime-security.mdx): 행위 탐지와 컨테이너 불변성.
+- [감사 로그](./advanced/audit-log.mdx)
+- [4C와 위협 모델로 클러스터 보기 (KCSA·KCNA)](./cert/threat-model.mdx): 공격 단계.
+
+**여기서 다루지 않는 것:** CIS 벤치마크와 kube-bench, 노드 메타데이터 엔드포인트 보호, 체크섬으로 플랫폼 바이너리 검증, 호스트 OS 줄이기, 샌드박스 런타임(gVisor, Kata), Cilium으로 하는 파드 간 암호화, 커리큘럼에 나오는 정적 분석 도구(Kubesec, KubeLinter).
+
+## 공부하는 방법
+
+- **"직접 해 보기"를 빠짐없이 한다.** 대부분의 레슨은 실행할 명령으로 끝난다. [노트북에 실습 클러스터 만들기](./basic/lab-cluster.mdx)를 한 번 만들어 두고 거기서 돌린다. CKA·CKAD·CKS는 실기 시험이라 다이어그램만 봐서는 모자라다.
+- **레슨 끝의 퀴즈를 푼다.** 틀린 문제가 있으면 다이어그램에서 그 부분으로 돌아가 다시 본다.
+- **모르는 말은 [용어집](./glossary.mdx)에서 찾는다.** 레슨이나 커리큘럼에 낯선 용어가 나오면 넘어가기 전에 확인한다.

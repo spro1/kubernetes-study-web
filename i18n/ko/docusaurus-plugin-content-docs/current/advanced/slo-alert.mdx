@@ -1,7 +1,7 @@
 ---
 id: slo-alert
 title: SLO와 알람 설계
-sidebar_label: 10 · SLO와 알람 설계
+sidebar_label: 12 · SLO와 알람 설계
 description: SLI·SLO·오류 예산으로 목표를 숫자로 만들고, 소진 속도 기반 증상 알람을 거는 법과 알람이 울린 뒤 지표·추적·로그로 원인을 좁히는 과정을 애니메이션으로 따라간다
 summary: 'SLI·SLO·오류 예산, 소진 속도로 울리는 알람과 원인 좁히기.'
 icon: bell
@@ -188,5 +188,11 @@ kubectl get prometheusrules -A                                         # 알람 
 curl -s <프로메테우스>/api/v1/rules | jq '.data.groups[].rules[].name'   # 프로메테우스가 실제로 읽은 규칙
 curl -s <얼럿매니저>/api/v2/alerts/groups                              # 한 통으로 묶인 알림
 ```
+
+<Quiz questions={[
+  {q: '"CPU 80% 초과" 알람이 하루 수십 번 울리지만 사용자 불만은 없다. 레슨이 권하는 것은 무엇인가?', options: ['기준을 95%로 올려 덜 울리게 한다', 'CPU는 대시보드로 옮기고, 오류 예산 소진 속도 같은 증상에 알람을 건다', 'CPU 지표를 아예 지운다', '누군가는 받도록 CPU 알람을 더 많은 사람에게 보낸다'], answer: 1, why: '원인 기반 알람은 사용자 영향 없이도 울려 알람 피로를 부른다. 원인 지표는 대시보드에 두고, 사람은 사용자가 겪는 증상에만 깨워야 하기 때문이다.'},
+  {q: '긴급 소진 속도 알람이 1시간 창과 5분 창이 모두 14.4 이상일 때만 울리는 이유는 무엇인가?', options: ['긴 창은 크게 타고 있음을, 짧은 창은 지금도 타고 있음을 확인해 빠르게 감지하면서 오탐을 줄이기 때문이다', '프로메테우스는 창 하나로는 계산하지 못하기 때문이다', '두 창의 평균으로 오류 예산을 구하기 때문이다'], answer: 0, why: '긴 창만 보면 장애가 끝난 뒤에도 알람이 남고, 짧은 창만 보면 잠깐의 흔들림에도 울린다. 둘을 함께 보면 빠르게 감지하면서 오탐이 줄기 때문이다.'},
+  {q: 'SLO가 30일 동안 성공률 99.9%이고 소진 속도가 14.4다. 무슨 뜻인가?', options: ['요청의 14.4%가 실패하고 있다', '예산이 30일이 끝날 때 정확히 바닥난다', '30일 오류 예산을 약 이틀 만에 다 쓰게 된다', 'SLO가 이미 깨졌다'], answer: 2, why: '소진 속도는 오류 예산을 쓰는 속도다. 1이면 기간이 끝날 때 정확히 다 쓰고, 14.4면 30일 예산을 약 이틀 만에 다 쓰기 때문이다.'},
+]} />
 
 더 읽을거리: [Google SRE Workbook — Alerting on SLOs](https://sre.google/workbook/alerting-on-slos/) · [Prometheus 알림 개요](https://prometheus.io/docs/alerting/latest/overview/) · [쿠버네티스 시스템 지표](https://kubernetes.io/docs/concepts/cluster-administration/system-metrics/)

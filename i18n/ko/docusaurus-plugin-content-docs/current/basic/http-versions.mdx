@@ -233,4 +233,10 @@ openssl s_client -connect <도메인>:443 -alpn h2 </dev/null 2>/dev/null | grep
 
 브라우저 개발자 도구의 Network 표 머리글을 오른쪽 클릭해 **Protocol** 열을 켜면 요청마다 `http/1.1`, `h2`, `h3`가 보인다.
 
+<Quiz questions={[
+  {q: '일반 ClusterIP 서비스 뒤의 gRPC 서비스를 파드 1개에서 4개로 늘렸는데, 여전히 파드 하나가 거의 모든 호출을 받는다. 왜인가?', options: ['gRPC는 레플리카가 둘 이상이면 동작하지 않는다', '나머지 파드가 readiness 검사에 실패했다', 'gRPC는 오래가는 HTTP/2 연결 하나를 쓰고, 서비스는 요청이 아니라 연결 단위로 나누기 때문이다'], answer: 2, why: '연결 단위 로드밸런서는 연결마다 한 번만 백엔드를 고르기 때문이다. 요청마다 나누는 L7 프록시(예: Envoy, 서비스 메시)나 클라이언트 쪽 부하 분산을 쓴다.'},
+  {q: '회사망에서 HTTP/3를 내놓는 사이트인데 개발자 도구에 h3가 끝내 안 보이고, 페이지는 잘 뜬다. 가장 그럴듯한 이유는 무엇인가?', options: ['방화벽이 UDP 443을 버려서 브라우저가 TCP 위의 HTTP/2로 되돌아갔다', 'HTTP/3는 API가 달라 브라우저가 거부한다', '사이트에 TLS 인증서가 없다', 'HTTP/3는 첫 방문에만 동작한다'], answer: 0, why: '회사망은 TCP 443은 열고 UDP 443은 버리는 경우가 많다. QUIC 핸드셰이크가 끝나지 않아 클라이언트가 폴백하기 때문이고, 그래서 서버도 TCP 리스너를 함께 열어 둔다.'},
+  {q: '손실이 잦은 모바일 망에서 HTTP/2가 HTTP/1.1보다 빠르지 않다. 무엇으로 설명되는가?', options: ['HTTP/2는 헤더를 글자 그대로 보낸다', '패킷 하나를 잃으면 TCP가 그 뒤 데이터를 모두 붙잡아, 하나뿐인 공유 연결의 모든 스트림이 멈춘다', 'HTTP/2는 호스트마다 연결을 6개 연다'], answer: 1, why: 'HTTP/2는 HTTP의 HOL 블로킹만 없앴고 그 아래 TCP의 HOL 블로킹은 그대로이기 때문이다. QUIC 위의 HTTP/3는 스트림마다 따로 복구한다.'},
+]} />
+
 더 읽을거리: [RFC 9110 HTTP 의미론](https://www.rfc-editor.org/rfc/rfc9110) · [RFC 9113 HTTP/2](https://www.rfc-editor.org/rfc/rfc9113) · [RFC 9114 HTTP/3](https://www.rfc-editor.org/rfc/rfc9114) · [RFC 9000 QUIC](https://www.rfc-editor.org/rfc/rfc9000) · [HTTP의 진화 (MDN)](https://developer.mozilla.org/ko/docs/Web/HTTP/Guides/Evolution_of_HTTP) · [gRPC 부하 분산](https://grpc.io/blog/grpc-load-balancing/) · [주소창에 주소를 입력하면](../basic/web-request.mdx) · [HTTPS와 인증서](../basic/https-cert.mdx)

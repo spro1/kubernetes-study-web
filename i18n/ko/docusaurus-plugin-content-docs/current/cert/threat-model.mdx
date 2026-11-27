@@ -210,4 +210,10 @@ kubectl get resourcequota -A                         # 서비스 거부를 막�
 sudo grep -E 'encryption-provider-config|audit-policy-file' /etc/kubernetes/manifests/kube-apiserver.yaml   # Secret 암호화와 감사가 켜졌는지(kubeadm)
 ```
 
+<Quiz questions={[
+  {q: '공격자가 web 컨테이너를 장악하고 DB 파드에 바로 접속하려 한다. 이 옆 이동을 막는 장치는 무엇인가?', options: ['RBAC 최소 권한', '필요한 통신만 허용하는 기본 차단 네트워크 폴리시', 'etcd 저장 암호화'], answer: 1, why: '기본 상태에서는 모든 파드끼리 통신할 수 있다. web → DB 허용 규칙이 없는 기본 차단 네트워크 폴리시가 이 접속을 막기 때문이다.'},
+  {q: '공격자가 web에 마운트된 서비스 어카운트 토큰으로 API 서버에 파드 생성을 시도한다. 이 권한 상승을 줄이는 것은 무엇인가?', options: ['읽기 전용 루트 파일 시스템', 'API 우선순위와 공정성', '네임스페이스 리소스 쿼터', '서비스 어카운트에 최소 권한만 준 RBAC와, 토큰이 필요 없는 파드의 automountServiceAccountToken: false'], answer: 3, why: 'RBAC가 허용되지 않은 API 요청을 거절하고, 토큰이 필요 없는 파드에는 아예 토큰을 마운트하지 않기 때문이다.'},
+  {q: '공격이 끝난 뒤 어느 서비스 어카운트가 언제 무엇을 했는지 따라가려 한다. 미리 갖춰 두었어야 하는 것은 무엇인가?', options: ['API 서버의 감사 정책. 감사 로그는 기본으로 꺼져 있다', '네임스페이스마다의 네트워크 폴리시', '파드 보안 기준 restricted'], answer: 0, why: 'API 서버를 거친 시도는 감사 정책을 설정해야 기록되기 때문이다. 없으면 따라갈 흔적이 없다.'},
+]} />
+
 더 읽을거리: [CNCF 자격증 출제 범위](https://github.com/cncf/curriculum) · [클라우드 네이티브 보안 개요](https://kubernetes.io/ko/docs/concepts/security/overview/) · [멀티 테넌시](https://kubernetes.io/docs/concepts/security/multi-tenancy/)

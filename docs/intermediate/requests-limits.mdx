@@ -187,4 +187,10 @@ kubectl describe node <node> | grep -A 8 'Allocated resources'   # Request total
 kubectl get pod <pod> -o jsonpath='{.status.containerStatuses[*].lastState.terminated.reason}'   # OOMKilled?
 ```
 
+<Quiz questions={[
+  {q: 'The node\'s CPU usage graph looks idle, yet a new pod stays Pending. What is most likely?', options: ['The node\'s request totals are already full', 'The pod\'s limits are higher than its requests', 'metrics-server is not installed'], answer: 0, why: 'The scheduler counts room by request totals against allocatable, not by actual usage. A full allocation keeps the pod Pending regardless of usage.'},
+  {q: 'A container keeps trying to use more than its limit. Which outcome matches the lesson?', options: ['Both CPU and memory overuse kill the container', 'CPU overuse kills it; memory overuse only slows it', 'CPU overuse only slows it (throttling); memory overuse kills it (OOMKilled)', 'Neither has any effect until the node runs short'], answer: 2, why: 'CPU is shareable, so the node throttles it and the container keeps running slowly. Memory already in use cannot be taken back, so the container is killed with OOMKilled.'},
+  {q: 'Node memory runs short. Which pod does the kubelet evict first?', options: ['A Guaranteed pod with requests equal to limits', 'A BestEffort pod with no requests or limits', 'A Burstable pod with requests lower than limits'], answer: 1, why: 'Eviction follows the QoS class. BestEffort, with nothing declared, goes first, and Guaranteed goes last.'},
+]} />
+
 Further reading: [Resource management for Pods and containers](https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/) · [Kubernetes scheduler](https://kubernetes.io/docs/concepts/scheduling-eviction/kube-scheduler/) · [Configure Quality of Service for Pods](https://kubernetes.io/docs/tasks/configure-pod-container/quality-service-pod/) · [Which Node Gets the Pod (Scheduling)](../k8s/scheduling.mdx)

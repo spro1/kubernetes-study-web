@@ -1,7 +1,7 @@
 ---
 id: desired-state
 title: Desired State and the Control Loop
-sidebar_label: 01 · Desired State
+sidebar_label: 02 · Desired State
 description: Follow the animation to see how controllers compare a written desired state with the current state and close the gap, and how labels and selectors connect resources
 summary: 'Write the desired state and a controller matches the current state to it. Plus labels and selectors.'
 icon: target
@@ -195,5 +195,11 @@ kubectl get svc <service> -o jsonpath='{.spec.selector}'   # Which labels the Se
 kubectl get endpointslices -l kubernetes.io/service-name=<service>   # 0 endpoints? Suspect the selector
 kubectl delete deployment demo-web                   # Cleanup
 ```
+
+<Quiz questions={[
+  {q: 'You change replicas from 3 to 4, but the nodes have no free resources. What do you see?', options: ['kubectl apply fails with an out-of-resources error', 'The fourth Pod stays Pending with no error, and Kubernetes keeps trying until room opens up', 'The Deployment rolls back to 3 replicas'], answer: 1, why: 'Submitting only writes down the goal. When the goal cannot be reached yet, Kubernetes waits and keeps retrying instead of failing.'},
+  {q: 'All web Pods are Running, but the Service web reaches none of them and has 0 endpoints. What should you suspect first?', options: ['The Pods need to be restarted', 'The nodes are out of CPU', 'The Service selector does not match the Pod labels, for example a one-letter typo'], answer: 2, why: 'A Service picks Pods by label selector, and a selector with 0 matches is saved as valid with no error. Only the connection is broken.'},
+  {q: 'kubectl apply returned success. What does that tell you?', options: ['The desired state is recorded, and controllers will move the current state toward it over time', 'All Pods are already up and running', 'You have also updated the status field'], answer: 0, why: 'apply records spec, the desired state. Kubernetes fills in status as controllers close the gap, which takes time.'},
+]} />
 
 Further reading: [Controllers (Kubernetes docs)](https://kubernetes.io/docs/concepts/architecture/controller/) · [Labels and Selectors](https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/) · [How a Pod Starts](../k8s/pod-startup.mdx) · [When a Pod Dies (Self-Healing)](../k8s/self-healing.mdx)

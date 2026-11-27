@@ -194,4 +194,10 @@ kubectl get endpointslices -l kubernetes.io/service-name=api   # Does the backen
 kubectl get secret shop-tls -o jsonpath='{.type}'    # Is it kubernetes.io/tls?
 ```
 
+<Quiz questions={[
+  {q: 'An Ingress was created without error, but the ADDRESS column in kubectl get ingress stays empty. What should you suspect first?', options: ['A wrong path type in the rules', 'No controller handles its IngressClass (missing, misnamed or dead)', 'The TLS certificate has expired'], answer: 1, why: 'An Ingress is only a rule document. If the implementation its IngressClass points to is not running, nobody reads the rules and no address is assigned.'},
+  {q: 'Rules / → web and /api → api both use Prefix. Where does /api/orders go?', options: ['To web, because / is listed first', 'To both, split evenly', 'To api, because the longer matching path wins', 'Nowhere, because the paths overlap'], answer: 2, why: 'With Prefix, /api also matches /api/orders. When both / and /api match, the longer path /api wins.'},
+  {q: 'For HTTPS, what must the Secret named in the Ingress tls field be?', options: ['Of type kubernetes.io/tls, in the same namespace as the Ingress', 'Of any type, in the controller\'s namespace', 'An Opaque Secret mounted into the backend pods'], answer: 0, why: 'The controller decrypts HTTPS at the entry with that Secret\'s certificate and key. The Secret must be of type kubernetes.io/tls and live in the Ingress\'s namespace.'},
+]} />
+
 Further reading: [Ingress](https://kubernetes.io/docs/concepts/services-networking/ingress/) · [Ingress controllers](https://kubernetes.io/docs/concepts/services-networking/ingress-controllers/) · [Gateway API](https://kubernetes.io/docs/concepts/services-networking/gateway/)

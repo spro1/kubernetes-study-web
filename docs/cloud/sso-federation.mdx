@@ -1,0 +1,254 @@
+---
+id: sso-federation
+title: Single Sign-On for People (SSO and Federation)
+sidebar_label: 06 · SSO and Federation
+description: Animated walkthrough of single sign-on for people, with one identity provider for the cloud console, kubectl and apps, SAML versus OIDC, permission sets that hand out temporary role credentials, MFA at the IdP, SCIM provisioning, group to role mapping and offboarding
+summary: 'One identity provider for every login, permission sets instead of IAM users, groups mapped to roles, and what really happens when someone leaves.'
+icon: user
+hide_table_of_contents: true
+---
+
+# Single Sign-On for People (SSO and Federation)
+
+An engineer needs the cloud console, a Kubernetes cluster and a few internal apps. Follow how one **identity provider** (IdP) becomes the only place their account lives, and how every other system trusts it instead of keeping its own users. How a single OIDC login works is in [How Logging In Works (Sessions, JWT, OIDC)](../basic/auth-login.mdx); how a cloud API checks a request is in [Permission Checks on One API Request (IAM)](../cloud/iam-request.mdx).
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~12 min', level: 'Intermediate'}}
+  groups={[
+    {label: 'Cloud accounts', x: 530, y: 40, w: 450, h: 150, tone: 'mgmt'},
+  ]}
+  nodes={[
+    {id: 'user', label: 'Engineer', sub: 'dana@example.com', icon: 'user', tone: 'ext', x: 110, y: 250, show: true},
+    {id: 'idp', label: 'Identity provider', sub: 'Entra ID · Okta', icon: 'gate', tone: 'cp', x: 340, y: 250, w: 170},
+    {id: 'sso', label: 'IAM Identity Center', sub: 'Permission sets', icon: 'gear', tone: 'cp', x: 630, y: 115, w: 170},
+    {id: 'role', label: 'Account role', sub: 'Temporary credentials', icon: 'ticket', tone: 'node', x: 870, y: 115},
+    {id: 'k8s', label: 'Kubernetes API', sub: 'OIDC · RBAC', icon: 'wheel', tone: 'cp', x: 630, y: 260, w: 170},
+    {id: 'app', label: 'Internal app', sub: 'OIDC login', icon: 'browser', tone: 'app', x: 630, y: 390, w: 170},
+    {id: 'iamuser', label: 'IAM user', sub: 'Long-lived key', icon: 'alert', tone: 'ext', x: 870, y: 320},
+  ]}
+  metrics={[
+    {id: 'who', label: 'Identity'},
+    {id: 'cred', label: 'Credential'},
+    {id: 'ttl', label: 'Expires'},
+    {id: 'access', label: 'Access'},
+  ]}
+  learn={[
+    {text: 'One identity provider as the only source of users', at: 1},
+    {text: 'SAML and OIDC, and where each is used', at: 2},
+    {text: 'Permission sets that turn a login into temporary role credentials', at: 3},
+    {text: 'SCIM provisioning and what offboarding really ends', at: 7},
+    {text: 'The same IdP for kubectl and apps', at: 9},
+  ]}
+  steps={[
+    {
+      short: 'Start',
+      kind: '시작',
+      title: 'Every system with its own users',
+      text: [
+        'Dana joins the team. She needs six cloud accounts, two clusters and four internal apps. If each keeps its own users and passwords, that is twelve accounts to create, twelve passwords to manage, and twelve to remove when she leaves.',
+        'Someone always forgets one. The forgotten account still works.',
+      ],
+      flows: [
+        {from: 'user', to: 'iamuser', label: 'Password + key', type: 'request', bend: 80},
+      ],
+      focus: ['user', 'iamuser'],
+      values: {who: 'One per system', cred: 'Passwords, keys'},
+    },
+    {
+      short: 'IdP',
+      kind: '원리',
+      title: 'One identity provider holds the people',
+      text: [
+        'The company picks one identity provider, such as Microsoft Entra ID, Okta or Google Workspace. Users, groups, passwords and MFA live only there. HR adds Dana once.',
+        'Every other system is set up to trust that IdP. This trust between separate systems is federation. A system no longer checks a password; it checks a signed statement from the IdP that says who the user is.',
+      ],
+      keyIdea: 'Federation moves the question "who is this?" to one place. Each system keeps only "what may they do?".',
+      flows: [{from: 'user', to: 'idp', label: 'Sign in once', type: 'request'}],
+      focus: ['idp'],
+      values: {who: 'dana@example.com (IdP)'},
+    },
+    {
+      short: 'SAML · OIDC',
+      kind: '원리',
+      title: 'Two languages for the same promise',
+      text: [
+        'SAML 2.0 is older and XML-based. The IdP signs an assertion and the browser posts it to the system. Cloud consoles and many business apps support it.',
+        'OpenID Connect (OIDC) sits on OAuth 2.0 and issues a signed JWT, the ID token. It suits web apps, CLIs and kubectl. Both say the same thing: this user, these groups, signed by the IdP, valid for a short time.',
+      ],
+      keyIdea: 'Use whichever the system supports. What matters is that the IdP signs it and the system checks the signature and expiry.',
+      flows: [
+        {from: 'idp', to: 'sso', label: 'SAML assertion', type: 'response'},
+        {from: 'idp', to: 'app', label: 'OIDC ID token', type: 'response'},
+      ],
+      focus: ['idp', 'sso', 'app'],
+    },
+    {
+      short: 'Console',
+      kind: '원리',
+      title: 'A login becomes temporary role credentials',
+      text: [
+        'Dana opens the AWS access portal. IAM Identity Center sends her to the IdP, gets back a SAML assertion, and shows the accounts and permission sets assigned to her.',
+        'A permission set is a template of policies. Identity Center creates a matching IAM role in each assigned account. When Dana picks one, she gets that role\'s temporary credentials, valid for the permission set\'s session duration (1 hour by default, up to 12).',
+      ],
+      keyIdea: 'Run aws sts get-caller-identity after login: the ARN shows an assumed role named AWSReservedSSO_..., not a user.',
+      flows: [
+        {from: 'user', to: 'sso', label: 'Access portal', type: 'request', bend: -60},
+        {from: 'sso', to: 'role', label: 'Assume role', type: 'request'},
+        {from: 'role', to: 'user', label: 'Temp credentials', type: 'response', bend: -110},
+      ],
+      focus: ['sso', 'role'],
+      badges: {role: 'Expires 1h'},
+      values: {cred: 'Role session', ttl: '1 hour'},
+    },
+    {
+      short: 'Groups',
+      kind: '원리',
+      title: 'Groups map to roles, people join groups',
+      text: [
+        'Access is assigned to IdP groups, not to people. The group platform-admins gets the AdministratorAccess permission set in prod; the group developers gets a read-only one in prod and PowerUser in dev.',
+        'To give Dana prod access, an owner adds her to a group in the IdP. Every cloud account, cluster and app that trusts the group follows.',
+      ],
+      keyIdea: 'Review access by reading group memberships in one place, instead of policies spread across every account.',
+      flows: [{from: 'idp', to: 'sso', label: 'Group: developers', type: 'watch'}],
+      focus: ['idp', 'sso'],
+      badges: {idp: 'developers'},
+      values: {access: 'dev: PowerUser · prod: ReadOnly'},
+    },
+    {
+      short: 'IAM users',
+      kind: '문제',
+      title: 'Long-lived IAM users are the leak waiting to happen',
+      text: [
+        'An old IAM user with an access key is still around for "the CLI". The key never expires, sits in a file on a laptop, and does not care whether its owner still works here. This is exactly the leaked key from the IAM lesson.',
+        'With SSO, the CLI uses the same login: aws sso login opens the browser, and the CLI gets short-lived role credentials. The IAM user and its key are deleted.',
+      ],
+      keyIdea: 'People should have no long-lived cloud keys. Check the credential report for IAM users and keys that are still active.',
+      flows: [{from: 'iamuser', to: 'role', label: 'Static key', type: 'request'}],
+      focus: ['iamuser'],
+      status: {iamuser: 'error'},
+      badges: {iamuser: 'Never expires'},
+      values: {cred: {text: 'Access key (no expiry)', tone: 'bad'}, ttl: {text: 'Never', tone: 'bad'}},
+    },
+    {
+      short: 'MFA',
+      kind: '원리',
+      title: 'MFA once, at the IdP, for everything',
+      text: [
+        'The IAM user is gone. MFA is now enforced in one place: the IdP. Every system behind it gets that protection without its own setup.',
+        'The IdP can also require phishing-resistant factors (FIDO2 security keys, passkeys) and conditional rules, such as a managed device or a known country, before it signs anything.',
+      ],
+      keyIdea: 'A strong IdP sign-in protects every app at once. A weak one exposes them all, so the IdP needs the strictest policy.',
+      flows: [{from: 'user', to: 'idp', label: 'Password + passkey', type: 'request'}],
+      focus: ['user', 'idp'],
+      status: {iamuser: 'gone'},
+      badges: {iamuser: null, idp: 'MFA required'},
+      values: {cred: 'Role session', ttl: '1 hour'},
+    },
+    {
+      short: 'SCIM',
+      kind: '원리',
+      title: 'SCIM copies users and groups automatically',
+      text: [
+        'SAML and OIDC only say who is signing in now. To assign permissions in advance, the cloud also needs to know users and groups before they sign in.',
+        'SCIM is a standard REST API for that. The IdP pushes create, update and disable events for users and groups to Identity Center and to apps that support it. Nobody copies accounts by hand.',
+      ],
+      flows: [
+        {from: 'idp', to: 'sso', label: 'SCIM sync', type: 'watch'},
+        {from: 'idp', to: 'app', label: 'SCIM sync', type: 'watch'},
+      ],
+      focus: ['idp', 'sso', 'app'],
+      badges: {idp: 'Source of truth'},
+    },
+    {
+      short: 'Offboarding',
+      kind: '주의',
+      title: 'Disable once, but sessions already issued run out on their own',
+      text: [
+        'Dana leaves. An admin disables her in the IdP, and SCIM disables her in Identity Center. She can no longer sign in or start a new role session. That part is immediate.',
+        'Role credentials already in her hands are a different story. In AWS they stay valid until they expire, up to the permission set\'s session duration (12 hours at most). Kubernetes tokens and app sessions likewise last until their own expiry.',
+      ],
+      keyIdea: 'Keep session durations short for sensitive accounts, and on a risky departure also revoke sessions in each system, not just the IdP.',
+      flows: [
+        {from: 'idp', to: 'sso', label: 'SCIM: disabled', type: 'watch'},
+        {from: 'user', to: 'idp', label: 'Sign in', type: 'request'},
+      ],
+      focus: ['user', 'idp', 'role'],
+      status: {user: 'off', idp: 'ok', role: 'warn'},
+      badges: {idp: 'Disabled', role: 'Valid until expiry'},
+      values: {who: {text: 'Disabled', tone: 'bad'}, access: {text: 'No new sessions', tone: 'good'}, ttl: {text: 'Old session: up to 12h', tone: 'bad'}},
+    },
+    {
+      short: 'kubectl · apps',
+      kind: '원리',
+      title: 'The same IdP signs in to kubectl and apps',
+      text: [
+        'The Kubernetes API server is set to trust the IdP as an OIDC issuer (the --oidc-issuer-url and --oidc-client-id flags, or a structured AuthenticationConfiguration file). A kubectl plugin such as kubelogin opens the browser and passes the ID token on each request.',
+        'The API server takes the user and groups from token claims, and RBAC binds a group like developers to a Role. Managed clusters often map the cloud SSO role instead. Internal apps sign in through OIDC with the same IdP.',
+      ],
+      keyIdea: 'kubectl auth whoami shows the username and groups the API server took from the token.',
+      flows: [
+        {from: 'idp', to: 'k8s', label: 'ID token', type: 'response'},
+        {from: 'idp', to: 'app', label: 'ID token', type: 'response'},
+      ],
+      focus: ['k8s', 'app'],
+      status: {user: null, idp: null, role: null},
+      badges: {idp: null, role: null, k8s: 'group: developers'},
+      values: {who: 'dana@example.com (IdP)', cred: 'ID token', ttl: 'Minutes to an hour', access: 'RBAC by group'},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'One place for people, short-lived proof everywhere else',
+      text: [
+        'The IdP holds the users, groups and MFA. Systems trust it through SAML or OIDC, and SCIM keeps their copies of users and groups up to date.',
+        'In the cloud, permission sets turn a login into temporary role credentials, so people need no IAM users. Disabling someone in the IdP stops new sessions everywhere, and short session durations end the old ones quickly.',
+      ],
+      keyIdea: 'Check three things: no person has a long-lived cloud key, access is granted to groups, and session durations are short where it matters.',
+      flows: [
+        {from: 'user', to: 'idp', label: 'Sign in', type: 'request'},
+        {from: 'idp', to: 'sso', label: 'SAML', type: 'response'},
+        {from: 'idp', to: 'k8s', label: 'OIDC', type: 'response'},
+        {from: 'idp', to: 'app', label: 'OIDC', type: 'response'},
+      ],
+      focus: ['idp'],
+      badges: {k8s: null},
+    },
+  ]}
+/>
+
+## SAML or OIDC
+
+| | SAML 2.0 | OpenID Connect |
+|---|---|---|
+| Built on | XML, signed assertions | OAuth 2.0, signed JWT (ID token) |
+| How it travels | Browser posts the assertion to the service | Redirect with a code, tokens fetched by the client |
+| Typical users | Cloud consoles, enterprise SaaS | Web and mobile apps, CLIs, kubectl |
+| Works without a browser | Hard | Yes, with the device flow or a local redirect |
+| Provisioning users ahead of login | Neither does it. Use SCIM | Neither does it. Use SCIM |
+
+When someone leaves: disable them in the IdP (stops new logins everywhere), check that SCIM disabled them downstream, revoke sessions in sensitive systems, and look for anything outside SSO such as IAM users, local accounts or personal access tokens.
+
+## Try it yourself
+
+```bash
+aws configure sso                                  # Set up a profile: start URL, account, permission set
+aws sso login --profile dev                        # Opens the browser, signs in at the IdP
+aws sts get-caller-identity --profile dev          # ARN shows assumed-role/AWSReservedSSO_...
+aws sso-admin list-instances                       # Identity Center instance and identity store ID
+aws sso-admin list-permission-sets --instance-arn <instance-arn>
+aws identitystore list-groups --identity-store-id <store-id>   # Groups synced from the IdP by SCIM
+aws iam generate-credential-report && aws iam get-credential-report \
+  --query Content --output text | base64 --decode | cut -d, -f1,4,9,10   # Leftover IAM users and active keys
+kubectl oidc-login setup --oidc-issuer-url=https://login.example.com --oidc-client-id=kubernetes   # kubelogin plugin
+kubectl auth whoami                                # Username and groups from the token
+```
+
+<Quiz questions={[
+  {q: 'Dana leaves and is disabled in the IdP, which syncs by SCIM. What can still work for a while?', options: ['A new console sign-in through the access portal', 'Role credentials she got before, until they expire', 'A brand-new kubectl login'], answer: 1, why: 'Disabling stops new sign-ins and new sessions at once. Temporary credentials already issued stay valid until their expiry, so keep session durations short.'},
+  {q: 'Why assign permission sets to IdP groups instead of individual users?', options: ['SAML cannot carry user names', 'Groups make the credentials last longer', 'Access then follows group membership in one place, so joining or leaving a group updates every account'], answer: 2, why: 'With groups, people management happens only in the IdP. Every system that maps the group follows automatically.'},
+  {q: 'What must the Kubernetes API server know to accept ID tokens from the company IdP?', options: ['The issuer URL and the client ID (audience), so it can check the token signature and audience', 'A copy of every user\'s password', 'An IAM user for each person'], answer: 0, why: 'The API server fetches the issuer\'s public keys, checks the signature, issuer and audience, then reads username and groups from the claims.'},
+]} />
+
+Further reading: [What is IAM Identity Center? (AWS)](https://docs.aws.amazon.com/singlesignon/latest/userguide/what-is.html) · [Automatic provisioning with SCIM (AWS)](https://docs.aws.amazon.com/singlesignon/latest/userguide/provision-automatically.html) · [Kubernetes OIDC authentication](https://kubernetes.io/docs/reference/access-authn-authz/authentication/#openid-connect-tokens) · [OpenID Connect Core](https://openid.net/specs/openid-connect-core-1_0.html) · [SCIM protocol (RFC 7644)](https://datatracker.ietf.org/doc/html/rfc7644) · [How Logging In Works (Sessions, JWT, OIDC)](../basic/auth-login.mdx) · [Permission Checks on One API Request (IAM)](../cloud/iam-request.mdx)

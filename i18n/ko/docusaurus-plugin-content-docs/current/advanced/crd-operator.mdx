@@ -199,4 +199,10 @@ kubectl get pods -A | grep -i <오퍼레이터>      # 처리할 오퍼레이터
 kubectl describe <종류> <이름> -n <네임스페이스>   # status 조건과 이벤트
 ```
 
+<Quiz questions={[
+  {q: 'Database CR을 몇 시간 전에 만들었는데 status가 아직 비어 있다. 먼저 무엇을 확인해야 하는가?', options: ['그 자원을 처리할 오퍼레이터(컨트롤러)가 실행 중인지', 'etcd에 디스크 공간이 충분한지', 'CRD를 지우고 다시 만들어야 하는지'], answer: 0, why: 'CRD는 데이터 형식을 등록할 뿐이다. 처리할 컨트롤러가 돌지 않으면 CR은 status가 빈 채로 etcd에 기록만 남기 때문이다.'},
+  {q: '오퍼레이터는 Helm으로 설치하는 것과 무엇이 다른가?', options: ['Helm은 클러스터 안에서, 오퍼레이터는 노트북에서 실행된다', '오퍼레이터는 항상 실행되며 spec과 실제 상태를 계속 맞추고, Helm은 설치·업그레이드를 실행할 때만 동작한다', '오퍼레이터는 스테이트풀셋 같은 기본 자원을 만들 수 없다', '차이가 없다. 둘 다 조정 루프다'], answer: 1, why: '오퍼레이터는 CR을 지켜보며 조정 루프를 계속 돌린다. Helm은 설치와 업그레이드 사이에는 아무 일도 하지 않기 때문이다.'},
+  {q: '도구를 정리하던 중 누군가 그 CRD를 지웠다. 어떻게 되는가?', options: ['오퍼레이터 파드만 지워진다', '기존 CR은 남지만 수정할 수 없다', '다음 Helm 업그레이드 전까지는 아무 일도 없다', '백업 일정 같은 그 종류의 CR이 한꺼번에 모두 삭제된다'], answer: 3, why: 'CRD를 지우면 그 종류의 CR이 모두 삭제된다. CR을 먼저 백업하고, CR을 지운 뒤 오퍼레이터를 지워야 하기 때문이다.'},
+]} />
+
 더 읽을거리: [커스텀 리소스](https://kubernetes.io/ko/docs/concepts/extend-kubernetes/api-extension/custom-resources/) · [오퍼레이터 패턴](https://kubernetes.io/ko/docs/concepts/extend-kubernetes/operator/) · [Velero](https://velero.io/docs/) · 삭제가 멈추는 원리는 [삭제는 생각보다 복잡하다](./deletion-finalizer.mdx)

@@ -192,4 +192,10 @@ aws rds describe-db-instances --db-instance-identifier <DB> --query 'DBInstances
 aws elbv2 describe-target-health --target-group-arn <대상그룹-ARN>   # 대상별 헬스 체크 결과
 ```
 
+<Quiz questions={[
+  {q: '영역 A가 정전됐다. 영역 B에 정상 서버가 있는데도 잠깐 동안 일부 요청이 실패하는 이유는 무엇인가?', options: ['로드밸런서가 서버 A를 빼기 전에 헬스 체크가 간격 × 횟수만큼 실패해야 하기 때문이다', '영역 B를 먼저 재시작해야 하기 때문이다', 'DNS를 손으로 바꿔야 하기 때문이다'], answer: 0, why: '로드밸런서는 정해진 횟수만큼 연속 실패해야 서버를 분배 대상에서 빼기 때문이다. 그 판정 시간 동안 들어온 요청은 실패할 수 있다.'},
+  {q: '대기 DB가 승격된 뒤 앱이 계속 동작하려면 무엇을 처리해야 하는가?', options: ['새 DB 주소로 손으로 바꾼다', '백업에서 데이터베이스를 복원한다', '기존 연결이 끊겼으니 재시도로 다시 연결한다', '옛 주 DB에서 데이터를 복사한다'], answer: 2, why: '접속 주소는 그대로이고 새 주를 가리키도록 바뀌지만, 끊긴 연결은 앱이 다시 맺어야 하므로 재시도 처리가 필요하기 때문이다.'},
+  {q: 'DB가 대기 DB로 동기 복제를 한다. 영역 장애 때의 RPO는 얼마인가?', options: ['마지막 백업 이후 전부', '주 DB가 대기에도 기록된 뒤에야 저장 완료라고 답하므로 거의 0', '헬스 체크 간격과 정확히 같다'], answer: 1, why: 'RPO는 잃어도 되는 데이터의 양이다. 동기 복제면 확정된 주문은 이미 대기 DB에 있기 때문이다. 비동기 복제라면 짧은 분량을 잃을 수 있다.'},
+]} />
+
 더 읽을거리: [여러 영역에서 실행하기 (쿠버네티스 문서)](https://kubernetes.io/docs/setup/best-practices/multiple-zones/) · [파드 토폴로지 분배 제약 조건](https://kubernetes.io/ko/docs/concepts/scheduling-eviction/topology-spread-constraints/) · [리전과 가용 영역 (AWS)](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/using-regions-availability-zones.html)

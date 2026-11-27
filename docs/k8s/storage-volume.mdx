@@ -1,7 +1,7 @@
 ---
 id: storage-volume
 title: How Storage Gets Attached (PVC·PV)
-sidebar_label: 08 · How Storage Gets Attached
+sidebar_label: 10 · How Storage Gets Attached
 description: Follow, step by step, how a PVC request becomes a PV through a StorageClass and a CSI provisioner, how it is attached and mounted on the node where the pod runs, and why a PVC stays Pending
 summary: 'From requesting storage to a volume being created and attached to a Pod, and why data survives Pod death.'
 icon: disk
@@ -204,5 +204,11 @@ kubectl get pv                                       # RECLAIM POLICY before del
 kubectl get volumeattachments                        # Which node a volume is attached to
 kubectl describe pod <pod>                           # FailedAttachVolume or FailedMount
 ```
+
+<Quiz questions={[
+  {q: 'A new PVC has stayed Pending for a long time with no error, and its StorageClass does not use WaitForFirstConsumer. Where should you look first?', options: ['The container logs of the db pod', 'The Events in kubectl describe pvc, for a StorageClass name typo, a missing provisioner or no capacity', 'The Service endpoints'], answer: 1, why: 'A PVC with no matching PV or class is still created and waits as Pending. The reason shows up in the PVC events.'},
+  {q: 'The db pod is deleted, and a new pod uses the same PVC. What happens to the data?', options: ['The same volume is attached and mounted again, so the old data is still there', 'The data is lost, because it was written inside the pod', 'A new empty PV is created for the new pod'], answer: 0, why: 'The data lives on the volume in the storage system, outside the pod. Deleting the PVC, not the pod, is what can delete data, depending on the reclaim policy.'},
+  {q: 'A db pod moved to another node stays in ContainerCreating with FailedAttachVolume. Its volume is RWO. What is a likely cause?', options: ['The StorageClass name has a typo', 'The image name is wrong', 'The volume is still attached to the old node, and RWO attaches to only one node'], answer: 2, why: 'RWO means the volume attaches to one node at a time. Until it is detached from the old node, the new node has to wait.'},
+]} />
 
 Further reading: [Persistent Volumes](https://kubernetes.io/docs/concepts/storage/persistent-volumes/) · [Storage Classes](https://kubernetes.io/docs/concepts/storage/storage-classes/)

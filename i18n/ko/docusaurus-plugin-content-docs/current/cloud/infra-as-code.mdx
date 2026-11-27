@@ -1,7 +1,7 @@
 ---
 id: infra-as-code
 title: 테라폼으로 하는 코드형 인프라
-sidebar_label: 12 · 코드형 인프라
+sidebar_label: 16 · 코드형 인프라
 description: 테라폼(또는 OpenTofu)이 .tf 코드에서 init·plan·apply를 거쳐 클라우드를 만드는 과정, 원격 백엔드와 잠금으로 지키는 상태 파일, 콘솔 변경으로 생기는 드리프트, 교체와 제자리 변경의 차이, destroy를 애니메이션으로 따라간다
 summary: '코드·init·plan·apply, 잠금이 걸린 공유 상태, 드리프트, 그리고 plan의 -/+를 다시 봐야 하는 이유.'
 icon: layers
@@ -224,5 +224,11 @@ terraform state show aws_instance.web   # 기록된 속성과 실제 ID
 terraform destroy                   # 상태에 있는 것 전부 삭제 (먼저 묻는다)
 # OpenTofu: terraform 대신 tofu 로 같은 명령
 ```
+
+<Quiz questions={[
+  {q: '동료가 콘솔에서 보안 그룹의 22 포트를 열었다. 다음 plan은 이를 지우는 ~ update in place를 제안한다. 생각 없이 apply하면 어떻게 되는가?', options: ['테라폼이 내 코드에 22 포트를 더한다', '동료의 변경이 소리 없이 되돌아간다', '상태가 망가져 plan이 실패한다'], answer: 1, why: '코드와 상태에는 여전히 443만 있어서 테라폼은 클라우드를 그 모습으로 되돌린다. plan -refresh-only로 드리프트를 보고 의도를 갖고 골라야 하기 때문이다.'},
+  {q: 'DB의 속성을 바꾸자 plan에 -/+와 "# forces replacement"가 나온다. 무슨 뜻인가?', options: ['있는 객체의 속성만 바뀌고 ID는 그대로다', '상태 파일만 다시 쓰고 클라우드는 건드리지 않는다', 'apply 중에 데이터 소스를 읽는다', '옛 객체를 지우고 새로 만든다. DB라면 데이터가 사라진다'], answer: 3, why: '살아 있는 객체에서 바꿀 수 없는 속성이 있어 테라폼이 객체를 교체하기 때문이다. prevent_destroy = true를 두면 그런 계획이 실패한다.'},
+  {q: '두 엔지니어가 잠금이 있는 원격 백엔드에 동시에 terraform apply를 실행한다. 어떻게 되는가?', options: ['두 번째가 "Error acquiring the state lock"으로 실패한다', '둘 다 돌고 나중에 상태 파일이 합쳐진다', '두 번째가 첫 번째의 상태를 덮어쓴다'], answer: 0, why: '잠금은 apply 두 개가 동시에 도는 것을 막아서, 두 번째는 공유 상태를 망가뜨리는 대신 실패하기 때문이다.'},
+]} />
 
 더 읽을거리: [What is Terraform? (HashiCorp)](https://developer.hashicorp.com/terraform/intro) · [terraform plan](https://developer.hashicorp.com/terraform/cli/commands/plan) · [State](https://developer.hashicorp.com/terraform/language/state) · [State locking](https://developer.hashicorp.com/terraform/language/state/locking) · [lifecycle 메타 인수](https://developer.hashicorp.com/terraform/language/meta-arguments/lifecycle) · [OpenTofu 문서](https://opentofu.org/docs/) · [VPC 안에서 요청이 가는 길](../cloud/vpc-request.mdx) · [API 요청 하나의 권한 검사 (IAM)](../cloud/iam-request.mdx) · [Helm과 GitOps](../intermediate/gitops-sync.mdx)

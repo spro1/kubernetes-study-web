@@ -1,0 +1,276 @@
+---
+id: incident-response
+title: 'Incident Response: From Alert to Postmortem'
+sidebar_label: 13 · Incident response
+description: 'Follow one production incident from the alert page to the postmortem: acknowledge, declare a severity, assign incident roles, mitigate before root cause, update stakeholders on a cadence, resolve, and write a blameless postmortem with owned action items.'
+summary: 'Acknowledge, declare, assign roles, mitigate first, keep people informed, then learn from it in a blameless postmortem.'
+icon: alert
+hide_table_of_contents: true
+---
+
+# Incident Response: From Alert to Postmortem
+
+An alert fires at 02:10 and checkout is failing. Follow the incident from the page to the postmortem: who does what, why you stop the bleeding before you look for the cause, and how the team makes sure it does not happen again.
+
+<StepDiagram
+  width={1000}
+  height={460}
+  meta={{duration: '~12 min', level: 'Advanced'}}
+  groups={[
+    {label: 'Incident team', x: 265, y: 40, w: 210, h: 410, tone: 'mgmt'},
+    {label: 'Production', x: 550, y: 190, w: 180, h: 260, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'alert', label: 'Alert', sub: 'SLO burn rate', icon: 'bell', tone: 'cp', x: 100, y: 100, show: true},
+    {id: 'oncall', label: 'On-call', sub: 'primary responder', icon: 'user', tone: 'ext', x: 100, y: 250, show: true},
+    {id: 'comms', label: 'Communications', sub: 'status, stakeholders', icon: 'book', tone: 'cp', x: 370, y: 100, w: 170},
+    {id: 'ic', label: 'Incident commander', sub: 'coordinates, decides', icon: 'target', tone: 'cp', x: 370, y: 250, w: 190},
+    {id: 'ops', label: 'Operations lead', sub: 'and subject experts', icon: 'hammer', tone: 'node', x: 370, y: 400, w: 170},
+    {id: 'status', label: 'Status page', sub: 'public updates', icon: 'browser', tone: 'ext', x: 640, y: 100},
+    {id: 'users', label: 'Customers', sub: 'and stakeholders', icon: 'user', tone: 'ext', x: 875, y: 100},
+    {id: 'svc', label: 'checkout', sub: 'Deployment v42', icon: 'pod', tone: 'app', x: 640, y: 250, show: true},
+    {id: 'db', label: 'orders DB', sub: 'shared database', icon: 'db', tone: 'store', x: 640, y: 400, show: true},
+    {id: 'pm', label: 'Postmortem', sub: 'timeline, actions', icon: 'book', tone: 'store', x: 875, y: 330},
+  ]}
+  metrics={[
+    {id: 'err', label: 'Checkout errors'},
+    {id: 'sev', label: 'Severity'},
+    {id: 'phase', label: 'Phase'},
+    {id: 'next', label: 'Next update'},
+  ]}
+  learn={[
+    {text: 'Acknowledge, declare an incident and choose a severity', at: 1},
+    {text: 'Incident commander, operations and communications roles', at: 2},
+    {text: 'Why you mitigate before you look for the root cause', at: 4},
+    {text: 'Status updates on a fixed cadence', at: 5},
+    {text: 'Blameless postmortems and action items with owners', at: 8},
+  ]}
+  steps={[
+    {
+      short: 'Page',
+      kind: '시작',
+      title: 'An alert pages the on-call engineer',
+      text: [
+        'At 02:10 a burn-rate alert fires: checkout is failing about 5% of requests and is spending its monthly error budget fast. The alert routes to the primary on-call engineer.',
+        'The on-call acknowledges the page. Acknowledging stops the escalation to the secondary and tells everyone that a person now owns the problem.',
+      ],
+      keyIdea: 'A page should mean users are hurting right now. If it is not urgent and actionable, it belongs in a ticket, not a page.',
+      flows: [
+        {from: 'svc', to: 'alert', label: 'Errors', type: 'response'},
+        {from: 'alert', to: 'oncall', label: 'Page', type: 'request'},
+      ],
+      focus: ['alert', 'oncall'],
+      status: {svc: 'error'},
+      values: {err: {text: '5%', tone: 'bad'}, sev: '—', phase: 'Detect', next: '—'},
+    },
+    {
+      short: 'Declare',
+      kind: '원리',
+      title: 'Declare an incident and pick a severity',
+      text: [
+        'The on-call spends a few minutes on impact, not on cause. Users cannot pay, and it is not getting better. That is enough to declare an incident.',
+        'Severity says how big the response is. Many teams use SEV-1 (critical, wide customer impact) down to SEV-5 (cosmetic). If you are unsure between two levels, pick the higher one. Downgrading later is cheap; a slow response is not.',
+      ],
+      keyIdea: 'Declaring early costs little. An incident that is declared late usually means people fixed things alone for too long.',
+      flows: [{from: 'oncall', to: 'ic', label: 'Declare', type: 'request'}],
+      focus: ['oncall', 'ic'],
+      badges: {ic: 'SEV-2'},
+      values: {sev: {text: 'SEV-2', tone: 'bad'}, phase: 'Declared'},
+    },
+    {
+      short: 'Roles',
+      kind: '원리',
+      title: 'One incident commander, separate roles',
+      text: [
+        'The incident commander (IC) coordinates. The IC keeps the big picture, makes decisions and assigns work, but does not type commands into production.',
+        'The operations lead and subject experts make the changes. Communications handles the status page and stakeholders. A scribe, or the IC, keeps a timeline of what was seen, decided and changed. Everyone works in one incident channel.',
+      ],
+      keyIdea: 'At the start the on-call often holds every role. Hand roles off out loud as soon as more people join.',
+      flows: [
+        {from: 'ic', to: 'ops', label: 'Assign', type: 'request'},
+        {from: 'ic', to: 'comms', label: 'Assign', type: 'request'},
+      ],
+      focus: ['ic', 'ops', 'comms'],
+      badges: {ops: 'Ops', comms: 'Comms'},
+    },
+    {
+      short: 'Freelancing',
+      kind: '주의',
+      title: 'Uncoordinated fixes make it worse',
+      text: [
+        'Two engineers join on their own. One restarts checkout Pods, the other scales the database, and neither tells the channel. Errors move up and down, and nobody can tell which change did what.',
+        'The IC stops it: every change to production goes through the operations lead and is announced before it is made. Changes are written in the timeline with the time.',
+      ],
+      keyIdea: 'Parallel, unannounced changes destroy your ability to see cause and effect. One person decides, everyone else reports.',
+      flows: [
+        {from: 'oncall', to: 'svc', label: 'Restart?', type: 'request'},
+        {from: 'oncall', to: 'db', label: 'Scale?', type: 'request', bend: -40},
+      ],
+      focus: ['svc', 'db', 'ic'],
+      status: {db: 'warn'},
+    },
+    {
+      short: 'Mitigate',
+      kind: '원리',
+      title: 'Mitigate first, find the root cause later',
+      text: [
+        'The first question is what changed. Version v42 of checkout rolled out 20 minutes before the alert. The ops lead rolls back to v41, the fastest known-safe action.',
+        'Other common mitigations are failing over to another region or cluster, shedding load, and turning off a feature with a flag. They all buy time without needing to understand the bug.',
+      ],
+      keyIdea: 'Users care about recovery, not diagnosis. If a safe mitigation exists, use it now and debug after the bleeding stops.',
+      flows: [{from: 'ops', to: 'svc', label: 'Roll back', type: 'request'}],
+      focus: ['ops', 'svc'],
+      status: {svc: 'warn', db: null},
+      badges: {svc: 'v42 → v41'},
+      values: {err: {text: '0.8%', tone: 'bad'}, phase: 'Mitigating'},
+    },
+    {
+      short: 'Updates',
+      kind: '원리',
+      title: 'Post updates on a fixed cadence',
+      text: [
+        'Communications posts on the status page: what is affected, what the team is doing, and when the next update will come, for example in 30 minutes. Internal stakeholders and support get the same facts.',
+        'Keep the promise even with no news. "Still investigating, next update at 03:00" stops people from interrupting responders to ask.',
+      ],
+      keyIdea: 'Customers judge an incident partly by how well they were kept informed. Every update says when the next one is due.',
+      flows: [
+        {from: 'comms', to: 'status', label: 'Update', type: 'request'},
+        {from: 'status', to: 'users', label: 'Notify', type: 'request'},
+      ],
+      focus: ['comms', 'status', 'users'],
+      values: {next: '03:00'},
+    },
+    {
+      short: 'Not fixed',
+      kind: '문제',
+      title: 'The rollback helped, but errors remain',
+      text: [
+        'Errors drop to 0.8% but not to normal. v42 also ran a database migration that dropped an index. Rolling back the code does not roll back the schema, so heavy queries still hit the orders DB.',
+        'The ops lead turns off the recommendations feature with a flag, which sends the heaviest queries. Load on the database falls and errors return to the usual level.',
+      ],
+      keyIdea: 'A rollback reverts code, not data or schema. Plan how to undo migrations before you need to.',
+      flows: [
+        {from: 'svc', to: 'db', label: 'Slow queries', type: 'request'},
+        {from: 'ops', to: 'svc', label: 'Flag off', type: 'request'},
+      ],
+      focus: ['db', 'svc', 'ops'],
+      status: {db: 'error'},
+      badges: {db: 'index missing'},
+      values: {err: {text: '0.8% → 0.05%', tone: 'good'}},
+    },
+    {
+      short: 'Resolve',
+      kind: '원리',
+      title: 'Resolve, then keep watching',
+      text: [
+        'The IC waits until the error rate has stayed normal for a while before declaring the incident resolved. Communications posts a final update.',
+        'Monitoring continues. The flag stays off and the index is rebuilt in a planned change, not in the middle of the night. The incident moves from response to follow-up.',
+      ],
+      keyIdea: 'Resolved means users are fine. It does not mean the problem is understood or fixed for good.',
+      flows: [
+        {from: 'svc', to: 'alert', label: 'Normal', type: 'response'},
+        {from: 'comms', to: 'status', label: 'Resolved', type: 'request'},
+      ],
+      focus: ['svc', 'ic'],
+      status: {svc: 'ok', db: 'warn'},
+      badges: {svc: 'v41 · flag off', ic: null},
+      values: {err: {text: '0.05%', tone: 'good'}, phase: 'Resolved', next: 'Final'},
+    },
+    {
+      short: 'Postmortem',
+      kind: '원리',
+      title: 'Write a blameless postmortem',
+      text: [
+        'Within a few days the team writes a postmortem: impact, a timeline from the incident channel, root cause and contributing factors, what went well and where they got lucky.',
+        'Contributing factors here: the migration was not part of the rollback plan, the canary did not exercise the recommendations path, and two people made unannounced changes. Blameless means asking how the system allowed the mistake, not who made it.',
+      ],
+      keyIdea: 'People only tell the whole story when they are not punished for it. Without the whole story, the fixes are wrong.',
+      flows: [{from: 'ic', to: 'pm', label: 'Timeline', type: 'request'}],
+      focus: ['pm'],
+      badges: {pm: 'Draft'},
+      values: {phase: 'Postmortem'},
+    },
+    {
+      short: 'Actions',
+      kind: '원리',
+      title: 'Action items need owners and due dates',
+      text: [
+        'Each action item has one owner, a priority and a ticket: check migrations for dropped indexes in CI, add the recommendations path to canary analysis, write a runbook for the flag.',
+        'The postmortem is reviewed with the wider team, and someone checks later that the items were actually done. A postmortem whose actions never land will be written again.',
+      ],
+      keyIdea: 'Prefer actions that change the system (tests, automation, guardrails) over actions that ask people to be more careful.',
+      flows: [{from: 'pm', to: 'svc', label: 'Fixes', type: 'request'}],
+      focus: ['pm', 'svc', 'db'],
+      status: {db: 'ok'},
+      badges: {pm: '3 actions · owned', db: null},
+      values: {phase: 'Follow-up'},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Coordinate, stop the bleeding, inform, then learn',
+      text: [
+        'Acknowledge the page, declare early with a severity, and split the work into command, operations and communications. Mitigate with rollbacks, failover, load shedding or flags before you hunt for the cause.',
+        'Update stakeholders on a promised schedule, resolve only when metrics are stable, and finish with a blameless postmortem whose action items have owners.',
+      ],
+      keyIdea: 'Practice the process on small incidents and drills, so that the big one feels routine.',
+      flows: [
+        {from: 'alert', to: 'oncall', label: 'Page', type: 'request'},
+        {from: 'oncall', to: 'ic', label: 'Declare', type: 'request'},
+        {from: 'ic', to: 'pm', label: 'Learn', type: 'request'},
+      ],
+      focus: ['alert', 'ic', 'pm'],
+      badges: {svc: null},
+    },
+  ]}
+/>
+
+## Incident phases at a glance
+
+| Phase | Goal | Who | Common mistake |
+|---|---|---|---|
+| Detect | Know users are hurting | Alerting, on-call | Paging on causes (CPU, disk) instead of symptoms |
+| Acknowledge | Someone owns it | On-call | Silent pages that escalate because nobody acked |
+| Declare | Start a coordinated response | On-call, then IC | Declaring too late, or arguing about severity |
+| Coordinate | One plan, one channel | Incident commander | IC fixing things instead of leading |
+| Mitigate | Stop user impact | Operations lead, subject experts | Debugging the root cause while users wait |
+| Communicate | Keep everyone informed | Communications | No next-update time, so people ask the responders |
+| Resolve | Confirm recovery holds | IC | Closing as soon as one graph looks better |
+| Learn | Prevent a repeat | Whole team | Blaming a person; action items with no owner |
+
+Common mitigations and their limits:
+
+| Mitigation | When it helps | Watch out |
+|---|---|---|
+| Roll back | A recent deploy or config change | Does not undo data or schema changes |
+| Fail over | One region, zone or cluster is bad | The other side needs enough capacity |
+| Shed load | Overload, retry storms | Pick what to drop (low-priority traffic first) |
+| Feature flag off | One feature causes the damage | The flag must exist and be tested |
+| Scale out | Real demand above capacity | Does not help when a dependency is the bottleneck |
+
+## Try it yourself
+
+```bash
+# What changed recently? Rollout history and recent events
+kubectl rollout history deployment/checkout -n shop
+kubectl get events -n shop --sort-by=.lastTimestamp | tail -20
+
+# Mitigate: roll back to the previous revision and wait for it
+kubectl rollout undo deployment/checkout -n shop
+kubectl rollout status deployment/checkout -n shop
+
+# Record why, so the timeline shows it later
+kubectl annotate deployment/checkout -n shop \
+  kubernetes.io/change-cause="incident 2026-11-27: roll back v42" --overwrite
+
+# Which alerts are firing right now (Alertmanager CLI)
+amtool --alertmanager.url=http://localhost:9093 alert query
+```
+
+<Quiz questions={[
+  {q: 'Checkout errors spike right after a deploy. What should the team do first?', options: ['Read the code diff until the bug is found', 'Roll back the deploy, then investigate', 'Wait for the next status update before acting'], answer: 1, why: 'Mitigation comes first. A rollback restores service quickly; the root cause can be found once users are no longer affected.'},
+  {q: 'Why should the incident commander avoid making changes in production?', options: ['Coordinating, deciding and tracking the big picture is a full-time job', 'Incident commanders usually lack production access', 'Changes by the IC are not recorded in the timeline'], answer: 0, why: 'An IC who is busy typing commands stops seeing the whole incident. Others make the changes; the IC decides and coordinates.'},
+  {q: 'A postmortem finds an engineer ran a risky command. What does a blameless postmortem ask?', options: ['Who approved that engineer\'s access', 'How to discipline the engineer', 'What in the system made the risky command easy and its effect hard to see'], answer: 2, why: 'Blameless postmortems look for system and process causes. If people fear blame they hide details, and the real fixes are missed.'},
+]} />
+
+Further reading: [Google SRE book: Managing Incidents](https://sre.google/sre-book/managing-incidents/) · [Google SRE book: Postmortem Culture](https://sre.google/sre-book/postmortem-culture/) · [PagerDuty Incident Response](https://response.pagerduty.com/) · [PagerDuty Postmortems](https://postmortems.pagerduty.com/) · [SLOs and Alert Design](../advanced/slo-alert.mdx) · [How Logs, Metrics and Traces Leave a Pod](../k8s/observability-pipeline.mdx)

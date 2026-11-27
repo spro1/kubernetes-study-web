@@ -1,7 +1,7 @@
 ---
 id: model-packaging
 title: Getting a Model Ready to Deploy
-sidebar_label: 06 · Getting a Model Ready to Deploy
+sidebar_label: 07 · Getting a Model Ready to Deploy
 description: Follow model weights from Hugging Face or S3 as they are pulled, packaged as an OCI artifact, and pre-pulled onto GPU nodes so that serving Pods start fast.
 summary: 'Pull weights, package them as an image or artifact, and pre-cache them on nodes so serving starts fast.'
 icon: archive
@@ -192,5 +192,11 @@ kubectl get daemonsets -A -o wide                    # Pre-pull DaemonSet ready 
 kubectl describe pod <pod> | grep -iE 'pulling|pulled'   # Model pull time (step 8)
 crictl images                                        # On the node: is the cache there?
 ```
+
+<Quiz questions={[
+  {q: 'Why pin the Hugging Face revision to a commit hash instead of using main?', options: ['main can change later, so only a commit hash lets you rebuild the same model', 'Gated models can only be downloaded by commit hash', 'Commit hashes download faster than branches'], answer: 0, why: 'The main branch can move. Pinning the revision makes every later stage reproducible.'},
+  {q: 'A serving Pod sits in ContainerCreating with a lingering Pulling image event on one GPU node. What is most likely?', options: ['The DRA driver has not prepared the GPU', 'The download Job hit its backoffLimit', 'The node has no cached model artifact, either never pre-pulled or removed by image garbage collection', 'The registry digest changed'], answer: 2, why: 'Without the node cache the artifact is pulled on the spot. A missing pre-pull or image GC evicting it under disk pressure leaves the Pod waiting.'},
+  {q: 'Why keep the raw weights in object storage after packaging them as an OCI artifact?', options: ['Serving Pods read the raw files directly', 'You can change the packaging or rerun a failed stage without downloading from outside again', 'The registry requires a checksum copy in object storage', 'Image garbage collection needs them to rebuild the cache'], answer: 1, why: 'Raw weights are the files as downloaded; the artifact is the deployable package. Keeping both separate means a rebuild never needs the external source.'},
+]} />
 
 Further reading: [Images](https://kubernetes.io/docs/concepts/containers/images/) · [Image volumes](https://kubernetes.io/docs/tasks/configure-pod-container/image-volumes/) · [KServe OCI model storage](https://kserve.github.io/website/docs/model-serving/storage/providers/oci) · [Garbage Collection](https://kubernetes.io/docs/concepts/architecture/garbage-collection/) · [Jobs](https://kubernetes.io/docs/concepts/workloads/controllers/job/)

@@ -1,0 +1,241 @@
+---
+id: model-evaluation
+title: Evaluating a Model Before and After Deploy
+sidebar_label: 16 · Model Evaluation
+description: Animated walkthrough of LLM evaluation from an offline eval set built from real tasks, exact match and pass@k, LLM-as-judge biases and human calibration, contamination, a CI regression gate, safety and refusal evals, to an online canary with quality and latency metrics and results tracked per model version
+summary: 'Build an eval set from real tasks, score it fairly, gate new models, prompts and quantizations in CI, then confirm on a canary with live quality and latency.'
+icon: chart
+hide_table_of_contents: true
+---
+
+# Evaluating a Model Before and After Deploy
+
+A new model, prompt or quantization can look fine in a few chats and still break real tasks. Evaluation turns "looks fine" into numbers you can compare: offline before deploy, then online on real traffic.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~12 min', level: 'Intermediate'}}
+  groups={[
+    {label: 'Production', x: 705, y: 200, w: 190, h: 235, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'cand', label: 'Candidate', sub: 'model · prompt · quant', icon: 'box', tone: 'app', x: 100, y: 110, w: 160, show: true},
+    {id: 'data', label: 'Eval set', sub: 'from real tasks', icon: 'book', tone: 'store', x: 100, y: 300, w: 160},
+    {id: 'runner', label: 'Eval runner', sub: 'CI job', icon: 'gear', tone: 'cp', x: 330, y: 205, w: 160},
+    {id: 'judge', label: 'LLM judge', sub: 'scores open answers', icon: 'target', tone: 'node', x: 560, y: 90, w: 160},
+    {id: 'human', label: 'Human labels', sub: 'calibrate the judge', icon: 'user', tone: 'ext', x: 800, y: 90, w: 160},
+    {id: 'gate', label: 'Regression gate', sub: 'promote or block', icon: 'shield', tone: 'cp', x: 560, y: 330, w: 160},
+    {id: 'results', label: 'Results store', sub: 'per model version', icon: 'db', tone: 'store', x: 330, y: 395, w: 160},
+    {id: 'canary', label: 'Canary', sub: 'small traffic share', icon: 'split', tone: 'node', x: 800, y: 260, w: 160},
+    {id: 'stable', label: 'Stable model', sub: 'current version', icon: 'server', tone: 'node', x: 800, y: 380, w: 160},
+  ]}
+  metrics={[
+    {id: 'cand', label: 'Candidate'},
+    {id: 'base', label: 'Baseline'},
+    {id: 'verdict', label: 'Decision'},
+  ]}
+  learn={[
+    {text: 'Build an eval set from real tasks, not from a demo', at: 1},
+    {text: 'Exact match, pass@k and task-specific scores', at: 2},
+    {text: 'LLM-as-judge biases and calibration against humans', at: 4},
+    {text: 'Why contaminated test data inflates scores', at: 6},
+    {text: 'A CI regression gate with safety and refusal evals', at: 7},
+    {text: 'Canary or A/B with quality and latency, tracked per version', at: 8},
+  ]}
+  steps={[
+    {
+      short: 'Start',
+      kind: '시작',
+      title: 'A cheaper model that "seems fine"',
+      text: [
+        'The team wants to replace the serving model with a 4-bit quantized version to save GPU memory. A few manual chats look the same as before.',
+        'A few chats say nothing about the long tail: rare intents, long documents, strict output formats. The question is not "does it work" but "is it at least as good as what runs now, on our tasks".',
+      ],
+      flows: [{from: 'cand', to: 'runner', label: 'new version', type: 'request'}],
+      focus: ['cand'],
+      values: {cand: 'chat-model q4', base: 'chat-model bf16', verdict: '—'},
+    },
+    {
+      short: 'Eval set',
+      kind: '원리',
+      title: 'Build the eval set from real tasks',
+      text: [
+        'Sample real requests from logs, remove personal data, and attach the expected answer or a grading rubric to each. Add the hard and rare cases that broke before, and group items into slices such as SQL, summaries, and tool use.',
+        'Keep the set private and versioned. A few hundred well-chosen items that match your traffic tell you more than a famous public benchmark.',
+      ],
+      flows: [{from: 'data', to: 'runner', label: 'eval set v7', type: 'request'}],
+      focus: ['data', 'runner'],
+      badges: {data: 'v7 · 6 slices'},
+    },
+    {
+      short: 'Metrics',
+      kind: '원리',
+      title: 'Score each task type the way it can be checked',
+      text: [
+        'Short factual answers use exact match after normalization. Code uses pass@k: generate k samples and count the task solved if at least one passes the unit tests. Structured output checks that the JSON parses and the fields are right.',
+        'Other tasks need their own score: correct tool and arguments for agents, cited sources for RAG, F1 for extraction. Prefer a check a program can run over an opinion.',
+      ],
+      keyIdea: 'pass@1 is what a user sees on one try; a higher pass@k only helps if something downstream tests the samples and picks one.',
+      flows: [{from: 'runner', to: 'cand', label: 'run eval set', type: 'request'}],
+      focus: ['runner'],
+      badges: {runner: 'EM · pass@k · JSON'},
+      values: {cand: 'SQL pass@1 71%', base: 'SQL pass@1 73%'},
+    },
+    {
+      short: 'Judge',
+      kind: '원리',
+      title: 'An LLM judge scores the open-ended answers',
+      text: [
+        'Summaries and support replies have no single right string. An LLM-as-judge reads the question, a rubric and the answer, then returns a score, or compares two answers and picks the better one.',
+        'It scales to thousands of items in minutes. But it is a model too, so its scores need checking before you trust them for a release decision.',
+      ],
+      flows: [{from: 'runner', to: 'judge', label: 'answer + rubric', type: 'request'}, {from: 'judge', to: 'runner', label: 'score 1–5', type: 'response', bend: 0.2}],
+      focus: ['judge'],
+      badges: {runner: null, judge: 'rubric v3'},
+    },
+    {
+      short: 'Bias',
+      kind: '주의',
+      title: 'Judges prefer the first, the longer, and their own',
+      text: [
+        'Known judge biases: position bias (favoring the answer shown first), length or verbosity bias (favoring longer answers), and self-preference (favoring answers from its own model family).',
+        'Counter them: run pairwise comparisons in both orders and count only consistent wins, tell the rubric to ignore length, and use a judge from a different family than the candidate.',
+      ],
+      flows: [{from: 'judge', to: 'runner', label: 'A first vs B first', type: 'response', bend: 0.2}],
+      focus: ['judge'],
+      status: {judge: 'warn'},
+      badges: {judge: 'position · length · self'},
+    },
+    {
+      short: 'Calibrate',
+      kind: '원리',
+      title: 'Calibrate the judge against human labels',
+      text: [
+        'People grade a sample of items with the same rubric. Compare the judge with them: how often do they agree, and on which slices do they differ?',
+        'If agreement is low on a slice, fix the rubric or keep humans on that slice. Repeat the check whenever the judge model or rubric changes, because that changes every score.',
+      ],
+      flows: [{from: 'human', to: 'judge', label: 'agreement check', type: 'watch'}],
+      focus: ['human', 'judge'],
+      status: {judge: 'ok'},
+      badges: {judge: 'agrees on most slices', human: '200 items'},
+    },
+    {
+      short: 'Contamination',
+      kind: '문제',
+      title: 'A suspiciously high score: the test leaked',
+      text: [
+        'A second candidate scores far above the baseline on one public benchmark but no better on your own set. Its training data likely contained those test items, so it remembers answers instead of solving tasks.',
+        'Keep your main eval set private and never train on it. Check training data for overlap with eval items, and refresh the set with new real tasks over time.',
+      ],
+      flows: [{from: 'data', to: 'runner', label: 'public set', type: 'request'}],
+      focus: ['data', 'runner'],
+      status: {judge: null, data: 'error'},
+      badges: {judge: null, human: null, data: 'seen in training?'},
+      values: {cand: {text: 'public 92% · ours 70%', tone: 'bad'}},
+    },
+    {
+      short: 'Gate',
+      kind: '원리',
+      title: 'A regression gate in CI decides promotion',
+      text: [
+        'Every new model, prompt or quantization runs the same eval in CI. The gate compares it with the baseline per slice and blocks if any slice drops beyond a set margin, not just the average.',
+        'The gate also runs safety and refusal evals: harmful requests must still be refused, and benign requests must not be refused more often. It checks latency and output length too, since a slower or wordier model can fail users without failing accuracy.',
+      ],
+      keyIdea: 'Gate on slices, not just the average. A small overall drop can hide a large one on the task that matters most.',
+      flows: [
+        {from: 'runner', to: 'gate', label: 'scores per slice', type: 'request', bend: 0.1},
+        {from: 'gate', to: 'canary', label: 'promote q4', type: 'request'},
+      ],
+      focus: ['gate'],
+      status: {data: null, gate: 'ok'},
+      badges: {data: null, gate: 'all slices within margin'},
+      values: {cand: 'within 2 pts · refusals OK', verdict: {text: 'promote to canary', tone: 'good'}},
+    },
+    {
+      short: 'Canary',
+      kind: '원리',
+      title: 'Confirm on live traffic with a canary',
+      text: [
+        'Offline sets never cover everything. A canary sends a small share of real traffic to the candidate, or an A/B test splits users, while the stable model serves the rest.',
+        'Compare quality signals (task success, thumbs down, retries, escalations to humans) and latency (time to first token, p95) between the two. A progressive delivery tool can step the share up and roll back automatically when the numbers cross a limit.',
+      ],
+      flows: [
+        {from: 'gate', to: 'canary', label: 'small share', type: 'request'},
+        {from: 'gate', to: 'stable', label: 'the rest', type: 'request', bend: 0.15},
+      ],
+      focus: ['canary', 'stable'],
+      status: {gate: null, canary: 'ok'},
+      badges: {gate: null, canary: 'TTFT · success rate'},
+      values: {verdict: 'canary running'},
+    },
+    {
+      short: 'Track',
+      kind: '원리',
+      title: 'Store every result with what produced it',
+      text: [
+        'Each run records the model version, prompt version, quantization, serving engine settings, eval set version and judge version, next to the scores per slice.',
+        'Then a later drop can be traced to one change, and an old model can be compared with a new one fairly. A score with no versions attached cannot be reproduced.',
+      ],
+      flows: [{from: 'runner', to: 'results', label: 'scores + versions', type: 'request'}, {from: 'canary', to: 'results', label: 'online metrics', type: 'watch', bend: 0.2}],
+      focus: ['results'],
+      status: {canary: null},
+      badges: {canary: null, results: 'q4 · prompt v12 · set v7'},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Offline to block regressions, online to confirm',
+      text: [
+        'Build the eval set from real tasks and score each type with a check that fits it: exact match, pass@k, or a judge calibrated against humans. Watch for judge bias and contaminated test data.',
+        'A CI gate compares every candidate with the baseline per slice, including safety and refusals. A canary then confirms quality and latency on real traffic, and every result is stored with its versions.',
+      ],
+      keyIdea: 'When a model change gets complaints, check three things: did it pass the gate per slice, does the eval set still look like current traffic, and what did the canary show?',
+      flows: [
+        {from: 'cand', to: 'runner', label: 'every change', type: 'request'},
+        {from: 'runner', to: 'gate', label: 'gate', type: 'request', bend: 0.1},
+      ],
+      focus: ['runner', 'gate', 'canary'],
+      badges: {results: null},
+      values: {verdict: {text: 'promoted with evidence', tone: 'good'}},
+    },
+  ]}
+/>
+
+## Which evaluation for which job
+
+| Method | Good for | Watch out |
+|---|---|---|
+| Exact match | Short answers, labels, IDs | Normalize case, spaces and punctuation first |
+| pass@k | Code with unit tests | pass@1 is what users see; tests must be strong |
+| Format checks | JSON, tool calls, schemas | Valid format does not mean right content |
+| LLM-as-judge | Summaries, replies, open answers | Position, length and self-preference bias; calibrate with humans |
+| Human review | Small samples, new tasks, judge calibration | Slow and costly; use a clear rubric |
+| Safety and refusal evals | Harmful requests refused, benign ones answered | Track both over-refusal and under-refusal |
+| Online canary or A/B | Real traffic, real latency | Needs enough traffic and an automatic rollback |
+
+## Try it yourself
+
+```bash
+# Run the same eval against baseline and candidate (both serve an OpenAI-compatible API)
+lm_eval --model local-completions --tasks gsm8k \
+  --model_args model=chat-model,base_url=http://baseline:8000/v1/completions \
+  --output_path results/baseline --log_samples
+lm_eval --model local-completions --tasks gsm8k \
+  --model_args model=chat-model,base_url=http://candidate:8000/v1/completions \
+  --output_path results/candidate --log_samples
+
+# Compare the scores side by side
+find results -name 'results_*.json' -exec jq -c '{file: input_filename, results}' {} \;
+
+# Watch the online canary (if you deliver with Argo Rollouts)
+kubectl argo rollouts get rollout chat-model -n llm --watch
+```
+
+<Quiz questions={[
+  {q: 'The candidate is 1 point lower on average but 9 points lower on the SQL slice. What should the gate do?', options: ['Pass it, since the average drop is small', 'Block it, because a slice dropped beyond its margin', 'Pass it if the LLM judge likes its answers'], answer: 1, why: 'An average hides slice regressions. Gating per slice catches a large drop on one important task.'},
+  {q: 'An LLM judge prefers whichever answer it reads first. What is the usual fix?', options: ['Run each comparison in both orders and count only consistent wins', 'Use a longer rubric', 'Let the candidate model judge itself'], answer: 0, why: 'This is position bias. Swapping the order and keeping consistent results removes it; self-judging adds self-preference bias.'},
+  {q: 'A model scores far higher on a public benchmark than on your private eval set. What is a likely reason?', options: ['Private sets are always harder', 'The public set uses exact match', 'Its training data contained the benchmark items (contamination)'], answer: 2, why: 'If test items leak into training, the model recalls answers. A private, fresh eval set from real tasks guards against it.'},
+]} />
+
+Further reading: [lm-evaluation-harness](https://github.com/EleutherAI/lm-evaluation-harness) · [Judging LLM-as-a-Judge (biases)](https://arxiv.org/abs/2306.05685) · [Evaluating LLMs Trained on Code (pass@k)](https://arxiv.org/abs/2107.03374) · [Making a Model Smaller (Quantization)](../llm/quantization.mdx) · [Progressive Delivery with Argo Rollouts](../feature/argo-rollouts.mdx) · [From Training Job to Model](../ai/training-job.mdx)

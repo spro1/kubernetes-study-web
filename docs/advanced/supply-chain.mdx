@@ -188,4 +188,10 @@ cosign verify --key <cosign.pub> <image>                        # Who built it, 
 kubectl get validatingwebhookconfigurations                     # Is a policy verifying signatures at deploy?
 ```
 
+<Quiz questions={[
+  {q: 'Your images are signed in CI, but a swapped image in the registry still runs in the cluster. What is missing?', options: ['An SBOM for each image', 'A newer vulnerability database', 'An admission policy that verifies the signature at deploy and rejects missing or mismatched ones'], answer: 2, why: 'Kubernetes does not verify image signatures by default. A signature means something only when admission checks it at deploy.'},
+  {q: 'Pods in one Deployment run different versions of app:latest, yet the manifest never changed. Why?', options: ['The tag was overwritten, and only Pods started afterwards on new nodes got the new image', 'The SBOM was regenerated', 'The scanner rebuilt the image', 'Digest pinning failed'], answer: 0, why: 'A mutable tag can point at a different image. Pinning by digest (app@sha256:...) avoids this, because different content always yields a different digest.'},
+  {q: 'A new vulnerability is announced in a library. What helps you find at once which of your images contain it?', options: ['The image signature', 'The SBOM, the list of packages and versions in each image', 'The digest'], answer: 1, why: 'An SBOM is only a list, not proof of safety, but it lets you find at once which images contain the affected package.'},
+]} />
+
 Further reading: [Images](https://kubernetes.io/docs/concepts/containers/images/) · [Harbor docs](https://goharbor.io/docs/) · [Sigstore docs](https://docs.sigstore.dev/) · [Trivy](https://trivy.dev/)

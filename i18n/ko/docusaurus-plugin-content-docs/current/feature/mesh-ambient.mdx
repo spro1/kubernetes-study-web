@@ -1,0 +1,253 @@
+---
+id: mesh-ambient
+title: 서비스 메시 ④ 사이드카 없는 앰비언트 모드
+sidebar_label: 08 · 메시 앰비언트 모드
+description: 네임스페이스 레이블 istio.io/dataplane-mode=ambient와 노드마다 도는 ztunnel이 포트 15008의 HBONE으로 mTLS를 싣는 방식부터, L4·L7 AuthorizationPolicy, 웨이포인트 프록시, 웨이포인트가 없을 때 무시되는 L7 규칙까지 Istio 앰비언트 모드를 애니메이션으로 본다
+summary: '파드 재시작 없이 네임스페이스 레이블로 메시에 넣고, 노드별 ztunnel이 HBONE으로 mTLS를 맡고, L7 규칙이 필요한 곳에만 웨이포인트를 둔다.'
+icon: layers
+hide_table_of_contents: true
+---
+
+# 서비스 메시 ④ 사이드카 없는 앰비언트 모드
+
+앰비언트 모드는 메시 프록시를 파드 밖으로 뺀다. 노드마다 하나씩 도는 **ztunnel**이 L4에서 mTLS와 신원을 맡고, 필요한 곳에만 **웨이포인트** 프록시를 두어 L7 기능을 더한다. ztunnel만으로 되는 것과, 조용히 안 되는 것을 본다.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '약 13분', level: '심화'}}
+  groups={[
+    {label: '노드 1', x: 30, y: 130, w: 420, h: 170, tone: 'biz'},
+    {label: '노드 2', x: 550, y: 130, w: 420, h: 170, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'istiod', label: 'istiod', sub: '설정과 인증서', icon: 'gear', tone: 'cp', x: 500, y: 65, show: true},
+    {id: 'web', label: '파드 web', sub: 'ns shop', icon: 'pod', tone: 'app', size: 'sm', x: 130, y: 215, show: true},
+    {id: 'zt1', label: 'ztunnel', sub: '데몬셋 · 노드 1', icon: 'shield', tone: 'node', x: 330, y: 215},
+    {id: 'zt2', label: 'ztunnel', sub: '데몬셋 · 노드 2', icon: 'shield', tone: 'node', x: 670, y: 215},
+    {id: 'api', label: '파드 api', sub: 'ns shop', icon: 'pod', tone: 'app', size: 'sm', x: 870, y: 215, show: true},
+    {id: 'route', label: 'HTTPRoute', sub: '재시도 · 헤더 매칭', icon: 'route', tone: 'store', x: 170, y: 380},
+    {id: 'wp', label: '웨이포인트', sub: 'Envoy · L7 · ns shop', icon: 'gate', tone: 'node', x: 500, y: 380, w: 160},
+    {id: 'authz', label: 'AuthorizationPolicy', sub: 'api를 부를 수 있는 쪽', icon: 'ticket', tone: 'store', x: 830, y: 380, w: 180},
+  ]}
+  metrics={[
+    {id: 'path', label: '경로'},
+    {id: 'mtls', label: 'mTLS'},
+    {id: 'l4', label: 'L4 정책'},
+    {id: 'l7', label: 'L7 규칙'},
+  ]}
+  learn={[
+    {text: '사이드카도 재시작도 없이 네임스페이스 레이블로 메시에 넣는 법', at: 1},
+    {text: 'ztunnel이 노드마다 하는 일과 하지 않는 일', at: 2},
+    {text: 'HBONE이 포트 15008에서 mTLS로 트래픽을 터널링하는 방식', at: 3},
+    {text: '웨이포인트가 없을 때 L7 규칙이 무시되거나 모두 막는 이유', at: 5},
+    {text: '웨이포인트를 두고 L7 경로와 정책을 거기에 붙이는 법', at: 7},
+  ]}
+  steps={[
+    {
+      short: '시작',
+      kind: '시작',
+      title: '파드 web이 파드 api를 부른다, 아직 메시 없이',
+      text: [
+        '노드 1의 web이 네임스페이스 shop에 있는 노드 2의 api를 부른다. 트래픽은 그냥 TCP다. 신원도 암호화도 없다.',
+        '사이드카 모드라면 모든 파드에 Envoy 프록시를 넣고 전부 다시 띄운다. 앰비언트 모드는 이 일을 둘로 나눈다. 노드마다 공유하는 L4 프록시 하나, 그리고 필요한 곳에만 L7 프록시. 앰비언트 모드는 Istio 1.24부터 정식(GA) 기능이다.',
+      ],
+      flows: [{from: 'web', to: 'api', label: '평문 TCP', type: 'request'}],
+      focus: ['web', 'api'],
+      values: {path: 'web → api', mtls: {text: '없음', tone: 'bad'}, l4: '—', l7: '—'},
+    },
+    {
+      short: '레이블',
+      kind: '원리',
+      title: '네임스페이스 레이블 하나로 파드가 메시에 들어간다',
+      text: [
+        '네임스페이스에 istio.io/dataplane-mode=ambient 레이블을 단다. 파드에 아무것도 주입하지 않으니 READY는 1/1 그대로이고 재시작도 없다.',
+        'Istio CNI 노드 에이전트가 각 파드의 네트워크 네임스페이스 안에 트래픽 우회 규칙을 건다. 그때부터 파드가 주고받는 트래픽은 같은 노드의 ztunnel을 거친다.',
+      ],
+      keyIdea: '레이블을 지우면 파드는 다시 메시에서 빠진다. 이것도 재시작이 필요 없다. 그래서 네임스페이스 하나씩 시험해 보기 쉽다.',
+      flows: [{from: 'web', to: 'zt1', label: '우회', type: 'request'}],
+      focus: ['web', 'zt1'],
+      badges: {web: 'ambient', api: 'ambient'},
+    },
+    {
+      short: 'ztunnel',
+      kind: '원리',
+      title: 'ztunnel은 노드마다 도는 L4 프록시다',
+      text: [
+        'ztunnel은 데몬셋이라 노드마다 파드가 하나씩 뜬다. istiod는 그 노드에 있는 파드들의 워크로드 신원용 인증서를 ztunnel에 준다. 그래서 ztunnel이 파드 대신 mTLS를 할 수 있다.',
+        'ztunnel은 L3·L4만 다룬다. mTLS, 신원, L4 인가, TCP 지표가 그 일이다. HTTP를 해석하지 않으므로 경로·헤더·재시도는 전혀 모른다.',
+      ],
+      keyIdea: 'istioctl ztunnel-config workloads 로 ztunnel마다 아는 워크로드를 본다. 메시에 든 파드는 PROTOCOL이 HBONE으로 나온다.',
+      flows: [
+        {from: 'istiod', to: 'zt1', label: '인증서', type: 'watch'},
+        {from: 'istiod', to: 'zt2', label: '인증서', type: 'watch'},
+      ],
+      focus: ['zt1', 'zt2', 'istiod'],
+    },
+    {
+      short: 'HBONE',
+      kind: '원리',
+      title: 'HBONE이 연결을 mTLS 안에 터널로 싣는다',
+      text: [
+        '노드 1의 ztunnel이 노드 2의 ztunnel 포트 15008로 mTLS 연결을 연다. 그 안에서 HTTP CONNECT 요청이 web의 TCP 스트림용 터널을 연다. HTTP/2 덕분에 스트림 여러 개가 연결 하나를 같이 쓴다. 이것이 HBONE이다.',
+        '양쪽이 서로의 인증서를 확인하므로, api 쪽 ztunnel은 호출한 쪽이 web 서비스어카운트 신원이라는 것을 안다. 앱은 여전히 평범한 TCP를 주고받는다.',
+      ],
+      flows: [
+        {from: 'web', to: 'zt1', label: 'TCP', type: 'request'},
+        {from: 'zt1', to: 'zt2', label: 'HBONE :15008', type: 'request'},
+        {from: 'zt2', to: 'api', label: 'TCP', type: 'request'},
+      ],
+      focus: ['zt1', 'zt2'],
+      values: {path: 'web → ztunnel → ztunnel → api', mtls: {text: '켜짐 (HBONE)', tone: 'good'}},
+    },
+    {
+      short: 'L4 정책',
+      kind: '원리',
+      title: 'ztunnel이 L4 AuthorizationPolicy를 지킨다',
+      text: [
+        'api에 web 신원만 허용하는 AuthorizationPolicy를 건다. 받는 쪽 ztunnel이 새 연결마다 이를 확인하고 다른 호출자는 거절한다.',
+        'L4에서 ztunnel은 출발지 principal, 네임스페이스, IP 대역, 목적지 포트를 맞춰 볼 수 있다. "누가 누구와 통신해도 되는가" 규칙 대부분은 L7 프록시 없이 이것으로 된다.',
+      ],
+      flows: [
+        {from: 'authz', to: 'zt2', label: 'principals, ports', type: 'watch'},
+        {from: 'zt1', to: 'zt2', label: 'HBONE', type: 'request'},
+      ],
+      focus: ['authz', 'zt2'],
+      badges: {authz: 'L4 규칙'},
+      values: {l4: {text: 'ztunnel이 적용', tone: 'good'}},
+    },
+    {
+      short: 'L7 무시',
+      kind: '문제',
+      title: '웨이포인트 없는 HTTP 경로는 아무 일도 안 한다',
+      text: [
+        '팀이 api용 HTTPRoute를 만든다. 재시도를 넣고, 헤더로 테스터만 새 버전에 보내는 규칙이다. kubectl apply는 성공하지만 바뀌는 것이 없다. 요청은 여전히 ztunnel에서 ztunnel로 곧장 간다.',
+        '경로 위에 HTTP를 읽는 프록시가 없으니 아무도 규칙을 적용하지 않는다. 재시도, 타임아웃, 헤더 라우팅, 장애 주입, L7 지표는 모두 웨이포인트가 있어야 한다.',
+      ],
+      keyIdea: '앰비언트 모드에서 L7 규칙이 듣지 않으면, 먼저 그 서비스를 맡은 웨이포인트가 있는지부터 본다.',
+      flows: [
+        {from: 'route', to: 'zt1', label: '적용 안 됨', type: 'watch'},
+        {from: 'zt1', to: 'zt2', label: 'HBONE', type: 'request'},
+      ],
+      focus: ['route'],
+      status: {route: 'warn'},
+      values: {l7: {text: '무시됨 (웨이포인트 없음)', tone: 'bad'}},
+    },
+    {
+      short: 'L7 정책',
+      kind: '주의',
+      title: 'ztunnel에 건 L7 ALLOW 규칙은 전부 막는다',
+      text: [
+        '이번엔 누군가 정책을 web의 GET만 허용하도록 바꾼다. ztunnel은 HTTP 메서드를 판단할 수 없어 그 규칙을 건너뛴다. ALLOW 정책에서 건너뛴 규칙은 절대 맞지 않으므로, api로 가는 트래픽이 모두 거부된다.',
+        '반대도 위험하다. L7 조건만 있는 DENY 정책도 건너뛰어지니 아무것도 막지 못한다.',
+      ],
+      keyIdea: 'ztunnel이 적용할 정책에는 L4 필드만 쓴다. 메서드·경로·헤더를 보는 정책은 웨이포인트에 붙인다.',
+      flows: [{from: 'zt1', to: 'zt2', label: '거부', type: 'request'}],
+      focus: ['authz', 'zt2'],
+      status: {authz: 'error', api: 'error', route: null},
+      badges: {authz: 'methods: GET'},
+      values: {l4: {text: '모두 거부', tone: 'bad'}},
+    },
+    {
+      short: '웨이포인트',
+      kind: '원리',
+      title: '웨이포인트가 네임스페이스에 L7을 더한다',
+      text: [
+        'istioctl waypoint apply -n shop --enroll-namespace 는 클래스가 istio-waypoint인 Gateway를 만들고, 네임스페이스에 istio.io/use-waypoint=waypoint 레이블을 단다. Istio는 이를 Envoy 디플로이먼트로 띄운다.',
+        '이제 ztunnel은 shop의 서비스로 가는 트래픽을 먼저 웨이포인트로 보낸다. 웨이포인트가 L7 규칙을 적용한 뒤 HBONE으로 넘긴다. 웨이포인트는 기본으로 서비스 트래픽을 맡는다. 같은 레이블을 서비스 하나에만 달 수도 있다.',
+      ],
+      flows: [
+        {from: 'zt1', to: 'wp', label: 'HBONE', type: 'request'},
+        {from: 'wp', to: 'zt2', label: 'HBONE', type: 'request'},
+      ],
+      focus: ['wp'],
+      status: {authz: null, api: null},
+      badges: {wp: 'use-waypoint'},
+      values: {path: 'web → ztunnel → 웨이포인트 → ztunnel → api'},
+    },
+    {
+      short: 'L7 동작',
+      kind: '원리',
+      title: '경로와 L7 정책은 웨이포인트에 붙는다',
+      text: [
+        'api 서비스를 parentRef로 둔 HTTPRoute가 이제 효과를 낸다. 재시도와 헤더 매칭이 웨이포인트에서 돈다. VirtualService도 웨이포인트와 쓸 수 있지만, Istio는 이 용법을 Alpha로 둔다.',
+        'L7 AuthorizationPolicy는 api 서비스(또는 웨이포인트 Gateway)를 가리키는 targetRefs로 옮긴다. 메서드와 경로는 웨이포인트가, L4 규칙은 계속 ztunnel이 지킨다.',
+      ],
+      flows: [
+        {from: 'route', to: 'wp', label: 'parentRef: api', type: 'watch'},
+        {from: 'authz', to: 'wp', label: 'targetRefs', type: 'watch'},
+        {from: 'wp', to: 'zt2', label: 'GET만', type: 'request'},
+      ],
+      focus: ['wp', 'route', 'authz'],
+      status: {route: 'ok', authz: 'ok'},
+      badges: {authz: 'L7 · 웨이포인트'},
+      values: {l4: {text: 'ztunnel이 적용', tone: 'good'}, l7: {text: '웨이포인트가 적용', tone: 'good'}},
+    },
+    {
+      short: '비용',
+      kind: '주의',
+      title: '프록시는 줄지만, 함께 쓰는 프록시가 된다',
+      text: [
+        '사이드카가 없으니 프록시의 메모리와 CPU가 파드 수에 따라 늘지 않는다. 노드마다 ztunnel 하나, L7이 필요한 곳에만 웨이포인트를 두고, 웨이포인트는 따로 늘리고 줄일 수 있다.',
+        '대신 ztunnel 하나가 그 노드의 메시 파드 전부를 맡는다. 그래서 ztunnel을 업그레이드하거나 재시작하면 모두가 영향을 받는다. 웨이포인트를 거치는 트래픽은 한 홉을 더 간다.',
+      ],
+      keyIdea: 'ztunnel과 웨이포인트 파드는 공유 인프라처럼 지켜본다. 자원 한도, 로그, 신중한 업그레이드 계획이 필요하다.',
+      flows: [{from: 'zt1', to: 'wp', label: '한 홉 더', type: 'request'}],
+      focus: ['zt1', 'zt2', 'wp'],
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: 'L4는 어디서나 ztunnel, L7은 필요한 곳에 웨이포인트',
+      text: [
+        '네임스페이스 레이블 하나로 파드가 사이드카도 재시작도 없이 메시에 들어간다. 노드마다 도는 ztunnel이 포트 15008의 HBONE으로 모든 연결에 mTLS와 신원을 주고, L4 정책을 지킨다.',
+        'HTTP가 필요한 것(경로, 재시도, L7 인가, L7 지표)은 모두 웨이포인트가 있어야 한다. 없으면 경로는 무시되고 L7 정책은 건너뛰어져, 뜻보다 더 막거나 더 열 수 있다.',
+      ],
+      keyIdea: '앰비언트 모드에서 L7 규칙을 쓰기 전에, 대상 서비스를 웨이포인트가 맡고 있는지 확인한다.',
+      flows: [
+        {from: 'web', to: 'zt1', label: 'TCP', type: 'request'},
+        {from: 'zt1', to: 'wp', label: 'HBONE', type: 'request'},
+        {from: 'wp', to: 'zt2', label: 'HBONE', type: 'request'},
+        {from: 'zt2', to: 'api', label: 'TCP', type: 'request'},
+      ],
+      focus: ['zt1', 'zt2', 'wp'],
+      status: {route: null, authz: null},
+      badges: {authz: null, wp: null},
+    },
+  ]}
+/>
+
+## 어디서 무엇이 도는가
+
+| 기능 | 사이드카 모드 | 앰비언트, ztunnel만 | 앰비언트 + 웨이포인트 |
+|---|---|---|---|
+| 메시에 넣기 | 주입 레이블 후 파드 재시작 | `istio.io/dataplane-mode=ambient`, 재시작 없음 | 같음, 여기에 `istio.io/use-waypoint` |
+| mTLS와 워크로드 신원 | 사이드카 | ztunnel (HBONE, 포트 15008) | ztunnel |
+| principal·네임스페이스·포트를 보는 AuthorizationPolicy | 사이드카 | ztunnel | ztunnel 또는 웨이포인트 |
+| 메서드·경로·헤더를 보는 AuthorizationPolicy | 사이드카 | 적용 안 됨: ALLOW는 전부 거부, DENY는 아무것도 못 막음 | 웨이포인트, `targetRefs`로 붙임 |
+| HTTPRoute, 재시도, 타임아웃, 헤더 라우팅 | 사이드카 | 무시됨 | 웨이포인트 |
+| VirtualService | 사이드카 | 무시됨 | 웨이포인트 (Alpha) |
+| 지표 | L4와 L7 | L4(TCP)만 | L4와 L7 |
+| 프록시 수 | 파드마다 하나 | 노드마다 하나 | 노드마다 하나 + 웨이포인트 |
+
+## 직접 확인해 보기
+
+```bash
+kubectl label namespace shop istio.io/dataplane-mode=ambient   # 네임스페이스를 메시에 넣기
+kubectl get pods -n shop                                       # 여전히 READY 1/1, 재시작 없음
+kubectl get daemonset ztunnel -n istio-system                  # 노드마다 ztunnel 하나
+istioctl ztunnel-config workloads                              # 메시 파드는 PROTOCOL HBONE
+kubectl logs -n istio-system -l app=ztunnel | grep -E "inbound|outbound"   # 연결과 신원
+istioctl waypoint apply -n shop --enroll-namespace             # 웨이포인트를 만들고 네임스페이스에 레이블
+kubectl get gateways.gateway.networking.k8s.io -n shop        # waypoint, 클래스 istio-waypoint, PROGRAMMED
+kubectl get namespace shop -L istio.io/dataplane-mode,istio.io/use-waypoint   # 어떤 레이블이 붙었는지
+kubectl get authorizationpolicy -n shop -o yaml                # selector(ztunnel)인지 targetRefs(웨이포인트)인지
+```
+
+<Quiz questions={[
+  {q: '네임스페이스에 istio.io/dataplane-mode=ambient 레이블을 달면, 이미 돌던 파드는 어떻게 되나?', options: ['사이드카 컨테이너를 달고 재시작한다', '그대로 메시에 들어가고, 트래픽이 노드의 ztunnel을 거친다', '웨이포인트를 설치하기 전까지 아무 일도 없다'], answer: 1, why: '앰비언트 모드는 파드에 아무것도 주입하지 않는다. CNI 노드 에이전트가 트래픽을 ztunnel로 우회시키므로 재시작 없이 들어간다.'},
+  {q: '서비스 api에 재시도를 넣은 HTTPRoute가 있는데 재시도가 일어나지 않는다. 웨이포인트는 없다. 왜인가?', options: ['ztunnel은 L4에서 일하고 HTTP를 읽지 않아, 경로를 적용하는 프록시가 없다', 'Istio는 HTTPRoute를 지원하지 않는다', '재시도는 호출하는 파드에 사이드카가 있어야 한다'], answer: 0, why: 'HTTP는 웨이포인트(또는 사이드카)만 처리한다. ztunnel만 있으면 L7 라우팅 규칙은 무시된다.'},
+  {q: '웨이포인트 없이 "web에서 온 GET만 허용"하는 ALLOW AuthorizationPolicy를 걸면?', options: ['web의 GET만 허용된다', '규칙을 건너뛰므로 모두 허용된다', '건너뛴 규칙은 맞을 수 없으므로 그 워크로드로 가는 트래픽이 모두 거부된다'], answer: 2, why: 'ztunnel은 판단할 수 없는 규칙을 건너뛴다. ALLOW에서는 맞는 규칙이 없으니 거부된다. L7 정책은 웨이포인트에 붙인다.'},
+]} />
+
+더 읽을거리: [앰비언트 모드 개요](https://istio.io/latest/docs/ambient/overview/) · [HBONE](https://istio.io/latest/docs/ambient/architecture/hbone/) · [웨이포인트 프록시 설정](https://istio.io/latest/docs/ambient/usage/waypoint/) · [앰비언트의 L4 인가 정책](https://istio.io/latest/docs/ambient/usage/l4-policy/) · [앰비언트 GA 발표](https://istio.io/latest/blog/2024/ambient-reaches-ga/) · [서비스 메시 ① 사이드카와 상호 인증](../feature/mesh-sidecar.mdx) · [서비스 메시 ② 트래픽 나누기](../feature/mesh-traffic.mdx) · [게이트웨이 API HTTPRoute가 파드에 닿기까지](../feature/gateway-api.mdx)

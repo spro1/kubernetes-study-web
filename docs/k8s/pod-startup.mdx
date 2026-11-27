@@ -1,7 +1,7 @@
 ---
 id: pod-startup
 title: How a Pod Starts
-sidebar_label: 04 · How a Pod Starts
+sidebar_label: 05 · How a Pod Starts
 description: Follow a single kubectl apply through the API server, etcd, controllers, scheduler, and kubelet until it becomes a running Pod, step by animated step.
 summary: 'How one kubectl apply goes through the API server, etcd, controllers, scheduler and kubelet to become a running Pod.'
 icon: pod
@@ -203,5 +203,11 @@ kubectl get pods -l app=try-nginx -o wide -w         # Pending → ContainerCrea
 kubectl describe pod <pod>                           # Events: Scheduled, Pulling, Started
 kubectl delete deployment try-nginx                  # Clean up
 ```
+
+<Quiz questions={[
+  {q: 'A new Pod has stayed Pending for a long time. At which step did it most likely stop?', options: ['Pulling the image', 'The scheduler picking a node, because no node has enough resources or matches the placement rules', 'The container exiting right after it starts'], answer: 1, why: 'Pending means the scheduler has not bound the Pod to a node. Image problems show ImagePullBackOff, and a container that keeps exiting shows CrashLoopBackOff.'},
+  {q: 'kubectl apply has just answered "created" for a Deployment of 3 nginx Pods. What exists at that moment?', options: ['Three running nginx containers', 'Three Pods already assigned to nodes', 'Only the Deployment recorded in etcd, with no container yet'], answer: 2, why: '"Created" means "recorded". A controller, the scheduler, the kubelet and the runtime still have to do their parts before anything runs.'},
+  {q: 'In an air-gapped network, a Pod shows ImagePullBackOff. What is the most likely cause?', options: ['The node cannot reach the external registry, so the image should be pushed to an internal registry in advance', 'The node does not have enough CPU', 'The readiness probe is failing'], answer: 0, why: 'ImagePullBackOff happens at the image step when the registry is unreachable or the name is wrong. Air-gapped clusters need images in an internal registry such as Harbor.'},
+]} />
 
 Further reading: [Kubernetes Overview](https://kubernetes.io/docs/concepts/overview/) · [Pod Lifecycle](https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/) · [Debug Pods](https://kubernetes.io/docs/tasks/debug/debug-application/debug-pods/)

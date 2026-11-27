@@ -1,0 +1,241 @@
+---
+id: topology-spread
+title: Spreading Pods Across Zones (Topology Spread Constraints)
+sidebar_label: 02 · Topology Spread
+description: Animated walkthrough of topologySpreadConstraints, with topologyKey, maxSkew, DoNotSchedule versus ScheduleAnyway, labelSelector and minDomains, what happens when a zone fails, skew during rolling updates and matchLabelKeys with pod-template-hash, cluster-level default constraints, and how it differs from podAntiAffinity
+summary: 'Keep replicas balanced across zones and nodes with maxSkew. What happens when a zone dies, during a rollout, and why it beats anti-affinity for more than one Pod per zone.'
+icon: split
+hide_table_of_contents: true
+---
+
+# Spreading Pods Across Zones (Topology Spread Constraints)
+
+Six replicas in one zone survive no zone outage. Follow the scheduler as **topologySpreadConstraints** count Pods per zone and per node, refuse placements that tip the balance, and run into a dead zone and a rolling update.
+
+<StepDiagram
+  width={1000}
+  height={460}
+  meta={{duration: '~13 min', level: 'Intermediate'}}
+  groups={[
+    {label: 'zone a', x: 20, y: 140, w: 310, h: 170, tone: 'plain'},
+    {label: 'zone b', x: 345, y: 140, w: 310, h: 170, tone: 'plain'},
+    {label: 'zone c', x: 670, y: 140, w: 310, h: 170, tone: 'plain'},
+  ]}
+  nodes={[
+    {id: 'deploy', label: 'Deployment web', sub: '6 replicas', icon: 'layers', tone: 'app', x: 250, y: 75, w: 170, show: true},
+    {id: 'sched', label: 'kube-scheduler', sub: 'PodTopologySpread', icon: 'target', tone: 'cp', x: 500, y: 75, w: 170, show: true},
+    {id: 'config', label: 'Scheduler config', sub: 'defaultConstraints', icon: 'gear', tone: 'store', x: 760, y: 75, w: 170},
+    {id: 'a1', label: 'node-a1', sub: 'zone a', icon: 'server', tone: 'node', x: 100, y: 230, w: 130, show: true},
+    {id: 'a2', label: 'node-a2', sub: 'zone a', icon: 'server', tone: 'node', x: 250, y: 230, w: 130, show: true},
+    {id: 'b1', label: 'node-b1', sub: 'zone b', icon: 'server', tone: 'node', x: 425, y: 230, w: 130, show: true},
+    {id: 'b2', label: 'node-b2', sub: 'zone b', icon: 'server', tone: 'node', x: 575, y: 230, w: 130, show: true},
+    {id: 'c1', label: 'node-c1', sub: 'zone c', icon: 'server', tone: 'node', x: 750, y: 230, w: 130, show: true},
+    {id: 'c2', label: 'node-c2', sub: 'zone c', icon: 'server', tone: 'node', x: 900, y: 230, w: 130, show: true},
+    {id: 'pend', label: 'Pending Pod', sub: 'web', icon: 'pod', tone: 'app', x: 250, y: 395, w: 140},
+    {id: 'desched', label: 'Descheduler', sub: 'Optional add-on', icon: 'wheel', tone: 'cp', x: 750, y: 395, w: 150},
+  ]}
+  metrics={[
+    {id: 'zones', label: 'Pods a / b / c'},
+    {id: 'skew', label: 'Skew'},
+    {id: 'result', label: 'Scheduler'},
+  ]}
+  learn={[
+    {text: 'Domains from topologyKey and the Pods labelSelector counts', at: 1},
+    {text: 'How maxSkew is measured against the global minimum', at: 2},
+    {text: 'DoNotSchedule versus ScheduleAnyway', at: 4},
+    {text: 'Zone failure and minDomains', at: 5},
+    {text: 'Rolling updates and matchLabelKeys', at: 7},
+    {text: 'Cluster defaults and when podAntiAffinity is the better tool', at: 8},
+  ]}
+  steps={[
+    {
+      short: 'Start',
+      kind: '시작',
+      title: 'Six replicas, three zones, and nothing keeps them apart',
+      text: [
+        'web has 6 replicas and no spread rules. The scheduler does apply built-in defaults to Pods of a Deployment (maxSkew 3 per node, 5 per zone), but they are ScheduleAnyway: only a scoring nudge that other scores can outweigh.',
+        'Here zone c happened to be busy when the Pods were created, so all six landed in zones a and b. If zone a fails, half the service goes with it, and zone c sits idle.',
+      ],
+      focus: ['deploy', 'a1', 'b1'],
+      status: {c1: 'off', c2: 'off'},
+      badges: {a1: 'web ×2', a2: 'web ×1', b1: 'web ×2', b2: 'web ×1'},
+      values: {zones: {text: '3 / 3 / 0', tone: 'bad'}, skew: '3', result: 'No rule'},
+    },
+    {
+      short: 'Domains',
+      kind: '원리',
+      title: 'topologyKey turns node labels into domains',
+      text: [
+        'Add a constraint with topologyKey: topology.kubernetes.io/zone. Every distinct value of that node label is one domain, so this cluster has three: a, b and c. With kubernetes.io/hostname, every node is its own domain.',
+        'labelSelector (app: web) says which Pods to count. Only Pods in the same namespace count. A node without the topologyKey label is skipped: no Pods land there and its Pods are not counted.',
+      ],
+      keyIdea: 'Check node labels first. A typo in the zone label silently removes a node from the spread.',
+      flows: [{from: 'deploy', to: 'sched', label: 'Constraint', type: 'request'}],
+      focus: ['sched'],
+      status: {c1: null, c2: null},
+      values: {result: 'Zones: a, b, c'},
+    },
+    {
+      short: 'maxSkew',
+      kind: '원리',
+      title: 'maxSkew compares each domain with the emptiest one',
+      text: [
+        'The Deployment is recreated with maxSkew: 1 and whenUnsatisfiable: DoNotSchedule. Skew is the matching Pods in a domain minus the global minimum, the count in the emptiest eligible domain. A placement is allowed only if skew stays at or below maxSkew after it.',
+        'After five Pods the counts are 2 / 2 / 1. Putting the sixth in zone a would make 3 − 1 = 2, too much. Only zone c keeps skew at 1, so the Pod goes there.',
+      ],
+      flows: [{from: 'sched', to: 'c1', label: 'Only fit', type: 'request'}],
+      focus: ['sched', 'c1'],
+      status: {c1: 'ok'},
+      badges: {a1: 'web ×1', a2: 'web ×1', b1: 'web ×1', b2: 'web ×1', c1: 'web ×1', c2: 'web ×1'},
+      values: {zones: {text: '2 / 2 / 2', tone: 'good'}, skew: '0', result: 'Placed in c'},
+    },
+    {
+      short: 'Two keys',
+      kind: '원리',
+      title: 'Zone and node constraints are checked together',
+      text: [
+        'A second constraint with topologyKey: kubernetes.io/hostname and maxSkew 1 keeps Pods spread across nodes inside each zone too. A node must satisfy every constraint to pass the filter.',
+        'Each pair of topologyKey and whenUnsatisfiable may appear only once. A common pattern is zone with DoNotSchedule for resilience, plus hostname with ScheduleAnyway so a full node does not block scheduling.',
+      ],
+      flows: [{from: 'sched', to: 'a2', label: 'zone + host', type: 'request'}],
+      focus: ['a1', 'a2', 'sched'],
+      status: {c1: null},
+      values: {skew: 'zone 0 · host 0'},
+    },
+    {
+      short: 'Unsatisfiable',
+      kind: '주의',
+      title: 'DoNotSchedule waits, ScheduleAnyway places it anyway',
+      text: [
+        'web scales to 9 while zone c is out of CPU. Pods 7 and 8 go to a and b, giving 3 / 3 / 2. Pod 9 would make 4 / 3 / 2 in a or b, skew 2. With DoNotSchedule it stays Pending, and the event says the nodes did not match pod topology spread constraints.',
+        'With ScheduleAnyway the scheduler places Pod 9 anyway and only prefers nodes that keep skew low. The Pod runs, but the balance you asked for is gone.',
+      ],
+      keyIdea: 'DoNotSchedule is a hard guarantee that can leave Pods Pending. A Pending Pod can at least trigger a node autoscaler to add capacity in zone c.',
+      flows: [{from: 'sched', to: 'c1', label: 'No CPU', type: 'watch'}],
+      focus: ['pend', 'c1', 'c2'],
+      status: {pend: 'warn', c1: 'warn', c2: 'warn'},
+      badges: {pend: 'Pod 9', a1: 'web ×2', b1: 'web ×2'},
+      values: {zones: '3 / 3 / 2', skew: {text: '2 if placed', tone: 'bad'}, result: {text: 'Pending', tone: 'bad'}},
+    },
+    {
+      short: 'Zone down',
+      kind: '장애',
+      title: 'Zone c fails, and its replacements may not fit',
+      text: [
+        'Back at 6 replicas, 2 / 2 / 2. Zone c loses power. Its two Pods are evicted and the Deployment creates two replacements. While the dead nodes still exist as Node objects, zone c is still a domain, now with 0 matching Pods.',
+        'Placing a replacement in zone a would make 3 − 0 = 3, above maxSkew 1. With DoNotSchedule on the zone constraint, the replacements can stay Pending exactly when you need them. They fit once the dead nodes are removed, or right away if the zone rule is ScheduleAnyway.',
+      ],
+      keyIdea: 'Decide which matters more during an outage: strict balance or running Pods. Plan headroom in the surviving zones either way.',
+      flows: [{from: 'sched', to: 'a2', label: 'Skew 3 > 1', type: 'watch'}],
+      focus: ['c1', 'c2', 'pend'],
+      status: {c1: 'error', c2: 'error', pend: 'error'},
+      badges: {c1: 'NotReady', c2: 'NotReady', a1: 'web ×1', b1: 'web ×1', pend: '2 replacements'},
+      values: {zones: {text: '2 / 2 / 0', tone: 'bad'}, skew: '2', result: {text: 'Pending', tone: 'bad'}},
+    },
+    {
+      short: 'minDomains',
+      kind: '원리',
+      title: 'minDomains: count zones that have no nodes yet',
+      text: [
+        'The scheduler only knows domains from existing nodes. If zone c\'s node pool is scaled to zero, only a and b exist, and 3 / 3 looks perfectly balanced.',
+        'minDomains: 3 says at least three domains should hold Pods. With fewer eligible domains, the global minimum counts as 0, so Pods beyond maxSkew in a and b stay Pending. That gives a node autoscaler a reason to start a node in zone c. minDomains works only with DoNotSchedule.',
+      ],
+      focus: ['pend', 'c1', 'c2'],
+      status: {c1: 'gone', c2: 'gone', pend: 'warn'},
+      badges: {c1: null, c2: null, pend: 'Waits for zone c'},
+      values: {zones: '3 / 3 / —', skew: 'min treated as 0', result: 'Pending → scale-up'},
+    },
+    {
+      short: 'Rollout',
+      kind: '문제',
+      title: 'A rolling update counts old and new Pods together',
+      text: [
+        'Zone c is back and web is 2 / 2 / 2. A rollout starts. New Pods carry app: web, so they are counted together with the old ones. The scheduler places each new Pod to balance all web Pods, not the new revision alone.',
+        'When the old Pods are gone, the new ones can end up 3 / 2 / 1. Add matchLabelKeys: [pod-template-hash]. Its value is merged into labelSelector, so each ReplicaSet revision is spread on its own.',
+      ],
+      keyIdea: 'Scaling down never rebalances either. The scheduler only acts at placement time. A tool like the Descheduler can evict Pods that violate the spread so they are placed again.',
+      flows: [{from: 'desched', to: 'c1', label: 'Rebalance', type: 'request'}],
+      focus: ['sched', 'desched'],
+      status: {c1: null, c2: null, pend: null},
+      badges: {pend: null, a1: 'web ×2', b1: 'web ×1', c1: null, c2: 'web ×1', a2: 'web ×1'},
+      values: {zones: {text: '3 / 2 / 1', tone: 'bad'}, skew: '2', result: 'Fix: matchLabelKeys'},
+    },
+    {
+      short: 'Defaults',
+      kind: '원리',
+      title: 'Cluster defaults cover Pods that set nothing',
+      text: [
+        'Pods with no topologySpreadConstraints that belong to a Service, ReplicaSet, StatefulSet or ReplicationController get the scheduler\'s default constraints. Built in: maxSkew 3 on kubernetes.io/hostname and 5 on topology.kubernetes.io/zone, both ScheduleAnyway.',
+        'An operator can replace them in the PodTopologySpread plugin args of KubeSchedulerConfiguration, with defaultingType: List and a defaultConstraints list without labelSelector. Managed clusters often do not let you change scheduler config.',
+      ],
+      flows: [{from: 'config', to: 'sched', label: 'defaultConstraints', type: 'watch'}],
+      focus: ['config', 'sched'],
+      badges: {config: 'zone maxSkew 1'},
+      values: {zones: '2 / 2 / 2', skew: '0', result: 'Defaults applied'},
+    },
+    {
+      short: 'vs anti-affinity',
+      kind: '주의',
+      title: 'Anti-affinity allows one Pod per domain, spread allows many',
+      text: [
+        'Required podAntiAffinity on the zone key means no two web Pods in one zone. With 3 zones, the fourth replica is Pending forever. Preferred anti-affinity is only a hint.',
+        'Topology spread keeps zones balanced at any replica count: 2 / 2 / 2, then 3 / 3 / 3. Use anti-affinity for strict one-per-node rules, such as two members of a quorum that must never share a node, and spread for balancing.',
+      ],
+      flows: [{from: 'sched', to: 'b2', label: 'Balance', type: 'request'}],
+      focus: ['sched'],
+      badges: {config: null, a1: 'web ×1', b1: 'web ×1', c1: 'web ×1'},
+      values: {result: 'Spread: N per zone'},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Count, compare with the emptiest domain, and decide what to do when it fails',
+      text: [
+        'topologyKey turns node labels into domains, labelSelector picks the Pods to count, and maxSkew caps the gap to the emptiest domain. DoNotSchedule enforces it, ScheduleAnyway only prefers it.',
+        'Strict zone spread can block replacements during a zone outage. minDomains counts zones that have no nodes yet. matchLabelKeys with pod-template-hash keeps each rollout balanced on its own.',
+      ],
+      keyIdea: 'A common setup: zone maxSkew 1 DoNotSchedule plus hostname ScheduleAnyway, matchLabelKeys pod-template-hash, and spare capacity in every zone.',
+      focus: ['sched'],
+      status: {},
+      badges: {a1: 'web ×1', a2: 'web ×1', b1: 'web ×1', b2: 'web ×1', c1: 'web ×1', c2: 'web ×1'},
+      values: {zones: {text: '2 / 2 / 2', tone: 'good'}, skew: '0', result: 'Balanced'},
+    },
+  ]}
+/>
+
+## Fields at a glance
+
+| Field | What it does | Watch out |
+|---|---|---|
+| `topologyKey` | Node label whose values form domains (`topology.kubernetes.io/zone`, `kubernetes.io/hostname`) | Nodes without the label are skipped entirely |
+| `maxSkew` | Largest allowed gap between a domain and the global minimum | Must be at least 1 |
+| `whenUnsatisfiable` | `DoNotSchedule` (default) filters nodes. `ScheduleAnyway` only scores | DoNotSchedule can leave Pods Pending during an outage |
+| `labelSelector` | Which Pods are counted, same namespace only | The Pod should match its own selector, or it does not count itself |
+| `matchLabelKeys` | Adds this Pod's values for these label keys to the selector, e.g. `pod-template-hash` | Do not use labels that get edited on running Pods |
+| `minDomains` | Treat the global minimum as 0 until this many domains exist | Only with `DoNotSchedule` |
+| `nodeAffinityPolicy` | `Honor` (default): only nodes matching the Pod's node affinity count | `Ignore` counts all nodes |
+| `nodeTaintsPolicy` | `Ignore` (default): taints do not matter. `Honor`: skip nodes with untolerated taints | Default counts tainted nodes as domains |
+
+## Try it yourself
+
+```bash
+kubectl get nodes -L topology.kubernetes.io/zone          # Which zone each node is in
+kubectl explain pod.spec.topologySpreadConstraints        # Fields your cluster version supports
+
+# Pods per zone for app=web
+for n in $(kubectl get pods -l app=web -o jsonpath='{.items[*].spec.nodeName}'); do
+  kubectl get node "$n" -o jsonpath='{.metadata.labels.topology\.kubernetes\.io/zone}{"\n"}'
+done | sort | uniq -c
+
+kubectl get pods -l app=web --field-selector=status.phase=Pending
+kubectl describe pod <pending-pod>                        # "didn't match pod topology spread constraints"
+kubectl get deploy web -o jsonpath='{.spec.template.spec.topologySpreadConstraints}'
+```
+
+<Quiz questions={[
+  {q: 'Counts are 3 / 2 / 2 across zones with maxSkew 1 and DoNotSchedule. Where can the next Pod go?', options: ['Only zone a', 'Zone b or zone c', 'Nowhere, it stays Pending'], answer: 1, why: 'The global minimum is 2. Zone a would become 4 − 2 = 2, too much. Zone b or c becomes 3, and skew is 3 − 2 = 1, which is allowed.'},
+  {q: 'You want 5 replicas balanced over 3 zones. Why is topology spread a better fit than required podAntiAffinity on the zone key?', options: ['Anti-affinity allows at most one Pod per zone, so replicas 4 and 5 stay Pending', 'Anti-affinity is slower to evaluate', 'Anti-affinity ignores zone labels'], answer: 0, why: 'Required anti-affinity forbids two matching Pods in the same domain. Spread allows several per domain while keeping the gap within maxSkew.'},
+  {q: 'After a rollout, new Pods sit 3 / 2 / 1 even though maxSkew is 1. What is the most likely reason?', options: ['The scheduler ignores constraints during rollouts', 'New Pods were placed while old Pods with the same labels were still counted', 'maxSkew only applies to StatefulSets'], answer: 1, why: 'Old and new revisions both match app: web. matchLabelKeys with pod-template-hash makes each revision count only its own Pods.'},
+]} />
+
+Further reading: [Pod Topology Spread Constraints](https://kubernetes.io/docs/concepts/scheduling-eviction/topology-spread-constraints/) · [Well-known labels](https://kubernetes.io/docs/reference/labels-annotations-taints/) · [Descheduler](https://github.com/kubernetes-sigs/descheduler) · [Which Node Gets the Pod (Scheduling)](../k8s/scheduling.mdx) · [When One Availability Zone Goes Down](../cloud/az-failover.mdx) · [Zero-Downtime Deploys (Rolling Update)](../k8s/rolling-update.mdx)

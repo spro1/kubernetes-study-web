@@ -182,4 +182,10 @@ curl -s http://<engine>:8000/metrics | grep vllm:inter_token_latency_seconds   #
 curl -s http://<engine>:8000/metrics | grep vllm:num_requests_waiting   # Queue behind a TTFT rise
 ```
 
+<Quiz questions={[
+  {q: 'Only TTFT got worse, while TPOT stayed the same. What is the most likely cause?', options: ['Memory bandwidth dropped', 'Inputs got longer or the queue of waiting requests grew', 'Answers got longer', 'The KV cache was disabled'], answer: 1, why: 'TTFT is set by prefill and the queue ahead. Longer inputs or more waiting requests raise it, so check vllm:num_requests_waiting alongside it.'},
+  {q: 'Which resource mostly sets the speed of decode?', options: ['Compute throughput', 'Network bandwidth to the client', 'Memory bandwidth, since every token reads all weights and the KV cache'], answer: 2, why: 'Decode makes one token per step, but each step reads all model weights and the KV cache. Little compute, lots of reading, so memory read speed sets the pace.'},
+  {q: 'Users see streamed text that stops and starts whenever someone sends a long document. Why?', options: ['Another request\'s long prefill cuts in and briefly stalls ongoing decode', 'The tokenizer slows down on long inputs', 'The KV cache is cleared for each new request', 'The gateway buffers every other token'], answer: 0, why: 'When both phases share one accelerator, a long prefill occupies the compute units and in-progress answers pause. Chunked prefill or P/D disaggregation reduce this.'},
+]} />
+
 Further reading: [vLLM documentation](https://docs.vllm.ai/) · [llm-d](https://llm-d.ai/)

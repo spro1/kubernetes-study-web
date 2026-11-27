@@ -216,4 +216,10 @@ kubectl get pod <pod> -n <namespace> -o jsonpath='{.spec.containers[*].securityC
 kubectl label --dry-run=server --overwrite namespace <namespace> pod-security.kubernetes.io/enforce=restricted   # Which Pods break before raising enforce
 ```
 
+<Quiz questions={[
+  {q: 'Namespace shop has enforce: baseline. A developer with permission to create Pods submits a Pod with privileged: true. What happens?', options: ['RBAC rejects it because privileged Pods need a ClusterRole', 'Admission rejects it, and nothing is written to etcd', 'It is created, with only a warning'], answer: 1, why: 'Authentication and RBAC pass, but a privileged container is something baseline blocks, so admission rejects the request and the Pod is never created.'},
+  {q: 'The same privileged spec is submitted as a Deployment. The rollout looks successful but there are zero Pods. Where is the cause?', options: ['In the Deployment\'s status, as a 403', 'In the kubelet log on the node', 'Nowhere; enforce does not apply to Deployments', 'In the ReplicaSet\'s events, because enforce rejects the Pods when they are created'], answer: 3, why: 'enforce applies only to Pods. The Deployment is stored, and the rejection happens when the ReplicaSet creates Pods, so the cause shows in its events.'},
+  {q: 'A Pod fixed with runAsNonRoot: true passes admission but fails to start. What is the most likely cause?', options: ['The image is built to run as root', 'The namespace label was removed', 'seccomp is missing'], answer: 0, why: 'Passing admission is not enough. If the image is built to run as root, runAsNonRoot makes the container fail to start.'},
+]} />
+
 Further reading: [Pod Security Standards](https://kubernetes.io/docs/concepts/security/pod-security-standards/) · [Pod Security Admission](https://kubernetes.io/docs/concepts/security/pod-security-admission/) · [Configure a security context for a Pod or container](https://kubernetes.io/docs/tasks/configure-pod-container/security-context/)

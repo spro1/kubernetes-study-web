@@ -1,0 +1,272 @@
+---
+id: argo-rollouts
+title: Argo Rollouts로 점진적 배포하기
+sidebar_label: 09 · Argo Rollouts
+description: Rollout 자원과 setWeight·pause 카나리 단계에서 Prometheus를 묻는 AnalysisTemplate, 자동 중단, 프리뷰 서비스를 쓰는 블루/그린, 트래픽 라우터, kubectl argo rollouts 명령까지 Argo Rollouts를 애니메이션으로 본다
+summary: '트래픽을 단계마다 옮기며 Prometheus 성공률을 확인하고, 숫자가 나빠지면 스스로 되돌리는 Rollout.'
+icon: split
+hide_table_of_contents: true
+---
+
+# Argo Rollouts로 점진적 배포하기
+
+보통 디플로이먼트는 파드를 바꾸고 잘되기를 바랄 뿐이다. **Rollout**이 새 버전에 트래픽을 조금씩 늘려 보내고, 단계마다 Prometheus에서 성공률을 확인하고, 확인에 실패하면 스스로 중단하는 과정을 따라간다.
+
+<StepDiagram
+  width={1000}
+  height={460}
+  meta={{duration: '약 13분', level: '심화'}}
+  groups={[
+    {label: '네임스페이스 shop', x: 230, y: 30, w: 745, h: 415, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'user', label: '나 또는 CI', sub: '새 이미지 태그', icon: 'user', tone: 'ext', x: 110, y: 90, show: true},
+    {id: 'ctrl', label: 'Rollouts 컨트롤러', sub: 'argo-rollouts', icon: 'gear', tone: 'cp', x: 110, y: 240, w: 170, show: true},
+    {id: 'prom', label: 'Prometheus', sub: '요청 메트릭', icon: 'chart', tone: 'store', x: 110, y: 390},
+    {id: 'rollout', label: 'Rollout web', sub: '템플릿 + 전략', icon: 'layers', tone: 'store', x: 370, y: 90, show: true},
+    {id: 'router', label: '트래픽 라우터', sub: '인그레스 · 메시 · 게이트웨이', icon: 'route', tone: 'node', x: 370, y: 240, w: 170},
+    {id: 'analysis', label: 'AnalysisRun', sub: 'success-rate', icon: 'target', tone: 'store', x: 370, y: 390, w: 160},
+    {id: 'svcS', label: '서비스 web-stable', sub: 'stable · active', icon: 'target', tone: 'cp', x: 610, y: 130, w: 170},
+    {id: 'svcC', label: '서비스 web-canary', sub: 'canary · preview', icon: 'target', tone: 'cp', x: 610, y: 350, w: 170},
+    {id: 'rs1', label: 'ReplicaSet v1', sub: '안정 버전', icon: 'pod', tone: 'app', x: 860, y: 130, show: true},
+    {id: 'rs2', label: 'ReplicaSet v2', sub: '새 버전', icon: 'pod', tone: 'app', x: 860, y: 350},
+  ]}
+  metrics={[
+    {id: 'weight', label: '카나리 비중'},
+    {id: 'analysis', label: '분석'},
+    {id: 'phase', label: 'Rollout 상태'},
+  ]}
+  learn={[
+    {text: 'Rollout은 디플로이먼트를 대신하고 카나리·블루/그린 단계를 더한다', at: 0},
+    {text: '파드 수로 맞추는 비중과 트래픽 라우터의 차이', at: 2},
+    {text: 'Prometheus를 묻는 AnalysisTemplate', at: 3},
+    {text: '분석 실패 시 자동 중단, 그리고 중단이 남기는 것', at: 5},
+    {text: '프리뷰 서비스와 승격을 쓰는 블루/그린', at: 7},
+  ]}
+  steps={[
+    {
+      short: '시작',
+      kind: '시작',
+      title: 'Rollout이 디플로이먼트 자리를 차지한다',
+      text: [
+        'web 앱은 Rollout(apiVersion argoproj.io/v1alpha1)으로 돈다. 스펙은 디플로이먼트와 비슷하다. replicas, selector, 파드 템플릿이 있다. 다른 점은 spec.strategy에 단계가 있는 canary나 blueGreen이 들어간다는 것이다.',
+        'Argo Rollouts 컨트롤러가 Rollout을 지켜보며 ReplicaSet을 직접 관리한다. 클러스터에는 컨트롤러를, 내 컴퓨터에는 kubectl argo rollouts 플러그인을 설치한다. 기존 디플로이먼트는 템플릿을 옮겨 적지 않고 workloadRef로 넘겨받을 수도 있다.',
+      ],
+      keyIdea: '디플로이먼트와 Rollout이 같은 파드를 함께 관리하게 두지 않는다. 바꾸거나, workloadRef를 써서 Rollout이 디플로이먼트를 줄이게 한다.',
+      flows: [
+        {from: 'ctrl', to: 'rollout', label: '지켜봄', type: 'watch'},
+        {from: 'svcS', to: 'rs1', label: '100%', type: 'request'},
+      ],
+      focus: ['rollout', 'ctrl'],
+      status: {rs1: 'ok'},
+      values: {weight: '0%', analysis: '—', phase: {text: 'Healthy', tone: 'good'}},
+    },
+    {
+      short: '단계',
+      kind: '원리',
+      title: '새 이미지가 카나리 단계를 시작한다',
+      text: [
+        'CI가 이미지를 web:2.0으로 바꾼다. 컨트롤러가 ReplicaSet v2를 만들고 단계를 시작한다. setWeight: 20, pause: {duration: 10m}, setWeight: 50, pause: {}, 그리고 100%.',
+        'setWeight는 카나리로 보낼 트래픽 비중을 정한다. 시간을 준 pause는 그만큼 기다린다. pause: {} 는 누군가 승격할 때까지 기다린다. kubectl argo rollouts get rollout web --watch 로 현재 단계, 비중, 두 ReplicaSet을 본다.',
+      ],
+      flows: [
+        {from: 'user', to: 'rollout', label: 'image web:2.0', type: 'request'},
+        {from: 'ctrl', to: 'rs2', label: 'v2 생성', type: 'request'},
+      ],
+      focus: ['user', 'rs2'],
+      status: {rs2: 'ok'},
+      badges: {rollout: '1/5 단계'},
+      values: {weight: '20%', phase: 'Progressing'},
+    },
+    {
+      short: '라우팅',
+      kind: '원리',
+      title: '비중은 파드 수나 트래픽 라우터로 맞춘다',
+      text: [
+        'trafficRouting이 없으면 컨트롤러는 레플리카 수만 바꿀 수 있다. 10개에 20%라면 한 서비스 뒤에 카나리 파드 약 2개, 안정 파드 8개를 둔다. 최선을 다할 뿐이라서 레플리카가 적으면 단계가 거칠어진다.',
+        'trafficRouting을 쓰면 stableService와 canaryService를 정한다. 컨트롤러가 각 서비스를 자기 ReplicaSet에 맞추고, 라우터에 비중을 써 넣는다. NGINX 인그레스 어노테이션, Istio VirtualService, 게이트웨이 API 플러그인을 통한 HTTPRoute 같은 것이다. 안정 ReplicaSet은 다 떠 있는 채로 남고, 20%는 요청의 20%를 뜻한다.',
+      ],
+      keyIdea: 'VirtualService나 HTTPRoute의 비중을 직접 고치지 않는다. 배포 중에는 컨트롤러가 그것을 맡는다.',
+      flows: [
+        {from: 'ctrl', to: 'router', label: 'weight 20', type: 'request'},
+        {from: 'router', to: 'svcS', label: '80%', type: 'request'},
+        {from: 'router', to: 'svcC', label: '20%', type: 'request'},
+        {from: 'svcS', to: 'rs1', label: 'v1', type: 'request'},
+        {from: 'svcC', to: 'rs2', label: 'v2', type: 'request'},
+      ],
+      focus: ['router', 'svcS', 'svcC'],
+      badges: {router: '80 / 20'},
+      values: {weight: {text: '요청의 20%', tone: 'good'}},
+    },
+    {
+      short: '분석',
+      kind: '원리',
+      title: 'AnalysisTemplate이 쿼리를 통과·실패로 바꾼다',
+      text: [
+        'success-rate라는 AnalysisTemplate에 Prometheus 쿼리가 있다. web-canary로 간 요청 중 5xx가 아닌 것을 전체 요청으로 나눈다. successCondition: result[0] >= 0.95, interval: 5m, 그리고 failureLimit을 둔다.',
+        'Rollout은 이것을 배경 분석(strategy.canary.analysis, 나중 단계부터 시작할 수도 있다)이나, 끝날 때까지 막아 두는 분석 단계로 참조한다. 그때마다 컨트롤러가 AnalysisRun을 만들고, AnalysisRun은 측정해서 결과를 남기고 Successful, Failed, Inconclusive 중 하나로 끝난다.',
+      ],
+      keyIdea: '카나리만 잰다. 모든 파드를 묶은 쿼리는 건강한 안정 트래픽 뒤에 나쁜 카나리를 숨긴다.',
+      flows: [
+        {from: 'ctrl', to: 'analysis', label: '실행 시작', type: 'request'},
+        {from: 'analysis', to: 'prom', label: 'PromQL', type: 'request'},
+        {from: 'prom', to: 'analysis', label: '0.995', type: 'response', bend: 40},
+      ],
+      focus: ['analysis', 'prom'],
+      status: {analysis: 'ok'},
+      badges: {analysis: 'Running'},
+      values: {analysis: {text: '성공률 0.995 ≥ 0.95', tone: 'good'}},
+    },
+    {
+      short: '승격',
+      kind: '원리',
+      title: 'pause: {} 는 사람을 기다린다',
+      text: [
+        '50%에서 Rollout이 pause: {} 에 닿아 Paused 상태로 멈춘다. 배경 분석은 계속 돈다. 사람이 대시보드를 보고 kubectl argo rollouts promote web 으로 다음 단계로 보낸다.',
+        'promote --full 은 남은 단계, 멈춤, 분석을 모두 건너뛰고 바로 100%로 간다. 안전 확인까지 건너뛰므로 비상용이다.',
+      ],
+      keyIdea: '시간을 준 멈춤은 배포를 계속 흘러가게 한다. 끝없는 멈춤은 사람이 여는 관문이다.',
+      flows: [
+        {from: 'user', to: 'rollout', label: 'promote', type: 'request'},
+        {from: 'router', to: 'svcS', label: '50%', type: 'request'},
+        {from: 'router', to: 'svcC', label: '50%', type: 'request'},
+      ],
+      focus: ['user', 'rollout'],
+      badges: {rollout: 'Paused · 4/5 단계', router: '50 / 50'},
+      values: {weight: '50%', phase: 'Paused'},
+    },
+    {
+      short: '중단',
+      kind: '장애',
+      title: '성공률이 떨어지자 Rollout이 스스로 중단한다',
+      text: [
+        '부하가 늘자 v2가 5xx를 낸다. 쿼리가 이제 0.88을 돌려준다. 0.95 아래인 측정은 실패로 세고, 실패한 측정이 failureLimit보다 많아지면 AnalysisRun이 Failed가 된다.',
+        '컨트롤러가 Rollout을 중단한다. 카나리 비중을 0으로 돌리고 카나리를 줄인다. 안정 ReplicaSet은 한 번도 줄지 않았으니 곧바로 모든 트래픽을 받는다. Rollout 상태는 Degraded가 된다.',
+      ],
+      keyIdea: '이 되돌림에는 깨어 있는 사람이 필요 없다. 분석이 이 배포의 당직자다.',
+      flows: [
+        {from: 'prom', to: 'analysis', label: '0.88', type: 'response', bend: 40},
+        {from: 'analysis', to: 'ctrl', label: 'Failed', type: 'response'},
+        {from: 'ctrl', to: 'router', label: 'weight 0', type: 'request'},
+        {from: 'router', to: 'svcS', label: '100%', type: 'request'},
+      ],
+      focus: ['analysis', 'rs2'],
+      status: {analysis: 'error', rs2: 'error'},
+      badges: {analysis: 'Failed', router: '100 / 0', rollout: 'Aborted'},
+      values: {weight: {text: '0%', tone: 'bad'}, analysis: {text: '0.88 < 0.95 · Failed', tone: 'bad'}, phase: {text: 'Degraded', tone: 'bad'}},
+    },
+    {
+      short: '중단 뒤',
+      kind: '주의',
+      title: '중단은 트래픽을 되돌릴 뿐 스펙은 그대로다',
+      text: [
+        '중단 뒤에도 spec.template은 여전히 web:2.0이다. Rollout이 중단 상태를 벗어나면 다시 v2를 시도한다. GitOps라면 Git에도 2.0이 적혀 있어서, 컨트롤러와 Git이 실제로 도는 것과 어긋난다.',
+        '템플릿을 되돌리거나 고친 이미지를 내보내서 바로잡는다. 예를 들어 Git에서 되돌린다. kubectl argo rollouts retry rollout web 은 같은 버전을 다시 시작하므로, 원인이 앱 바깥에 있었을 때만 의미가 있다.',
+      ],
+      keyIdea: 'Degraded는 끝났다는 뜻이 아니라 안전하게 멈췄다는 뜻이다. 고쳐서 나아갈지, 스펙의 이미지를 되돌릴지 정한다.',
+      flows: [
+        {from: 'user', to: 'rollout', label: 'image web:2.0.1', type: 'request'},
+      ],
+      focus: ['rollout'],
+      status: {analysis: null, rs2: 'off'},
+      badges: {analysis: null, rollout: 'spec: web:2.0'},
+      values: {analysis: '—'},
+    },
+    {
+      short: '블루/그린',
+      kind: '원리',
+      title: '블루/그린: 사용자보다 먼저 프리뷰 서비스로 v2를 본다',
+      text: [
+        'strategy.blueGreen에는 activeService와 previewService를 적는다. 컨트롤러가 각 서비스 셀렉터에 rollouts-pod-template-hash 레이블을 더한다. active는 v1을, preview는 v2를 가리킨다.',
+        'v2는 전체 크기(또는 previewReplicaCount)로 뜨고 프리뷰 서비스로만 닿는다. prePromotionAnalysis가 거기서 v2를 시험할 수 있다. autoPromotionEnabled: false 면 전환 전에 멈춘다. 기본값은 true라서 v2가 준비되자마자 전환한다.',
+      ],
+      keyIdea: '스모크 테스트와 내부 사용자는 프리뷰 서비스로 보낸다. 운영 트래픽은 아직 움직이지 않는다.',
+      flows: [
+        {from: 'svcS', to: 'rs1', label: 'active', type: 'request'},
+        {from: 'svcC', to: 'rs2', label: 'preview', type: 'request'},
+        {from: 'ctrl', to: 'analysis', label: 'prePromotion', type: 'request'},
+      ],
+      focus: ['svcC', 'rs2'],
+      status: {rs2: 'ok', analysis: 'ok'},
+      badges: {rollout: 'Paused', svcS: 'hash v1', svcC: 'hash v2', router: null},
+      values: {weight: 'active v1 · preview v2', analysis: {text: 'prePromotion 통과', tone: 'good'}, phase: 'Paused'},
+    },
+    {
+      short: '전환',
+      kind: '원리',
+      title: '승격하면 active 셀렉터가 바뀌고, v1은 잠시 기다렸다가 줄어든다',
+      text: [
+        'kubectl argo rollouts promote web 이 active 서비스 셀렉터를 v2 해시로 바꾼다. 운영 트래픽이 한꺼번에 옮겨 간다. postPromotionAnalysis로 실제 부하에서 v2를 확인할 수 있고, 실패하면 Rollout이 중단되며 active를 v1로 되돌린다.',
+        'v1은 scaleDownDelaySeconds 동안 남는다. 기본값은 30초다. 노드가 서비스 규칙을 갱신하는 데 잠깐 걸리고, 그동안 일부 요청은 아직 v1로 갈 수 있기 때문이다.',
+      ],
+      keyIdea: '블루/그린은 잠시 두 배 용량이 든다. 트래픽 라우터를 쓰는 카나리는 덜 들지만 오래 걸린다.',
+      flows: [
+        {from: 'user', to: 'rollout', label: 'promote', type: 'request'},
+        {from: 'svcS', to: 'rs2', label: 'active', type: 'request'},
+      ],
+      focus: ['svcS', 'rs2'],
+      status: {rs1: 'warn', analysis: null},
+      badges: {svcS: 'hash v2', svcC: null, rs1: '30초 뒤 축소', rollout: null},
+      values: {weight: 'active v2', analysis: '—', phase: {text: 'Healthy', tone: 'good'}},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '작게 나아가고, 매번 잰다',
+      text: [
+        'Rollout은 계획이 붙은 디플로이먼트다. 카나리는 setWeight와 pause로, 파드 수나 트래픽 라우터를 통해 트래픽을 옮긴다. 블루/그린은 프리뷰 서비스 뒤에서 v2를 시험하고, 승격할 때 active 셀렉터를 바꾼다.',
+        'AnalysisTemplate은 Prometheus 쿼리를 통과·실패로 바꾼다. 실패한 실행은 Rollout을 중단하고 사람 없이 트래픽을 안정 버전으로 돌린다. 중단 뒤에는 스펙이 아직 나쁜 버전을 가리키므로 스펙을 고친다.',
+      ],
+      keyIdea: '배포하는 동안 열어 둘 화면은 kubectl argo rollouts get rollout web --watch 하나다.',
+      flows: [
+        {from: 'ctrl', to: 'router', label: '비중', type: 'request'},
+        {from: 'analysis', to: 'prom', label: '확인', type: 'request'},
+      ],
+      focus: ['rollout', 'analysis', 'router'],
+      status: {rs1: null, rs2: null},
+      badges: {svcS: null, rs1: null},
+    },
+  ]}
+/>
+
+## 카나리냐 블루/그린이냐, 그리고 명령
+
+| | 카나리 | 블루/그린 |
+|---|---|---|
+| 트래픽이 옮겨 가는 방식 | 단계마다(`setWeight`), 파드 수나 트래픽 라우터로 | active 셀렉터가 바뀔 때 한꺼번에 |
+| 추가 용량 | 카나리 파드만(라우터를 쓰면 안정 버전은 다 떠 있음) | `scaleDownDelaySeconds`가 지날 때까지 한 벌 더 |
+| 사용자보다 먼저 시험 | 실제 사용자 일부 | `previewService`와 `prePromotionAnalysis` |
+| 자동 확인 | 배경 분석이나 `analysis` 단계 | `prePromotionAnalysis`, `postPromotionAnalysis` |
+| 정확한 비율 | `trafficRouting`이 필요(인그레스, 메시, 게이트웨이 API 플러그인) | 필요 없음 |
+
+| 명령 | 하는 일 |
+|---|---|
+| `kubectl argo rollouts get rollout web --watch` | 단계, 비중, ReplicaSet, AnalysisRun을 실시간으로 |
+| `kubectl argo rollouts promote web` | 지금의 멈춤을 풀고 다음 단계로 |
+| `kubectl argo rollouts promote web --full` | 남은 단계, 멈춤, 분석을 모두 건너뜀 |
+| `kubectl argo rollouts abort web` | 트래픽을 안정 버전으로 돌리고 멈춤. 스펙은 바꾸지 않음 |
+| `kubectl argo rollouts retry rollout web` | 중단된 Rollout을 같은 스펙으로 다시 시작 |
+| `kubectl argo rollouts undo web` | 템플릿을 이전 리비전으로 되돌림 |
+
+## 직접 확인해 보기
+
+```bash
+kubectl create namespace argo-rollouts
+kubectl apply -n argo-rollouts -f https://github.com/argoproj/argo-rollouts/releases/latest/download/install.yaml
+kubectl apply -f https://raw.githubusercontent.com/argoproj/argo-rollouts/master/docs/getting-started/basic/rollout.yaml   # 예제 Rollout (레플리카 5)
+kubectl apply -f https://raw.githubusercontent.com/argoproj/argo-rollouts/master/docs/getting-started/basic/service.yaml
+kubectl argo rollouts get rollout rollouts-demo --watch          # 다른 터미널에 띄워 둔다
+kubectl argo rollouts set image rollouts-demo rollouts-demo=argoproj/rollouts-demo:yellow   # 카나리 시작
+kubectl argo rollouts promote rollouts-demo                      # 끝없는 멈춤을 푼다
+kubectl argo rollouts set image rollouts-demo rollouts-demo=argoproj/rollouts-demo:red
+kubectl argo rollouts abort rollouts-demo                        # 안정 버전으로, 상태 Degraded
+kubectl get analysisrun                                          # Rollout이 분석을 쓴다면 결과
+```
+
+<Quiz questions={[
+  {q: '레플리카 4개이고 trafficRouting이 없는 카나리 Rollout이다. setWeight: 10 이 카나리에 요청의 정확히 10%를 주지 못하는 이유는?', options: ['setWeight는 블루/그린에서만 동작하므로', '비중을 파드 수로 맞추는데, 넷 중 하나만 해도 이미 25%이므로', '분석을 통과하기 전에는 카나리가 트래픽을 받지 않으므로'], answer: 1, why: '트래픽 라우터가 없으면 컨트롤러는 한 서비스 뒤의 파드 수만 바꿀 수 있다. 레플리카가 4개면 가장 작은 단계가 파드 하나라서 10%는 만들 수 없다.'},
+  {q: 'AnalysisRun이 실패해 Rollout이 중단됐다. 중단 직후에 맞는 것은?', options: ['트래픽은 안정 버전으로 돌아왔지만 spec.template은 여전히 새 이미지를 가리킨다', 'spec.template의 이미지가 예전 버전으로 바뀐다', 'Rollout은 Healthy이고 배포가 끝났다'], answer: 0, why: '중단은 트래픽을 되돌리고 카나리를 줄이지만 스펙은 고치지 않는다. 스펙을 고치거나 다시 시도할 때까지 Rollout은 Degraded다.'},
+  {q: '블루/그린에서 승격 뒤 예전 ReplicaSet을 scaleDownDelaySeconds 동안 남겨 두는 이유는?', options: ['postPromotionAnalysis가 두 버전을 비교하도록', '프리뷰 서비스가 아직 그것을 쓰므로', '노드가 서비스 규칙을 갱신하는 데 잠깐 걸려서, 일부 요청이 아직 v1로 갈 수 있으므로'], answer: 2, why: '셀렉터 변경은 조금 늦게 노드에 퍼진다. 그동안 v1을 남겨 두면 이미 사라진 파드로 요청이 가지 않는다.'},
+]} />
+
+더 읽을거리: [Argo Rollouts 문서](https://argo-rollouts.readthedocs.io/en/stable/) · [카나리](https://argo-rollouts.readthedocs.io/en/stable/features/canary/) · [블루/그린](https://argo-rollouts.readthedocs.io/en/stable/features/bluegreen/) · [분석과 점진적 배포](https://argo-rollouts.readthedocs.io/en/stable/features/analysis/) · [트래픽 관리](https://argo-rollouts.readthedocs.io/en/stable/features/traffic-management/) · [블루/그린과 카나리를 기본 요소로 (CKAD)](../cert/deploy-strategies.mdx) · [서비스 메시 ② 트래픽 나누기](../feature/mesh-traffic.mdx)

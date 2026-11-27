@@ -180,4 +180,10 @@ curl -s http://<engine>:8000/metrics | grep vllm:prefix_cache   # Prefix cache q
 vllm serve <model> --gpu-memory-utilization 0.9 --max-model-len 8192 --max-num-seqs 64 --enable-prefix-caching   # Levers
 ```
 
+<Quiz questions={[
+  {q: 'Right after vLLM starts, nvidia-smi shows GPU memory about 90% used with no traffic. What does this mean?', options: ['The model is too large for the GPU', 'There is a memory leak', 'Requests are already queuing', 'The engine reserved memory for the KV cache up front; check KV cache usage for real headroom'], answer: 3, why: 'After loading the weights, vLLM reserves most of the remaining memory as the KV cache area. Real headroom is the KV cache usage metric, not memory usage.'},
+  {q: 'Requests A and B start with the same system prompt. What does prefix caching let the engine do for B?', options: ['Reuse the existing KV blocks for that prefix and skip its prefill', 'Skip decode for B entirely', 'Copy A\'s answer to B', 'Store B\'s cache on disk instead of GPU memory'], answer: 0, why: 'The keys and values for an identical prefix are the same, so the engine links the existing blocks to B and skips that part of prefill. The first token arrives sooner and memory is saved.'},
+  {q: 'KV cache usage stays near full, and waiting requests and preemptions both rise. What does that indicate?', options: ['The tokenizer is too slow', 'The KV cache is too small for the load; time to adjust limits or add replicas', 'GPU compute is saturated', 'Prefix caching is turned off'], answer: 1, why: 'When the cache fills, new requests queue and running ones get preempted and recomputed. Levers are --max-model-len, --max-num-seqs, replica count or accelerators with more memory.'},
+]} />
+
 Further reading: [vLLM documentation](https://docs.vllm.ai/) · [PagedAttention paper](https://arxiv.org/abs/2309.06180) · [Gateway API Inference Extension](https://gateway-api-inference-extension.sigs.k8s.io/)

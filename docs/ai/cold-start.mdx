@@ -1,7 +1,7 @@
 ---
 id: cold-start
 title: Until a Model First Starts (Cold Start)
-sidebar_label: 08 · Model Cold Start
+sidebar_label: 09 · Model Cold Start
 description: Follow a model replica as it is placed on a node, downloads its weights, loads them into accelerator memory, and prepares the engine before its first request, plus the common ways to shorten that cold start.
 summary: 'Downloading weights, loading them onto the accelerator and warming the engine before the first request, and how to cut that time.'
 icon: spark
@@ -183,5 +183,11 @@ kubectl get pod <pod> -o jsonpath='{.spec.containers[*].startupProbe}'   # Start
 kubectl get pod <pod> -o jsonpath='{.status.containerStatuses[*].restartCount}'   # Restarts mean liveness killed the load
 curl -s -o /dev/null -w '%{http_code}\n' http://<engine>:8000/health   # e.g. vLLM: 200 once the engine is ready
 ```
+
+<Quiz questions={[
+  {q: 'Every new LLM replica takes minutes to start, and most of that time is spent before the engine even loads anything. What is the first fix to try?', options: ['Raise the HPA maximum replica count', 'Pre-download the weights to the node\'s local disk (local model cache)', 'Shorten the readinessProbe period', 'Use a smaller engine container image'], answer: 1, why: 'Fetching tens of GB of weights over the network is usually the slowest phase. With weights already cached on the node, that phase is skipped.'},
+  {q: 'An engine Pod keeps restarting while it loads the model, and the load starts over each time. What is most likely?', options: ['The image was garbage collected', 'The readinessProbe is failing', 'The livenessProbe fails during loading and no startupProbe covers the load time', 'The KV cache reservation is too large'], answer: 2, why: 'If a livenessProbe fails while the model is loading, the kubelet restarts the container. A startupProbe with failureThreshold × periodSeconds longer than the startup holds off liveness checks until loading ends.'},
+  {q: 'Traffic spikes and autoscaling adds replicas, yet queues still build up for minutes. Why?', options: ['Each new replica serves nothing until its cold start finishes', 'New replicas reject requests until the HPA confirms them', 'The gateway sends new requests only to the oldest replica', 'Adding replicas clears the KV cache on existing ones'], answer: 0, why: 'A new replica must be placed, get its weights, load them and warm up before it passes readiness. Until then the existing replicas carry the load, which is why spare replicas are often kept ahead of peaks.'},
+]} />
 
 Further reading: [Liveness, Readiness, and Startup Probes](https://kubernetes.io/docs/concepts/workloads/pods/probes/) · [vLLM docs](https://docs.vllm.ai/) · [KServe Model Cache](https://kserve.github.io/website/docs/model-serving/generative-inference/modelcache/localmodel)

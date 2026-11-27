@@ -1,7 +1,7 @@
 ---
 id: helm-release
 title: 헬름 릴리스의 설치·업그레이드·롤백
-sidebar_label: 05 · 헬름 릴리스
+sidebar_label: 06 · 헬름 릴리스
 description: 차트와 values가 매니페스트로 렌더링되는 과정, 시크릿에 저장되는 릴리스 리비전, 실패하는 업그레이드, 새 리비전으로 쓰이는 롤백, kubectl로 직접 고친 값이 어떻게 되는지를 애니메이션으로 본다
 summary: '차트와 values가 매니페스트가 되고, 설치·업그레이드마다 시크릿에 리비전이 쌓이며, 롤백은 새 리비전을 쓴다.'
 icon: wheel
@@ -232,5 +232,11 @@ helm get values shop -n shop                            # 내가 넘긴 values
 kubectl get secret -n shop -l owner=helm                # 리비전마다 시크릿 하나
 helm rollback shop 1 -n shop                            # 새 리비전을 쓴다
 ```
+
+<Quiz questions={[
+  {q: '이미지 태그에 오타가 있는 helm upgrade가 성공으로 끝나 리비전은 deployed인데, 파드는 ImagePullBackOff다. 헬름은 왜 알아채지 못했는가?', options: ['--wait가 없으면 헬름은 API 서버가 객체를 받아들였는지만 본다', '헬름은 차트 버전만 확인한다', '릴리스 시크릿이 갱신되지 않았다', '클러스터에 Tiller가 돌고 있지 않았다'], answer: 0, why: '릴리스 상태는 앱이 아니라 적용에 대한 것이기 때문이다. --wait를 주면 헬름이 파드가 준비될 때까지 기다리고, 준비되지 않으면 리비전을 failed로 표시한다.'},
+  {q: '이력이 1 superseded, 2 superseded, 3 failed다. helm rollback shop 2를 친 뒤 helm history에는 무엇이 보이는가?', options: ['리비전 3이 지워지고 2가 다시 deployed가 된다', '리비전 2의 번호가 4로 바뀐다', '리비전 2의 내용으로 쓴 새 리비전 4가 deployed이고, 설명은 Rollback to 2다'], answer: 2, why: '롤백은 이력을 되감지 않기 때문이다. 리비전 번호는 올라가기만 하므로 헬름은 리비전 2를 복사한 새 리비전 4를 쓴다.'},
+  {q: '트래픽이 몰리자 동료가 kubectl scale deployment shop --replicas=6을 실행했다. 차트는 replicas를 3으로 둔다. 헬름 3에서 다음 helm upgrade 때 어떻게 되는가?', options: ['실제 객체가 이기므로 헬름은 6을 유지한다', '차트가 정하는 필드라 헬름이 replicas를 3으로 되돌린다', '헬름이 디플로이먼트를 지우고 다시 만든다'], answer: 1, why: '헬름은 이전 매니페스트, 새 매니페스트, 실제 객체를 비교해 차트가 정하는 필드를 되돌리기 때문이다. 차트가 가진 값은 kubectl이 아니라 values로 바꾼다.'},
+]} />
 
 더 읽을거리: [헬름 문서](https://helm.sh/docs/) · [헬름 사용하기](https://helm.sh/docs/intro/using_helm/) · [values 파일](https://helm.sh/docs/chart_template_guide/values_files/) · [helm rollback](https://helm.sh/docs/helm/helm_rollback/) · [헬름 4 개요](https://helm.sh/docs/overview/) · [Kustomize로 환경별 배포](../cert/kustomize.mdx) · [GitOps 동기화](../intermediate/gitops-sync.mdx)

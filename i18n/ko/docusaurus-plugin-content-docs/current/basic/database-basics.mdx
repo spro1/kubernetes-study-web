@@ -1,7 +1,7 @@
 ---
 id: database-basics
 title: 앱이 데이터베이스에 저장할 때
-sidebar_label: 03 · 데이터베이스에 저장할 때
+sidebar_label: 04 · 데이터베이스에 저장할 때
 description: 주문 하나가 PostgreSQL 같은 관계형 데이터베이스에 저장되기까지, 커넥션 풀과 쿼리 플래너, 인덱스, 트랜잭션과 ACID, WAL, 잠금과 교착 상태, 읽기 복제본으로의 복제와 복제 지연, NoSQL과의 차이를 애니메이션으로 따라간다
 summary: '커넥션 풀, 실행 계획과 인덱스, 트랜잭션과 WAL, 잠금, 읽기 복제본과 복제 지연.'
 icon: db
@@ -216,7 +216,7 @@ hide_table_of_contents: true
 | 저장은 됐는데 안 보임 | 뒤처진 복제본에서 읽음 | `pg_stat_replication`의 `replay_lag`, 방금 쓴 것은 주 서버에서 읽기 |
 | 모든 쓰기에서 COMMIT이 느림 | WAL 디스크 flush가 느림 | WAL 볼륨의 디스크 지연, `pg_stat_io`의 WAL 쓰기·fsync 시간(PostgreSQL 18+) 또는 `pg_stat_wal`(17 이하) |
 
-## 직접 해 보기
+## 직접 확인해 보기
 
 ```bash
 docker run -d --name pg -e POSTGRES_PASSWORD=pw -p 5432:5432 postgres:17   # 로컬 PostgreSQL
@@ -235,5 +235,11 @@ SHOW max_connections;
 SELECT pid, state, wait_event_type, query FROM pg_stat_activity;          -- 누가 연결했고 누가 기다리는지
 SELECT client_addr, state, replay_lag FROM pg_stat_replication;           -- 복제본이 있는 주 서버에서
 ```
+
+<Quiz questions={[
+  {q: 'HPA가 주문 앱을 레플리카 3개에서 5개로 늘리자 새 DB 연결이 "sorry, too many clients already"로 실패한다. 가장 그럴듯한 원인은 무엇인가?', options: ['orders 테이블에 인덱스가 없다', '풀 크기 × 레플리카 수가 max_connections를 넘었다', '읽기 복제본의 복제 지연', '두 트랜잭션 사이의 교착 상태'], answer: 1, why: '레플리카마다 자기 풀을 가지므로 파드를 늘리면 DB 연결 수도 곱으로 늘기 때문이다. 풀 크기를 레플리카 기준으로 정하거나 앞단에 PgBouncer 같은 풀러를 둔다.'},
+  {q: '고객이 주문을 저장했는데, 복제본에서 읽는 주문 내역 화면에 그 주문이 없다. 무슨 일인가?', options: ['주문이 커밋되지 않았다', '서버가 죽으면서 WAL을 잃었다', '복제본이 뒤처져(복제 지연) 주문이 아직 도착하지 않았다'], answer: 2, why: '기본 복제는 비동기라 복제본은 늘 조금 뒤처지기 때문이다. 사용자가 방금 쓴 것을 꼭 봐야 하는 읽기는 주 서버에서 한다.'},
+  {q: 'COMMIT이 WAL 기록을 디스크에 flush한 뒤에야 돌아오는 이유는 무엇인가?', options: ['서버가 죽어도 WAL을 재생해 되살릴 수 있어야 커밋된 변경이 지속되기 때문이다', '테이블 페이지를 아예 쓰지 않아도 되게 하기 위해서다', '변경이 끝날 때까지 읽기를 막기 위해서다'], answer: 0, why: '테이블 페이지는 나중에 체크포인트가 쓴다. 다시 켤 때 마지막 체크포인트부터 WAL을 재생해 커밋된 변경을 모두 되살리기 때문이다.'},
+]} />
 
 더 읽을거리: [PostgreSQL: EXPLAIN 사용하기](https://www.postgresql.org/docs/current/using-explain.html) · [인덱스](https://www.postgresql.org/docs/current/indexes.html) · [트랜잭션](https://www.postgresql.org/docs/current/tutorial-transactions.html) · [WAL](https://www.postgresql.org/docs/current/wal-intro.html) · [명시적 잠금과 교착 상태](https://www.postgresql.org/docs/current/explicit-locking.html) · [스트리밍 복제](https://www.postgresql.org/docs/current/warm-standby.html#STREAMING-REPLICATION) · [가용 영역 하나가 멈추면](../cloud/az-failover.mdx) · [스테이트풀셋과 데이터베이스](../intermediate/statefulset.mdx)

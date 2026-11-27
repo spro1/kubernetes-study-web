@@ -1,7 +1,7 @@
 ---
 id: vpa
 title: Automatic Pod Sizing (VPA)
-sidebar_label: 09 · Automatic Pod Sizing
+sidebar_label: 11 · Automatic Pod Sizing
 description: Animated walkthrough of how the VPA (Vertical Pod Autoscaler) computes recommendations from usage history and, depending on its update mode, recreates pods to change their CPU and memory values
 summary: 'Adjusting CPU and memory size rather than count, and why defined and actual values can look different.'
 icon: scale
@@ -182,5 +182,11 @@ kubectl describe vpa <name>                          # Recommendation
 kubectl get pod <pod> -o jsonpath='{.spec.containers[*].resources}'   # Actual pod values
 kubectl get hpa -A                                   # Is an HPA attached to the same target?
 ```
+
+<Quiz questions={[
+  {q: 'Nobody changed the Deployment YAML, but a running pod has different CPU and memory requests. What is the most likely reason?', options: ['A VPA in apply mode recreated the pod with its recommendation', 'An HPA changed the pod\'s requests', 'The scheduler resized the pod to fit the node'], answer: 0, why: 'VPA does not edit the workload YAML; it changes only the values on pods it recreates. HPA changes the count, not the size.'},
+  {q: 'You attach a VPA in recommend-only mode (Off). What happens to the pods?', options: ['They are recreated with the recommended values', 'They are resized in place without a restart', 'Nothing; VPA only computes recommendations', 'They are scaled out to more replicas'], answer: 2, why: 'In recommend-only mode VPA just computes recommendations and leaves pods alone. Use it to check the values before switching to an applying mode.'},
+  {q: 'An HPA scales pods on CPU, and you want to add a VPA in apply mode. What should you avoid?', options: ['Setting maxAllowed on the VPA', 'Letting both adjust the same CPU metric', 'Targeting a Deployment with the VPA'], answer: 1, why: 'If both act on the same CPU, their adjustments affect each other. Drive the HPA with a different metric, or keep the VPA in recommend-only mode.'},
+]} />
 
 Further reading: [Workload autoscaling](https://kubernetes.io/docs/concepts/workloads/autoscaling/) · [Vertical Pod Autoscaler (GitHub)](https://github.com/kubernetes/autoscaler/tree/master/vertical-pod-autoscaler) · [Resource management for containers](https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/) · [Scaling with Load (HPA)](../k8s/autoscaling.mdx)

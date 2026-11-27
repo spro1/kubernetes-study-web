@@ -199,4 +199,10 @@ kubectl get resourceclaims -A                        # Per-Pod claims and alloca
 kubectl get events -n <namespace> --field-selector reason=FailedScheduling   # cannot allocate all claims (step 8)
 ```
 
+<Quiz questions={[
+  {q: 'A second model deployment passed the namespace quota check, but its Pod stays Pending. What is most likely?', options: ['The quota check was skipped by mistake', 'Other Pods hold all matching devices; quota is only a ceiling and does not guarantee free devices', 'The DRA driver has not published a DeviceClass', 'The Deployment has too many replicas for the API server'], answer: 1, why: 'ResourceQuota caps what you may use but does not reserve devices. If matching devices are all taken, the scheduler finds no place and reports cannot allocate all claims.'},
+  {q: 'How do you ask DRA for two GPUs and a network card attached to the same PCIe root?', options: ['Create three separate Pods and use node affinity', 'Request nvidia.com/gpu: 2 and a NIC count in limits', 'Put several device requests in one claim with a matchAttribute constraint on resource.kubernetes.io/pcieRoot', 'Set the GPU model in a ResourceQuota'], answer: 2, why: 'One claim can hold several device requests, and matchAttribute requires their attributes, such as pcieRoot, to match.'},
+  {q: 'For a Pending Pod, what order of checks does the lesson suggest?', options: ['Quota, then free devices, then whether the criteria are too strict', 'Kubelet logs, then driver logs, then node reboot', 'Criteria first, then delete the claim, then quota'], answer: 0, why: 'Quota exceeded and devices exhausted look similar but are different causes. Check kubectl describe quota, then resourceslices and resourceclaims, then the criteria.'},
+]} />
+
 Further reading: [Dynamic Resource Allocation](https://kubernetes.io/docs/concepts/resource-management/dynamic-resource-allocation/) · [Resource Quotas](https://kubernetes.io/docs/concepts/policy/resource-quotas/) · [Kueue](https://kueue.sigs.k8s.io/docs/overview/)

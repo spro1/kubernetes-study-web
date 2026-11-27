@@ -1,7 +1,7 @@
 ---
 id: kustomize
 title: Per-environment deploys with Kustomize (CKA·CKAD)
-sidebar_label: 06 · Kustomize per environment
+sidebar_label: 07 · Kustomize per environment
 description: Follow an animation of applying per-environment overlays for dev and prod on top of shared manifests (base) to change name prefixes, replicas and image tags, previewing with kubectl kustomize and deploying with kubectl apply -k
 summary: 'Producing different manifests per environment with base and overlays.'
 icon: split
@@ -190,5 +190,11 @@ kubectl kustomize overlays/prod | grep -E 'replicas|image:'   # Patch and new ta
 kubectl kustomize overlays/dev | grep -E 'name: dev-|namespace:'   # namePrefix and namespace
 kubectl diff -k overlays/prod                        # What apply -k would change
 ```
+
+<Quiz questions={[
+  {q: 'You need prod to run 3 replicas while dev keeps 1. Where do you make the change?', options: ['Edit replicas in base/deployment.yaml', 'A patch file with only replicas: 3, listed under patches in overlays/prod', 'Add namePrefix: prod- in overlays/prod'], answer: 1, why: 'An overlay holds only what differs in that environment. Editing base directly would change the other environments too.'},
+  {q: 'You run kubectl kustomize overlays/prod, but nothing changes in the cluster. Why?', options: ['The overlay is missing ../../base', 'It needs -f instead of a folder', 'The namespace prod does not exist', 'kubectl kustomize only prints the merged YAML; kubectl apply -k applies it'], answer: 3, why: 'kubectl kustomize is a preview and sends nothing to the cluster. kubectl apply -k builds the same result and applies it.'},
+  {q: 'A bad image tag went out with kubectl apply -k overlays/prod. How do you roll back?', options: ['Take the previous kustomization.yaml from Git and run apply -k again', 'kubectl rollback -k overlays/prod', 'helm rollback, because Kustomize stores revisions'], answer: 0, why: 'Kustomize has no install history of its own. Git handles history, so you restore the previous file and apply again.'},
+]} />
 
 Further reading: [CNCF certification curriculum](https://github.com/cncf/curriculum) · [Declarative management of Kubernetes objects using Kustomize](https://kubernetes.io/docs/tasks/manage-kubernetes-objects/kustomization/) · [Helm and GitOps](../intermediate/gitops-sync.mdx)

@@ -213,4 +213,10 @@ sudo aa-status | grep deny-shell                     # On the node: profile load
 sudo grep '"subresource":"exec"' /var/log/kubernetes/audit/audit.log   # Who exec'd (path set by --audit-log-path)
 ```
 
+<Quiz questions={[
+  {q: 'Falco fires Terminal shell in container for the web Pod. What happens to the shell?', options: ['Falco kills the shell process', 'Falco deletes the Pod', 'Nothing; Falco only alerts, so you must replace the Pod yourself'], answer: 2, why: 'Falco is a detection tool. Blocking is the job of seccomp, AppArmor and a read-only root filesystem, and cleaning up the Pod is up to you.'},
+  {q: 'A Falco alert shows a shell was opened in Pod web. How do you find out who did it?', options: ['Read the user on the pods/exec request in the audit log, matched by time and Pod name', 'Read the Falco alert, which names the user account', 'Check the Pod\'s seccomp profile', 'Run kubectl logs on the web container'], answer: 0, why: 'Falco tells you what happened inside the container; the audit log tells you who came in through the API server. If the audit policy leaves out this request, there is no record.'},
+  {q: 'You add an AppArmor Localhost profile to a Pod, and the Pod cannot start on some nodes. What is the most likely cause?', options: ['seccomp RuntimeDefault conflicts with AppArmor', 'The profile is not loaded on those nodes', 'readOnlyRootFilesystem is missing'], answer: 1, why: 'AppArmor works in the kernel of each node. A Pod scheduled to a node without the profile cannot start, so load it with apparmor_parser first.'},
+]} />
+
 Further reading: [CNCF certification curriculum](https://github.com/cncf/curriculum) · [Falco docs](https://falco.org/docs/) · [Restrict a container's syscalls with seccomp](https://kubernetes.io/docs/tutorials/security/seccomp/) · [Pod Security Standards and securityContext](../advanced/pod-security.mdx) · [Audit Logs](../advanced/audit-log.mdx)

@@ -1,7 +1,7 @@
 ---
 id: server-to-container
 title: From One Server to Containers
-sidebar_label: 05 · From One Server to Containers
+sidebar_label: 06 · From One Server to Containers
 description: Follow step by step from a physical server's four resources and processes to virtual machines, containers that share a kernel, and on-premises versus cloud
 summary: 'A server’s four resources, processes, virtual machines, and containers that share the kernel.'
 icon: server
@@ -186,5 +186,11 @@ kubectl get nodes -o custom-columns=NAME:.metadata.name,CPU:.status.capacity.cpu
 kubectl top nodes                                    # CPU and memory use per node (needs metrics-server)
 kubectl get pod <pod> -o jsonpath='{.status.containerStatuses[*].lastState.terminated.reason}'   # OOMKilled after a memory limit?
 ```
+
+<Quiz questions={[
+  {q: 'An app responds slowly but never crashes, while another app keeps getting killed. Which resource shortage fits each?', options: ['Slow is a memory shortage, killed is a CPU shortage', 'Both point to a full disk', 'Slow is a CPU shortage, killed is a memory shortage'], answer: 2, why: 'Too little CPU makes things slow. Too little memory can get a program killed, and in Kubernetes a container over its memory limit is OOMKilled.'},
+  {q: 'Why do containers start in seconds and fit on a server in far greater numbers than VMs?', options: ['They share the server\'s kernel and carry only their own programs and libraries', 'Each one runs a smaller copy of the operating system', 'The hypervisor gives them priority over VMs', 'They do not use CPU or memory'], answer: 0, why: 'A VM carries a whole operating system. A container is an isolated process that shares the kernel, so it is much lighter.'},
+  {q: 'The web container goes over its memory limit. What happens to the api container on the same server?', options: ['It is killed along with web', 'It keeps running, because the containers are isolated from each other', 'It takes over web\'s memory limit'], answer: 1, why: 'Only the container over its limit is killed and then restarted. The neighbor is isolated and keeps running.'},
+]} />
 
 Further reading: [Containers (Kubernetes docs)](https://kubernetes.io/docs/concepts/containers/) · [Nodes](https://kubernetes.io/docs/concepts/architecture/nodes/) · [Resource Management for Pods and Containers](https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/)

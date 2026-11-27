@@ -201,4 +201,10 @@ kubectl get resourceclaim <이름> -o jsonpath='{.status.allocation.devices.resu
 kubectl describe pod <파드>                           # FailedScheduling(cannot allocate all claims)
 ```
 
+<Quiz questions={[
+  {q: 'DRA에서 파드가 어느 GPU를 받을지 정하는 것은 누구인가?', options: ['노드의 kubelet이 남은 장치 중 아무거나 고른다', '스케줄러가 노드와 함께 장치를 골라 요청서에 기록한다', 'DRA 드라이버가 ResourceSlice를 올릴 때 정한다'], answer: 1, why: 'DRA에서는 스케줄러가 요청서의 조건과 장치 목록을 맞춰 장치와 노드를 고르고, 할당 결과를 ResourceClaim에 적기 때문이다.'},
+  {q: '파드가 메모리 40GB 이상인 GPU를 요청했고, 클러스터에는 24GB GPU가 남아 있다. 파드가 Pending이다. 무엇을 확인해야 하는가?', options: ['kubelet을 재시작해야 하는지', '대신 nvidia.com/gpu: 1로 요청해야 하는지', '파드가 뜬 뒤 DeviceClass가 지워졌는지', 'FailedScheduling 이벤트(cannot allocate all claims)와 kubectl get resourceslices의 장치 속성'], answer: 3, why: 'GPU가 있어도 조건에 맞는 것이 없을 수 있다. 요청서의 조건을 드라이버가 ResourceSlice에 올린 속성과 비교해 봐야 하기 때문이다.'},
+  {q: 'ResourceClaimTemplate을 쓴 학습 파드가 지워졌다. 그 GPU는 어떻게 되는가?', options: ['틀로 만들어진 요청서가 함께 지워지고, GPU는 할당이 풀려 다음 요청이 쓸 수 있다', '관리자가 요청서를 지울 때까지 GPU는 할당된 채로 남는다', 'GPU가 같은 노드의 다음 파드로 자동으로 옮겨 간다'], answer: 0, why: '틀로 만들어진 요청서는 그 파드 전용이다. 파드가 지워지면 요청서도 함께 지워지고 장치는 다시 쓸 수 있는 상태가 되기 때문이다.'},
+]} />
+
 더 읽을거리: [동적 리소스 할당](https://kubernetes.io/docs/concepts/resource-management/dynamic-resource-allocation/) · [장치 플러그인](https://kubernetes.io/ko/docs/concepts/extend-kubernetes/compute-storage-net/device-plugins/) · [GPU 스케줄링](https://kubernetes.io/ko/docs/tasks/manage-gpus/scheduling-gpus/)

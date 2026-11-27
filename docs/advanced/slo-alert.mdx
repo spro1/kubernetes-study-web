@@ -1,7 +1,7 @@
 ---
 id: slo-alert
 title: SLOs and Alert Design
-sidebar_label: 10 · SLOs and Alert Design
+sidebar_label: 12 · SLOs and Alert Design
 description: Turn goals into numbers with SLIs, SLOs and error budgets, set symptom alerts based on burn rate, and narrow down the cause with metrics, traces and logs after an alert fires, step by step with animation
 summary: 'SLIs, SLOs and error budgets, burn-rate alerts, and narrowing down the cause.'
 icon: bell
@@ -188,5 +188,11 @@ kubectl get prometheusrules -A                                         # Alertin
 curl -s <prometheus>/api/v1/rules | jq '.data.groups[].rules[].name'   # Rules Prometheus actually loaded
 curl -s <alertmanager>/api/v2/alerts/groups                            # Alerts grouped into notifications
 ```
+
+<Quiz questions={[
+  {q: 'A "CPU over 80%" alert fires dozens of times a day, but users report no problems. What does the lesson recommend?', options: ['Raise the threshold to 95% so it fires less often', 'Move CPU to dashboards and page on a symptom such as error budget burn rate', 'Delete the CPU metric entirely', 'Send the CPU alert to more people so someone answers'], answer: 1, why: 'Cause-based alerts fire without user impact and cause alert fatigue. Keep cause metrics on dashboards and wake people only for user-facing symptoms.'},
+  {q: 'Why does the urgent burn-rate alert require both a 1-hour and a 5-minute window to be at 14.4 or more?', options: ['The long window confirms it is burning hard, the short one confirms it is still burning now, so it fires fast with fewer false alarms', 'Prometheus cannot evaluate a single window', 'The two windows are averaged to get the error budget'], answer: 0, why: 'A long window alone lingers after the outage ends; a short window alone fires on brief blips. Requiring both detects fast while cutting false alarms.'},
+  {q: 'The SLO is 99.9% success over 30 days, and the burn rate is 14.4. What does that mean?', options: ['14.4% of requests are failing', 'The budget will last exactly until the end of the 30 days', 'The 30-day error budget will be used up in about two days', 'The SLO is already broken'], answer: 2, why: 'Burn rate is how fast the error budget is spent. At 1 it runs out exactly at the end of the period; at 14.4 a 30-day budget is gone in about two days.'},
+]} />
 
 Further reading: [Google SRE Workbook — Alerting on SLOs](https://sre.google/workbook/alerting-on-slos/) · [Prometheus alerting overview](https://prometheus.io/docs/alerting/latest/overview/) · [Kubernetes system metrics](https://kubernetes.io/docs/concepts/cluster-administration/system-metrics/)

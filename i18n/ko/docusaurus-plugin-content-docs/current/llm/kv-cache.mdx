@@ -180,4 +180,10 @@ curl -s http://<엔진>:8000/metrics | grep vllm:prefix_cache   # 프리픽스 �
 vllm serve <모델> --gpu-memory-utilization 0.9 --max-model-len 8192 --max-num-seqs 64 --enable-prefix-caching   # 손볼 곳
 ```
 
+<Quiz questions={[
+  {q: 'vLLM이 뜨자마자 트래픽이 없는데도 nvidia-smi에 GPU 메모리가 90%쯤 쓰인 것으로 나온다. 무슨 뜻인가?', options: ['모델이 GPU에 비해 너무 크다', '메모리 누수가 있다', '이미 요청이 대기 중이다', '엔진이 KV 캐시 영역을 미리 잡은 것이므로, 실제 여유는 KV 캐시 사용률로 봐야 한다'], answer: 3, why: 'vLLM은 가중치를 올린 뒤 남은 메모리의 대부분을 KV 캐시 영역으로 미리 잡는다. 실제 여유는 메모리 사용률이 아니라 KV 캐시 사용률로 보기 때문이다.'},
+  {q: '요청 A와 B가 같은 시스템 지시문으로 시작한다. 프리픽스 캐시 덕분에 엔진은 B에 대해 무엇을 할 수 있는가?', options: ['그 앞부분의 기존 KV 블록을 재사용하고 그 부분의 프리필을 건너뛴다', 'B의 디코드를 통째로 건너뛴다', 'A의 답을 B에 복사한다', 'B의 캐시를 GPU 메모리 대신 디스크에 둔다'], answer: 0, why: '같은 앞부분의 키·값은 똑같으므로, 엔진은 이미 있는 블록을 B에 연결하고 그 부분의 프리필을 건너뛴다. 첫 토큰이 빨라지고 메모리도 아끼기 때문이다.'},
+  {q: 'KV 캐시 사용률이 늘 가득에 가깝고, 대기 요청 수와 선점 횟수가 함께 오른다. 이것은 무엇을 뜻하는가?', options: ['토크나이저가 너무 느리다', '부하에 비해 KV 캐시가 모자라므로 한도를 손보거나 레플리카를 늘릴 때다', 'GPU 연산이 포화됐다', '프리픽스 캐시가 꺼져 있다'], answer: 1, why: '캐시가 차면 새 요청은 대기하고 진행 중인 요청은 선점되어 다시 계산된다. --max-model-len, --max-num-seqs, 레플리카 수, 더 큰 메모리의 가속기가 손볼 곳이기 때문이다.'},
+]} />
+
 더 읽을거리: [vLLM 문서](https://docs.vllm.ai/) · [PagedAttention 논문](https://arxiv.org/abs/2309.06180) · [Gateway API Inference Extension](https://gateway-api-inference-extension.sigs.k8s.io/)

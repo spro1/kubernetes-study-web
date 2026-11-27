@@ -1,0 +1,266 @@
+---
+id: linux-basics
+title: 쿠버네티스를 위한 리눅스 기초
+sidebar_label: 07 · 리눅스 기초
+description: 프로세스·PID·시그널부터 종료 코드, 사용자와 sudo, 파일 권한, systemd 유닛, journalctl, 로그 위치까지 모든 노드와 컨테이너 밑에 깔린 리눅스 기초를 애니메이션으로 본다
+summary: '프로세스와 시그널, 종료 코드 127·137의 뜻, root와 sudo, rwx 권한과 "permission denied", systemd 유닛과 로그 위치.'
+icon: server
+hide_table_of_contents: true
+---
+
+# 쿠버네티스를 위한 리눅스 기초
+
+쿠버네티스 노드는 모두 리눅스 서버고, 컨테이너는 모두 리눅스 프로세스다. 서버 한 대에서 앱 하나를 따라간다. 어떻게 시작하고, 어떻게 멈추고, 종료 코드가 무엇을 말하고, 왜 "permission denied"가 나고, 로그는 어디로 가는지 본다.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '약 14분', level: '기초'}}
+  groups={[
+    {label: '리눅스 서버 (예: 노드)', x: 230, y: 30, w: 750, h: 410, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'you', label: '나', sub: 'ssh · 사용자 dev', icon: 'user', tone: 'ext', x: 110, y: 110, show: true},
+    {id: 'systemd', label: 'systemd', sub: 'PID 1', icon: 'gear', tone: 'cp', x: 340, y: 110},
+    {id: 'kubelet', label: 'kubelet.service', sub: 'systemd 유닛', icon: 'server', tone: 'node', x: 340, y: 240, w: 170},
+    {id: 'journal', label: 'journald', sub: 'journalctl -u', icon: 'book', tone: 'store', x: 340, y: 370},
+    {id: 'shell', label: 'bash', sub: 'PID 2001 · uid dev', icon: 'hammer', tone: 'node', x: 580, y: 110},
+    {id: 'app', label: 'app', sub: 'PID 2002 · PPID 2001', icon: 'box', tone: 'app', x: 580, y: 240},
+    {id: 'child', label: 'worker', sub: 'PID 2003', icon: 'box', tone: 'app', size: 'sm', x: 580, y: 370},
+    {id: 'file', label: 'config.yaml', sub: '-rw------- root', icon: 'disk', tone: 'store', x: 830, y: 110, w: 160},
+    {id: 'varlog', label: '/var/log', sub: 'syslog · pods/', icon: 'archive', tone: 'store', x: 830, y: 240, w: 160},
+    {id: 'root', label: 'root', sub: 'UID 0 · sudo로', icon: 'shield', tone: 'cp', x: 830, y: 370, w: 160},
+  ]}
+  metrics={[
+    {id: 'tree', label: '프로세스 트리'},
+    {id: 'signal', label: '시그널'},
+    {id: 'exit', label: '종료 코드'},
+    {id: 'perm', label: '접근'},
+  ]}
+  learn={[
+    {text: 'PID, 부모와 자식, PID 1이 하는 일', at: 1},
+    {text: 'SIGTERM·SIGKILL·SIGHUP의 차이와 trap', at: 2},
+    {text: '종료 코드 읽기: 0, 1, 126, 127, 128+n, 137', at: 4},
+    {text: '사용자, root, sudo, rwx 권한', at: 5},
+    {text: 'systemd 유닛, journalctl, 로그가 있는 곳', at: 8},
+  ]}
+  steps={[
+    {
+      short: '시작',
+      kind: '시작',
+      title: '노드에서는 모든 것이 프로세스다',
+      text: [
+        'SSH로 노드에 들어가 셸을 얻는다. kubelet도, 컨테이너 런타임도, 이 노드의 컨테이너도 모두 평범한 리눅스 프로세스다.',
+        '그래서 리눅스 기초가 곧 쿠버네티스 기초다. kubectl describe의 종료 코드, 종료 요청을 무시하는 파드, 로그의 "permission denied"는 모두 리눅스 이야기다.',
+      ],
+      flows: [{from: 'you', to: 'shell', label: 'ssh 로그인', type: 'request'}],
+      focus: ['you', 'shell'],
+      values: {tree: 'bash', signal: '—', exit: '—', perm: '—'},
+    },
+    {
+      short: 'PID',
+      kind: '원리',
+      title: '프로세스마다 PID와 부모가 있다',
+      text: [
+        '셸에서 ./app을 친다. 셸이 자식을 fork하고 그 안에서 프로그램을 exec한다. 그래서 app은 PID 2002를 받고, 부모 PID(PPID)는 셸인 2001이다. app은 다시 자기 자식 worker를 띄운다.',
+        'PID 1은 특별하다. 서버에서는 init 시스템, 보통 systemd다. 부모가 먼저 죽으면 남은 자식은 PID 1(또는 subreaper)이 넘겨받아 종료 상태를 거둔다.',
+      ],
+      keyIdea: 'ps -ef는 PID와 PPID를 보여 준다. pstree -p는 트리로 그린다.',
+      flows: [
+        {from: 'shell', to: 'app', label: 'fork + exec', type: 'request'},
+        {from: 'app', to: 'child', label: 'fork', type: 'request'},
+      ],
+      focus: ['shell', 'app', 'child'],
+      values: {tree: 'bash → app → worker'},
+    },
+    {
+      short: '시그널',
+      kind: '원리',
+      title: '시그널은 프로세스에게 멈추라고 부탁하거나 강제한다',
+      text: [
+        '시그널은 커널이 보내는 짧은 신호다. SIGTERM(15)은 멈춰 달라는 부탁이다. 프로세스가 받아서 하던 일을 끝내고 나갈 수 있다. SIGKILL(9)은 받을 수도 무시할 수도 없다. 커널이 바로 끝낸다.',
+        'SIGHUP(1)은 터미널이 끊겼다는 뜻이다. 많은 데몬은 이것을 "설정 다시 읽기"로 쓴다. 셸 스크립트에서는 trap \'cleanup\' TERM으로 SIGTERM이 오면 cleanup을 돌린다.',
+      ],
+      keyIdea: 'kill PID는 SIGTERM을 보낸다. kill -9는 정리할 틈을 주지 않으니 끝까지 안 멈출 때만 쓴다.',
+      flows: [{from: 'shell', to: 'app', label: 'SIGTERM', type: 'request'}],
+      focus: ['app'],
+      badges: {app: 'trap TERM'},
+      values: {signal: 'SIGTERM (15)'},
+    },
+    {
+      short: 'PID 1 함정',
+      kind: '주의',
+      title: '컨테이너 안에서는 내 앱이 PID 1이다',
+      text: [
+        '컨테이너는 PID 네임스페이스를 따로 가지고, 첫 프로세스가 그 안의 PID 1이다. 커널은 PID 1에 기본 동작인 "종료"를 적용하지 않는다. 앱에 SIGTERM 핸들러가 없으면 SIGTERM은 아무 일도 하지 않는다.',
+        '쿠버네티스는 SIGTERM을 보내고 terminationGracePeriodSeconds(기본 30초)를 기다린 뒤 SIGKILL을 보낸다. SIGTERM을 무시하는 앱은 늘 끝까지 기다리다 강제로 죽는다. 셸 형식 CMD는 sh를 PID 1로 앞에 두는데, sh가 시그널을 넘겨주지 않을 수 있다.',
+      ],
+      keyIdea: '앱에서 SIGTERM을 처리하거나, CMD를 exec 형식으로 쓰거나, tini 같은 작은 init을 둔다.',
+      flows: [{from: 'shell', to: 'app', label: 'SIGTERM 무시', type: 'request'}],
+      focus: ['app'],
+      status: {app: 'warn'},
+      badges: {app: 'PID 1 · 핸들러 없음'},
+      values: {signal: {text: 'SIGTERM → 대기 → SIGKILL', tone: 'bad'}},
+    },
+    {
+      short: '종료 코드',
+      kind: '원리',
+      title: '종료 코드는 프로세스가 어떻게 끝났는지 말한다',
+      text: [
+        '프로세스는 0~255 사이의 숫자를 남기고 끝난다. 0은 성공이고, 나머지는 프로그램이 정한 실패다. 흔히 1이다. 셸도 자기 숫자를 쓴다. 126은 "찾았지만 실행할 수 없다", 127은 "명령을 찾을 수 없다"다.',
+        '시그널로 죽으면 셸은 128 + 시그널 번호를 보여 준다. 137은 128 + 9, 곧 SIGKILL이다. OOM 킬러나 유예 시간 만료가 흔한 원인이다. 143은 128 + 15, SIGTERM이다.',
+      ],
+      keyIdea: 'echo $?가 마지막 종료 코드를 보여 준다. kubectl describe pod의 Last State: Terminated에 Exit Code와 OOMKilled 같은 Reason이 나온다.',
+      flows: [{from: 'app', to: 'shell', label: 'exit 137', type: 'response'}],
+      focus: ['app', 'shell'],
+      status: {app: 'error', child: 'gone'},
+      badges: {app: 'killed'},
+      values: {exit: {text: '137 = 128 + 9', tone: 'bad'}},
+    },
+    {
+      short: '사용자',
+      kind: '원리',
+      title: '모든 프로세스는 어떤 사용자로 돈다',
+      text: [
+        '프로세스마다 사용자 ID(UID)와 그룹 ID가 있다. 셸이 dev로 돌고 있으니 거기서 띄운 app도 dev로 돈다. 커널은 파일에 접근할 때마다 이 UID를 확인한다.',
+        'root는 UID 0이고 권한 검사를 거의 건너뛴다. sudo는 /etc/sudoers를 확인한 뒤 명령 하나를 root로 돌리고, 그 기록을 남긴다. 평소에는 일반 사용자로 일하고 필요한 명령에만 sudo를 쓴다.',
+      ],
+      keyIdea: 'id는 내 UID·GID·그룹을 보여 준다. ps -o user,pid,cmd는 프로세스마다 누구로 도는지 보여 준다.',
+      flows: [{from: 'shell', to: 'root', label: 'sudo', type: 'request', bend: 40}],
+      focus: ['shell', 'root'],
+      status: {app: null, child: null},
+      badges: {app: null},
+      values: {tree: 'bash → app (uid dev)', signal: '—', exit: '—'},
+    },
+    {
+      short: '거부',
+      kind: '문제',
+      title: 'Permission denied: 파일 주인이 다른 사람이다',
+      text: [
+        'app이 다시 떠서 config.yaml을 연다. ls -l은 -rw------- root root를 보여 준다. 첫 글자는 종류(-는 일반 파일)다. 그 뒤로 rwx 묶음 셋이 소유자, 그룹, 나머지 순서로 온다.',
+        '여기서는 소유자 root만 읽고 쓸 수 있다. dev는 소유자도 아니고 root 그룹에도 없으니 나머지에 해당하고, 나머지에는 아무 권한이 없다. open()이 EACCES로 실패하고 앱은 "permission denied"를 남긴다.',
+      ],
+      keyIdea: 'ls -l은 왼쪽부터 읽는다. 누가 주인이고, 어느 그룹이고, 묶음 셋이 각각 무엇을 허락하는지.',
+      flows: [{from: 'app', to: 'file', label: 'open() → EACCES', type: 'request'}],
+      focus: ['app', 'file'],
+      status: {app: 'error'},
+      values: {perm: {text: 'Permission denied', tone: 'bad'}},
+    },
+    {
+      short: 'chmod',
+      kind: '원리',
+      title: 'chown, chmod, 그룹으로 고친다',
+      text: [
+        '필요한 사용자에게 파일을 준다: sudo chown dev config.yaml. 또는 그룹과 나눈다: chgrp app에 chmod 640(소유자 rw, 그룹 r). 8진수는 r=4, w=2, x=1을 묶음마다 더한 값이다.',
+        '디렉터리는 x가 있어야 들어갈 수 있고, 스크립트는 x가 있어야 실행된다. 없으면 126이 나온다. chmod 777은 쓰지 않는다. 서버의 모든 사용자가 파일을 바꿀 수 있게 된다.',
+      ],
+      keyIdea: '비밀과 키는 600, 일반 파일은 644, 프로그램과 디렉터리는 755.',
+      flows: [{from: 'root', to: 'file', label: 'chown · chmod', type: 'request'}],
+      focus: ['file', 'root'],
+      status: {app: 'ok'},
+      badges: {file: '-rw-r----- dev app'},
+      values: {perm: {text: '읽기 OK', tone: 'good'}},
+    },
+    {
+      short: 'systemd',
+      kind: '원리',
+      title: 'systemd는 서비스를 유닛으로 돌린다',
+      text: [
+        'kubelet이나 컨테이너 런타임처럼 오래 도는 서비스는 systemd 유닛이다. 유닛 파일에는 어떤 명령을, 어느 사용자로 돌리고, 끝나면 다시 띄울지가 적혀 있다.',
+        'systemctl status kubelet은 돌고 있는지와 마지막 로그 몇 줄을 보여 준다. systemctl restart는 다시 띄우고, systemctl enable은 부팅할 때 띄운다. 출력은 저널로 간다.',
+      ],
+      keyIdea: 'journalctl -u kubelet -f는 유닛 하나의 로그를 따라간다. --since "10 min ago"로 범위를 줄인다.',
+      flows: [
+        {from: 'systemd', to: 'kubelet', label: '시작 · 재시작', type: 'request'},
+        {from: 'kubelet', to: 'journal', label: 'stdout · stderr', type: 'response'},
+      ],
+      focus: ['systemd', 'kubelet', 'journal'],
+      badges: {kubelet: 'active (running)'},
+    },
+    {
+      short: '로그',
+      kind: '원리',
+      title: '로그가 있는 곳',
+      text: [
+        '서비스 로그는 systemd 저널에 있다. 많은 배포판은 /var/log 아래에 텍스트 파일도 쓴다. syslog(데비안·우분투)나 messages(RHEL 계열), 로그인과 sudo 기록을 담는 auth 로그 같은 것이다.',
+        '쿠버네티스 노드에서는 kubelet이 컨테이너 로그를 /var/log/pods 아래에 두고, /var/log/containers에 링크를 건다. kubectl logs는 kubelet을 거쳐 이 파일을 읽는다.',
+      ],
+      keyIdea: '노드 문제는 journalctl -u kubelet, 앱 문제는 kubectl logs, 죽은 컨테이너는 kubectl logs --previous.',
+      flows: [
+        {from: 'journal', to: 'varlog', label: '전달 (배포판)', type: 'response', bend: 60},
+        {from: 'app', to: 'varlog', label: '컨테이너 로그', type: 'response'},
+      ],
+      focus: ['journal', 'varlog'],
+      badges: {kubelet: null},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '프로세스, 시그널, 사용자, 파일',
+      text: [
+        '프로그램은 PID와 부모와 사용자를 가진 프로세스로 돈다. 시그널이 멈춘다. SIGTERM은 부드럽게, SIGKILL은 강제로. 종료 코드가 어떻게 끝났는지 알려 주고, 128 + n은 시그널 n이다.',
+        '커널은 프로세스의 사용자를 파일의 소유자·그룹·rwx 비트와 비교한다. systemd는 서비스를 살려 두고, journalctl과 /var/log는 서비스가 남긴 말을 보여 준다.',
+      ],
+      keyIdea: '종료 137? SIGKILL을 떠올린다: OOM이나 유예 시간 초과. Permission denied? id와 ls -l을 비교한다.',
+      flows: [{from: 'shell', to: 'app', label: '실행', type: 'request'}],
+      focus: ['app', 'file', 'kubelet'],
+      badges: {file: null},
+    },
+  ]}
+/>
+
+## 종료 코드와 시그널 한눈에 보기
+
+| 코드 | 뜻 | 흔한 원인 | 볼 것 |
+|---|---|---|---|
+| 0 | 성공 | 프로그램이 정상으로 끝났다 | — |
+| 1 | 일반 오류 | 프로그램이 스스로 실패를 알렸다 | 앱 로그 |
+| 2 | 셸 내장 명령 오용이나 잘못된 인자 (흔한 관례) | 틀린 플래그 | 명령줄 |
+| 126 | 찾았지만 실행할 수 없다 | `x` 비트가 없거나, 디렉터리이거나, 바이너리 형식이 틀렸다 | `ls -l`, `chmod +x` |
+| 127 | 명령을 찾을 수 없다 | 오타, `PATH`에 없음 (또는 이미지에 없음) | `which cmd`, `echo $PATH` |
+| 128 + n | 시그널 n으로 죽었다 | — | 어떤 시그널을 누가 보냈나 |
+| 130 | 128 + 2, SIGINT | Ctrl+C | — |
+| 137 | 128 + 9, SIGKILL | OOM 킬, 유예 시간 만료, `kill -9` | `kubectl describe pod`의 Reason, `dmesg` |
+| 143 | 128 + 15, SIGTERM | 정상 종료 요청을 앱이 받지 않았거나 기본 동작으로 끝났다 | 종료 중이라면 대개 괜찮다 |
+
+| 시그널 | 번호 | 받아서 처리할 수 있나 | 흔한 뜻 |
+|---|---|---|---|
+| SIGHUP | 1 | 예 | 터미널이 끊김, 관례상 "설정 다시 읽기" |
+| SIGINT | 2 | 예 | Ctrl+C |
+| SIGKILL | 9 | 아니요 | 지금 멈춤, 정리 없음 |
+| SIGTERM | 15 | 예 | 멈춰 달라는 부탁. `kill`과 쿠버네티스의 기본값 |
+
+## 직접 확인해 보기
+
+```bash
+# 프로세스, 부모, 사용자 (리눅스 서버나 VM에서)
+echo $$                                  # 이 셸의 PID
+ps -o pid,ppid,user,cmd -p $$
+sleep 300 &                              # 이 셸의 자식
+ps -o pid,ppid,cmd --ppid $$
+id                                       # 내 UID, GID, 그룹
+
+# 시그널과 종료 코드
+sleep 300 & kill $!; wait $!; echo "exit $?"        # 143 = 128 + 15
+sleep 300 & kill -9 $!; wait $!; echo "exit $?"     # 137 = 128 + 9
+nosuchcmd; echo "exit $?"                           # 127
+bash -c 'trap "echo got TERM; exit 0" TERM; sleep 30 & wait' & sleep 1; kill $!; wait $!   # trap이 돈다
+
+# 권한
+echo secret > demo.txt && chmod 600 demo.txt && ls -l demo.txt   # -rw-------
+printf '#!/bin/sh\necho hi\n' > hi.sh; ./hi.sh; echo "exit $?"   # 126, x 비트 없음
+chmod +x hi.sh && ./hi.sh
+
+# systemd와 로그 (리눅스 서버나 kind 노드에서: docker exec -it lab-control-plane bash)
+systemctl status kubelet --no-pager
+journalctl -u kubelet --since "10 min ago" --no-pager | tail
+ls /var/log/pods /var/log/containers | head
+```
+
+<Quiz questions={[
+  {q: 'kubectl describe pod에 Last State: Terminated, Exit Code 137이 보인다. 가장 먼저 알 수 있는 것은?', options: ['설정 오류 뒤 프로그램이 exit(137)을 불렀다', '컨테이너가 SIGKILL(128 + 9)로 죽었다. 예를 들어 OOM 킬러나 유예 시간 만료 때문이다', '노드에서 이미지를 찾지 못했다'], answer: 1, why: '128보다 큰 종료 코드는 "시그널 n으로 죽었다"는 뜻이다. 137 - 128 = 9, 곧 SIGKILL이다. Reason에 OOMKilled가 있는지 본다.'},
+  {q: '컨테이너 안에서 PID 1로 도는 앱에 SIGTERM 핸들러가 없다. 쿠버네티스가 파드를 지우면 어떻게 되나?', options: ['SIGTERM이 아무 일도 하지 않아서, 유예 시간이 끝나면 SIGKILL로 죽는다', 'SIGTERM은 언제나 종료시키므로 바로 끝난다', '쿠버네티스가 알아채고 대신 SIGHUP을 보낸다'], answer: 0, why: '커널은 네임스페이스의 PID 1에 기본 종료 동작을 적용하지 않는다. 핸들러가 없으면 시그널은 무시되고, terminationGracePeriodSeconds 뒤에 SIGKILL이 온다.'},
+  {q: 'dev 사용자로 도는 프로세스가 -rw------- root root 파일에서 "permission denied"를 받는다. 최소 권한에 맞는 해결책은?', options: ['파일을 chmod 777로 바꾼다', '앱을 root로 돌린다', 'chown/chgrp로 파일을 dev(또는 공유 그룹)에게 주고 600이나 640 같은 모드를 준다'], answer: 2, why: '600 파일은 소유자만 읽는다. 소유자나 그룹을 바꾸면 딱 필요한 만큼만 열린다. 777이나 root는 훨씬 많이 연다.'},
+]} />
+
+더 읽을거리: [signal(7)](https://man7.org/linux/man-pages/man7/signal.7.html) · [chmod(1)](https://man7.org/linux/man-pages/man1/chmod.1.html) · [journalctl](https://www.freedesktop.org/software/systemd/man/latest/journalctl.html) · [파드 종료](https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/#pod-termination) · [정상 종료 — 요청을 잃지 않고 내려가기](../intermediate/graceful-shutdown.mdx) · [리눅스는 컨테이너를 어떻게 격리하나](../basic/linux-isolation.mdx)

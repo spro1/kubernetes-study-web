@@ -199,4 +199,10 @@ kubectl get pods -A | grep -i <operator>        # Is the operator handling it ru
 kubectl describe <kind> <name> -n <namespace>   # Status conditions and events
 ```
 
+<Quiz questions={[
+  {q: 'You created a Database CR hours ago and its status is still empty. What should you check first?', options: ['Whether the operator (controller) that handles it is running', 'Whether etcd has enough disk space', 'Whether the CRD needs to be deleted and recreated'], answer: 0, why: 'A CRD only registers a data format. Without a running controller, the CR is just a record in etcd with an empty status.'},
+  {q: 'How does an operator differ from installing with Helm?', options: ['Helm runs inside the cluster; an operator runs on your laptop', 'An operator runs all the time and keeps reconciling spec against actual state; Helm acts only when you run install or upgrade', 'An operator cannot create built-in resources like StatefulSets', 'There is no difference; both are reconcile loops'], answer: 1, why: 'An operator watches its CRs and runs a reconcile loop continuously. Helm does nothing between installs and upgrades.'},
+  {q: 'While cleaning up a tool, someone deletes its CRD. What happens?', options: ['Only the operator Pod is removed', 'Existing CRs stay but cannot be edited', 'Nothing until the next Helm upgrade', 'Every CR of that kind, such as backup schedules, is deleted at once'], answer: 3, why: 'Deleting a CRD deletes all CRs of that kind. Back up CRs first, delete the CRs, and then the operator.'},
+]} />
+
 Further reading: [Custom resources](https://kubernetes.io/docs/concepts/extend-kubernetes/api-extension/custom-resources/) · [Operator pattern](https://kubernetes.io/docs/concepts/extend-kubernetes/operator/) · [Velero](https://velero.io/docs/) · Why deletion gets stuck: [Deletion Is More Complex Than You Think](./deletion-finalizer.mdx)

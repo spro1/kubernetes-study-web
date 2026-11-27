@@ -246,4 +246,10 @@ nslookup www.example.com                  # Available almost everywhere, includi
 
 Run `dig www.example.com` twice against the same resolver and watch the TTL go down. That is the cache.
 
+<Quiz questions={[
+  {q: 'You changed an A record from .10 to .20 an hour ago, yet some users still reach the old server. Why?', options: ['The authoritative server has not loaded the change yet', 'Resolvers that cached the old answer keep returning it until the old TTL runs out', 'The root servers still hold the old IP'], answer: 1, why: 'The authoritative server answers the new IP at once, but cached answers live for their TTL. The worst case is the old TTL, so lower it well before a migration.'},
+  {q: 'A lookup returns SERVFAIL. What does that tell you?', options: ['The name definitely does not exist', 'Your request never left the machine', 'You are not allowed to use that resolver', 'The resolver could not get a valid answer, so check the name servers, delegation and DNSSEC'], answer: 3, why: 'SERVFAIL means the lookup broke, not that the name is missing. NXDOMAIN is the code for a name that does not exist.'},
+  {q: 'A user typed a name before you created its record, got NXDOMAIN, and still gets NXDOMAIN after you create it. What explains this?', options: ['The negative answer is cached too, for the SOA-based negative TTL', 'The browser never retries a failed name', 'New records only appear after the TLD server is updated'], answer: 0, why: 'Resolvers cache NXDOMAIN as well (RFC 2308), for the smaller of the SOA record\'s TTL and its MINIMUM field. Users who just got it keep getting it until that expires.'},
+]} />
+
 Further reading: [RFC 1034: Domain Concepts](https://www.rfc-editor.org/rfc/rfc1034) · [RFC 2308: Negative Caching](https://www.rfc-editor.org/rfc/rfc2308) · [Root servers (IANA)](https://www.iana.org/domains/root/servers) · [resolv.conf(5)](https://man7.org/linux/man-pages/man5/resolv.conf.5.html) · [DNS (MDN glossary)](https://developer.mozilla.org/en-US/docs/Glossary/DNS) · [When You Type an Address](../basic/web-request.mdx) · [Finding Services by Name](../k8s/service-dns.mdx)

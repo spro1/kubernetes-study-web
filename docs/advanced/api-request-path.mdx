@@ -207,4 +207,10 @@ kubectl create deployment demo --image=nginx --dry-run=server -o yaml   # Passes
 kubectl get deployment <name> -o jsonpath='{.metadata.resourceVersion}'   # Changes on every write
 ```
 
+<Quiz questions={[
+  {q: 'You wrote a Pod with one container, but the stored Pod shows two. What is most likely?', options: ['Schema validation duplicated the container by mistake', 'The Deployment controller added a backup container', 'A mutating admission webhook, such as a service mesh, added a sidecar', 'etcd stores every container twice'], answer: 2, why: 'The mutating phase fills defaults and can change the request. In a namespace with a mesh enabled, a proxy container is added here, so this is normal.'},
+  {q: 'Suddenly every Pod creation in the cluster fails with failed calling webhook. What should you check first?', options: ['Whether the validating webhook server is answering, and whether its failurePolicy is Fail', 'Whether your RBAC token has expired', 'Whether etcd has run out of resourceVersions'], answer: 0, why: 'If a webhook server does not answer and failurePolicy is Fail, every create and update in that webhook\'s scope is rejected.'},
+  {q: 'You leave kubectl edit open for a while, then save and get 409 Conflict. What should you do?', options: ['Wait for the API server to recover, since 409 means it failed', 'Ask for more RBAC permissions', 'Re-read the latest copy and make the edit again', 'Delete the object and create it again'], answer: 2, why: '409 is optimistic concurrency, not a server failure. Someone, possibly the HPA or a controller, changed the object first, so you edit from the latest resourceVersion.'},
+]} />
+
 Further reading: [Controlling Access to the Kubernetes API](https://kubernetes.io/docs/concepts/security/controlling-access/) · [Admission controllers](https://kubernetes.io/docs/reference/access-authn-authz/admission-controllers/) · [API concepts — resourceVersion](https://kubernetes.io/docs/reference/using-api/api-concepts/)

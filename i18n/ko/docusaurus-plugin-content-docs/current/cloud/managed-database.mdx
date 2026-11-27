@@ -1,0 +1,267 @@
+---
+id: managed-database
+title: 매니지드 데이터베이스가 대신 해 주는 일
+sidebar_label: 09 · 매니지드 데이터베이스
+description: Amazon RDS, Cloud SQL, Azure Database 같은 매니지드 관계형 데이터베이스에서 제공자가 맡는 일과 내게 남는 일, 엔드포인트 DNS 이름과 다중 AZ 장애 조치, 비동기 읽기 복제본, 자동 백업과 특정 시점 복원, 유지 관리 기간과 엔진 업그레이드, 파라미터 그룹, 연결 한도와 프록시, 스토리지 자동 확장과 저장 데이터 암호화를 애니메이션으로 본다
+summary: '제공자가 맡는 것과 내게 남는 것, 장애 조치 뒤 다시 연결해야 하는 이유, 복원이 새 인스턴스를 만드는 방식, CPU보다 연결이 먼저 바닥나는 이유.'
+icon: db
+hide_table_of_contents: true
+---
+
+# 매니지드 데이터베이스가 대신 해 주는 일
+
+매니지드 데이터베이스는 엔진·OS·하드웨어를 클라우드 제공자에게 맡긴다. Amazon RDS for PostgreSQL 인스턴스 하나를 따라 **장애 조치, 복원, 유지 관리, 연결 폭주**를 지나가며(Cloud SQL과 Azure Database도 거의 같다), 여전히 내 몫인 일이 무엇인지 본다.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '약 14분', level: '중급'}}
+  groups={[
+    {label: 'AZ a', x: 410, y: 140, w: 180, h: 190, tone: 'biz'},
+    {label: 'AZ b', x: 610, y: 140, w: 180, h: 190, tone: 'biz'},
+    {label: 'AZ c', x: 810, y: 140, w: 170, h: 190, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'app', label: '앱 파드', sub: '레플리카 50 · 풀 20', icon: 'pod', tone: 'app', x: 100, y: 230, show: true},
+    {id: 'dns', label: '엔드포인트', sub: 'mydb.xxxx.rds…', icon: 'route', tone: 'ext', x: 290, y: 100, show: true},
+    {id: 'proxy', label: '프록시', sub: 'RDS Proxy · PgBouncer', icon: 'split', tone: 'node', x: 290, y: 330},
+    {id: 'ctrl', label: '제공자 관리 계층', sub: '감시 · 패치', icon: 'cloud', tone: 'cp', x: 600, y: 70, w: 170},
+    {id: 'primary', label: '주 인스턴스', sub: 'PostgreSQL · 쓰기', icon: 'db', tone: 'store', x: 500, y: 235, show: true},
+    {id: 'standby', label: '대기 인스턴스', sub: '동기 · 읽기 불가', icon: 'db', tone: 'store', x: 700, y: 235},
+    {id: 'replica', label: '읽기 복제본', sub: '비동기 · 별도 엔드포인트', icon: 'db', tone: 'store', x: 895, y: 235},
+    {id: 'backup', label: '백업', sub: '스냅샷 + 로그', icon: 'archive', tone: 'store', x: 700, y: 395},
+  ]}
+  metrics={[
+    {id: 'writer', label: '엔드포인트가 가리키는 곳'},
+    {id: 'conns', label: '연결'},
+    {id: 'restore', label: '복원 가능 범위'},
+    {id: 'state', label: '상태'},
+  ]}
+  learn={[
+    {text: '제공자가 맡는 것과 여전히 내 몫인 것', at: 0},
+    {text: '다중 AZ 장애 조치에도 연결이 끊기는 이유', at: 2},
+    {text: '읽기 복제본과 대기 인스턴스의 차이', at: 3},
+    {text: '특정 시점 복원은 새 인스턴스를 만든다는 것', at: 4},
+    {text: '연결이 바닥나는 이유와 프록시가 돕는 방식', at: 8},
+  ]}
+  steps={[
+    {
+      short: '시작',
+      kind: '시작',
+      title: '엔진은 제공자가, 데이터는 내가 돌본다',
+      text: [
+        '앱은 서버 IP가 아니라 엔드포인트라는 DNS 이름으로 접속한다. 그 뒤에서 제공자가 엔진을 설치하고, OS를 패치하고, 고장 난 하드웨어를 바꾸고, 백업과 장애 조치를 맡는다.',
+        '스키마, 쿼리, 인덱스, 인스턴스 크기, 설정값, 누가 접속할지, 앱이 어떻게 접속할지는 여전히 내 몫이다. 엔진 자체의 동작은 데이터베이스 기초 레슨에서 다뤘다. 이 레슨은 매니지드인 부분을 본다.',
+      ],
+      keyIdea: '언제나 엔드포인트 이름으로 접속한다. 그 뒤의 IP는 장애 조치, 복원, 일부 유지 관리 때 바뀐다.',
+      flows: [
+        {from: 'app', to: 'dns', label: '조회', type: 'request'},
+        {from: 'dns', to: 'primary', label: 'CNAME', type: 'request'},
+      ],
+      focus: ['app', 'dns', 'primary'],
+      values: {writer: '주 인스턴스 (AZ a)', conns: '—', restore: '—', state: {text: 'available', tone: 'good'}},
+    },
+    {
+      short: '다중 AZ',
+      kind: '원리',
+      title: '다중 AZ는 동기 대기 인스턴스를 둔다',
+      text: [
+        '다중 AZ를 켜면 제공자가 다른 영역에 대기 인스턴스를 둔다. 쓰기는 모두 그곳에 동기로 복사되므로 커밋이 양쪽을 기다린다. 쓰기 지연이 조금 늘고 인스턴스 비용은 두 배가 된다.',
+        '대기 인스턴스는 쿼리를 받지 않는다. 넘겨받는 것만이 할 일이다. 대기 인스턴스의 개념은 가용 영역 장애 레슨에서 봤다. 여기서는 엔드포인트에 무슨 일이 생기는지 본다.',
+      ],
+      flows: [{from: 'primary', to: 'standby', label: '동기 복사', type: 'request'}],
+      focus: ['primary', 'standby'],
+      badges: {standby: '대기'},
+    },
+    {
+      short: '장애 조치',
+      kind: '장애',
+      title: '장애 조치는 DNS 이름을 바꾸고, 연결은 끊긴다',
+      text: [
+        '주 인스턴스의 호스트가 고장 난다. 제공자의 감시가 대기 인스턴스를 승격하고, 엔드포인트의 DNS 레코드가 그쪽을 가리키게 바꾼다. AWS에 따르면 장애 조치는 보통 60~120초 걸리고, 큰 트랜잭션이나 긴 복구가 있으면 더 걸린다.',
+        '옛 주 인스턴스로 열려 있던 연결은 모두 사라진다. 앱은 다시 접속하며 이름을 새로 조회해야 한다. DNS를 너무 오래 캐시하는 클라이언트는 죽은 주소를 계속 두드린다. AWS는 JVM의 DNS TTL을 60초 이하로 두라고 권한다.',
+      ],
+      keyIdea: '직접 시험해 본다. 장애 조치를 동반한 재부팅으로 일부러 일으킬 수 있다. 커넥션 풀이 끊긴 연결을 버리고 앱이 재시도하는지 확인한다.',
+      flows: [
+        {from: 'ctrl', to: 'standby', label: '승격', type: 'watch'},
+        {from: 'dns', to: 'standby', label: 'CNAME', type: 'request'},
+      ],
+      focus: ['primary', 'standby', 'dns'],
+      status: {primary: 'error', standby: 'ok'},
+      badges: {standby: '새 주 인스턴스'},
+      values: {writer: '옛 대기 (AZ b)', state: {text: '장애 조치 중 · 재접속 필요', tone: 'bad'}},
+    },
+    {
+      short: '복제본',
+      kind: '원리',
+      title: '읽기 복제본은 비동기이고 엔드포인트가 따로 있다',
+      text: [
+        '읽기 복제본은 변경을 비동기로 받아 오고, 자기 엔드포인트에서 읽기 전용 연결을 받는다. 앱이 일부러 읽기를 그쪽으로 보내야 한다. 늦게 따라올 수 있어서, 방금 쓴 행이 잠깐 안 보일 수 있다.',
+        '주 인스턴스가 고장 나도 복제본이 스스로 넘겨받지 않는다. 독립 인스턴스로 승격할 수는 있지만 그러면 복제가 끝난다. 그래서 빠른 장애 조치보다 재해 복구에 어울린다.',
+      ],
+      keyIdea: 'ReplicaLag 지표를 지켜본다. 방금 쓴 내 데이터는 주 인스턴스에서 읽는다.',
+      flows: [
+        {from: 'standby', to: 'replica', label: '비동기', type: 'request'},
+        {from: 'app', to: 'replica', label: '읽기', type: 'request'},
+      ],
+      focus: ['replica'],
+      status: {primary: null, standby: null},
+      badges: {standby: '주 인스턴스', primary: '새 대기', replica: '지연 2초'},
+      values: {state: {text: 'available', tone: 'good'}},
+    },
+    {
+      short: '시점 복원',
+      kind: '원리',
+      title: '백업으로 거의 아무 초로나 되돌린다',
+      text: [
+        '자동 백업은 백업 기간에 하루 한 번 스냅샷을 뜨고, RDS는 트랜잭션 로그를 5분마다 올린다. 둘을 합쳐 보존 기간(최대 35일) 안의 아무 시점으로나 복원할 수 있다. LatestRestorableTime이 얼마나 최근까지 되는지 알려 준다.',
+        '복원은 언제나 새 엔드포인트를 가진 새 인스턴스를 만든다. 망가진 인스턴스를 덮어쓰지 않는다. 앱이 새 이름을 보게 바꿔야 하고, 내 파라미터 그룹을 지정하지 않으면 새 인스턴스는 기본 그룹을 받는다.',
+      ],
+      keyIdea: '누가 14:03에 테이블을 지웠다면? 14:02로 새 인스턴스에 복원해 확인한 뒤, 앱을 옮기거나 데이터를 다시 복사해 온다.',
+      flows: [
+        {from: 'standby', to: 'backup', label: '스냅샷 + 로그', type: 'request'},
+      ],
+      focus: ['backup'],
+      badges: {replica: null, backup: '보존 7일'},
+      values: {restore: '7일 안의 아무 초'},
+    },
+    {
+      short: '유지 관리',
+      kind: '원리',
+      title: '유지 관리는 매주 정한 시간에 한다',
+      text: [
+        '인스턴스마다 매주 30분짜리 유지 관리 기간이 있다. OS 패치와 마이너 엔진 버전(자동 마이너 버전 업그레이드를 켰을 때)이 그때 적용된다. 필수 업데이트에는 적용 날짜가 있어서 끝없이 미룰 수 없다.',
+        '다중 AZ라면 OS 패치는 대기 인스턴스부터 한다. 그다음 제공자가 장애 조치를 하고 옛 주 인스턴스를 패치한다. 긴 중단 대신 짧은 장애 조치 한 번으로 끝난다.',
+      ],
+      flows: [{from: 'ctrl', to: 'standby', label: '패치', type: 'watch'}],
+      focus: ['ctrl'],
+      badges: {backup: null, ctrl: '일 18:00–18:30'},
+    },
+    {
+      short: '업그레이드',
+      kind: '주의',
+      title: '엔진 버전 업그레이드는 두 인스턴스를 함께 멈춘다',
+      text: [
+        '엔진 버전 업그레이드는 마이너든 메이저든 다르다. 다중 AZ 인스턴스에서 RDS는 주 인스턴스와 대기 인스턴스를 동시에 올리므로, 업그레이드가 끝날 때까지 데이터베이스가 멈춘다. 메이저 업그레이드는 쿼리가 기대던 동작을 바꿀 수도 있다.',
+        '중단을 줄이려면 복원한 사본에서 먼저 시험하거나, 블루/그린 배포를 쓴다. 새 버전으로 만든 준비용 사본으로 한 번에 갈아타는 방식이다.',
+      ],
+      keyIdea: '메이저 업그레이드는 릴리스처럼 계획한다. 스냅샷을 복원해 올려 보고, 테스트를 돌리고, 전환 시간을 잰다.',
+      flows: [{from: 'ctrl', to: 'primary', label: '업그레이드', type: 'watch'}],
+      focus: ['primary', 'standby'],
+      status: {standby: 'off', primary: 'off'},
+      badges: {ctrl: null},
+      values: {state: {text: '업그레이드 중 · 중단', tone: 'bad'}},
+    },
+    {
+      short: '파라미터',
+      kind: '원리',
+      title: '설정값은 파라미터 그룹에 있다',
+      text: [
+        'postgresql.conf를 직접 고칠 수 없다. max_connections, work_mem, log_min_duration_statement 같은 엔진 설정은 파라미터 그룹에 있다. 기본 그룹은 바꿀 수 없으니 내 그룹을 만들어 붙인다.',
+        '동적 파라미터는 바로 적용된다. 정적 파라미터는 재부팅을 기다리고, 그때까지 인스턴스에 pending-reboot가 뜬다.',
+      ],
+      keyIdea: '파라미터 그룹은 인프라 코드에 두고, 바꿀 때마다 pending-reboot가 남았는지 본다.',
+      flows: [{from: 'ctrl', to: 'standby', label: '파라미터', type: 'watch'}],
+      focus: ['standby'],
+      status: {standby: null, primary: null},
+      badges: {standby: 'pending-reboot'},
+      values: {state: {text: 'available', tone: 'good'}},
+    },
+    {
+      short: '연결 초과',
+      kind: '문제',
+      title: 'CPU보다 연결이 먼저 바닥난다',
+      text: [
+        '앱 레플리카 50개가 각자 20개짜리 풀을 두니 연결 1,000개를 열려고 한다. 기본 max_connections는 인스턴스 메모리로 정해지고, 새 연결부터 실패한다. 앱을 늘릴수록 더 나빠진다.',
+        'RDS Proxy나 PgBouncer 같은 프록시를 사이에 둔다. 프록시는 실제 DB 연결을 작은 풀로 쥐고, 많은 클라이언트 연결이 이를 나눠 쓰게 한다. RDS Proxy는 장애 조치 동안에도 클라이언트 연결을 붙잡고 있다가 새 주 인스턴스로 다시 잇는다.',
+      ],
+      keyIdea: 'DatabaseConnections를 max_connections와 견줘 본다. 앱 풀 크기는 파드 하나가 아니라 레플리카 수 × 풀 크기로 잡는다.',
+      flows: [
+        {from: 'app', to: 'proxy', label: '클라이언트 1,000', type: 'request'},
+        {from: 'proxy', to: 'standby', label: '서버 100', type: 'request'},
+      ],
+      focus: ['proxy', 'app'],
+      badges: {standby: null, proxy: '풀'},
+      values: {conns: {text: '1,000 → 프록시로 100', tone: 'good'}},
+    },
+    {
+      short: '만들 때',
+      kind: '주의',
+      title: '스토리지 자동 확장과 암호화는 일찍 정한다',
+      text: [
+        '스토리지 자동 확장을 켜면, 남은 공간이 10% 이하인 상태가 5분 이어질 때 RDS가 정해 둔 최대치까지 스토리지를 늘린다. 줄이지는 않고, 갑자기 몰려드는 아주 큰 적재는 따라잡지 못한다.',
+        '저장 데이터 암호화는 로그, 백업, 스냅샷, 복제본까지 덮고, 인스턴스를 만들 때 골라야 한다. 나중에 넣으려면 스냅샷을 암호화해 복사한 뒤 새 인스턴스로 복원해야 한다.',
+      ],
+      keyIdea: '만들 때 암호화와 적절한 최대 스토리지를 켠다. 둘 다 나중에 바꾸기 번거롭다.',
+      flows: [{from: 'standby', to: 'backup', label: '암호화됨', type: 'request'}],
+      focus: ['standby', 'backup'],
+      badges: {proxy: null, standby: 'KMS · 자동 확장'},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '기계는 제공자가, 연결은 내가 다룬다',
+      text: [
+        '제공자는 엔진, OS, 백업, 패치, 장애 조치를 맡는다. 장애 조치는 엔드포인트 이름을 옮기므로 앱이 다시 접속해야 한다. 복제본은 비동기이고 엔드포인트가 따로 있으며, 복원은 언제나 새 인스턴스다.',
+        '유지 관리 기간, 버전, 파라미터 그룹, 암호화와 스토리지 한도는 여전히 내가 고르고, 연결 수도 내가 다스려야 한다. 흔히 프록시를 쓴다.',
+      ],
+      keyIdea: '나쁜 날 세 가지를 연습한다. 장애 조치를 일으키고, 특정 시점으로 복원하고, 사본을 업그레이드해 본다. 각각 걸린 시간을 적어 둔다.',
+      flows: [
+        {from: 'app', to: 'proxy', label: '클라이언트', type: 'request'},
+        {from: 'proxy', to: 'standby', label: '풀', type: 'request'},
+        {from: 'standby', to: 'replica', label: '비동기', type: 'request'},
+      ],
+      focus: ['dns', 'proxy', 'standby'],
+      badges: {standby: null, primary: null},
+    },
+  ]}
+/>
+
+## 누가 무엇을 하나
+
+| 일 | 제공자 | 나 |
+|---|---|---|
+| 하드웨어, OS, 엔진 설치 | 돌리고 패치한다 | 인스턴스 클래스와 엔진 버전을 고른다 |
+| 고가용성 | 대기 인스턴스를 두고, 고장을 감지하고, DNS를 바꾼다 | 다중 AZ를 켜고, 앱이 다시 접속하고 재시도하게 만든다 |
+| 읽기 확장 | 복제본을 만들고 변경을 보낸다 | 읽기를 복제본 엔드포인트로 보내고 지연을 다룬다 |
+| 백업 | 매일 스냅샷, 로그, 특정 시점 복원 | 보존 기간을 정하고, 복원 연습을 하고, 복원 뒤 앱 접속처를 바꾼다 |
+| 유지 관리 | 기간 안에 패치와 마이너 버전을 적용한다 | 기간을 고르고, 메이저 업그레이드(블루/그린)를 계획한다 |
+| 설정 | 파라미터 그룹을 준다 | 내 그룹을 만들고, 정적 파라미터는 재부팅한다 |
+| 연결 | 메모리로 max_connections를 정하고 프록시를 준다 | 풀 크기를 잡고, RDS Proxy나 PgBouncer 같은 프록시를 둔다 |
+| 스토리지와 암호화 | 한도까지 스토리지를 늘리고 KMS로 암호화한다 | 최대치를 정하고, 만들 때 암호화를 켠다 |
+| 스키마, 쿼리, 인덱스 | — | 모두 내 몫 |
+
+이름만 다르다. Google Cloud SQL은 다중 AZ를 "고가용성(리전 인스턴스)"이라 부르고 데이터베이스 플래그로 설정한다. Azure Database for PostgreSQL 유연한 서버는 "영역 중복 고가용성"이라 부르고 서버 매개변수로 설정한다.
+
+## 직접 확인해 보기
+
+AWS CLI 예시다.
+
+```bash
+aws rds describe-db-instances --db-instance-identifier mydb \
+  --query 'DBInstances[].[Endpoint.Address,MultiAZ,AvailabilityZone,SecondaryAvailabilityZone,StorageEncrypted,MaxAllocatedStorage]'
+dig +short mydb.xxxx.ap-northeast-2.rds.amazonaws.com             # 엔드포인트 CNAME이 지금 가리키는 곳
+aws rds reboot-db-instance --db-instance-identifier mydb --force-failover   # 장애 조치 연습 (스테이징에서!)
+aws rds describe-events --source-identifier mydb --source-type db-instance --duration 60   # failover started / completed
+aws rds describe-db-instances --db-instance-identifier mydb \
+  --query 'DBInstances[].[LatestRestorableTime,BackupRetentionPeriod,PreferredBackupWindow,PreferredMaintenanceWindow]'
+aws rds restore-db-instance-to-point-in-time --source-db-instance-identifier mydb \
+  --target-db-instance-identifier mydb-restored --restore-time 2026-11-27T05:02:00Z \
+  --db-parameter-group-name my-pg17                                # 엔드포인트가 따로 있는 새 인스턴스
+aws rds describe-pending-maintenance-actions                      # 필수·선택 업데이트
+aws rds describe-db-parameters --db-parameter-group-name my-pg17 \
+  --query "Parameters[?ParameterName=='max_connections']"         # 흔히 메모리 기반 수식
+```
+
+```sql
+SHOW max_connections;
+SELECT count(*), state FROM pg_stat_activity GROUP BY state;     -- 누가 연결을 쥐고 있나
+```
+
+<Quiz questions={[
+  {q: '다중 AZ 장애 조치는 끝났는데 앱이 몇 분이고 계속 실패한다. 가장 그럴듯한 원인은?', options: ['대기 인스턴스가 마지막 커밋 데이터를 잃었다', '앱이 옛 주 인스턴스로 가는 낡은 연결이나 캐시된 DNS 답을 쥐고 있다', '장애 조치 뒤에도 손으로 승격해야 한다'], answer: 1, why: '장애 조치는 엔드포인트의 DNS 레코드를 바꾼다. 앱은 옛 연결을 버리고 이름을 다시 조회해야 하며, DNS를 오래 캐시하면 그만큼 늦어진다.'},
+  {q: '잘못된 DELETE 5분 전 시점으로 복원하면 무엇이 생기나?', options: ['새 엔드포인트를 가진 새 인스턴스. 원래 인스턴스는 그대로다', '원래 인스턴스가 그 자리에서 되감긴다', '원래 인스턴스의 새 읽기 복제본'], answer: 0, why: '특정 시점 복원은 언제나 새 인스턴스를 만든다. 앱을 그쪽으로 옮기거나 빠진 행을 다시 복사해 온다.'},
+  {q: '파드 50개가 각자 20개짜리 풀을 열자 새 연결이 실패하는데 CPU는 한가하다. 가장 좋은 해결책은?', options: ['인스턴스 클래스만 키운다', '읽기 복제본을 늘린다', 'RDS Proxy나 PgBouncer 같은 연결 프록시를 두고 풀을 줄인다'], answer: 2, why: '한계는 CPU가 아니라 max_connections다. 프록시는 적은 서버 연결을 많은 클라이언트가 나눠 쓰게 하고, 풀 크기는 전체 레플리카 기준으로 잡아야 한다.'},
+]} />
+
+더 읽을거리: [다중 AZ 장애 조치 (Amazon RDS)](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/Concepts.MultiAZ.Failover.html) · [읽기 복제본](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/USER_ReadRepl.html) · [특정 시점 복원](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/USER_PIT.html) · [DB 인스턴스 유지 관리](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/USER_UpgradeDBInstance.Maintenance.html) · [RDS Proxy](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/rds-proxy.html) · [스토리지 자동 확장](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/USER_PIOPS.Autoscaling.html) · [RDS 자원 암호화](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/Overview.Encryption.html) · [Cloud SQL 고가용성](https://cloud.google.com/sql/docs/postgres/high-availability) · [앱이 데이터베이스에 저장할 때](../basic/database-basics.mdx) · [가용 영역 하나가 멈추면](../cloud/az-failover.mdx)

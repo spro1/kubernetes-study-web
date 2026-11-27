@@ -86,6 +86,8 @@ const config = {
         items: [
           {type: 'docSidebar', sidebarId: 'lessons', label: 'Lessons', position: 'left'},
           {to: FIRST_LESSON, label: 'Start learning', position: 'left'},
+          {to: '/roadmap', label: 'Roadmap', position: 'left'},
+          {to: '/glossary', label: 'Glossary', position: 'left'},
           {type: 'localeDropdown', position: 'right'},
           {href: REPO_URL, label: '⭐ GitHub', position: 'right'},
         ],

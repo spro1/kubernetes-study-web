@@ -1,0 +1,267 @@
+---
+id: managed-database
+title: What a Managed Database Does for You
+sidebar_label: 09 · Managed database
+description: Animated walkthrough of a managed relational database such as Amazon RDS, Cloud SQL or Azure Database, what the provider runs and what you still own, the endpoint DNS name and Multi-AZ failover, async read replicas, automated backups and point-in-time restore, maintenance windows and engine upgrades, parameter groups, connection limits and a proxy, storage autoscaling and encryption at rest
+summary: 'What the provider runs and what stays yours, why a failover means reconnecting, how restore makes a new instance, and why connections run out before CPU.'
+icon: db
+hide_table_of_contents: true
+---
+
+# What a Managed Database Does for You
+
+A managed database hands the engine, the OS and the hardware to the cloud provider. Follow one Amazon RDS for PostgreSQL instance (Cloud SQL and Azure Database work much the same) through **failover, restore, maintenance and a connection storm**, and see which parts are still your job.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~14 min', level: 'Intermediate'}}
+  groups={[
+    {label: 'AZ a', x: 410, y: 140, w: 180, h: 190, tone: 'biz'},
+    {label: 'AZ b', x: 610, y: 140, w: 180, h: 190, tone: 'biz'},
+    {label: 'AZ c', x: 810, y: 140, w: 170, h: 190, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'app', label: 'App Pods', sub: '50 replicas · pool 20', icon: 'pod', tone: 'app', x: 100, y: 230, show: true},
+    {id: 'dns', label: 'Endpoint', sub: 'mydb.xxxx.rds…', icon: 'route', tone: 'ext', x: 290, y: 100, show: true},
+    {id: 'proxy', label: 'Proxy', sub: 'RDS Proxy · PgBouncer', icon: 'split', tone: 'node', x: 290, y: 330},
+    {id: 'ctrl', label: 'Provider control', sub: 'Monitors · patches', icon: 'cloud', tone: 'cp', x: 600, y: 70, w: 170},
+    {id: 'primary', label: 'Primary', sub: 'PostgreSQL · writer', icon: 'db', tone: 'store', x: 500, y: 235, show: true},
+    {id: 'standby', label: 'Standby', sub: 'Sync · not readable', icon: 'db', tone: 'store', x: 700, y: 235},
+    {id: 'replica', label: 'Read replica', sub: 'Async · own endpoint', icon: 'db', tone: 'store', x: 895, y: 235},
+    {id: 'backup', label: 'Backups', sub: 'Snapshots + logs', icon: 'archive', tone: 'store', x: 700, y: 395},
+  ]}
+  metrics={[
+    {id: 'writer', label: 'Endpoint points to'},
+    {id: 'conns', label: 'Connections'},
+    {id: 'restore', label: 'Restorable to'},
+    {id: 'state', label: 'State'},
+  ]}
+  learn={[
+    {text: 'What the provider runs and what you still own', at: 0},
+    {text: 'Why a Multi-AZ failover still drops your connections', at: 2},
+    {text: 'Read replicas vs. the standby', at: 3},
+    {text: 'Point-in-time restore creates a new instance', at: 4},
+    {text: 'Why connections run out, and how a proxy helps', at: 8},
+  ]}
+  steps={[
+    {
+      short: 'Start',
+      kind: '시작',
+      title: 'The provider runs the engine, you run the data',
+      text: [
+        'The app connects to an endpoint, a DNS name, not a server IP. Behind it, the provider installs the engine, patches the OS, replaces failed hardware, takes backups and handles failover.',
+        'You still own the schema, queries and indexes, the instance size, the settings, who may connect, and how the app connects. Database Basics covers how the engine itself works. This lesson is about the managed part.',
+      ],
+      keyIdea: 'Always connect by the endpoint name. The IP behind it changes on failover, restore and some maintenance.',
+      flows: [
+        {from: 'app', to: 'dns', label: 'Lookup', type: 'request'},
+        {from: 'dns', to: 'primary', label: 'CNAME', type: 'request'},
+      ],
+      focus: ['app', 'dns', 'primary'],
+      values: {writer: 'Primary (AZ a)', conns: '—', restore: '—', state: {text: 'available', tone: 'good'}},
+    },
+    {
+      short: 'Multi-AZ',
+      kind: '원리',
+      title: 'Multi-AZ keeps a synchronous standby',
+      text: [
+        'With Multi-AZ on, the provider keeps a standby in another zone. Each write is copied to it synchronously, so a commit waits for both. That costs some write latency and doubles the instance bill.',
+        'The standby serves no queries. Its only job is to take over. The zone-failure lesson covers the idea of a standby. Here, watch what happens to the endpoint.',
+      ],
+      flows: [{from: 'primary', to: 'standby', label: 'Sync copy', type: 'request'}],
+      focus: ['primary', 'standby'],
+      badges: {standby: 'Standby'},
+    },
+    {
+      short: 'Failover',
+      kind: '장애',
+      title: 'Failover flips the DNS name, and connections break',
+      text: [
+        'The primary\'s host fails. The provider\'s monitoring promotes the standby and changes the endpoint\'s DNS record to point to it. AWS says failover typically takes 60 to 120 seconds, longer with large transactions or a long recovery.',
+        'Every open connection to the old primary is gone. Apps must reconnect and look up the name again. A client that caches DNS for too long keeps trying the dead address. AWS suggests a JVM DNS TTL of no more than 60 seconds.',
+      ],
+      keyIdea: 'Test this: a reboot with failover forces one. Make sure the pool drops broken connections and the app retries.',
+      flows: [
+        {from: 'ctrl', to: 'standby', label: 'Promote', type: 'watch'},
+        {from: 'dns', to: 'standby', label: 'CNAME', type: 'request'},
+      ],
+      focus: ['primary', 'standby', 'dns'],
+      status: {primary: 'error', standby: 'ok'},
+      badges: {standby: 'New primary'},
+      values: {writer: 'Old standby (AZ b)', state: {text: 'Failing over · reconnect', tone: 'bad'}},
+    },
+    {
+      short: 'Replicas',
+      kind: '원리',
+      title: 'Read replicas are async and have their own endpoint',
+      text: [
+        'A read replica copies changes asynchronously and accepts read-only connections at its own endpoint. The app must send reads there on purpose. It may lag, so a row just written can be missing for a moment.',
+        'A replica does not take over by itself when the primary fails. You can promote it to a standalone instance, which ends replication, so it suits disaster recovery more than quick failover.',
+      ],
+      keyIdea: 'Watch the ReplicaLag metric. Read your own fresh writes from the primary.',
+      flows: [
+        {from: 'standby', to: 'replica', label: 'Async', type: 'request'},
+        {from: 'app', to: 'replica', label: 'Reads', type: 'request'},
+      ],
+      focus: ['replica'],
+      status: {primary: null, standby: null},
+      badges: {standby: 'Primary', primary: 'New standby', replica: 'lag 2 s'},
+      values: {state: {text: 'available', tone: 'good'}},
+    },
+    {
+      short: 'PITR',
+      kind: '원리',
+      title: 'Backups allow restore to almost any second',
+      text: [
+        'Automated backups take a daily snapshot in the backup window, and RDS uploads transaction logs every five minutes. Together they allow a restore to any time in the retention period, up to 35 days. LatestRestorableTime shows how recent you can go.',
+        'A restore always creates a new instance with a new endpoint. It does not overwrite the broken one. The app has to be pointed at the new name, and the new instance gets the default parameter group unless you name yours.',
+      ],
+      keyIdea: 'Someone dropped a table at 14:03? Restore to 14:02 into a new instance, check it, then switch the app or copy the data back.',
+      flows: [
+        {from: 'standby', to: 'backup', label: 'Snapshot + logs', type: 'request'},
+      ],
+      focus: ['backup'],
+      badges: {replica: null, backup: 'Retention 7 days'},
+      values: {restore: 'Any second in 7 days'},
+    },
+    {
+      short: 'Maintenance',
+      kind: '원리',
+      title: 'Maintenance happens in your weekly window',
+      text: [
+        'Each instance has a weekly 30-minute maintenance window. OS patches and minor engine versions (with auto minor version upgrade on) are applied then. Required updates have an apply date and cannot be put off forever.',
+        'With Multi-AZ, OS patches go to the standby first. Then the provider fails over and patches the old primary. You see a short failover instead of a long outage.',
+      ],
+      flows: [{from: 'ctrl', to: 'standby', label: 'Patch', type: 'watch'}],
+      focus: ['ctrl'],
+      badges: {backup: null, ctrl: 'Sun 18:00–18:30'},
+    },
+    {
+      short: 'Upgrade',
+      kind: '주의',
+      title: 'An engine version upgrade stops both instances',
+      text: [
+        'Engine version upgrades, minor or major, are different. On a Multi-AZ instance, RDS upgrades the primary and the standby at the same time, so the database is down until the upgrade ends. A major version upgrade can also change behaviour your queries rely on.',
+        'To cut the downtime, test on a restored copy first, or use a blue/green deployment: a staging copy on the new version that you switch to in one step.',
+      ],
+      keyIdea: 'Plan major upgrades like a release. Restore a snapshot, upgrade it, run your tests, and time the switch.',
+      flows: [{from: 'ctrl', to: 'primary', label: 'Upgrade', type: 'watch'}],
+      focus: ['primary', 'standby'],
+      status: {standby: 'off', primary: 'off'},
+      badges: {ctrl: null},
+      values: {state: {text: 'Upgrading · down', tone: 'bad'}},
+    },
+    {
+      short: 'Parameters',
+      kind: '원리',
+      title: 'Settings live in a parameter group',
+      text: [
+        'You cannot edit postgresql.conf. Engine settings such as max_connections, work_mem or log_min_duration_statement live in a parameter group. The default group cannot be changed, so create your own and attach it.',
+        'Dynamic parameters apply right away. Static ones wait for a reboot, and the instance shows pending-reboot until then.',
+      ],
+      keyIdea: 'Keep parameter groups in infrastructure code, and check for pending-reboot after every change.',
+      flows: [{from: 'ctrl', to: 'standby', label: 'Parameters', type: 'watch'}],
+      focus: ['standby'],
+      status: {standby: null, primary: null},
+      badges: {standby: 'pending-reboot'},
+      values: {state: {text: 'available', tone: 'good'}},
+    },
+    {
+      short: 'Too many',
+      kind: '문제',
+      title: 'Connections run out before CPU does',
+      text: [
+        '50 app replicas each keep a pool of 20, so they try to open 1,000 connections. The default max_connections comes from the instance memory, and new connections start failing. Scaling the app out makes it worse.',
+        'A proxy such as RDS Proxy or PgBouncer sits in between. It keeps a small pool of real database connections and shares them among many client connections. RDS Proxy also holds client connections open during a failover and reconnects to the new primary.',
+      ],
+      keyIdea: 'Watch DatabaseConnections against max_connections. Size app pools as replicas × pool size, not per Pod.',
+      flows: [
+        {from: 'app', to: 'proxy', label: '1,000 clients', type: 'request'},
+        {from: 'proxy', to: 'standby', label: '100 server', type: 'request'},
+      ],
+      focus: ['proxy', 'app'],
+      badges: {standby: null, proxy: 'Pool'},
+      values: {conns: {text: '1,000 → 100 via proxy', tone: 'good'}},
+    },
+    {
+      short: 'At creation',
+      kind: '주의',
+      title: 'Storage autoscaling and encryption are set early',
+      text: [
+        'With storage autoscaling, RDS grows storage when free space stays at or below 10% for five minutes, up to the maximum you set. It never shrinks it, and it cannot keep up with a huge sudden load.',
+        'Encryption at rest also covers logs, backups, snapshots and replicas, and must be chosen when the instance is created. Adding it later means copying a snapshot with encryption and restoring a new instance.',
+      ],
+      keyIdea: 'Turn on encryption and a sensible maximum storage at creation. Both are painful to change afterwards.',
+      flows: [{from: 'standby', to: 'backup', label: 'Encrypted', type: 'request'}],
+      focus: ['standby', 'backup'],
+      badges: {proxy: null, standby: 'KMS · autoscale'},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'The provider handles the machine; you handle the connections',
+      text: [
+        'The provider runs the engine, OS, backups, patches and failover. A failover moves the endpoint name, so apps must reconnect. Replicas are async with their own endpoint, and every restore is a new instance.',
+        'You still choose the window, the versions, the parameter group, encryption and storage limits, and you must keep connections under control, often with a proxy.',
+      ],
+      keyIdea: 'Drill the three bad days: force a failover, restore to a point in time, and upgrade a copy. Write down how long each took.',
+      flows: [
+        {from: 'app', to: 'proxy', label: 'Clients', type: 'request'},
+        {from: 'proxy', to: 'standby', label: 'Pool', type: 'request'},
+        {from: 'standby', to: 'replica', label: 'Async', type: 'request'},
+      ],
+      focus: ['dns', 'proxy', 'standby'],
+      badges: {standby: null, primary: null},
+    },
+  ]}
+/>
+
+## Who does what
+
+| Task | Provider | You |
+|---|---|---|
+| Hardware, OS, engine install | Runs and patches them | Pick the instance class and engine version |
+| High availability | Keeps the standby, detects failure, flips DNS | Turn Multi-AZ on; make the app reconnect and retry |
+| Read scaling | Creates and feeds replicas | Send reads to the replica endpoint; handle lag |
+| Backups | Daily snapshots, logs, point-in-time restore | Set retention; run restore drills; repoint the app after a restore |
+| Maintenance | Applies patches and minor versions in the window | Choose the window; plan major upgrades (blue/green) |
+| Settings | Offers parameter groups | Create your own group; reboot for static parameters |
+| Connections | Sets max_connections from memory; offers a proxy | Size pools; add a proxy such as RDS Proxy or PgBouncer |
+| Storage and encryption | Grows storage up to a limit; encrypts with KMS | Set the maximum; enable encryption at creation |
+| Schema, queries, indexes | — | All yours |
+
+Same ideas, other names: Google Cloud SQL calls Multi-AZ "high availability (regional instance)" and uses database flags; Azure Database for PostgreSQL flexible server calls it "zone-redundant high availability" and uses server parameters.
+
+## Try it yourself
+
+These are AWS CLI examples.
+
+```bash
+aws rds describe-db-instances --db-instance-identifier mydb \
+  --query 'DBInstances[].[Endpoint.Address,MultiAZ,AvailabilityZone,SecondaryAvailabilityZone,StorageEncrypted,MaxAllocatedStorage]'
+dig +short mydb.xxxx.ap-northeast-2.rds.amazonaws.com             # Where the endpoint CNAME points now
+aws rds reboot-db-instance --db-instance-identifier mydb --force-failover   # Drill a failover (staging!)
+aws rds describe-events --source-identifier mydb --source-type db-instance --duration 60   # failover started / completed
+aws rds describe-db-instances --db-instance-identifier mydb \
+  --query 'DBInstances[].[LatestRestorableTime,BackupRetentionPeriod,PreferredBackupWindow,PreferredMaintenanceWindow]'
+aws rds restore-db-instance-to-point-in-time --source-db-instance-identifier mydb \
+  --target-db-instance-identifier mydb-restored --restore-time 2026-11-27T05:02:00Z \
+  --db-parameter-group-name my-pg17                                # A NEW instance with its own endpoint
+aws rds describe-pending-maintenance-actions                      # Required and optional updates
+aws rds describe-db-parameters --db-parameter-group-name my-pg17 \
+  --query "Parameters[?ParameterName=='max_connections']"         # Often a formula based on memory
+```
+
+```sql
+SHOW max_connections;
+SELECT count(*), state FROM pg_stat_activity GROUP BY state;     -- who holds connections
+```
+
+<Quiz questions={[
+  {q: 'A Multi-AZ failover completes, but the app keeps failing for many minutes. What is the most likely cause?', options: ['The standby lost the latest committed data', 'The app keeps stale connections or a cached DNS answer for the old primary', 'Failover also needs a manual promote'], answer: 1, why: 'Failover changes the endpoint\'s DNS record. Apps must drop old connections and look up the name again; long DNS caching delays that.'},
+  {q: 'You restore to a point in time 5 minutes before a bad DELETE. What do you get?', options: ['A new instance with a new endpoint, while the original stays as it is', 'The original instance rolled back in place', 'A new read replica of the original'], answer: 0, why: 'Point-in-time restore always creates a new instance. You point the app at it or copy the missing rows back.'},
+  {q: '50 Pods each open a pool of 20 and new connections fail, but CPU is low. What fixes it best?', options: ['A larger instance class only', 'More read replicas', 'A connection proxy such as RDS Proxy or PgBouncer, and smaller pools'], answer: 2, why: 'The limit is max_connections, not CPU. A proxy shares a few server connections among many clients, and pools should be sized fleet-wide.'},
+]} />
+
+Further reading: [Multi-AZ failover (Amazon RDS)](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/Concepts.MultiAZ.Failover.html) · [Read replicas](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/USER_ReadRepl.html) · [Point-in-time restore](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/USER_PIT.html) · [Maintaining a DB instance](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/USER_UpgradeDBInstance.Maintenance.html) · [RDS Proxy](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/rds-proxy.html) · [Storage autoscaling](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/USER_PIOPS.Autoscaling.html) · [Encrypting RDS resources](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/Overview.Encryption.html) · [Cloud SQL high availability](https://cloud.google.com/sql/docs/postgres/high-availability) · [What Happens When an App Saves to a Database](../basic/database-basics.mdx) · [When One Availability Zone Goes Down](../cloud/az-failover.mdx)

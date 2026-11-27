@@ -213,4 +213,10 @@ sudo aa-status | grep deny-shell                     # 노드에서: 프로파�
 sudo grep '"subresource":"exec"' /var/log/kubernetes/audit/audit.log   # 누가 exec했는지(경로는 --audit-log-path)
 ```
 
+<Quiz questions={[
+  {q: 'web 파드에서 Falco의 Terminal shell in container 경보가 울렸다. 그 셸은 어떻게 되는가?', options: ['Falco가 셸 프로세스를 죽인다', 'Falco가 파드를 지운다', '아무 일도 없다. Falco는 알리기만 하니 파드는 직접 교체해야 한다'], answer: 2, why: 'Falco는 탐지 도구다. 막는 일은 seccomp·AppArmor·읽기 전용 루트 파일 시스템이 맡고, 파드 정리는 직접 해야 하기 때문이다.'},
+  {q: 'Falco 경보로 web 파드에서 셸이 열린 것을 알았다. 누가 했는지는 어떻게 찾는가?', options: ['감사 로그의 pods/exec 요청에서 사용자를 찾고, 시간과 파드 이름으로 맞춰 본다', 'Falco 경보에 적힌 사용자 계정을 본다', '파드의 seccomp 프로파일을 확인한다', 'web 컨테이너에 kubectl logs를 친다'], answer: 0, why: 'Falco는 컨테이너 안에서 무엇이 일어났는지를, 감사 로그는 API 서버로 누가 들어왔는지를 알려 주기 때문이다. 감사 정책에 이 요청이 빠져 있으면 기록이 없다.'},
+  {q: '파드에 AppArmor Localhost 프로파일을 걸었더니 일부 노드에서 파드가 시작되지 못한다. 가장 그럴듯한 원인은 무엇인가?', options: ['seccomp RuntimeDefault가 AppArmor와 충돌한다', '그 노드들에 프로파일이 올라와 있지 않다', 'readOnlyRootFilesystem이 빠졌다'], answer: 1, why: 'AppArmor는 노드마다의 커널에서 동작한다. 프로파일이 없는 노드에 배치되면 파드가 시작되지 못하므로 apparmor_parser로 먼저 올려야 하기 때문이다.'},
+]} />
+
 더 읽을거리: [CNCF 자격증 출제 범위](https://github.com/cncf/curriculum) · [Falco 문서](https://falco.org/docs/) · [seccomp로 시스템 콜 제한](https://kubernetes.io/docs/tutorials/security/seccomp/) · [파드 보안 기준과 securityContext](../advanced/pod-security.mdx) · [감사 로그](../advanced/audit-log.mdx)

@@ -1,7 +1,7 @@
 ---
 id: cloud-cost
 title: Where a Cloud Bill Comes From
-sidebar_label: 11 · Where a Cloud Bill Comes From
+sidebar_label: 15 · Where a Cloud Bill Comes From
 description: Animated walkthrough of what drives a cloud bill (compute pricing models, forgotten storage, NAT and cross-AZ data transfer, idle managed services), cost allocation tags, why Kubernetes requests decide the node bill, OpenCost per-namespace cost, budgets and the FinOps loop
 summary: 'Compute, storage, data transfer and idle services on the bill, why Kubernetes requests decide node cost, and the FinOps loop.'
 icon: chart
@@ -258,5 +258,11 @@ kubectl top pods -A --sort-by=cpu
 kubectl get pods -A -o custom-columns='NS:.metadata.namespace,POD:.metadata.name,CPU_REQ:.spec.containers[*].resources.requests.cpu,MEM_REQ:.spec.containers[*].resources.requests.memory'
 kubectl describe nodes | grep -A 8 'Allocated resources'   # requested share of each node
 ```
+
+<Quiz questions={[
+  {q: 'Pods request 2 CPU each but use about 0.2. Nodes look full, new Pods go Pending and the autoscaler adds nodes. What is the root cause?', options: ['The scheduler places Pods by requests, not usage, so oversized requests fill nodes that sit mostly idle', 'The Pods use too much CPU and need bigger nodes', 'Spot nodes were taken back by the cloud'], answer: 0, why: 'A node is full when the sum of requests reaches its allocatable capacity. Rightsizing requests from measured usage lets more Pods fit per node.'},
+  {q: 'The NAT gateway line on the bill keeps growing, though nobody changed any code. What is a likely cause?', options: ['Data coming in from the internet', 'An unused Savings Plan commitment', 'Nodes in private subnets pulling images and calling cloud storage APIs through the NAT gateway'], answer: 2, why: 'A NAT gateway charges per GB it processes, so every pulled image and storage API byte through it is billed. Private endpoints for cloud services avoid that charge.'},
+  {q: 'The team deleted several VMs, but the storage line did not drop. What should they check first?', options: ['Whether a Savings Plan has expired', 'Volumes left in the available (unattached) state and old snapshots', 'Whether cost allocation tags were activated'], answer: 1, why: 'Block volumes bill for their provisioned size even when unattached, and old snapshots pile up the same way after the VM is gone.'},
+]} />
 
 Further reading: [FinOps Framework](https://www.finops.org/framework/) · [Amazon EC2 pricing](https://aws.amazon.com/ec2/pricing/) · [Savings Plans](https://aws.amazon.com/savingsplans/) · [Spot Instances](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/using-spot-instances.html) · [VPC pricing (NAT gateway)](https://aws.amazon.com/vpc/pricing/) · [Cost allocation tags](https://docs.aws.amazon.com/awsaccountbilling/latest/aboutv2/cost-alloc-tags.html) · [OpenCost](https://www.opencost.io/docs/) · [Requests and limits](../intermediate/requests-limits.mdx) · [Auto-Scaling VMs (Auto Scaling Groups)](../cloud/auto-scaling-group.mdx)

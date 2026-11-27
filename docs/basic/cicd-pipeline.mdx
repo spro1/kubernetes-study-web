@@ -1,7 +1,7 @@
 ---
 id: cicd-pipeline
 title: How a Pipeline Runs
-sidebar_label: 09 · Pipeline Order
+sidebar_label: 12 · Pipeline Order
 description: Follow in animation the general flow of a CI/CD pipeline, from trigger through build, test and artifact to deploys to dev, staging and production, stopping right where something fails
 summary: 'Trigger → build → test → artifact → deploy per environment, and where it stops on failure.'
 icon: hammer
@@ -193,5 +193,11 @@ kubectl get deploy <name> -n <namespace> -o jsonpath='{.spec.template.spec.conta
 kubectl rollout history deploy/<name> -n <namespace>   # Deploy history
 kubectl rollout status deploy/<name> -n <namespace>   # Did the deploy finish?
 ```
+
+<Quiz questions={[
+  {q: 'For change 1.4.3 the build succeeds but tests fail. What is running in production afterwards?', options: ['1.4.3, because the build succeeded', 'Nothing, the failed run takes production down', 'Still 1.4.2, because later stages do not run and 1.4.3 is neither stored nor deployed'], answer: 2, why: 'When a stage fails, the pipeline stops there. Production stays on the last good version, and the cause is in the test stage logs.'},
+  {q: 'Why is the same 1.4.2 image deployed to staging instead of rebuilding it for staging?', options: ['So that what was verified in staging is exactly what goes to production', 'Rebuilding is not allowed by Kubernetes', 'Staging cannot reach the build machine'], answer: 0, why: 'Only by promoting the same artifact through each environment can you say the thing you checked is the thing you released.'},
+  {q: 'A pipeline pushes every image as latest. What problem does that cause?', options: ['Builds become slower', 'The image cannot be pulled by nodes', 'Tests are skipped', 'It is hard to tell which build is running in production, because latest keeps pointing to different images'], answer: 3, why: 'latest moves with every push. Tags that never change, like 1.4.2 or a commit hash, let you trace what is deployed.'},
+]} />
 
 Further reading: [Deployment rollback](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/) · [Argo CD](https://argo-cd.readthedocs.io/) · [Tekton](https://tekton.dev/docs/) · [Helm and GitOps](../intermediate/gitops-sync.mdx)

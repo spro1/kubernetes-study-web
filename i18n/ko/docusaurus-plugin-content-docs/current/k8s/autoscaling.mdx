@@ -186,4 +186,10 @@ kubectl describe hpa <이름>                          # 늘리고 줄인 이벤
 kubectl get pods -A --field-selector=status.phase=Pending   # 노드 자리가 없어 멈춘 파드
 ```
 
+<Quiz questions={[
+  {q: 'HPA의 목표가 평균 CPU 60%다. 파드 2개가 90%로 돌고 있다. HPA가 원하는 파드 수는 몇 개인가?', options: ['2개', '3개', '4개', '6개'], answer: 1, why: '필요 파드 수 = 올림(현재 파드 수 × 현재 사용률 ÷ 목표) = 올림(2 × 90 ÷ 60) = 3개이기 때문이다.'},
+  {q: 'kubectl get hpa에서 필요 파드 수는 늘었는데 새 파드가 Pending에 머문다. 가장 그럴듯한 원인은 무엇인가?', options: ['metrics-server가 멈췄다', 'HPA가 아직 replicas를 고쳐 쓰지 않았다', '파드의 요청량(requests)만큼 남은 자원이 있는 노드가 없다'], answer: 2, why: 'HPA는 개수만 바꾸고 배치는 스케줄러가 하기 때문이다. 요청량이 들어갈 노드가 없으면 노드를 늘리거나 다른 파드가 덜 쓸 때까지 Pending으로 남는다.'},
+  {q: 'HPA의 사용률이 <unknown>으로 나온다. 무엇을 확인해야 하는가?', options: ['metrics-server가 동작하는지, 파드에 자원 요청량(requests)이 적혀 있는지', '스케일 인 안정화 시간이 지났는지', 'Cluster Autoscaler가 설치되어 있는지'], answer: 0, why: 'HPA는 metrics-server가 모은 사용량을 읽고, 사용률은 요청량을 기준으로 계산하기 때문이다. 둘 중 하나라도 없으면 값을 계산하지 못한다.'},
+]} />
+
 더 읽을거리: [Horizontal Pod Autoscaling](https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/) · [HPA 연습](https://kubernetes.io/ko/docs/tasks/run-application/horizontal-pod-autoscale-walkthrough/)

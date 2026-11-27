@@ -183,4 +183,10 @@ kubectl get endpointslices -l kubernetes.io/service-name=<service> -w   # Watch 
 kubectl get events --field-selector reason=Killing   # When the kubelet stopped the container
 ```
 
+<Quiz questions={[
+  {q: 'Without a preStop hook, users see intermittent errors during every rollout. Why?', options: ['SIGKILL is always sent before SIGTERM', 'Removal from the endpoints and the stop signal start at the same time, so requests still arrive while the app is closing', 'The grace period is skipped when there is no preStop hook'], answer: 1, why: 'The order "leave the targets, then stop" is not guaranteed. The news of removal takes a moment to spread, and requests that arrive in that gap hit a closing pod.'},
+  {q: 'What should an app do when it receives SIGTERM?', options: ['Ignore it and wait for SIGKILL', 'Exit immediately, dropping in-flight requests', 'Restart itself so the pod stays Ready', 'Stop accepting new requests, finish in-flight ones, then exit on its own'], answer: 3, why: 'SIGTERM means "clean up and exit". An app that finishes its in-flight work and exits within the grace period loses no requests.'},
+  {q: 'A deleted pod stays Terminating for about 30 seconds and then vanishes, and its in-flight requests fail. What is most likely?', options: ['The app ignored SIGTERM, used up the grace period and was killed with SIGKILL', 'The preStop hook removed it from the endpoints too early', 'The scheduler could not find a node for it'], answer: 0, why: 'The default grace period is 30 seconds. If the app does not exit within it, the kubelet sends SIGKILL and in-flight requests fail.'},
+]} />
+
 Further reading: [Pod lifecycle — termination of Pods](https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/#pod-termination) · [Container lifecycle hooks](https://kubernetes.io/docs/concepts/containers/container-lifecycle-hooks/)

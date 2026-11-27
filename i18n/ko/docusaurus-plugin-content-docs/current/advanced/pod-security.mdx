@@ -216,4 +216,10 @@ kubectl get pod <파드> -n <네임스페이스> -o jsonpath='{.spec.containers[
 kubectl label --dry-run=server --overwrite namespace <네임스페이스> pod-security.kubernetes.io/enforce=restricted   # enforce로 올리기 전 걸리는 파드
 ```
 
+<Quiz questions={[
+  {q: 'shop 네임스페이스에 enforce: baseline이 걸려 있다. 파드 생성 권한이 있는 개발자가 privileged: true인 파드를 제출하면 어떻게 되는가?', options: ['특권 파드는 ClusterRole이 필요해 RBAC가 거절한다', '어드미션이 거절하고, etcd에는 아무것도 기록되지 않는다', '경고만 붙고 만들어진다'], answer: 1, why: '인증과 RBAC는 통과하지만 특권 컨테이너는 baseline이 막는 대상이다. 어드미션이 요청을 거절해 파드가 처음부터 만들어지지 않기 때문이다.'},
+  {q: '같은 특권 명세를 Deployment로 제출했다. 배포는 성공으로 보이는데 파드가 0개다. 원인은 어디에 있는가?', options: ['Deployment 상태에 403으로 남는다', '노드의 kubelet 로그에 남는다', '어디에도 없다. enforce는 Deployment에 적용되지 않는다', 'ReplicaSet의 이벤트에 남는다. enforce가 파드를 만드는 단계에서 거절하기 때문이다'], answer: 3, why: 'enforce는 파드에만 적용된다. Deployment는 저장되고 ReplicaSet이 파드를 만들 때 거절되므로 원인이 그 이벤트에 남기 때문이다.'},
+  {q: 'runAsNonRoot: true로 고친 파드가 어드미션은 통과했는데 시작에 실패한다. 가장 그럴듯한 원인은 무엇인가?', options: ['이미지가 루트로 실행되도록 만들어졌다', '네임스페이스 레이블이 지워졌다', 'seccomp가 빠졌다'], answer: 0, why: '어드미션 통과만으로는 부족하다. 루트로 실행되도록 만든 이미지라면 runAsNonRoot 때문에 컨테이너가 시작에 실패하기 때문이다.'},
+]} />
+
 더 읽을거리: [파드 보안 표준](https://kubernetes.io/docs/concepts/security/pod-security-standards/) · [파드 시큐리티 어드미션](https://kubernetes.io/docs/concepts/security/pod-security-admission/) · [파드와 컨테이너에 securityContext 설정](https://kubernetes.io/docs/tasks/configure-pod-container/security-context/)

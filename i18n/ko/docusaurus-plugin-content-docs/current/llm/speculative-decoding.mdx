@@ -192,7 +192,7 @@ hide_table_of_contents: true
 - 초안 몫의 메모리 여유를 남긴다. 초안 모델은 자기 가중치와 KV 캐시를 더하므로 같은 가속기에 들어가는 요청 수가 줄어든다.
 - 수락률을 계속 지켜본다. 트래픽이 창작이나 높은 temperature 요청 쪽으로 바뀌면 이득이 조용히 사라질 수 있다.
 
-## 직접 해 보기
+## 직접 확인해 보기
 
 ```bash
 # vLLM: n-gram 초안은 모델이 더 필요 없다 (쓰는 버전의 추측 디코딩 문서를 확인한다)
@@ -210,4 +210,10 @@ vllm bench serve --model meta-llama/Llama-3.1-8B-Instruct --max-concurrency 8 --
 curl -s http://<engine>:8000/metrics | grep -E 'vllm:spec_decode_num_(accepted|draft)_tokens_total'
 ```
 
-더 읽어 보기: [Leviathan 외, 2023: Fast Inference from Transformers via Speculative Decoding](https://arxiv.org/abs/2211.17192) · [Chen 외, 2023: Accelerating LLM Decoding with Speculative Sampling](https://arxiv.org/abs/2302.01318) · [EAGLE](https://arxiv.org/abs/2401.15077) · [vLLM 추측 디코딩](https://docs.vllm.ai/en/latest/features/speculative_decoding/) · [질문 읽기와 답 쓰기 (프리필·디코드)](../llm/prefill-decode.mdx) · [요청을 묶어 처리하기 (연속 배칭)](../llm/continuous-batching.mdx)
+<Quiz questions={[
+  {q: '추측 디코딩은 목표 모델이 내놓을 답을 바꾸는가?', options: ['바꾼다. 초안 모델의 말투가 출력에 섞인다', 'temperature가 낮을 때만 바꾼다', '바꾼다. 속도를 얻는 대신 품질이 조금 떨어진다', '바꾸지 않는다. 검증기가 출력 분포를 목표 모델만 쓸 때와 같게 유지한다'], answer: 3, why: '수락 판정은 일종의 기각 샘플링이라 결과가 목표 모델의 분포를 정확히 따른다. 바뀌는 것은 속도뿐이기 때문이다.'},
+  {q: '사용자 1명 테스트에서는 추측 디코딩으로 TPOT이 빨라졌는데, 동시 사용자 64명에서는 전체 처리량이 떨어졌다. 왜 그런가?', options: ['배치가 크면 디코드가 연산에 막혀, 추가 자리를 채점하는 것이 진짜 추가 작업이 된다', '초안 모델의 토크나이저 사전이 모자랐다', '부하가 걸리면 수락률이 늘 0으로 떨어진다', '추측 중에는 KV 캐시가 꺼진다'], answer: 0, why: '속도 향상은 메모리에 막힌 디코드에서 남는 연산 능력에서 나온다. 배치가 크면 그 여유가 없고, 초안도 배치에 쓸 메모리를 차지하기 때문이다.'},
+  {q: '서비스가 주로 문서를 요약하고 입력을 인용하는 코드 수정을 한다. 추가 모델 메모리 없이 가장 잘 맞는 초안 방식은 무엇인가?', options: ['별도의 작은 초안 모델', 'n-gram(프롬프트 조회) 초안', '어떤 초안이든 k를 크게 잡기', 'MTP 가중치가 없는 모델에 MTP 모듈'], answer: 1, why: 'n-gram 초안은 질문 안에서 같은 짧은 토큰 열 뒤에 왔던 토큰을 가져오므로 모델이 필요 없다. 출력이 입력을 반복할 때 잘 맞기 때문이다.'},
+]} />
+
+더 읽을거리: [Leviathan 외, 2023: Fast Inference from Transformers via Speculative Decoding](https://arxiv.org/abs/2211.17192) · [Chen 외, 2023: Accelerating LLM Decoding with Speculative Sampling](https://arxiv.org/abs/2302.01318) · [EAGLE](https://arxiv.org/abs/2401.15077) · [vLLM 추측 디코딩](https://docs.vllm.ai/en/latest/features/speculative_decoding/) · [질문 읽기와 답 쓰기 (프리필·디코드)](../llm/prefill-decode.mdx) · [요청을 묶어 처리하기 (연속 배칭)](../llm/continuous-batching.mdx)

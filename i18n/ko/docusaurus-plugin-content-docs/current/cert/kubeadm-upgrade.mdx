@@ -1,7 +1,7 @@
 ---
 id: kubeadm-upgrade
 title: kubeadm으로 클러스터 업그레이드 (CKA)
-sidebar_label: 03 · kubeadm 업그레이드
+sidebar_label: 04 · kubeadm 업그레이드
 description: kubeadm으로 만든 클러스터를 한 마이너 버전 올릴 때 컨트롤 플레인(kubeadm → plan → apply → kubelet)과 워커(kubeadm → upgrade node → drain → kubelet → uncordon)를 어떤 순서로 다루는지 애니메이션으로 따라간다
 summary: '컨트롤 플레인부터 워커까지, 마이너 버전 하나씩 올리는 순서.'
 icon: layers
@@ -203,5 +203,11 @@ sudo kubeadm upgrade plan                            # 구성 요소 버전, 아
 sudo kubeadm certs check-expiration                  # apply가 갱신한 인증서
 kubelet --version                                    # 이 노드의 kubelet
 ```
+
+<Quiz questions={[
+  {q: 'kubeadm upgrade apply v1.37.x는 성공했는데 kubectl get nodes에서 컨트롤 플레인 노드가 여전히 1.36이다. 이유는 무엇인가?', options: ['apply가 조용히 실패해서 다시 쳐야 한다', 'VERSION은 kubelet 버전이고, kubeadm은 kubelet 패키지를 바꾸지 않는다', '노드를 재부팅해야 한다', 'kubectl get nodes가 옛 버전을 캐시한다'], answer: 1, why: 'kubeadm은 구성요소와 설정만 바꾸기 때문이다. kubelet·kubectl 패키지를 설치하고 systemctl daemon-reload, systemctl restart kubelet을 쳐야 한다.'},
+  {q: 'worker-1을 1.37로 올리는 중이다. 그 노드에서 칠 kubeadm 명령은 무엇인가?', options: ['sudo kubeadm upgrade apply v1.37.x', 'sudo kubeadm upgrade plan', 'sudo kubeadm upgrade node'], answer: 2, why: 'apply는 첫 컨트롤 플레인 노드에서 한 번만 치기 때문이다. 워커에서는 upgrade node가 이 노드의 kubelet 설정을 새 버전에 맞게 갱신한다.'},
+  {q: '컨트롤 플레인 노드에서 apt로 찾아봐도 1.37 kubeadm 패키지가 보이지 않는다. 빠뜨린 것은 무엇인가?', options: ['pkgs.k8s.io 저장소 주소를 1.37용으로 바꾸기', 'kubeadm upgrade plan 실행', '노드 drain'], answer: 0, why: '공식 패키지 저장소는 마이너 버전마다 주소가 따로 있기 때문이다. 1.37용으로 바꾸기 전에는 새 패키지가 보이지 않는다.'},
+]} />
 
 더 읽을거리: [CNCF 자격증 출제 범위](https://github.com/cncf/curriculum) · [kubeadm 클러스터 업그레이드](https://kubernetes.io/docs/tasks/administer-cluster/kubeadm/kubeadm-upgrade/) · [버전 차이(skew) 정책](https://kubernetes.io/docs/setup/release/version-skew-policy/) · [노드 비우기와 클러스터 업그레이드](../k8s/node-drain.mdx)

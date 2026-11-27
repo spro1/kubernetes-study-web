@@ -1,7 +1,7 @@
 ---
 id: git-merge-request
 title: From Branch to Merge Request
-sidebar_label: 08 · Merge Request
+sidebar_label: 11 · Merge Request
 description: Follow in animation how one code change goes from repository, commit and branch through a merge request, code review, conflict and tag into the main line
 summary: 'The collaboration flow of branches, commits, merge requests, reviews, conflicts and tags.'
 icon: git
@@ -195,5 +195,11 @@ git show --stat HEAD                                 # One commit: hash, author,
 git diff main...<branch>                             # What the merge request would show
 git tag -n                                           # Release tags
 ```
+
+<Quiz questions={[
+  {q: 'B tries to merge and Git reports a conflict because A changed the same line differently. What does this mean?', options: ['The repository is broken and must be cloned again', 'Git cannot decide which version is right, so a person must look at both and decide how to combine them', 'B\'s change was rejected by the reviewer'], answer: 1, why: 'A conflict is not an error but a sign that a human must decide. B resolves it by hand and commits the result.'},
+  {q: 'Why does A open a merge request instead of merging feat-login into main directly?', options: ['Merging directly is impossible in Git', 'A merge request makes the build faster', 'It deletes the branch automatically', 'It gathers automated checks, review comments and approval in one place before the change reaches main'], answer: 3, why: 'The merge request is the review before merging. Its comments and check results stay recorded, so the reasoning behind a decision can be found later.'},
+  {q: 'You want to know which code a running image came from. What makes this easy?', options: ['Putting the commit hash or Git tag in the image tag', 'Always tagging images latest', 'Deleting old branches after merging'], answer: 0, why: 'A Git tag labels a commit and an image tag labels an image version. If the image tag carries the commit hash or Git tag, you can trace the image back to its code.'},
+]} />
 
 Further reading: [Pro Git](https://git-scm.com/book/en/v2) · [GitLab merge requests](https://docs.gitlab.com/ee/user/project/merge_requests/) · [GitHub pull requests](https://docs.github.com/en/pull-requests)

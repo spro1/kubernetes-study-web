@@ -179,4 +179,10 @@ kubectl get nodes --show-labels                      # Labels a nodeSelector mat
 kubectl get pods -o wide                             # Which node each replica landed on
 ```
 
+<Quiz questions={[
+  {q: 'A node\'s CPU usage graph shows 20%, yet a Pod requesting 1 CPU will not be placed there. Why?', options: ['The scheduler computes free capacity from the sum of requests, which is already full', 'The node has a taint', 'The usage graph is cached', 'The kubelet is down'], answer: 0, why: 'Free capacity is the sum of requests of placed Pods, not real usage. A node with full requests has no room even at 20% usage.'},
+  {q: 'The GPU job has a toleration for the gpu taint but no nodeSelector. Where can it land?', options: ['Only on gpu-node', 'Nowhere; it stays Pending', 'On gpu-node or any other node that fits, because a toleration only permits and does not attract'], answer: 2, why: 'A toleration only permits. To pull the job onto gpu-node you also need a nodeSelector or node affinity.'},
+  {q: 'web-2 is Pending with 0/3 nodes are available, including 1 node(s) didn\'t match pod anti-affinity rules. Replicas outnumber nodes. What fixes the anti-affinity part?', options: ['Adding a toleration to web', 'Writing the anti-affinity as preferred instead of required', 'Lowering the CPU requests'], answer: 1, why: 'Required anti-affinity keeps failing when replicas outnumber nodes. Each cause needs its own fix, and a preferred rule only affects scoring.'},
+]} />
+
 Further reading: [Kubernetes Scheduler](https://kubernetes.io/docs/concepts/scheduling-eviction/kube-scheduler/) · [Assigning Pods to Nodes](https://kubernetes.io/docs/concepts/scheduling-eviction/assign-pod-node/) · [Taints and Tolerations](https://kubernetes.io/docs/concepts/scheduling-eviction/taint-and-toleration/)

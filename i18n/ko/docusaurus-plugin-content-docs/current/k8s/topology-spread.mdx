@@ -1,0 +1,241 @@
+---
+id: topology-spread
+title: 파드를 존에 고르게 펼치기 (토폴로지 분산 제약)
+sidebar_label: 02 · 토폴로지 분산
+description: topologySpreadConstraints의 topologyKey, maxSkew, DoNotSchedule과 ScheduleAnyway, labelSelector, minDomains, 존 하나가 죽을 때 벌어지는 일, 롤링 업데이트 중의 쏠림과 pod-template-hash를 쓰는 matchLabelKeys, 클러스터 기본 제약, podAntiAffinity와의 차이를 애니메이션으로 본다
+summary: 'maxSkew로 레플리카를 존과 노드에 고르게 둔다. 존이 죽을 때, 배포 중에 벌어지는 일과 존마다 파드가 여럿일 때 안티어피니티보다 나은 이유.'
+icon: split
+hide_table_of_contents: true
+---
+
+# 파드를 존에 고르게 펼치기 (토폴로지 분산 제약)
+
+레플리카 6개가 한 존에 몰려 있으면 존 장애 한 번에 다 잃는다. **topologySpreadConstraints**가 존별·노드별로 파드를 세고, 균형을 깨는 자리를 거절하고, 죽은 존과 롤링 업데이트를 만나는 과정을 스케줄러와 함께 따라간다.
+
+<StepDiagram
+  width={1000}
+  height={460}
+  meta={{duration: '약 13분', level: '중급'}}
+  groups={[
+    {label: 'zone a', x: 20, y: 140, w: 310, h: 170, tone: 'plain'},
+    {label: 'zone b', x: 345, y: 140, w: 310, h: 170, tone: 'plain'},
+    {label: 'zone c', x: 670, y: 140, w: 310, h: 170, tone: 'plain'},
+  ]}
+  nodes={[
+    {id: 'deploy', label: '디플로이먼트 web', sub: '레플리카 6', icon: 'layers', tone: 'app', x: 250, y: 75, w: 170, show: true},
+    {id: 'sched', label: 'kube-scheduler', sub: 'PodTopologySpread', icon: 'target', tone: 'cp', x: 500, y: 75, w: 170, show: true},
+    {id: 'config', label: '스케줄러 설정', sub: 'defaultConstraints', icon: 'gear', tone: 'store', x: 760, y: 75, w: 170},
+    {id: 'a1', label: 'node-a1', sub: 'zone a', icon: 'server', tone: 'node', x: 100, y: 230, w: 130, show: true},
+    {id: 'a2', label: 'node-a2', sub: 'zone a', icon: 'server', tone: 'node', x: 250, y: 230, w: 130, show: true},
+    {id: 'b1', label: 'node-b1', sub: 'zone b', icon: 'server', tone: 'node', x: 425, y: 230, w: 130, show: true},
+    {id: 'b2', label: 'node-b2', sub: 'zone b', icon: 'server', tone: 'node', x: 575, y: 230, w: 130, show: true},
+    {id: 'c1', label: 'node-c1', sub: 'zone c', icon: 'server', tone: 'node', x: 750, y: 230, w: 130, show: true},
+    {id: 'c2', label: 'node-c2', sub: 'zone c', icon: 'server', tone: 'node', x: 900, y: 230, w: 130, show: true},
+    {id: 'pend', label: 'Pending 파드', sub: 'web', icon: 'pod', tone: 'app', x: 250, y: 395, w: 140},
+    {id: 'desched', label: 'Descheduler', sub: '선택 애드온', icon: 'wheel', tone: 'cp', x: 750, y: 395, w: 150},
+  ]}
+  metrics={[
+    {id: 'zones', label: '파드 a / b / c'},
+    {id: 'skew', label: '쏠림(skew)'},
+    {id: 'result', label: '스케줄러'},
+  ]}
+  learn={[
+    {text: 'topologyKey가 만드는 도메인과 labelSelector가 세는 파드', at: 1},
+    {text: 'maxSkew를 전체 최솟값과 비교해 재는 방식', at: 2},
+    {text: 'DoNotSchedule과 ScheduleAnyway의 차이', at: 4},
+    {text: '존 장애와 minDomains', at: 5},
+    {text: '롤링 업데이트와 matchLabelKeys', at: 7},
+    {text: '클러스터 기본값, 그리고 podAntiAffinity가 더 맞는 때', at: 8},
+  ]}
+  steps={[
+    {
+      short: '시작',
+      kind: '시작',
+      title: '레플리카 6개, 존 3개, 떼어 놓는 규칙은 없다',
+      text: [
+        'web은 레플리카가 6개이고 분산 규칙이 없다. 스케줄러는 디플로이먼트 파드에 내장 기본값(노드별 maxSkew 3, 존별 5)을 적용하지만 ScheduleAnyway다. 점수를 조금 밀어 줄 뿐이라 다른 점수에 밀릴 수 있다.',
+        '파드를 만들 때 마침 zone c가 바빠서 여섯 개가 모두 zone a와 b에 들어갔다. zone a가 죽으면 서비스 절반이 같이 사라지고, zone c는 놀고 있다.',
+      ],
+      focus: ['deploy', 'a1', 'b1'],
+      status: {c1: 'off', c2: 'off'},
+      badges: {a1: 'web ×2', a2: 'web ×1', b1: 'web ×2', b2: 'web ×1'},
+      values: {zones: {text: '3 / 3 / 0', tone: 'bad'}, skew: '3', result: '규칙 없음'},
+    },
+    {
+      short: '도메인',
+      kind: '원리',
+      title: 'topologyKey가 노드 레이블을 도메인으로 바꾼다',
+      text: [
+        'topologyKey: topology.kubernetes.io/zone인 제약을 더한다. 이 노드 레이블의 서로 다른 값 하나가 도메인 하나다. 이 클러스터에는 a, b, c 세 개가 있다. kubernetes.io/hostname이면 노드 하나하나가 도메인이다.',
+        'labelSelector(app: web)는 어떤 파드를 셀지 정한다. 같은 네임스페이스의 파드만 센다. topologyKey 레이블이 없는 노드는 건너뛴다. 거기에는 파드가 가지 않고, 거기 있는 파드도 세지 않는다.',
+      ],
+      keyIdea: '노드 레이블부터 확인한다. 존 레이블에 오타가 있으면 그 노드는 소리 없이 분산에서 빠진다.',
+      flows: [{from: 'deploy', to: 'sched', label: '제약', type: 'request'}],
+      focus: ['sched'],
+      status: {c1: null, c2: null},
+      values: {result: '존: a, b, c'},
+    },
+    {
+      short: 'maxSkew',
+      kind: '원리',
+      title: 'maxSkew는 각 도메인을 가장 빈 도메인과 비교한다',
+      text: [
+        '디플로이먼트를 maxSkew: 1, whenUnsatisfiable: DoNotSchedule로 다시 만든다. 쏠림은 한 도메인의 대상 파드 수에서 전체 최솟값, 즉 가장 빈 도메인의 수를 뺀 값이다. 놓은 뒤에도 쏠림이 maxSkew 이하일 때만 그 자리를 허용한다.',
+        '다섯 개를 놓으면 2 / 2 / 1이다. 여섯 번째를 zone a에 두면 3 − 1 = 2라 너무 크다. zone c만 쏠림을 1로 지키므로 거기로 간다.',
+      ],
+      flows: [{from: 'sched', to: 'c1', label: '유일한 자리', type: 'request'}],
+      focus: ['sched', 'c1'],
+      status: {c1: 'ok'},
+      badges: {a1: 'web ×1', a2: 'web ×1', b1: 'web ×1', b2: 'web ×1', c1: 'web ×1', c2: 'web ×1'},
+      values: {zones: {text: '2 / 2 / 2', tone: 'good'}, skew: '0', result: 'c에 배치'},
+    },
+    {
+      short: '키 두 개',
+      kind: '원리',
+      title: '존 제약과 노드 제약은 함께 검사한다',
+      text: [
+        'topologyKey: kubernetes.io/hostname, maxSkew 1인 두 번째 제약을 두면 각 존 안에서도 노드끼리 고르게 펼친다. 노드는 모든 제약을 만족해야 필터를 통과한다.',
+        'topologyKey와 whenUnsatisfiable 쌍은 한 번씩만 쓸 수 있다. 흔한 조합은 복원력을 위한 존 DoNotSchedule과, 꽉 찬 노드 하나가 스케줄을 막지 않도록 하는 hostname ScheduleAnyway다.',
+      ],
+      flows: [{from: 'sched', to: 'a2', label: '존 + 호스트', type: 'request'}],
+      focus: ['a1', 'a2', 'sched'],
+      status: {c1: null},
+      values: {skew: '존 0 · 호스트 0'},
+    },
+    {
+      short: '만족 불가',
+      kind: '주의',
+      title: 'DoNotSchedule은 기다리고, ScheduleAnyway는 그냥 놓는다',
+      text: [
+        'zone c의 CPU가 바닥난 상태에서 web을 9개로 늘린다. 7번과 8번은 a와 b로 가서 3 / 3 / 2가 된다. 9번을 a나 b에 두면 4 / 3 / 2로 쏠림이 2다. DoNotSchedule이면 Pending으로 남고, 이벤트에는 노드가 pod topology spread constraints를 맞추지 못했다고 나온다.',
+        'ScheduleAnyway면 스케줄러는 9번을 그래도 놓고, 쏠림이 작은 노드를 고를 뿐이다. 파드는 돌지만 원했던 균형은 사라진다.',
+      ],
+      keyIdea: 'DoNotSchedule은 파드를 Pending으로 남길 수 있는 엄격한 보장이다. 그래도 Pending 파드는 노드 오토스케일러가 zone c에 용량을 늘리는 계기가 된다.',
+      flows: [{from: 'sched', to: 'c1', label: 'CPU 없음', type: 'watch'}],
+      focus: ['pend', 'c1', 'c2'],
+      status: {pend: 'warn', c1: 'warn', c2: 'warn'},
+      badges: {pend: '9번 파드', a1: 'web ×2', b1: 'web ×2'},
+      values: {zones: '3 / 3 / 2', skew: {text: '놓으면 2', tone: 'bad'}, result: {text: 'Pending', tone: 'bad'}},
+    },
+    {
+      short: '존 장애',
+      kind: '장애',
+      title: 'zone c가 죽고, 대체 파드가 들어갈 자리가 없을 수 있다',
+      text: [
+        '다시 레플리카 6개, 2 / 2 / 2다. zone c의 전원이 나갔다. 거기 있던 파드 둘이 축출되고 디플로이먼트가 대체 파드 둘을 만든다. 죽은 노드가 Node 객체로 남아 있는 동안 zone c는 여전히 도메인이고, 대상 파드는 0개다.',
+        '대체 파드를 zone a에 두면 3 − 0 = 3으로 maxSkew 1을 넘는다. 존 제약이 DoNotSchedule이면 대체 파드가 정작 필요한 순간에 Pending으로 남을 수 있다. 죽은 노드가 지워지면 들어가고, 존 규칙이 ScheduleAnyway면 바로 들어간다.',
+      ],
+      keyIdea: '장애 중에 엄격한 균형과 돌아가는 파드 중 무엇이 중요한지 정한다. 어느 쪽이든 살아남은 존에 여유를 둔다.',
+      flows: [{from: 'sched', to: 'a2', label: '쏠림 3 > 1', type: 'watch'}],
+      focus: ['c1', 'c2', 'pend'],
+      status: {c1: 'error', c2: 'error', pend: 'error'},
+      badges: {c1: 'NotReady', c2: 'NotReady', a1: 'web ×1', b1: 'web ×1', pend: '대체 파드 2개'},
+      values: {zones: {text: '2 / 2 / 0', tone: 'bad'}, skew: '2', result: {text: 'Pending', tone: 'bad'}},
+    },
+    {
+      short: 'minDomains',
+      kind: '원리',
+      title: 'minDomains: 아직 노드가 없는 존까지 센다',
+      text: [
+        '스케줄러는 있는 노드로만 도메인을 안다. zone c의 노드 풀이 0으로 줄어 있으면 a와 b만 있고, 3 / 3은 완벽한 균형으로 보인다.',
+        'minDomains: 3은 적어도 세 도메인에 파드가 있어야 한다는 뜻이다. 쓸 수 있는 도메인이 그보다 적으면 전체 최솟값을 0으로 보므로, a와 b에서 maxSkew를 넘는 파드는 Pending으로 남는다. 그래서 노드 오토스케일러가 zone c에 노드를 띄울 이유가 생긴다. minDomains는 DoNotSchedule과만 쓴다.',
+      ],
+      focus: ['pend', 'c1', 'c2'],
+      status: {c1: 'gone', c2: 'gone', pend: 'warn'},
+      badges: {c1: null, c2: null, pend: 'zone c를 기다림'},
+      values: {zones: '3 / 3 / —', skew: '최솟값을 0으로', result: 'Pending → 확장'},
+    },
+    {
+      short: '롤아웃',
+      kind: '문제',
+      title: '롤링 업데이트는 옛 파드와 새 파드를 함께 센다',
+      text: [
+        'zone c가 돌아와 web은 2 / 2 / 2다. 롤아웃이 시작된다. 새 파드도 app: web을 달고 있어서 옛 파드와 함께 세어진다. 스케줄러는 새 리비전만이 아니라 web 파드 전체가 고르도록 새 파드를 놓는다.',
+        '옛 파드가 사라지고 나면 새 파드는 3 / 2 / 1이 될 수 있다. matchLabelKeys: [pod-template-hash]를 더한다. 그 값이 labelSelector에 합쳐져 ReplicaSet 리비전마다 따로 펼친다.',
+      ],
+      keyIdea: '줄일 때도 다시 맞추지 않는다. 스케줄러는 놓을 때만 일한다. Descheduler 같은 도구가 분산을 어긴 파드를 축출하면 다시 놓인다.',
+      flows: [{from: 'desched', to: 'c1', label: '다시 맞춤', type: 'request'}],
+      focus: ['sched', 'desched'],
+      status: {c1: null, c2: null, pend: null},
+      badges: {pend: null, a1: 'web ×2', b1: 'web ×1', c1: null, c2: 'web ×1', a2: 'web ×1'},
+      values: {zones: {text: '3 / 2 / 1', tone: 'bad'}, skew: '2', result: '해결: matchLabelKeys'},
+    },
+    {
+      short: '기본값',
+      kind: '원리',
+      title: '아무것도 적지 않은 파드는 클러스터 기본값을 받는다',
+      text: [
+        'topologySpreadConstraints가 없고 Service·ReplicaSet·StatefulSet·ReplicationController에 속한 파드는 스케줄러의 기본 제약을 받는다. 내장값은 kubernetes.io/hostname에 maxSkew 3, topology.kubernetes.io/zone에 5이고 둘 다 ScheduleAnyway다.',
+        '운영자는 KubeSchedulerConfiguration의 PodTopologySpread 플러그인 args에서 defaultingType: List와 labelSelector 없는 defaultConstraints 목록으로 바꿀 수 있다. 관리형 클러스터는 스케줄러 설정을 못 바꾸게 하는 경우가 많다.',
+      ],
+      flows: [{from: 'config', to: 'sched', label: 'defaultConstraints', type: 'watch'}],
+      focus: ['config', 'sched'],
+      badges: {config: 'zone maxSkew 1'},
+      values: {zones: '2 / 2 / 2', skew: '0', result: '기본값 적용'},
+    },
+    {
+      short: '안티어피니티',
+      kind: '주의',
+      title: '안티어피니티는 도메인마다 하나, 분산은 여럿을 허용한다',
+      text: [
+        '존 키에 required podAntiAffinity를 걸면 한 존에 web 파드 둘이 못 온다. 존이 3개면 네 번째 레플리카는 영원히 Pending이다. preferred 안티어피니티는 힌트일 뿐이다.',
+        '토폴로지 분산은 레플리카 수가 얼마든 존을 고르게 둔다. 2 / 2 / 2, 그다음 3 / 3 / 3이다. 쿼럼 멤버 둘이 절대 한 노드에 있으면 안 되는 것처럼 노드당 하나라는 엄격한 규칙에는 안티어피니티를, 균형에는 분산을 쓴다.',
+      ],
+      flows: [{from: 'sched', to: 'b2', label: '균형', type: 'request'}],
+      focus: ['sched'],
+      badges: {config: null, a1: 'web ×1', b1: 'web ×1', c1: 'web ×1'},
+      values: {result: '분산: 존마다 N개'},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '세고, 가장 빈 도메인과 비교하고, 무너질 때의 동작을 정한다',
+      text: [
+        'topologyKey는 노드 레이블을 도메인으로 바꾸고, labelSelector는 셀 파드를 고르고, maxSkew는 가장 빈 도메인과의 차이를 묶는다. DoNotSchedule은 강제하고, ScheduleAnyway는 선호만 한다.',
+        '엄격한 존 분산은 존 장애 때 대체 파드를 막을 수 있다. minDomains는 아직 노드가 없는 존까지 센다. pod-template-hash를 쓰는 matchLabelKeys는 롤아웃마다 따로 균형을 맞춘다.',
+      ],
+      keyIdea: '흔한 구성: 존 maxSkew 1 DoNotSchedule에 hostname ScheduleAnyway, matchLabelKeys pod-template-hash, 그리고 모든 존에 남는 용량.',
+      focus: ['sched'],
+      status: {},
+      badges: {a1: 'web ×1', a2: 'web ×1', b1: 'web ×1', b2: 'web ×1', c1: 'web ×1', c2: 'web ×1'},
+      values: {zones: {text: '2 / 2 / 2', tone: 'good'}, skew: '0', result: '균형'},
+    },
+  ]}
+/>
+
+## 필드 한눈에 보기
+
+| 필드 | 하는 일 | 주의할 점 |
+|---|---|---|
+| `topologyKey` | 값이 도메인이 되는 노드 레이블(`topology.kubernetes.io/zone`, `kubernetes.io/hostname`) | 레이블이 없는 노드는 통째로 건너뛴다 |
+| `maxSkew` | 한 도메인과 전체 최솟값 사이에 허용하는 가장 큰 차이 | 1 이상이어야 한다 |
+| `whenUnsatisfiable` | `DoNotSchedule`(기본값)은 노드를 거른다. `ScheduleAnyway`는 점수만 매긴다 | DoNotSchedule은 장애 중 파드를 Pending으로 남길 수 있다 |
+| `labelSelector` | 셀 파드. 같은 네임스페이스만 | 파드가 자기 셀렉터와 맞아야 자기 자신을 센다 |
+| `matchLabelKeys` | 이 레이블 키에 대한 이 파드의 값을 셀렉터에 더한다(예: `pod-template-hash`) | 실행 중인 파드에서 고치는 레이블은 쓰지 않는다 |
+| `minDomains` | 도메인이 이만큼 생길 때까지 전체 최솟값을 0으로 본다 | `DoNotSchedule`과만 |
+| `nodeAffinityPolicy` | `Honor`(기본값): 파드의 노드 어피니티와 맞는 노드만 센다 | `Ignore`는 모든 노드를 센다 |
+| `nodeTaintsPolicy` | `Ignore`(기본값): 테인트를 따지지 않는다. `Honor`: 견디지 못하는 테인트가 있는 노드는 뺀다 | 기본값은 테인트 달린 노드도 도메인으로 센다 |
+
+## 직접 확인해 보기
+
+```bash
+kubectl get nodes -L topology.kubernetes.io/zone          # 노드마다 어느 존인지
+kubectl explain pod.spec.topologySpreadConstraints        # 이 클러스터 버전이 지원하는 필드
+
+# app=web 파드의 존별 개수
+for n in $(kubectl get pods -l app=web -o jsonpath='{.items[*].spec.nodeName}'); do
+  kubectl get node "$n" -o jsonpath='{.metadata.labels.topology\.kubernetes\.io/zone}{"\n"}'
+done | sort | uniq -c
+
+kubectl get pods -l app=web --field-selector=status.phase=Pending
+kubectl describe pod <pending-pod>                        # "didn't match pod topology spread constraints"
+kubectl get deploy web -o jsonpath='{.spec.template.spec.topologySpreadConstraints}'
+```
+
+<Quiz questions={[
+  {q: '존별 개수가 3 / 2 / 2이고 maxSkew 1, DoNotSchedule이다. 다음 파드는 어디로 갈 수 있나?', options: ['zone a만', 'zone b나 zone c', '어디에도 못 가고 Pending'], answer: 1, why: '전체 최솟값은 2다. zone a는 4 − 2 = 2로 너무 크다. zone b나 c는 3이 되고 쏠림은 3 − 2 = 1이라 허용된다.'},
+  {q: '레플리카 5개를 존 3개에 고르게 두고 싶다. 존 키에 required podAntiAffinity를 거는 것보다 토폴로지 분산이 나은 이유는?', options: ['안티어피니티는 존마다 파드를 하나까지만 허용해서 4, 5번이 Pending으로 남는다', '안티어피니티는 계산이 느리다', '안티어피니티는 존 레이블을 무시한다'], answer: 0, why: 'required 안티어피니티는 같은 도메인에 대상 파드 둘을 금지한다. 분산은 차이를 maxSkew 안에 두면서 도메인마다 여럿을 허용한다.'},
+  {q: '롤아웃 뒤 maxSkew가 1인데 새 파드가 3 / 2 / 1로 놓였다. 가장 그럴듯한 이유는?', options: ['스케줄러는 롤아웃 중에는 제약을 무시한다', '같은 레이블을 단 옛 파드가 아직 세어지는 동안 새 파드가 놓였다', 'maxSkew는 StatefulSet에만 적용된다'], answer: 1, why: '옛 리비전과 새 리비전이 모두 app: web과 맞는다. pod-template-hash를 쓰는 matchLabelKeys를 두면 리비전마다 자기 파드만 센다.'},
+]} />
+
+더 읽을거리: [파드 토폴로지 분산 제약](https://kubernetes.io/docs/concepts/scheduling-eviction/topology-spread-constraints/) · [잘 알려진 레이블](https://kubernetes.io/docs/reference/labels-annotations-taints/) · [Descheduler](https://github.com/kubernetes-sigs/descheduler) · [파드를 어느 노드에 둘까 (스케줄링)](../k8s/scheduling.mdx) · [가용 영역 하나가 멈추면](../cloud/az-failover.mdx) · [무중단 배포 (롤링 업데이트)](../k8s/rolling-update.mdx)

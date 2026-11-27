@@ -1,7 +1,7 @@
 ---
 id: workload-types
 title: 워크로드 종류
-sidebar_label: 03 · 워크로드 종류
+sidebar_label: 04 · 워크로드 종류
 description: 디플로이먼트·레플리카셋·파드의 소유 관계, 이름과 저장소가 고정되는 스테이트풀셋, 노드마다 하나씩 뜨는 데몬셋을 애니메이션으로 비교한다
 summary: '디플로이먼트·스테이트풀셋·데몬셋이 파드를 다루는 방식과 고르는 기준.'
 icon: layers
@@ -187,5 +187,11 @@ kubectl get statefulset,pvc -n <네임스페이스>        # 순번 파드와 �
 kubectl get daemonset -A                             # DESIRED/READY와 노드 수 비교
 kubectl logs deploy/<이름>                           # 상위 리소스 이름으로 로그 보기
 ```
+
+<Quiz questions={[
+  {q: '스테이트풀셋의 파드 db-0이 지워지고 다시 만들어진다. 무엇이 돌아오는가?', options: ['임의 문자열이 새로 붙고 볼륨이 빈 파드', '이름이 db-0이고 볼륨 data-db-0을 다시 쓰는 파드', '0과 1은 이미 썼으므로 이름이 db-2인 파드'], answer: 1, why: '스테이트풀셋은 순번으로 파드 이름을 고정하고 파드마다 전용 볼륨을 붙인다. 다시 만들어진 db-0은 이름을 유지하고 같은 볼륨을 다시 붙이므로 데이터가 이어지기 때문이다.'},
+  {q: '나중에 들어오는 노드까지 포함해 모든 노드에 로그 수집기가 있어야 한다. 어떤 워크로드가 맞는가?', options: ['레플리카 수를 노드 수로 맞춘 디플로이먼트', '스테이트풀셋', '데몬셋'], answer: 2, why: '데몬셋은 조건에 맞는 노드마다 파드를 하나씩 띄우고 노드 수를 따른다. 노드가 들어오면 그 노드에 파드를 자동으로 만들기 때문이다.'},
+  {q: '스크립트가 디플로이먼트 파드의 IP를 저장해 두었는데, 다음 배포 뒤 깨졌다. 왜이며, 대신 무엇을 써야 하는가?', options: ['파드는 고치지 않고 새로 바꾸므로 새 파드는 이름과 IP가 다르다. 서비스를 쓴다', '레플리카셋이 파드를 고치면서 네트워크를 초기화했다. 스크립트를 다시 시작한다', '파드 IP는 노드가 재시작할 때만 바뀐다. 파드를 노드 하나에 고정한다'], answer: 0, why: '배포나 노드 장애 때 파드는 새 이름 문자열과 IP를 받는 새 파드로 교체되기 때문이다. 고정 주소는 서비스가 준다.'},
+]} />
 
 더 읽을거리: [워크로드 (쿠버네티스 문서)](https://kubernetes.io/ko/docs/concepts/workloads/) · [디플로이먼트](https://kubernetes.io/ko/docs/concepts/workloads/controllers/deployment/) · [스테이트풀셋](https://kubernetes.io/ko/docs/concepts/workloads/controllers/statefulset/) · [데몬셋](https://kubernetes.io/ko/docs/concepts/workloads/controllers/daemonset/)

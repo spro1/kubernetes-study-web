@@ -1,0 +1,265 @@
+---
+id: private-registry
+title: Pulling Images from a Private Registry
+sidebar_label: 06 · Private registry
+description: Animated walkthrough of a private image pull, from a 401 and ImagePullBackOff to imagePullSecrets, ServiceAccounts, the namespace pitfall, kubelet credential providers, rate limits, pull-through caches and KubeletEnsureSecretPulledImages
+summary: 'Why a private image fails with 401, how imagePullSecrets and credential providers hand the node a login, and why a cached image needs a credential check.'
+icon: registry
+hide_table_of_contents: true
+---
+
+# Pulling Images from a Private Registry
+
+A Pod asks for an image the registry will not hand out to strangers. Follow **Pod → kubelet → runtime → registry** and see where the login comes from, why it goes missing, and which error tells you what.
+
+<StepDiagram
+  width={1000}
+  height={460}
+  meta={{duration: '~12 min', level: 'Intermediate'}}
+  groups={[
+    {label: 'Namespace shop', x: 30, y: 30, w: 360, h: 260, tone: 'biz'},
+    {label: 'Namespace batch', x: 30, y: 315, w: 360, h: 130, tone: 'biz'},
+    {label: 'Node worker-1', x: 420, y: 30, w: 300, h: 415, tone: 'mgmt'},
+  ]}
+  nodes={[
+    {id: 'pod', label: 'Pod web', sub: 'registry.example.com', icon: 'pod', tone: 'app', x: 120, y: 110, show: true},
+    {id: 'sa', label: 'ServiceAccount', sub: 'default', icon: 'ticket', tone: 'cp', x: 300, y: 110},
+    {id: 'secret', label: 'Secret regcred', sub: 'dockerconfigjson', icon: 'shield', tone: 'store', x: 210, y: 230, w: 170},
+    {id: 'pod2', label: 'Pod report', sub: 'same image', icon: 'pod', tone: 'app', x: 210, y: 380},
+    {id: 'kubelet', label: 'kubelet', sub: 'gathers credentials', icon: 'gear', tone: 'node', x: 570, y: 110, show: true},
+    {id: 'runtime', label: 'Runtime', sub: 'containerd · CRI-O', icon: 'box', tone: 'node', x: 570, y: 240, show: true},
+    {id: 'credprov', label: 'Credential plugin', sub: 'exec · short-lived', icon: 'agent', tone: 'node', x: 570, y: 375, w: 170},
+    {id: 'registry', label: 'Private registry', sub: 'registry.example.com', icon: 'registry', tone: 'ext', x: 870, y: 110, w: 170, show: true},
+    {id: 'mirror', label: 'Pull-through cache', sub: 'mirror for docker.io', icon: 'archive', tone: 'ext', x: 870, y: 260, w: 170},
+    {id: 'hub', label: 'Docker Hub', sub: 'public · rate limited', icon: 'cloud', tone: 'ext', x: 870, y: 390, w: 170},
+  ]}
+  metrics={[
+    {id: 'image', label: 'Image'},
+    {id: 'creds', label: 'Credentials'},
+    {id: 'state', label: 'Pod status'},
+  ]}
+  learn={[
+    {text: 'Who pulls the image and why the registry says 401', at: 1},
+    {text: 'imagePullSecrets of type kubernetes.io/dockerconfigjson', at: 2},
+    {text: 'Pull secrets on a ServiceAccount and the namespace pitfall', at: 3},
+    {text: 'Credential provider plugins for cloud registries', at: 5},
+    {text: 'Rate limits, mirrors and credential checks for cached images', at: 6},
+  ]}
+  steps={[
+    {
+      short: 'Start',
+      kind: '시작',
+      title: 'The kubelet asks the runtime to pull',
+      text: [
+        'Pod web in namespace shop is scheduled on worker-1 with image registry.example.com/shop/web:1.4.2. The kubelet sees the image is not on the node and asks the container runtime to pull it over CRI.',
+        'The kubelet does not download anything itself. It hands the runtime the image name and any credentials it found for that registry. The runtime talks to the registry.',
+      ],
+      flows: [
+        {from: 'pod', to: 'kubelet', label: 'Scheduled', type: 'watch'},
+        {from: 'kubelet', to: 'runtime', label: 'PullImage', type: 'request'},
+      ],
+      focus: ['pod', 'kubelet', 'runtime'],
+      values: {image: 'registry.example.com/shop/web:1.4.2', creds: 'none', state: 'ContainerCreating'},
+    },
+    {
+      short: '401',
+      kind: '문제',
+      title: 'No credentials: the registry answers 401',
+      text: [
+        'The runtime asks the registry for the image manifest without a login. A private registry answers 401 Unauthorized. The kubelet records a Failed event, Failed to pull image ... 401 Unauthorized, and the container waits with ErrImagePull.',
+        'The kubelet retries with a growing delay, up to 5 minutes, and the status shows ImagePullBackOff in between. Retrying alone never helps, because nothing about the request changes.',
+      ],
+      keyIdea: 'Read the Failed event message, not just the status. 401 or unauthorized means the login is missing or wrong.',
+      flows: [
+        {from: 'runtime', to: 'registry', label: 'GET manifest', type: 'request'},
+        {from: 'registry', to: 'runtime', label: '401', type: 'response', bend: 40},
+      ],
+      focus: ['registry', 'runtime'],
+      status: {pod: 'error', registry: 'warn'},
+      badges: {pod: 'ImagePullBackOff'},
+      values: {creds: {text: 'none', tone: 'bad'}, state: {text: 'ErrImagePull → ImagePullBackOff', tone: 'bad'}},
+    },
+    {
+      short: 'Pull secret',
+      kind: '원리',
+      title: 'An imagePullSecret gives the Pod a login',
+      text: [
+        'kubectl create secret docker-registry regcred --docker-server=registry.example.com --docker-username=... --docker-password=... -n shop creates a Secret of type kubernetes.io/dockerconfigjson. It holds a .dockerconfigjson file, the same format docker login writes.',
+        'The Pod lists it under spec.imagePullSecrets. The kubelet reads the Secret, picks the entry that matches the image\'s registry, and passes it with the pull request. The registry checks it, and the pull succeeds.',
+      ],
+      keyIdea: 'Use a read-only robot or token account for pull secrets, not a person\'s password.',
+      flows: [
+        {from: 'secret', to: 'kubelet', label: 'regcred', type: 'watch'},
+        {from: 'kubelet', to: 'runtime', label: 'Pull + auth', type: 'request'},
+        {from: 'runtime', to: 'registry', label: 'Authorized', type: 'request'},
+        {from: 'registry', to: 'runtime', label: 'Layers', type: 'response', bend: 40},
+      ],
+      focus: ['secret', 'registry'],
+      status: {pod: 'ok', registry: null},
+      badges: {pod: 'Running', secret: 'dockerconfigjson'},
+      values: {creds: {text: 'Pod imagePullSecrets', tone: 'good'}, state: {text: 'Running', tone: 'good'}},
+    },
+    {
+      short: 'ServiceAccount',
+      kind: '원리',
+      title: 'Put the secret on the ServiceAccount once',
+      text: [
+        'Writing imagePullSecrets into every Pod is easy to forget. Instead, add regcred to the ServiceAccount the Pods run as: kubectl patch serviceaccount default -n shop -p \'{"imagePullSecrets":[{"name":"regcred"}]}\'.',
+        'When a Pod is created, the ServiceAccount admission plugin copies the account\'s imagePullSecrets into the Pod spec. Pods that already exist are not changed, so restart them to pick it up.',
+      ],
+      keyIdea: 'kubectl get pod web -o jsonpath=\'{.spec.imagePullSecrets}\' shows what the Pod actually got.',
+      flows: [
+        {from: 'secret', to: 'sa', label: 'Listed', type: 'watch'},
+        {from: 'sa', to: 'pod', label: 'Copied at create', type: 'watch'},
+      ],
+      focus: ['sa', 'pod'],
+      badges: {sa: 'regcred', secret: null},
+      values: {creds: {text: 'From ServiceAccount', tone: 'good'}},
+    },
+    {
+      short: 'Namespace',
+      kind: '문제',
+      title: 'A Secret in another namespace does not count',
+      text: [
+        'Pod report runs in namespace batch with the same image and imagePullSecrets: regcred. It fails with 401 again. A Pod can only use pull secrets from its own namespace, and batch has no regcred.',
+        'The kubelet adds a hint: event FailedToRetrieveImagePullSecret, Unable to retrieve some image pull secrets (regcred). Create the Secret in each namespace that needs it, by hand or with a tool that copies Secrets across namespaces.',
+      ],
+      keyIdea: 'Secrets are namespaced. The name in imagePullSecrets is always looked up in the Pod\'s own namespace.',
+      flows: [
+        {from: 'pod2', to: 'kubelet', label: 'regcred?', type: 'request'},
+        {from: 'runtime', to: 'registry', label: 'No auth', type: 'request'},
+        {from: 'registry', to: 'runtime', label: '401', type: 'response', bend: 40},
+      ],
+      focus: ['pod2'],
+      status: {pod2: 'error'},
+      badges: {pod2: 'ImagePullBackOff', sa: null},
+      values: {creds: {text: 'regcred not in batch', tone: 'bad'}, state: {text: 'ImagePullBackOff', tone: 'bad'}},
+    },
+    {
+      short: 'Provider',
+      kind: '원리',
+      title: 'Cloud registries: let the node fetch short-lived tokens',
+      text: [
+        'With a cloud registry (for example ECR, Artifact Registry or ACR), you usually skip pull secrets. The kubelet runs a credential provider plugin, set with --image-credential-provider-config and --image-credential-provider-bin-dir. For images that match the plugin\'s matchImages, the kubelet calls it to get a short-lived login.',
+        'The plugin gets that login from the node\'s cloud identity. There is no long-lived password in any namespace, and the token rotates by itself. Newer versions can also pass the Pod\'s ServiceAccount token to the plugin, so access can follow the workload instead of the node.',
+      ],
+      keyIdea: 'Node-wide credentials let every Pod on the node pull those images. Use per-workload identity or pull secrets when teams must be kept apart.',
+      flows: [
+        {from: 'kubelet', to: 'credprov', label: 'exec', type: 'request'},
+        {from: 'credprov', to: 'kubelet', label: 'Token', type: 'response', bend: 40},
+        {from: 'runtime', to: 'registry', label: 'Authorized', type: 'request'},
+      ],
+      focus: ['credprov', 'kubelet'],
+      status: {pod2: 'ok', credprov: 'ok'},
+      badges: {pod2: 'Running'},
+      values: {creds: {text: 'Credential plugin', tone: 'good'}, state: {text: 'Running', tone: 'good'}},
+    },
+    {
+      short: 'Errors',
+      kind: '장애',
+      title: 'Not every pull error is a login problem',
+      text: [
+        'manifest unknown or not found means the registry let you in but has no such name or tag. Check the spelling, the tag and the architecture. Credentials are fine.',
+        'toomanyrequests with HTTP 429 is a rate limit. Docker Hub limits pulls per account or, without a login, per source IP. Many nodes behind one NAT address share that limit, so a large rollout or a node pool scale-up can hit it at once.',
+      ],
+      keyIdea: '401 or unauthorized: credentials. manifest unknown: name or tag. 429 toomanyrequests: rate limit. timeout: network or DNS.',
+      flows: [
+        {from: 'runtime', to: 'hub', label: 'Pull', type: 'request'},
+        {from: 'hub', to: 'runtime', label: '429', type: 'response', bend: 40},
+      ],
+      focus: ['hub', 'runtime'],
+      status: {credprov: null, hub: 'error'},
+      badges: {hub: 'toomanyrequests'},
+      values: {image: 'docker.io/library/redis:7', creds: 'anonymous', state: {text: 'ImagePullBackOff', tone: 'bad'}},
+    },
+    {
+      short: 'Mirror',
+      kind: '원리',
+      title: 'A pull-through cache absorbs repeated pulls',
+      text: [
+        'Point the runtime at a mirror. In containerd, a hosts.toml file under /etc/containerd/certs.d/docker.io/ lists the mirror first and the upstream as fallback. Image names in Pods do not change.',
+        'The first pull goes through the cache to Docker Hub, with one account\'s login. Every later pull of the same layers is served from the cache. That cuts rate-limit hits and keeps pulls working when the upstream is slow or down. Harbor proxy caches and cloud pull-through caches are common examples.',
+      ],
+      keyIdea: 'Mirror config lives on the node, so roll it out with the node image or node bootstrap, not with kubectl.',
+      flows: [
+        {from: 'runtime', to: 'mirror', label: 'Pull', type: 'request'},
+        {from: 'mirror', to: 'hub', label: 'Miss only', type: 'request'},
+        {from: 'mirror', to: 'runtime', label: 'Layers', type: 'response', bend: 40},
+      ],
+      focus: ['mirror'],
+      status: {hub: null, mirror: 'ok'},
+      badges: {hub: null, mirror: 'Cache hit'},
+      values: {creds: 'Mirror has its own login', state: {text: 'Running', tone: 'good'}},
+    },
+    {
+      short: 'Cached',
+      kind: '주의',
+      title: 'A cached image used to skip the credential check',
+      text: [
+        'With imagePullPolicy IfNotPresent, an image already on the node is used without asking the registry. In the past, a Pod with no valid login could start a private image just because another Pod had pulled it to the same node.',
+        'The KubeletEnsureSecretPulledImages feature gate closes that gap. It is beta and on by default since Kubernetes v1.35. The kubelet remembers which credentials pulled each image and checks a new Pod\'s credentials before reusing it. The kubelet setting imagePullCredentialsVerificationPolicy defaults to NeverVerifyPreloadedImages, so images placed on the node outside the kubelet are not checked.',
+      ],
+      keyIdea: 'On older clusters, use imagePullPolicy Always or the AlwaysPullImages admission plugin when tenants share nodes.',
+      flows: [
+        {from: 'pod2', to: 'kubelet', label: 'IfNotPresent', type: 'request'},
+        {from: 'kubelet', to: 'runtime', label: 'Check creds', type: 'request'},
+      ],
+      focus: ['pod2', 'kubelet'],
+      status: {mirror: null, pod2: 'warn'},
+      badges: {mirror: null, kubelet: 'Verify'},
+      values: {image: 'registry.example.com/shop/web:1.4.2', creds: 'Checked against pull record', state: 'Depends on its own login'},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Know where the login comes from',
+      text: [
+        'The runtime pulls; the kubelet gives it credentials from the Pod\'s imagePullSecrets, which may come from the ServiceAccount, or from a credential provider plugin on the node. Pull secrets must live in the Pod\'s own namespace.',
+        'Read the pull error before changing anything: 401 is credentials, manifest unknown is the name or tag, 429 is a rate limit. A mirror reduces upstream pulls, and credential verification stops cached images from being shared without a login.',
+      ],
+      keyIdea: 'For any ImagePullBackOff, run kubectl describe pod and read the Failed event message to the end.',
+      flows: [
+        {from: 'secret', to: 'kubelet', label: 'Secret', type: 'watch'},
+        {from: 'credprov', to: 'kubelet', label: 'Plugin', type: 'watch'},
+        {from: 'runtime', to: 'registry', label: 'Pull', type: 'request'},
+      ],
+      focus: ['kubelet', 'runtime', 'registry'],
+      status: {pod2: null, pod: null},
+      badges: {kubelet: null, pod: null, pod2: null},
+    },
+  ]}
+/>
+
+## Pull errors and what they mean
+
+| Event message or reason | Cause | Fix |
+|---|---|---|
+| `401 Unauthorized`, `unauthorized`, `authorization failed` | No credentials, or wrong ones, for this registry | Check the Secret's server name matches the image's registry exactly; check user and token |
+| `FailedToRetrieveImagePullSecret` | The named pull secret is not in the Pod's namespace | Create the Secret in that namespace, or fix the name |
+| `manifest unknown`, `not found` | The name or tag does not exist (or no image for this CPU architecture) | Fix the image name or tag; check the registry UI |
+| `403 Forbidden`, `denied` | Logged in, but this account may not read this repository | Grant pull access to the account or token |
+| `429 Too Many Requests`, `toomanyrequests` | Registry rate limit, often anonymous Docker Hub pulls per IP | Log in for pulls, use a pull-through cache, or mirror the image |
+| `i/o timeout`, `no such host` | Network, DNS, proxy or firewall from the node | Test from the node, e.g. `crictl pull`, and check egress |
+| `x509: certificate signed by unknown authority` | The node does not trust the registry's certificate | Install the CA on the node or in the runtime's registry config |
+
+## Try it yourself
+
+```bash
+kubectl create secret docker-registry regcred -n shop \
+  --docker-server=registry.example.com \
+  --docker-username=robot-pull --docker-password="$TOKEN"         # type kubernetes.io/dockerconfigjson
+kubectl get secret regcred -n shop -o jsonpath='{.data.\.dockerconfigjson}' | base64 -d   # check the server name
+kubectl patch serviceaccount default -n shop \
+  -p '{"imagePullSecrets":[{"name":"regcred"}]}'                  # new Pods get it automatically
+kubectl get pod web -n shop -o jsonpath='{.spec.imagePullSecrets}{"\n"}'   # what the Pod actually got
+kubectl describe pod web -n shop | grep -A8 Events                 # read the Failed message
+kubectl get events -A --field-selector reason=FailedToRetrieveImagePullSecret   # secret missing in a namespace
+```
+
+<Quiz questions={[
+  {q: 'A Pod in namespace batch lists imagePullSecrets: regcred, and regcred exists in namespace shop. What happens?', options: ['The kubelet finds regcred in shop and the pull succeeds', 'The pull runs without that login, because the Secret is looked up only in batch', 'The API server rejects the Pod when it is created'], answer: 1, why: 'Pull secrets are looked up in the Pod\'s own namespace. The kubelet emits FailedToRetrieveImagePullSecret and the private registry answers 401.'},
+  {q: 'A rollout of 200 Pods on new nodes fails with 429 toomanyrequests from Docker Hub. Credentials were never needed for this public image. What helps most?', options: ['Add a pull-through cache or log in for pulls', 'Create a new imagePullSecret with the same anonymous access', 'Set imagePullPolicy Always so the pull is retried sooner'], answer: 0, why: '429 is a rate limit, not a login error. A cache serves repeated pulls locally, and logged-in pulls get a separate, usually higher, limit.'},
+  {q: 'Why does the kubelet check credentials for an image that is already on the node when KubeletEnsureSecretPulledImages is on?', options: ['To find newer versions of the tag', 'To save disk space by removing unused images', 'So a Pod without a valid login cannot use a private image another Pod pulled'], answer: 2, why: 'With IfNotPresent, a cached image used to start without asking the registry. The kubelet now checks that the new Pod\'s credentials match a successful pull.'},
+]} />
+
+Further reading: [Images: using a private registry](https://kubernetes.io/docs/concepts/containers/images/#using-a-private-registry) · [Pull an Image from a Private Registry](https://kubernetes.io/docs/tasks/configure-pod-container/pull-image-private-registry/) · [Kubelet image credential provider](https://kubernetes.io/docs/tasks/administer-cluster/kubelet-credential-provider/) · [containerd registry hosts](https://github.com/containerd/containerd/blob/main/docs/hosts.md) · [How an Image Is Built and Run](../basic/container-image.mdx) · [Reading status in three layers and the troubleshooting order](../intermediate/troubleshoot-status.mdx)

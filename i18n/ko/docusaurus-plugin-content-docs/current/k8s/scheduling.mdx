@@ -179,4 +179,10 @@ kubectl get nodes --show-labels                      # nodeSelector가 맞춰 �
 kubectl get pods -o wide                             # 복제본마다 놓인 노드
 ```
 
+<Quiz questions={[
+  {q: '노드의 CPU 사용률 그래프는 20%인데, CPU 1코어를 요청한 파드가 그 노드에 배치되지 않는다. 이유는 무엇인가?', options: ['스케줄러는 여유를 요청량 합계로 계산하는데, 그 합계가 이미 차 있다', '노드에 테인트가 있다', '사용률 그래프가 캐시된 값이다', 'kubelet이 죽었다'], answer: 0, why: '여유는 실제 사용량이 아니라 이미 배치된 파드들의 요청량 합계로 계산하기 때문이다. 사용률이 20%여도 요청량 합계가 차 있으면 자리가 없다.'},
+  {q: 'GPU 작업 파드에 gpu 테인트를 견디는 톨러레이션은 있지만 노드 셀렉터는 없다. 어디에 배치될 수 있는가?', options: ['gpu-node에만', '어디에도 못 가고 Pending으로 남는다', 'gpu-node나 조건이 맞는 다른 노드 어디든. 톨러레이션은 허가일 뿐 유도가 아니다'], answer: 2, why: '톨러레이션은 허가일 뿐이기 때문이다. gpu-node로 끌어오려면 노드 셀렉터나 노드 어피니티를 함께 써야 한다.'},
+  {q: 'web-2가 Pending이고 이벤트에 1 node(s) didn\'t match pod anti-affinity rules가 들어 있다. 복제본 수가 노드 수보다 많다. 안티 어피니티 쪽을 푸는 방법은 무엇인가?', options: ['web에 톨러레이션을 단다', '안티 어피니티를 필수 대신 선호(preferred) 조건으로 쓴다', 'CPU 요청량을 줄인다'], answer: 1, why: '필수 안티 어피니티는 복제본 수가 노드 수보다 많으면 계속 걸리기 때문이다. 해결책은 원인마다 다르고, 선호 조건은 점수에만 반영된다.'},
+]} />
+
 더 읽을거리: [쿠버네티스 스케줄러](https://kubernetes.io/ko/docs/concepts/scheduling-eviction/kube-scheduler/) · [노드에 파드 할당하기](https://kubernetes.io/ko/docs/concepts/scheduling-eviction/assign-pod-node/) · [테인트와 톨러레이션](https://kubernetes.io/ko/docs/concepts/scheduling-eviction/taint-and-toleration/)

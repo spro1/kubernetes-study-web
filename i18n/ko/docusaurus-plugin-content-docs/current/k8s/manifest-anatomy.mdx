@@ -1,7 +1,7 @@
 ---
 id: manifest-anatomy
 title: 매니페스트 읽고 적용하기
-sidebar_label: 02 · 매니페스트 읽고 적용하기
+sidebar_label: 03 · 매니페스트 읽고 적용하기
 description: 입문자를 위해 쿠버네티스 YAML 매니페스트를 따라간다. YAML 기본, apiVersion과 kind, metadata, kubectl explain, 서버의 엄격한 필드 검증과 드라이런, create와 apply의 차이, kubectl diff, 서버 사이드 적용의 필드 소유권을 애니메이션으로 본다
 summary: '매니페스트의 최상위 필드 넷, API 서버가 그것을 검사하는 방식, create·apply·diff·서버 사이드 적용의 차이.'
 icon: book
@@ -215,5 +215,11 @@ kubectl get deploy web -o yaml | grep -A3 last-applied   # 클라이언트 사�
 kubectl apply -f web.yaml --server-side
 kubectl get deploy web -o yaml --show-managed-fields | grep -B2 -A8 managedFields   # 필드별 주인
 ```
+
+<Quiz questions={[
+  {q: 'web.yaml에 replicas: 3 대신 replica: 3이라고 적었다. 지금 kubectl의 기본값으로 apply하면 어떻게 되는가?', options: ['디플로이먼트가 레플리카 하나로 조용히 만들어진다', 'strict decoding error: unknown field "spec.replica"로 요청이 실패한다', 'kubectl이 필드 이름을 알아서 고쳐 준다'], answer: 1, why: '지금 kubectl의 기본값은 엄격한 필드 검증이라 API 서버가 모르는 필드를 거절하기 때문이다. 검증을 Ignore로 둘 때만 필드가 조용히 버려진다.'},
+  {q: 'HPA가 디플로이먼트를 늘리고 줄이는데, 파일에는 여전히 replicas: 3이 있고 클라이언트 사이드 apply를 쓴다. apply할 때마다 어떻게 되는가?', options: ['apply가 replicas를 조용히 3으로 되돌리고 HPA가 다시 바꾸기를 반복하므로, 파일에서 그 필드를 빼야 한다', 'HPA가 apply를 오류로 막는다', 'HPA가 있으면 apply는 replicas를 무시한다'], answer: 0, why: '클라이언트 사이드 apply는 파일에 적힌 값을 밀어 넣는다. HPA처럼 다른 컨트롤러가 맡아야 할 필드는 파일에서 빼야 하기 때문이다.'},
+  {q: '기본값과 변경 어드미션이 바꾼 내용까지 포함해 apply가 실제로 무엇을 바꿀지 보고 싶다. 어떤 명령이 맞는가?', options: ['kubectl explain deployment.spec', 'YAML 린터', 'kubectl diff -f web.yaml', 'kubectl create -f web.yaml'], answer: 2, why: 'kubectl diff는 파일을 서버 사이드 드라이런으로 보내 그 결과를 실제 오브젝트와 비교하므로, 서버가 만든 변경도 보이기 때문이다.'},
+]} />
 
 더 읽을거리: [쿠버네티스 오브젝트](https://kubernetes.io/ko/docs/concepts/overview/working-with-objects/) · [kubectl apply로 선언형 관리](https://kubernetes.io/docs/tasks/manage-kubernetes-objects/declarative-config/) · [서버 사이드 적용](https://kubernetes.io/docs/reference/using-api/server-side-apply/) · [필드 검증](https://kubernetes.io/docs/reference/using-api/api-concepts/#field-validation) · [원하는 상태와 컨트롤 루프](../basic/desired-state.mdx) · [Kustomize로 환경별 배포](../cert/kustomize.mdx)

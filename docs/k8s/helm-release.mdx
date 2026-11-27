@@ -1,7 +1,7 @@
 ---
 id: helm-release
 title: How a Helm Release Is Installed, Upgraded and Rolled Back
-sidebar_label: 05 · Helm releases
+sidebar_label: 06 · Helm releases
 description: Animated walkthrough of Helm from chart and values to rendered manifests, release revisions stored as Secrets, an upgrade that fails, rolling back to a new revision, and what happens to manual kubectl edits
 summary: 'Chart plus values becomes manifests, each install or upgrade becomes a revision stored in a Secret, and rollback writes a new revision.'
 icon: wheel
@@ -232,5 +232,11 @@ helm get values shop -n shop                            # Values you supplied
 kubectl get secret -n shop -l owner=helm                # One Secret per revision
 helm rollback shop 1 -n shop                            # Writes a new revision
 ```
+
+<Quiz questions={[
+  {q: 'helm upgrade with a typo in the image tag reports success and the revision is deployed, but the Pods are in ImagePullBackOff. Why did Helm not notice?', options: ['Without --wait, Helm only checks that the API server accepted the objects', 'Helm only checks the chart version', 'The release Secret was not updated', 'Tiller was not running in the cluster'], answer: 0, why: 'Release status is about the apply, not the app. With --wait, Helm waits for the Pods to be ready and marks the revision failed if they are not.'},
+  {q: 'History shows 1 superseded, 2 superseded, 3 failed. You run helm rollback shop 2. What does helm history show afterwards?', options: ['Revision 3 is deleted and 2 is deployed again', 'Revision 2 is renamed to revision 4', 'A new revision 4 with the contents of revision 2, deployed, with the description Rollback to 2'], answer: 2, why: 'Rollback does not rewind history. Revision numbers only go up, so Helm writes a new revision 4 copied from revision 2.'},
+  {q: 'During a traffic spike a teammate runs kubectl scale deployment shop --replicas=6. The chart sets replicas to 3. What happens on the next helm upgrade with Helm 3?', options: ['Helm keeps 6, because the live object wins', 'Helm puts replicas back to 3, because the chart sets that field', 'Helm deletes and recreates the Deployment'], answer: 1, why: 'Helm compares the old manifest, the new manifest and the live object, and puts back fields the chart sets. Change chart-owned values through values, not kubectl.'},
+]} />
 
 Further reading: [Helm docs](https://helm.sh/docs/) · [Using Helm](https://helm.sh/docs/intro/using_helm/) · [Values files](https://helm.sh/docs/chart_template_guide/values_files/) · [helm rollback](https://helm.sh/docs/helm/helm_rollback/) · [Helm 4 overview](https://helm.sh/docs/overview/) · [Per-environment deploys with Kustomize](../cert/kustomize.mdx) · [GitOps sync](../intermediate/gitops-sync.mdx)

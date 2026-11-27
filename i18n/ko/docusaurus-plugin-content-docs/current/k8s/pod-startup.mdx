@@ -1,7 +1,7 @@
 ---
 id: pod-startup
 title: 파드가 뜨기까지
-sidebar_label: 04 · 파드가 뜨기까지
+sidebar_label: 05 · 파드가 뜨기까지
 description: kubectl apply 한 줄이 API 서버·etcd·컨트롤러·스케줄러·kubelet을 거쳐 실행 중인 파드가 되기까지를 단계별 애니메이션으로 따라간다
 summary: 'kubectl apply 한 줄이 API 서버·etcd·컨트롤러·스케줄러·kubelet을 거쳐 실행 중인 파드가 되기까지.'
 icon: pod
@@ -203,5 +203,11 @@ kubectl get pods -l app=try-nginx -o wide -w         # Pending → ContainerCrea
 kubectl describe pod <파드>                           # Events: Scheduled, Pulling, Started
 kubectl delete deployment try-nginx                  # 정리
 ```
+
+<Quiz questions={[
+  {q: '새 파드가 오랫동안 Pending에 머물러 있다. 어느 단계에서 멈췄을 가능성이 가장 큰가?', options: ['이미지를 내려받는 단계', '스케줄러가 노드를 고르는 단계. 자원이 충분하거나 배치 조건이 맞는 노드가 없다', '컨테이너가 시작 직후 종료되는 단계'], answer: 1, why: 'Pending은 스케줄러가 파드를 노드에 배정하지 못했다는 뜻이기 때문이다. 이미지 문제는 ImagePullBackOff, 계속 종료되는 컨테이너는 CrashLoopBackOff로 보인다.'},
+  {q: 'nginx 파드 3개짜리 Deployment에 kubectl apply가 방금 "created"로 답했다. 이 순간 무엇이 있는가?', options: ['돌고 있는 nginx 컨테이너 3개', '이미 노드에 배정된 파드 3개', 'etcd에 기록된 Deployment뿐이고, 컨테이너는 아직 없다'], answer: 2, why: '"생성됨"은 "기록됨"이라는 뜻이다. 무언가 실행되기 전에 컨트롤러, 스케줄러, kubelet, 런타임이 아직 각자 몫의 일을 해야 하기 때문이다.'},
+  {q: '폐쇄망에서 파드가 ImagePullBackOff를 보인다. 가장 가능성이 큰 원인은 무엇인가?', options: ['노드가 외부 저장소에 닿지 못한다. 이미지를 사내 저장소에 미리 올려 두어야 한다', '노드의 CPU가 모자라다', '준비 상태 검사가 실패하고 있다'], answer: 0, why: 'ImagePullBackOff는 저장소에 접근할 수 없거나 이름이 틀렸을 때 이미지 단계에서 나기 때문이다. 폐쇄망 클러스터는 Harbor 같은 사내 저장소에 이미지가 있어야 한다.'},
+]} />
 
 더 읽을거리: [쿠버네티스 개요](https://kubernetes.io/ko/docs/concepts/overview/) · [파드 라이프사이클](https://kubernetes.io/ko/docs/concepts/workloads/pods/pod-lifecycle/) · [파드 디버깅](https://kubernetes.io/docs/tasks/debug/debug-application/debug-pods/)

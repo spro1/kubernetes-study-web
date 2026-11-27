@@ -1,7 +1,7 @@
 ---
 id: cloud-cost
 title: 클라우드 청구서는 어디서 나오나
-sidebar_label: 11 · 클라우드 청구서는 어디서 나오나
+sidebar_label: 15 · 클라우드 청구서는 어디서 나오나
 description: 컴퓨팅 요금 방식, 잊힌 스토리지, NAT와 가용 영역 간 데이터 전송, 놀고 있는 관리형 서비스 등 청구서를 키우는 요인과 비용 할당 태그, 쿠버네티스 요청값이 노드 비용을 정하는 이유, OpenCost 네임스페이스별 비용, 예산 알림과 FinOps 순환을 애니메이션으로 따라간다
 summary: '컴퓨팅·스토리지·데이터 전송·유휴 서비스, 쿠버네티스 요청값이 노드 비용을 정하는 이유, FinOps 순환.'
 icon: chart
@@ -258,5 +258,11 @@ kubectl top pods -A --sort-by=cpu
 kubectl get pods -A -o custom-columns='NS:.metadata.namespace,POD:.metadata.name,CPU_REQ:.spec.containers[*].resources.requests.cpu,MEM_REQ:.spec.containers[*].resources.requests.memory'
 kubectl describe nodes | grep -A 8 'Allocated resources'   # 노드마다 요청된 비율
 ```
+
+<Quiz questions={[
+  {q: '파드가 각각 CPU 2를 요청하지만 실제로는 0.2쯤 쓴다. 노드는 꽉 차 보이고, 새 파드는 Pending이 되며, 오토스케일러가 노드를 늘린다. 근본 원인은 무엇인가?', options: ['스케줄러가 사용량이 아니라 요청값으로 파드를 배치해서, 너무 큰 요청값이 대부분 노는 노드를 채운다', '파드가 CPU를 너무 많이 써서 더 큰 노드가 필요하다', '클라우드가 스팟 노드를 회수했다'], answer: 0, why: '요청값 합이 할당 가능 용량에 닿으면 노드는 꽉 찬 것이다. 측정한 사용량으로 요청값을 맞추면 노드마다 파드가 더 들어가기 때문이다.'},
+  {q: '아무도 코드를 바꾸지 않았는데 청구서의 NAT 게이트웨이 항목이 계속 커진다. 가능성이 큰 원인은 무엇인가?', options: ['인터넷에서 들어오는 데이터', '쓰지 않는 Savings Plans 약정', '프라이빗 서브넷의 노드가 NAT 게이트웨이를 거쳐 이미지를 받고 클라우드 스토리지 API를 부른다'], answer: 2, why: 'NAT 게이트웨이는 처리한 GB당 요금을 받으므로 거쳐 간 이미지와 스토리지 API 바이트마다 과금된다. 클라우드 서비스에 프라이빗 엔드포인트를 쓰면 이 요금을 피할 수 있기 때문이다.'},
+  {q: '팀이 VM 몇 대를 지웠는데 스토리지 항목이 줄지 않았다. 먼저 무엇을 확인해야 하는가?', options: ['Savings Plans가 만료됐는지', 'available(연결 안 됨) 상태로 남은 볼륨과 오래된 스냅샷', '비용 할당 태그가 활성화됐는지'], answer: 1, why: '블록 볼륨은 연결되지 않아도 할당한 크기만큼 과금되고, 오래된 스냅샷도 VM이 사라진 뒤 같은 식으로 쌓이기 때문이다.'},
+]} />
 
 더 읽을거리: [FinOps 프레임워크](https://www.finops.org/framework/) · [Amazon EC2 요금](https://aws.amazon.com/ec2/pricing/) · [Savings Plans](https://aws.amazon.com/savingsplans/) · [스팟 인스턴스](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/using-spot-instances.html) · [VPC 요금 (NAT 게이트웨이)](https://aws.amazon.com/vpc/pricing/) · [비용 할당 태그](https://docs.aws.amazon.com/awsaccountbilling/latest/aboutv2/cost-alloc-tags.html) · [OpenCost](https://www.opencost.io/docs/) · [요청값과 상한값](../intermediate/requests-limits.mdx) · [가상 머신 자동 증감 (오토스케일링 그룹)](../cloud/auto-scaling-group.mdx)

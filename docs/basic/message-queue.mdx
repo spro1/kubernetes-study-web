@@ -1,7 +1,7 @@
 ---
 id: message-queue
 title: How a Message Queue Decouples Services
-sidebar_label: 05 · Message Queues and Kafka
+sidebar_label: 06 · Message Queues and Kafka
 description: Animated walkthrough of asynchronous messaging with Kafka as the example, from topics, partitions and keys to producer acks, replication, consumer groups and offset commits, redelivery after a crash, consumer lag, dead-letter queues, and queue versus pub/sub
 summary: 'Topics, partitions and consumer groups, why at-least-once delivery means consumers must be idempotent, consumer lag, and dead-letter queues.'
 icon: layers
@@ -225,5 +225,11 @@ kafka-consumer-groups.sh --bootstrap-server localhost:9092 --describe --group sh
 ```
 
 Run two consumers with the same `--group` and they split the partitions. Run one with a different group and it gets every message again.
+
+<Quiz questions={[
+  {q: 'A shipping consumer books a shipment and crashes before committing the offset. After the rebalance the same shipment is booked again. What is the right fix?', options: ['Commit the offset before processing so it never repeats', 'Make the consumer idempotent, for example by recording processed order ids or using a unique key', 'Switch the producer to acks=1'], answer: 1, why: 'Committing after processing gives at-least-once delivery: nothing is lost, but duplicates happen. Committing first would risk skipping work instead.'},
+  {q: 'The topic orders has 3 partitions and lag keeps growing. You scale the shipping group from 3 to 6 consumers. What happens?', options: ['Throughput doubles', 'Kafka creates 3 more partitions automatically', 'Messages are split across all 6 consumers in round-robin', 'Three consumers sit idle, because each partition goes to only one member of the group'], answer: 3, why: 'The partition count caps parallelism within a group. Make processing faster or add partitions, knowing that adding partitions changes which partition a key maps to.'},
+  {q: 'One message with a broken payload fails every time, and everything behind it in partition 2 waits. What should the consumer do?', options: ['After a few retries, write it to a dead-letter topic with the error, commit, and move on', 'Retry it forever until it succeeds', 'Restart the broker that leads partition 2'], answer: 0, why: 'A poison message blocks its partition. Parking it in a DLQ lets the rest flow, and someone can inspect and replay it once fixed.'},
+]} />
 
 Further reading: [Kafka documentation](https://kafka.apache.org/documentation/) · [Kafka design: message delivery semantics](https://kafka.apache.org/documentation/#semantics) · [KEDA Apache Kafka scaler](https://keda.sh/docs/latest/scalers/apache-kafka/) · [Amazon SQS dead-letter queues](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-dead-letter-queues.html) · [RabbitMQ dead letter exchanges](https://www.rabbitmq.com/docs/dlx) · [Autoscaling with HPA](../k8s/autoscaling.mdx) · [Database basics](../basic/database-basics.mdx)

@@ -1,0 +1,254 @@
+---
+id: sso-federation
+title: 사람을 위한 싱글 사인온 (SSO와 페더레이션)
+sidebar_label: 06 · SSO와 페더레이션
+description: 클라우드 콘솔, kubectl, 앱에 하나의 ID 제공자로 로그인하는 싱글 사인온을 애니메이션으로 본다. SAML과 OIDC, 임시 역할 자격 증명을 주는 권한 세트, IdP의 MFA, SCIM 프로비저닝, 그룹과 역할 연결, 퇴사 처리를 다룬다
+summary: '모든 로그인을 맡는 ID 제공자 하나, IAM 사용자 대신 권한 세트, 역할에 연결한 그룹, 누군가 떠날 때 실제로 일어나는 일.'
+icon: user
+hide_table_of_contents: true
+---
+
+# 사람을 위한 싱글 사인온 (SSO와 페더레이션)
+
+엔지니어 한 명이 클라우드 콘솔, 쿠버네티스 클러스터, 사내 앱 몇 개를 써야 한다. **ID 제공자**(IdP) 하나가 그 사람의 계정이 있는 유일한 곳이 되고, 다른 시스템은 사용자를 따로 두지 않고 그 IdP를 믿게 되는 과정을 따라간다. OIDC 로그인 한 번이 어떻게 도는지는 [로그인은 이렇게 동작한다 (세션, JWT, OIDC)](../basic/auth-login.mdx)에서, 클라우드 API가 요청 권한을 검사하는 방식은 [API 요청 하나의 권한 검사 (IAM)](../cloud/iam-request.mdx)에서 다룬다.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '약 12분', level: '중급'}}
+  groups={[
+    {label: '클라우드 계정', x: 530, y: 40, w: 450, h: 150, tone: 'mgmt'},
+  ]}
+  nodes={[
+    {id: 'user', label: '엔지니어', sub: 'dana@example.com', icon: 'user', tone: 'ext', x: 110, y: 250, show: true},
+    {id: 'idp', label: 'ID 제공자', sub: 'Entra ID · Okta', icon: 'gate', tone: 'cp', x: 340, y: 250, w: 170},
+    {id: 'sso', label: 'IAM Identity Center', sub: '권한 세트', icon: 'gear', tone: 'cp', x: 630, y: 115, w: 170},
+    {id: 'role', label: '계정 역할', sub: '임시 자격 증명', icon: 'ticket', tone: 'node', x: 870, y: 115},
+    {id: 'k8s', label: '쿠버네티스 API', sub: 'OIDC · RBAC', icon: 'wheel', tone: 'cp', x: 630, y: 260, w: 170},
+    {id: 'app', label: '사내 앱', sub: 'OIDC 로그인', icon: 'browser', tone: 'app', x: 630, y: 390, w: 170},
+    {id: 'iamuser', label: 'IAM 사용자', sub: '오래 사는 키', icon: 'alert', tone: 'ext', x: 870, y: 320},
+  ]}
+  metrics={[
+    {id: 'who', label: '신원'},
+    {id: 'cred', label: '자격 증명'},
+    {id: 'ttl', label: '만료'},
+    {id: 'access', label: '접근'},
+  ]}
+  learn={[
+    {text: 'ID 제공자 하나를 사용자의 유일한 출처로 두는 법', at: 1},
+    {text: 'SAML과 OIDC, 각각 어디에 쓰이나', at: 2},
+    {text: '로그인을 임시 역할 자격 증명으로 바꾸는 권한 세트', at: 3},
+    {text: 'SCIM 프로비저닝과 퇴사 처리가 실제로 끊는 것', at: 7},
+    {text: 'kubectl과 앱에도 같은 IdP를 쓰는 법', at: 9},
+  ]}
+  steps={[
+    {
+      short: '시작',
+      kind: '시작',
+      title: '시스템마다 사용자가 따로 있다',
+      text: [
+        'Dana가 팀에 들어온다. 클라우드 계정 여섯 개, 클러스터 두 개, 사내 앱 네 개가 필요하다. 시스템마다 사용자와 비밀번호를 따로 두면 만들 계정이 열두 개, 관리할 비밀번호가 열두 개, 떠날 때 지울 것도 열두 개다.',
+        '꼭 하나는 잊는다. 잊힌 계정은 여전히 동작한다.',
+      ],
+      flows: [
+        {from: 'user', to: 'iamuser', label: '비밀번호 + 키', type: 'request', bend: 80},
+      ],
+      focus: ['user', 'iamuser'],
+      values: {who: '시스템마다 하나', cred: '비밀번호, 키'},
+    },
+    {
+      short: 'IdP',
+      kind: '원리',
+      title: 'ID 제공자 하나가 사람을 맡는다',
+      text: [
+        '회사는 Microsoft Entra ID, Okta, Google Workspace 같은 ID 제공자 하나를 고른다. 사용자, 그룹, 비밀번호, MFA는 거기에만 있다. 인사팀이 Dana를 한 번만 추가한다.',
+        '다른 시스템은 모두 그 IdP를 믿도록 설정한다. 서로 다른 시스템 사이의 이런 신뢰가 페더레이션이다. 시스템은 더는 비밀번호를 확인하지 않고, 사용자가 누구인지 IdP가 서명한 진술을 확인한다.',
+      ],
+      keyIdea: '페더레이션은 "이 사람이 누구인가"라는 질문을 한곳으로 옮긴다. 각 시스템에는 "무엇을 해도 되는가"만 남는다.',
+      flows: [{from: 'user', to: 'idp', label: '한 번 로그인', type: 'request'}],
+      focus: ['idp'],
+      values: {who: 'dana@example.com (IdP)'},
+    },
+    {
+      short: 'SAML · OIDC',
+      kind: '원리',
+      title: '같은 약속을 말하는 두 가지 언어',
+      text: [
+        'SAML 2.0은 더 오래됐고 XML 기반이다. IdP가 어서션(assertion)에 서명하면 브라우저가 그것을 시스템에 POST로 보낸다. 클라우드 콘솔과 많은 업무용 앱이 지원한다.',
+        'OpenID Connect(OIDC)는 OAuth 2.0 위에서 서명된 JWT인 ID 토큰을 준다. 웹 앱, CLI, kubectl에 잘 맞는다. 둘이 하는 말은 같다. 이 사용자, 이 그룹, IdP가 서명함, 짧은 시간 동안 유효함.',
+      ],
+      keyIdea: '시스템이 지원하는 쪽을 쓴다. 중요한 것은 IdP가 서명하고 시스템이 서명과 만료를 확인한다는 점이다.',
+      flows: [
+        {from: 'idp', to: 'sso', label: 'SAML 어서션', type: 'response'},
+        {from: 'idp', to: 'app', label: 'OIDC ID 토큰', type: 'response'},
+      ],
+      focus: ['idp', 'sso', 'app'],
+    },
+    {
+      short: '콘솔',
+      kind: '원리',
+      title: '로그인이 임시 역할 자격 증명이 된다',
+      text: [
+        'Dana가 AWS 액세스 포털을 연다. IAM Identity Center가 Dana를 IdP로 보내 SAML 어서션을 받아 오고, Dana에게 배정된 계정과 권한 세트를 보여 준다.',
+        '권한 세트는 정책을 묶은 틀이다. Identity Center가 배정된 계정마다 그에 맞는 IAM 역할을 만든다. Dana가 하나를 고르면 그 역할의 임시 자격 증명을 받는데, 권한 세트의 세션 시간(기본 1시간, 최대 12시간) 동안 유효하다.',
+      ],
+      keyIdea: '로그인 뒤 aws sts get-caller-identity 를 실행하면 ARN에 사용자가 아니라 AWSReservedSSO_... 라는 역할이 보인다.',
+      flows: [
+        {from: 'user', to: 'sso', label: '액세스 포털', type: 'request', bend: -60},
+        {from: 'sso', to: 'role', label: '역할 맡기', type: 'request'},
+        {from: 'role', to: 'user', label: '임시 자격 증명', type: 'response', bend: -110},
+      ],
+      focus: ['sso', 'role'],
+      badges: {role: '1시간 뒤 만료'},
+      values: {cred: '역할 세션', ttl: '1시간'},
+    },
+    {
+      short: '그룹',
+      kind: '원리',
+      title: '그룹을 역할에 잇고, 사람은 그룹에 넣는다',
+      text: [
+        '접근 권한은 사람이 아니라 IdP 그룹에 준다. platform-admins 그룹은 prod에서 AdministratorAccess 권한 세트를, developers 그룹은 prod에서 읽기 전용, dev에서 PowerUser를 받는다.',
+        'Dana에게 prod 접근을 주려면 담당자가 IdP에서 Dana를 그룹에 넣는다. 그 그룹을 믿는 클라우드 계정, 클러스터, 앱이 모두 따라온다.',
+      ],
+      keyIdea: '계정마다 흩어진 정책 대신, 한곳에서 그룹 구성원을 읽어 접근을 검토한다.',
+      flows: [{from: 'idp', to: 'sso', label: '그룹: developers', type: 'watch'}],
+      focus: ['idp', 'sso'],
+      badges: {idp: 'developers'},
+      values: {access: 'dev: PowerUser · prod: ReadOnly'},
+    },
+    {
+      short: 'IAM 사용자',
+      kind: '문제',
+      title: '오래 사는 IAM 사용자는 언젠가 샐 키다',
+      text: [
+        '"CLI용"이라며 만든 옛 IAM 사용자와 액세스 키가 아직 남아 있다. 키는 만료되지 않고, 노트북의 파일에 들어 있고, 주인이 아직 회사에 있는지 신경 쓰지 않는다. IAM 레슨에서 본 바로 그 샌 키다.',
+        'SSO를 쓰면 CLI도 같은 로그인을 쓴다. aws sso login 이 브라우저를 열고, CLI는 짧게 사는 역할 자격 증명을 받는다. IAM 사용자와 그 키는 지운다.',
+      ],
+      keyIdea: '사람에게는 오래 사는 클라우드 키가 없어야 한다. 자격 증명 보고서로 아직 살아 있는 IAM 사용자와 키를 찾는다.',
+      flows: [{from: 'iamuser', to: 'role', label: '고정 키', type: 'request'}],
+      focus: ['iamuser'],
+      status: {iamuser: 'error'},
+      badges: {iamuser: '만료 없음'},
+      values: {cred: {text: '액세스 키 (만료 없음)', tone: 'bad'}, ttl: {text: '없음', tone: 'bad'}},
+    },
+    {
+      short: 'MFA',
+      kind: '원리',
+      title: 'MFA는 IdP에서 한 번, 모든 곳에',
+      text: [
+        'IAM 사용자는 사라졌다. 이제 MFA는 IdP 한곳에서 강제한다. 그 뒤의 모든 시스템이 따로 설정하지 않아도 같은 보호를 받는다.',
+        'IdP는 무엇에든 서명하기 전에 피싱에 강한 수단(FIDO2 보안 키, 패스키)이나 관리되는 기기, 알려진 국가 같은 조건부 규칙을 요구할 수도 있다.',
+      ],
+      keyIdea: 'IdP 로그인이 튼튼하면 모든 앱이 한 번에 보호되고, 약하면 모두가 드러난다. 그래서 IdP에 가장 엄한 정책을 건다.',
+      flows: [{from: 'user', to: 'idp', label: '비밀번호 + 패스키', type: 'request'}],
+      focus: ['user', 'idp'],
+      status: {iamuser: 'gone'},
+      badges: {iamuser: null, idp: 'MFA 필수'},
+      values: {cred: '역할 세션', ttl: '1시간'},
+    },
+    {
+      short: 'SCIM',
+      kind: '원리',
+      title: 'SCIM이 사용자와 그룹을 자동으로 옮긴다',
+      text: [
+        'SAML과 OIDC는 지금 로그인하는 사람이 누구인지만 말한다. 권한을 미리 배정하려면 클라우드가 로그인 전에도 사용자와 그룹을 알아야 한다.',
+        'SCIM은 이를 위한 표준 REST API다. IdP가 사용자와 그룹의 생성, 변경, 비활성화를 Identity Center와 지원하는 앱으로 밀어 보낸다. 아무도 계정을 손으로 옮기지 않는다.',
+      ],
+      flows: [
+        {from: 'idp', to: 'sso', label: 'SCIM 동기화', type: 'watch'},
+        {from: 'idp', to: 'app', label: 'SCIM 동기화', type: 'watch'},
+      ],
+      focus: ['idp', 'sso', 'app'],
+      badges: {idp: '기준 원본'},
+    },
+    {
+      short: '퇴사',
+      kind: '주의',
+      title: '한 번에 막지만, 이미 나간 세션은 스스로 끝날 때까지 간다',
+      text: [
+        'Dana가 떠난다. 관리자가 IdP에서 Dana를 비활성화하고, SCIM이 Identity Center에서도 비활성화한다. 이제 로그인도, 새 역할 세션도 안 된다. 여기까지는 즉시다.',
+        '이미 손에 쥔 역할 자격 증명은 다르다. AWS에서는 만료될 때까지, 즉 권한 세트의 세션 시간(최대 12시간)까지 유효하다. 쿠버네티스 토큰과 앱 세션도 각자의 만료까지 간다.',
+      ],
+      keyIdea: '민감한 계정은 세션 시간을 짧게 둔다. 위험한 퇴사라면 IdP만이 아니라 시스템마다 세션도 끊는다.',
+      flows: [
+        {from: 'idp', to: 'sso', label: 'SCIM: 비활성화', type: 'watch'},
+        {from: 'user', to: 'idp', label: '로그인', type: 'request'},
+      ],
+      focus: ['user', 'idp', 'role'],
+      status: {user: 'off', idp: 'ok', role: 'warn'},
+      badges: {idp: '비활성화', role: '만료까지 유효'},
+      values: {who: {text: '비활성화', tone: 'bad'}, access: {text: '새 세션 없음', tone: 'good'}, ttl: {text: '옛 세션: 최대 12시간', tone: 'bad'}},
+    },
+    {
+      short: 'kubectl · 앱',
+      kind: '원리',
+      title: '같은 IdP로 kubectl과 앱에도 로그인한다',
+      text: [
+        '쿠버네티스 API 서버가 IdP를 OIDC 발급자로 믿도록 설정한다(--oidc-issuer-url, --oidc-client-id 플래그나 구조화된 AuthenticationConfiguration 파일). kubelogin 같은 kubectl 플러그인이 브라우저를 열고, 요청마다 ID 토큰을 실어 보낸다.',
+        'API 서버는 토큰 클레임에서 사용자와 그룹을 꺼내고, RBAC가 developers 같은 그룹을 Role에 묶는다. 관리형 클러스터는 대신 클라우드 SSO 역할을 연결하는 경우가 많다. 사내 앱도 같은 IdP로 OIDC 로그인을 한다.',
+      ],
+      keyIdea: 'kubectl auth whoami 로 API 서버가 토큰에서 읽은 사용자 이름과 그룹을 본다.',
+      flows: [
+        {from: 'idp', to: 'k8s', label: 'ID 토큰', type: 'response'},
+        {from: 'idp', to: 'app', label: 'ID 토큰', type: 'response'},
+      ],
+      focus: ['k8s', 'app'],
+      status: {user: null, idp: null, role: null},
+      badges: {idp: null, role: null, k8s: 'group: developers'},
+      values: {who: 'dana@example.com (IdP)', cred: 'ID 토큰', ttl: '몇 분~1시간', access: '그룹별 RBAC'},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '사람은 한곳에, 나머지에는 짧게 사는 증명만',
+      text: [
+        'IdP가 사용자, 그룹, MFA를 맡는다. 시스템은 SAML이나 OIDC로 IdP를 믿고, SCIM이 시스템 쪽 사용자와 그룹을 최신으로 유지한다.',
+        '클라우드에서는 권한 세트가 로그인을 임시 역할 자격 증명으로 바꾸므로 사람에게 IAM 사용자가 필요 없다. IdP에서 비활성화하면 모든 곳에서 새 세션이 막히고, 짧은 세션 시간이 옛 세션을 빨리 끝낸다.',
+      ],
+      keyIdea: '세 가지를 확인한다. 오래 사는 클라우드 키를 가진 사람이 없는가, 접근을 그룹에 주는가, 중요한 곳의 세션 시간이 짧은가.',
+      flows: [
+        {from: 'user', to: 'idp', label: '로그인', type: 'request'},
+        {from: 'idp', to: 'sso', label: 'SAML', type: 'response'},
+        {from: 'idp', to: 'k8s', label: 'OIDC', type: 'response'},
+        {from: 'idp', to: 'app', label: 'OIDC', type: 'response'},
+      ],
+      focus: ['idp'],
+      badges: {k8s: null},
+    },
+  ]}
+/>
+
+## SAML이냐 OIDC냐
+
+| | SAML 2.0 | OpenID Connect |
+|---|---|---|
+| 바탕 | XML, 서명된 어서션 | OAuth 2.0, 서명된 JWT(ID 토큰) |
+| 전달 방식 | 브라우저가 어서션을 서비스로 POST한다 | 코드를 들고 리다이렉트하고, 클라이언트가 토큰을 받아 온다 |
+| 주로 쓰는 곳 | 클라우드 콘솔, 기업용 SaaS | 웹·모바일 앱, CLI, kubectl |
+| 브라우저 없이 | 어렵다 | 된다. 디바이스 플로나 로컬 리다이렉트를 쓴다 |
+| 로그인 전 사용자 미리 만들기 | 하지 않는다. SCIM을 쓴다 | 하지 않는다. SCIM을 쓴다 |
+
+누군가 떠날 때는 IdP에서 비활성화하고(모든 곳의 새 로그인이 막힌다), SCIM이 아래 시스템에서도 비활성화했는지 확인하고, 민감한 시스템의 세션을 끊고, IAM 사용자, 로컬 계정, 개인 액세스 토큰처럼 SSO 밖에 있는 것을 찾는다.
+
+## 직접 확인해 보기
+
+```bash
+aws configure sso                                  # 프로필 설정: 시작 URL, 계정, 권한 세트
+aws sso login --profile dev                        # 브라우저를 열어 IdP에서 로그인
+aws sts get-caller-identity --profile dev          # ARN에 assumed-role/AWSReservedSSO_... 가 보인다
+aws sso-admin list-instances                       # Identity Center 인스턴스와 ID 저장소 ID
+aws sso-admin list-permission-sets --instance-arn <instance-arn>
+aws identitystore list-groups --identity-store-id <store-id>   # SCIM으로 IdP에서 넘어온 그룹
+aws iam generate-credential-report && aws iam get-credential-report \
+  --query Content --output text | base64 --decode | cut -d, -f1,4,9,10   # 남아 있는 IAM 사용자와 살아 있는 키
+kubectl oidc-login setup --oidc-issuer-url=https://login.example.com --oidc-client-id=kubernetes   # kubelogin 플러그인
+kubectl auth whoami                                # 토큰에서 읽은 사용자 이름과 그룹
+```
+
+<Quiz questions={[
+  {q: 'Dana가 떠나 IdP에서 비활성화됐고, IdP는 SCIM으로 동기화한다. 한동안 여전히 동작할 수 있는 것은?', options: ['액세스 포털을 통한 새 콘솔 로그인', '전에 받아 둔 역할 자격 증명, 만료될 때까지', '처음부터 새로 하는 kubectl 로그인'], answer: 1, why: '비활성화하면 새 로그인과 새 세션은 즉시 막힌다. 이미 발급된 임시 자격 증명은 만료까지 유효하므로 세션 시간을 짧게 둔다.'},
+  {q: '권한 세트를 사람 대신 IdP 그룹에 배정하는 이유는?', options: ['SAML은 사용자 이름을 실을 수 없어서', '그룹을 쓰면 자격 증명이 더 오래가서', '접근이 한곳의 그룹 구성원을 따르므로, 그룹에 들고 나기만 하면 모든 계정이 바뀌어서'], answer: 2, why: '그룹을 쓰면 사람 관리는 IdP에서만 한다. 그 그룹을 연결한 시스템은 모두 자동으로 따라온다.'},
+  {q: '쿠버네티스 API 서버가 회사 IdP의 ID 토큰을 받아들이려면 무엇을 알아야 하나?', options: ['발급자 URL과 클라이언트 ID(대상). 이것으로 토큰 서명과 대상을 확인한다', '모든 사용자의 비밀번호 사본', '사람마다 하나씩인 IAM 사용자'], answer: 0, why: 'API 서버는 발급자의 공개 키를 받아 서명, 발급자, 대상을 확인한 뒤 클레임에서 사용자 이름과 그룹을 읽는다.'},
+]} />
+
+더 읽을거리: [IAM Identity Center란? (AWS)](https://docs.aws.amazon.com/singlesignon/latest/userguide/what-is.html) · [SCIM 자동 프로비저닝 (AWS)](https://docs.aws.amazon.com/singlesignon/latest/userguide/provision-automatically.html) · [쿠버네티스 OIDC 인증](https://kubernetes.io/docs/reference/access-authn-authz/authentication/#openid-connect-tokens) · [OpenID Connect Core](https://openid.net/specs/openid-connect-core-1_0.html) · [SCIM 프로토콜 (RFC 7644)](https://datatracker.ietf.org/doc/html/rfc7644) · [로그인은 이렇게 동작한다 (세션, JWT, OIDC)](../basic/auth-login.mdx) · [API 요청 하나의 권한 검사 (IAM)](../cloud/iam-request.mdx)

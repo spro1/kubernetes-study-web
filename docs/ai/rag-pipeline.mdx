@@ -1,7 +1,7 @@
 ---
 id: rag-pipeline
 title: How a RAG Pipeline Answers From Your Documents
-sidebar_label: 12 · RAG Pipeline
+sidebar_label: 14 · RAG Pipeline
 description: Animated walkthrough of retrieval-augmented generation, from chunking and embedding documents into a vector database to searching with the same model, hybrid search and reranking, assembling a prompt with citations, and the usual failures such as bad chunks, stale indexes and leaked permissions
 summary: 'Chunk, embed and index documents, then retrieve, rerank and hand the best chunks to the LLM, and where answers go wrong.'
 icon: book
@@ -268,5 +268,11 @@ curl -s http://<embedding-server>/v1/embeddings -H 'Content-Type: application/js
 ```
 
 Real embeddings have hundreds or thousands of dimensions. The three-number vectors above only show how the query works.
+
+<Quiz questions={[
+  {q: 'The RAG assistant confidently gives a wrong return window, although the right fact exists in your documents. What should you check first?', options: ['Retrain the LLM on the policy documents', 'Raise the model\'s temperature', 'Look at which chunks were retrieved and whether the right one was indexed, retrieved and survived reranking', 'Switch to a larger LLM'], answer: 2, why: 'Most wrong RAG answers are retrieval failures, not model failures. Check that the right chunk was indexed, retrieved, survived reranking and was used.'},
+  {q: 'The team switches queries to a newer embedding model but keeps the stored chunks as they are. What happens?', options: ['Similarity scores become meaningless, and if the dimensions differ the query fails', 'Search gets better because the new model is stronger', 'Only keyword search results change', 'The vector DB re-embeds the old chunks automatically'], answer: 0, why: 'Vectors from different models live in different spaces and cannot be compared. Changing the embedding model means rebuilding the whole index.'},
+  {q: 'Questions about an error code like "RMA-114" keep getting unrelated chunks. What fixes this?', options: ['Make the chunks larger', 'Add keyword search (BM25) and merge it with vector search (hybrid search)', 'Raise k from 20 to 200', 'Drop the reranker'], answer: 1, why: 'Vector search is good at meaning but can miss exact terms such as codes and names. Hybrid search adds a BM25 keyword search and merges the two result lists.'},
+]} />
 
 Further reading: [pgvector](https://github.com/pgvector/pgvector) · [Qdrant docs](https://qdrant.tech/documentation/) · [Milvus docs](https://milvus.io/docs) · [Lewis et al. 2020, Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks](https://arxiv.org/abs/2005.11401) · [How an Answer Is Built One Token at a Time](../llm/token-generation.mdx) · [From API Request to Response](../ai/inference-request.mdx)

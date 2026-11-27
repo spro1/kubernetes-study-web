@@ -197,4 +197,10 @@ kubectl get pods -n <namespace> -l app=backend --show-labels   # Pods the select
 kubectl get pods -n kube-system -l k8s-app=cilium    # Is the enforcing CNI (Cilium) running?
 ```
 
+<Quiz questions={[
+  {q: 'Right after a default-deny policy is applied, frontend\'s calls to backend hang until they time out. Why a timeout and not a "refused" error?', options: ['The network plugin silently drops the packets', 'backend crashed when the policy was applied', 'The Service lost its endpoints'], answer: 0, why: 'Cilium drops blocked packets without replying, so the caller waits until its timeout. The db and backend pods are still Running.'},
+  {q: 'After blocking both Ingress and Egress, every external call fails with "name not found". What was forgotten?', options: ['An allow policy for incoming traffic to frontend', 'Opening egress to DNS (port 53)', 'Labelling the namespace', 'A deny rule for the debug pod'], answer: 1, why: 'Default deny blocks outgoing traffic too, including DNS lookups. That is why an allow-dns policy usually goes alongside.'},
+  {q: 'You create a NetworkPolicy and it has no effect at all, with no error. Which is a likely cause?', options: ['Policies take effect only after the pods restart', 'Two policies select the same pod and cancel out', 'No pod matches its selector, or the network plugin does not support policies'], answer: 2, why: 'A policy is only a rule document. It does nothing if its selector matches no pod, or if the CNI does not enforce policies. Multiple policies add up rather than cancel.'},
+]} />
+
 Further reading: [Network Policies](https://kubernetes.io/docs/concepts/services-networking/network-policies/) · [Cilium docs](https://docs.cilium.io/)

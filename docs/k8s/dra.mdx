@@ -201,4 +201,10 @@ kubectl get resourceclaim <name> -o jsonpath='{.status.allocation.devices.result
 kubectl describe pod <pod>                           # FailedScheduling: cannot allocate all claims
 ```
 
+<Quiz questions={[
+  {q: 'With DRA, who decides which specific GPU a Pod gets?', options: ['The kubelet on the node, picking any free device', 'The scheduler, which picks the device together with the node and records it in the claim', 'The DRA driver, when it publishes the ResourceSlice'], answer: 1, why: 'In DRA the scheduler matches the claim\'s criteria against the device list, picks a device and a node, and writes the allocation into the ResourceClaim.'},
+  {q: 'A Pod asks for a GPU with at least 40 GB, and the cluster has free 24 GB GPUs. The Pod is Pending. What should you check?', options: ['Whether the kubelet needs a restart', 'Whether the Pod should ask for nvidia.com/gpu: 1 instead', 'Whether the DeviceClass was deleted after the Pod started', 'The FailedScheduling event (cannot allocate all claims) and the device attributes in kubectl get resourceslices'], answer: 3, why: 'GPUs can exist without any matching the criteria. Compare the claim\'s criteria with the attributes the driver published in the ResourceSlices.'},
+  {q: 'A training Pod that used a ResourceClaimTemplate is deleted. What happens to its GPU?', options: ['The claim created from the template is deleted and the GPU is deallocated for the next request', 'The GPU stays allocated until an admin deletes the claim', 'The GPU moves to the next Pod on the same node automatically'], answer: 0, why: 'A claim generated from a template belongs to that Pod. When the Pod is deleted, the claim goes with it and the device becomes available again.'},
+]} />
+
 Further reading: [Dynamic Resource Allocation](https://kubernetes.io/docs/concepts/resource-management/dynamic-resource-allocation/) · [Device Plugins](https://kubernetes.io/docs/concepts/extend-kubernetes/compute-storage-net/device-plugins/) · [Schedule GPUs](https://kubernetes.io/docs/tasks/manage-gpus/scheduling-gpus/)

@@ -1,7 +1,7 @@
 ---
 id: manifest-anatomy
 title: Reading and Applying a Manifest
-sidebar_label: 02 · Reading and Applying a Manifest
+sidebar_label: 03 · Reading and Applying a Manifest
 description: Animated walkthrough of a Kubernetes YAML manifest for beginners, covering YAML basics, apiVersion and kind, metadata, kubectl explain, strict server-side field validation and dry runs, create versus apply, kubectl diff, and field ownership in server-side apply
 summary: 'The four top-level fields of a manifest, how the API server checks them, and how create, apply, diff and server-side apply differ.'
 icon: book
@@ -215,5 +215,11 @@ kubectl get deploy web -o yaml | grep -A3 last-applied   # Client-side apply's r
 kubectl apply -f web.yaml --server-side
 kubectl get deploy web -o yaml --show-managed-fields | grep -B2 -A8 managedFields   # Who owns which field
 ```
+
+<Quiz questions={[
+  {q: 'web.yaml says replica: 3 instead of replicas: 3. With current kubectl defaults, what happens on apply?', options: ['The Deployment is created quietly with one replica', 'The request fails with strict decoding error: unknown field "spec.replica"', 'kubectl corrects the field name for you'], answer: 1, why: 'Strict field validation is the default in current kubectl, so the API server rejects unknown fields. Only with validation set to Ignore would the field be dropped quietly.'},
+  {q: 'An HPA scales the Deployment, but your file still says replicas: 3 and you use client-side apply. What happens on every apply?', options: ['apply quietly sets replicas back to 3 until the HPA changes it again, so the field should be removed from the file', 'The HPA blocks the apply with an error', 'apply ignores replicas whenever an HPA exists'], answer: 0, why: 'Client-side apply pushes what the file says. Leave out fields that another controller such as the HPA should own.'},
+  {q: 'You want to see exactly what apply would change, including defaults and changes from mutating admission. Which command fits?', options: ['kubectl explain deployment.spec', 'A YAML linter', 'kubectl diff -f web.yaml', 'kubectl create -f web.yaml'], answer: 2, why: 'kubectl diff sends the file as a server-side dry run and compares the result with the live object, so server-built changes show up too.'},
+]} />
 
 Further reading: [Objects in Kubernetes](https://kubernetes.io/docs/concepts/overview/working-with-objects/) · [Declarative management with kubectl apply](https://kubernetes.io/docs/tasks/manage-kubernetes-objects/declarative-config/) · [Server-Side Apply](https://kubernetes.io/docs/reference/using-api/server-side-apply/) · [Field validation](https://kubernetes.io/docs/reference/using-api/api-concepts/#field-validation) · [Desired State and the Control Loop](../basic/desired-state.mdx) · [Per-environment deploys with Kustomize](../cert/kustomize.mdx)

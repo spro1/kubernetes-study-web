@@ -1,0 +1,275 @@
+---
+id: lab-cluster
+title: Build a Lab Cluster on Your Laptop
+sidebar_label: 01 · Lab cluster
+description: Animated walkthrough of building a local Kubernetes lab with kind (or minikube), from node containers and kubeconfig contexts to multi-node configs, loading local images, port-forward and common problems
+summary: 'Install a container runtime, kind and kubectl, create a multi-node cluster in containers, load your own image, reach the app and clean up.'
+icon: hammer
+hide_table_of_contents: true
+---
+
+# Build a Lab Cluster on Your Laptop
+
+Every "Try it yourself" section on this site needs a cluster. Build one on your laptop with **kind** (Kubernetes in Docker), where each Kubernetes node is just a container. It is free, takes a minute, and you can throw it away at any time.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~12 min', level: 'Beginner'}}
+  groups={[
+    {label: 'Container runtime on your laptop (e.g. Docker)', x: 270, y: 30, w: 560, h: 410, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'you', label: 'You', sub: 'terminal', icon: 'user', tone: 'ext', x: 130, y: 100, show: true},
+    {id: 'kubectl', label: 'kubectl', sub: 'talks to the API', icon: 'gear', tone: 'ext', x: 130, y: 230},
+    {id: 'kcfg', label: '~/.kube/config', sub: 'context kind-lab', icon: 'book', tone: 'store', x: 130, y: 360, w: 170},
+    {id: 'cp', label: 'control-plane', sub: 'node container', icon: 'server', tone: 'cp', x: 380, y: 120, w: 170},
+    {id: 'w1', label: 'worker', sub: 'node container', icon: 'server', tone: 'node', x: 560, y: 120, w: 140},
+    {id: 'w2', label: 'worker2', sub: 'node container', icon: 'server', tone: 'node', x: 730, y: 120, w: 140},
+    {id: 'pod', label: 'Pod', sub: 'my-app:dev', icon: 'pod', tone: 'app', size: 'sm', x: 560, y: 250},
+    {id: 'img', label: 'Local image', sub: 'my-app:dev', icon: 'box', tone: 'store', x: 380, y: 370},
+    {id: 'reg', label: 'Registry', sub: 'docker.io', icon: 'registry', tone: 'ext', size: 'sm', x: 915, y: 370},
+    {id: 'browser', label: 'Browser', sub: 'localhost:8080', icon: 'browser', tone: 'ext', x: 915, y: 230, w: 120},
+  ]}
+  metrics={[
+    {id: 'cluster', label: 'Cluster'},
+    {id: 'context', label: 'Current context'},
+    {id: 'nodes', label: 'Nodes'},
+    {id: 'app', label: 'App Pod'},
+  ]}
+  learn={[
+    {text: 'What kind creates: a container per node, running kubelet and the control plane', at: 2},
+    {text: 'How kubeconfig contexts decide which cluster kubectl talks to', at: 3},
+    {text: 'A multi-node config for practicing drains and scheduling', at: 4},
+    {text: 'Why a locally built image gives ImagePullBackOff, and kind load', at: 5},
+    {text: 'Reaching the app with port-forward, NodePort and extraPortMappings', at: 7},
+  ]}
+  steps={[
+    {
+      short: 'Start',
+      kind: '시작',
+      title: 'A real cluster you can break',
+      text: [
+        'Learning Kubernetes means running commands, deleting things and watching what happens. A shared or production cluster is the wrong place for that.',
+        'A lab cluster on your laptop runs the same API, the same kubelet and the same kubectl. When you break it, you delete it and make a new one in about a minute.',
+      ],
+      keyIdea: 'Treat the lab cluster as disposable. Nothing in it should matter.',
+      flows: [{from: 'you', to: 'kubectl', label: 'Commands', type: 'request'}],
+      focus: ['you'],
+      values: {cluster: '—', context: '—', nodes: '—', app: '—'},
+    },
+    {
+      short: 'Install',
+      kind: '원리',
+      title: 'Three tools: a container runtime, kind and kubectl',
+      text: [
+        'First, a container runtime: Docker Desktop on macOS or Windows, or Docker Engine or Podman on Linux. kind uses it to run the nodes.',
+        'Then the kind CLI (for example with brew install kind, a release binary, or go install) and kubectl. kind builds and deletes clusters. kubectl is the client you use for everything else.',
+      ],
+      keyIdea: 'Check each tool before going on: docker info, kind version, kubectl version --client.',
+      flows: [{from: 'you', to: 'kubectl', label: 'Install', type: 'request'}],
+      focus: ['you', 'kubectl'],
+    },
+    {
+      short: 'Create',
+      kind: '원리',
+      title: 'kind create cluster starts a container that is a node',
+      text: [
+        'kind create cluster --name lab starts one container named lab-control-plane from a kind node image. Inside it run systemd, containerd and the kubelet, like on a real machine.',
+        'kind then runs kubeadm inside that container. The API server, etcd, scheduler and controller manager start as static Pods on this node. A default CNI (kindnet) gives Pods their network.',
+      ],
+      keyIdea: 'docker ps shows the node containers. Each one is a whole Kubernetes node, not a single app.',
+      flows: [{from: 'you', to: 'cp', label: 'kind create', type: 'request'}],
+      focus: ['cp'],
+      badges: {cp: 'kubelet + API'},
+      values: {cluster: 'lab', nodes: '1 · control-plane'},
+    },
+    {
+      short: 'Context',
+      kind: '원리',
+      title: 'kind writes a kubeconfig context and kubectl follows it',
+      text: [
+        'When the cluster is up, kind adds a cluster, a user and a context named kind-lab to $KUBECONFIG, or to ~/.kube/config if that is not set. It also makes kind-lab the current context.',
+        'kubectl reads the current context to find the API server address and credentials. kubectl get nodes now shows lab-control-plane, and it turns Ready once the CNI is running.',
+      ],
+      keyIdea: 'kubectl config current-context tells you which cluster your next command will hit.',
+      flows: [
+        {from: 'kubectl', to: 'kcfg', label: 'Read context', type: 'watch'},
+        {from: 'kubectl', to: 'cp', label: 'get nodes', type: 'request'},
+      ],
+      focus: ['kubectl', 'kcfg'],
+      badges: {cp: 'Ready'},
+      values: {context: 'kind-lab'},
+    },
+    {
+      short: 'Multi-node',
+      kind: '원리',
+      title: 'A config file adds worker nodes',
+      text: [
+        'One node cannot show scheduling, drains or Pod spreading. A small config file (apiVersion kind.x-k8s.io/v1alpha4, kind: Cluster) lists one control-plane and two worker nodes.',
+        'kind create cluster --config lab.yaml then starts three containers: lab-control-plane, lab-worker and lab-worker2. Now kubectl drain lab-worker really moves Pods to the other worker.',
+      ],
+      keyIdea: 'The node layout is fixed at creation. To change it, delete the cluster and create it again with a new config.',
+      flows: [
+        {from: 'cp', to: 'w1', label: 'Join', type: 'watch'},
+        {from: 'cp', to: 'w2', label: 'Join', type: 'watch', bend: -40},
+      ],
+      focus: ['w1', 'w2'],
+      badges: {cp: null, w1: 'Ready', w2: 'Ready'},
+      values: {nodes: '3 · 1 cp + 2 workers'},
+    },
+    {
+      short: 'Pull fails',
+      kind: '문제',
+      title: 'Your local image is not inside the nodes',
+      text: [
+        'You build my-app:dev with docker build and deploy it. The Pod stays in ErrImagePull, then ImagePullBackOff.',
+        'The image lives in the image store on your laptop. Each node has its own containerd with its own image store, so the kubelet tries to pull docker.io/library/my-app:dev from the registry, where it does not exist.',
+      ],
+      keyIdea: 'kubectl describe pod shows the pull error in Events. The image name is fine; the node just cannot see it.',
+      flows: [{from: 'w1', to: 'reg', label: 'Pull my-app:dev', type: 'request'}],
+      focus: ['pod', 'reg'],
+      status: {pod: 'error'},
+      badges: {w1: null, w2: null, pod: 'ImagePullBackOff'},
+      values: {app: {text: 'ImagePullBackOff', tone: 'bad'}},
+    },
+    {
+      short: 'kind load',
+      kind: '원리',
+      title: 'kind load copies the image into every node',
+      text: [
+        'kind load docker-image my-app:dev --name lab copies the image from your local store into the containerd of each node in the cluster.',
+        'Watch the tag. With :latest or no tag, the default pull policy is Always, so the kubelet still goes to the registry. Use a real tag like :dev, or set imagePullPolicy: IfNotPresent.',
+      ],
+      keyIdea: 'Rebuilt the image? Load it again and restart the Pod. A loaded image does not update itself.',
+      flows: [
+        {from: 'img', to: 'w1', label: 'kind load', type: 'request'},
+        {from: 'img', to: 'w2', label: 'kind load', type: 'request', bend: 40},
+      ],
+      focus: ['img', 'pod'],
+      status: {pod: 'ok'},
+      badges: {pod: 'Running'},
+      values: {app: {text: 'Running', tone: 'good'}},
+    },
+    {
+      short: 'Reach it',
+      kind: '원리',
+      title: 'Reach the app with port-forward',
+      text: [
+        'Pod and Service IPs live inside the node containers, so your browser cannot reach them directly. kubectl port-forward svc/my-app 8080:80 opens localhost:8080 and tunnels it through the API server to a Pod.',
+        'For a more realistic path, use a NodePort Service plus extraPortMappings in the kind config. That maps a host port to a port on the node container. It must be set when the cluster is created.',
+      ],
+      keyIdea: 'port-forward is for testing only. It stops when you press Ctrl+C.',
+      flows: [
+        {from: 'browser', to: 'kubectl', label: 'localhost:8080', type: 'request', bend: -60},
+        {from: 'kubectl', to: 'cp', label: 'Tunnel', type: 'request'},
+        {from: 'cp', to: 'pod', label: 'Port 80', type: 'request'},
+      ],
+      focus: ['browser', 'pod'],
+      values: {app: {text: 'Running · localhost:8080', tone: 'good'}},
+    },
+    {
+      short: 'Problems',
+      kind: '장애',
+      title: 'Two common traps: memory and the wrong context',
+      text: [
+        'Memory: all nodes share the memory of your laptop, or of the Docker Desktop VM on macOS and Windows. When it runs out, Pods stay Pending, containers get OOMKilled or nodes go NotReady. Raise the VM limit or use fewer nodes.',
+        'Wrong context: kubectl uses whatever context is current. If you also have a work cluster, kubectl delete may hit it instead of the lab. Check the context before destructive commands.',
+      ],
+      keyIdea: 'kubectl config get-contexts marks the current one with *. Switch with kubectl config use-context kind-lab.',
+      flows: [{from: 'kubectl', to: 'kcfg', label: 'Which cluster?', type: 'watch'}],
+      focus: ['kcfg', 'w2'],
+      status: {w2: 'warn'},
+      badges: {w2: 'NotReady?'},
+      values: {context: {text: 'prod-eu ⚠', tone: 'bad'}},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Create, practice, delete, repeat',
+      text: [
+        'kind runs each node as a container with containerd and the kubelet inside. It writes a kubeconfig context, so kubectl knows where to go. A config file sets the node layout and port mappings.',
+        'Load local images with kind load, use a fixed tag, and reach apps with port-forward. When you are done, kind delete cluster --name lab removes the node containers and the context.',
+      ],
+      keyIdea: 'minikube works too: minikube start, minikube image load and minikube service. Pick one and use it for every Try it yourself section.',
+      flows: [{from: 'you', to: 'cp', label: 'kind delete', type: 'request'}],
+      focus: ['cp', 'w1', 'w2'],
+      status: {w2: null},
+      badges: {w2: null},
+      values: {context: 'kind-lab'},
+    },
+  ]}
+/>
+
+## kind and minikube side by side
+
+Both tools give you a real cluster on one machine. kind runs nodes as containers. minikube can run its node as a container (docker driver) or as a VM.
+
+| Task | kind | minikube |
+|---|---|---|
+| Create | `kind create cluster --name lab` | `minikube start -p lab` |
+| Multi-node | `--config lab.yaml` with a `nodes` list | `minikube start -p lab --nodes 3` |
+| kubectl context | `kind-lab` | `lab` (the profile name) |
+| Load a local image | `kind load docker-image my-app:dev --name lab` | `minikube -p lab image load my-app:dev` |
+| Reach an app | `kubectl port-forward`, or NodePort + `extraPortMappings` | `kubectl port-forward`, or `minikube service my-app` |
+| Delete | `kind delete cluster --name lab` | `minikube delete -p lab` |
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| `ErrImagePull` / `ImagePullBackOff` for your own image | Image is only on your laptop, or the tag is `:latest` | `kind load docker-image`, then use a fixed tag or `imagePullPolicy: IfNotPresent` |
+| Pods `Pending`, nodes `NotReady`, `OOMKilled` | Not enough memory or CPU for the runtime | Give the Docker VM more resources, or use fewer nodes |
+| Commands hit the wrong cluster | Current context points elsewhere | `kubectl config use-context kind-lab` |
+| `kind create` fails because a port is in use | Another process uses a host port from `extraPortMappings` | Free the port or pick another `hostPort` |
+| `localhost:8080` refuses connections | `port-forward` was stopped, or the Service port is wrong | Run it again and check `kubectl get svc` |
+
+## Try it yourself
+
+```bash
+# 0. Check the tools
+docker info >/dev/null && echo "runtime ok"
+kind version
+kubectl version --client
+
+# 1. A 3-node cluster: 1 control-plane, 2 workers, host port 30080 -> NodePort 30080
+cat > lab.yaml <<'EOF'
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+  - role: control-plane
+    extraPortMappings:
+      - containerPort: 30080
+        hostPort: 30080
+  - role: worker
+  - role: worker
+EOF
+kind create cluster --name lab --config lab.yaml
+docker ps --format '{{.Names}}'                 # lab-control-plane, lab-worker, lab-worker2
+kubectl config current-context                   # kind-lab
+kubectl get nodes -o wide
+
+# 2. Run an app and reach it
+kubectl create deployment web --image=nginx:1.27 --replicas=2
+kubectl expose deployment web --port=80
+kubectl port-forward svc/web 8080:80             # open http://localhost:8080, Ctrl+C to stop
+
+# 3. Your own image: build, load, run (use a fixed tag, not :latest)
+# docker build -t my-app:dev .
+# kind load docker-image my-app:dev --name lab
+# kubectl create deployment my-app --image=my-app:dev
+
+# 4. Practice a drain
+kubectl drain lab-worker --ignore-daemonsets
+kubectl get pods -o wide                         # Pods moved to lab-worker2
+kubectl uncordon lab-worker
+
+# 5. Clean up
+kind delete cluster --name lab
+```
+
+<Quiz questions={[
+  {q: 'You built my-app:dev with docker build and deployed it to kind. The Pod shows ImagePullBackOff. Why?', options: ['The kind cluster has no internet access at all', 'The image is in your laptop image store, but each node container has its own containerd store and tries the registry', 'kubectl did not upload the image together with the manifest'], answer: 1, why: 'Nodes are separate containers with their own image store. kind load docker-image copies the image into them.'},
+  {q: 'You loaded my-app:latest with kind load, but the Pod still tries to pull from the registry. What is the fix?', options: ['Use a fixed tag such as :dev, or set imagePullPolicy: IfNotPresent', 'Load the image a second time', 'Restart the Docker runtime'], answer: 0, why: 'With :latest or no tag, the default pull policy is Always, so the kubelet ignores the loaded copy and pulls.'},
+  {q: 'You have a work cluster and a kind cluster in the same kubeconfig. What decides which one kubectl delete affects?', options: ['The cluster that was created most recently', 'Whichever cluster responds first', 'The current context in kubeconfig'], answer: 2, why: 'kubectl always uses the current context unless you pass --context. Check it with kubectl config current-context.'},
+]} />
+
+Further reading: [kind Quick Start](https://kind.sigs.k8s.io/docs/user/quick-start/) · [minikube start](https://minikube.sigs.k8s.io/docs/start/) · [Install kubectl](https://kubernetes.io/docs/tasks/tools/) · [Organizing cluster access with kubeconfig](https://kubernetes.io/docs/concepts/configuration/organize-cluster-access-kubeconfig/) · [Draining Nodes and Upgrading the Cluster](../k8s/node-drain.mdx) · [How an Image Is Built and Run](../basic/container-image.mdx)

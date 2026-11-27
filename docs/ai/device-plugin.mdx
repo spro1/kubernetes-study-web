@@ -216,4 +216,10 @@ kubectl get events -A --field-selector reason=FailedScheduling   # Insufficient 
 kubectl exec <pod> -- nvidia-smi -L                  # e.g. NVIDIA: the container sees one GPU (step 8)
 ```
 
+<Quiz questions={[
+  {q: 'The NVIDIA driver is installed on a node, but kubectl describe node shows no nvidia.com/gpu. What is most likely missing?', options: ['A running device plugin that registers with the kubelet', 'A GPU entry in the scheduler config', 'A ResourceClaim for the node', 'A Pod with nvidia.com/gpu: 1 in its limits'], answer: 0, why: 'With only the driver, the OS sees the devices but Kubernetes does not. The device plugin registers with the kubelet, and the kubelet then publishes the count in capacity and allocatable.'},
+  {q: 'A user asks for nvidia.com/gpu: 0.5 to share a GPU. What happens?', options: ['The Pod gets half of the GPU memory', 'The request is rejected, because extended resources are integers only', 'The scheduler rounds it up to 1'], answer: 1, why: 'Extended resources are integers and cannot be overcommitted. Sharing needs node-side settings such as MIG or time-slicing.'},
+  {q: 'One idle GPU on a 2-GPU node fails. What changes in the node status?', options: ['Capacity and allocatable both drop to 1', 'Nothing until the kubelet restarts', 'Capacity stays 2, allocatable drops to 1', 'The node becomes NotReady'], answer: 2, why: 'The plugin marks the device Unhealthy over ListAndWatch, and the kubelet lowers allocatable while keeping capacity. Watch the gap between the two.'},
+]} />
+
 Further reading: [Device Plugins](https://kubernetes.io/docs/concepts/extend-kubernetes/compute-storage-net/device-plugins/) · [Schedule GPUs](https://kubernetes.io/docs/tasks/manage-gpus/scheduling-gpus/) · [NVIDIA GPU Operator overview](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/overview.html)

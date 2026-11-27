@@ -178,4 +178,10 @@ kubectl get events -n team-a | grep -i quota
 kubectl auth can-i create resourcequotas -n team-a
 ```
 
+<Quiz questions={[
+  {q: 'team-a and team-b are in separate namespaces with no quota. team-a scales up many Pods, and team-b\'s new Pods stay Pending. Why?', options: ['Namespaces block Pods from other teams by default', 'RBAC denies team-b permission to create Pods', 'Namespaces only divide names and permissions; CPU and memory still come from the same cluster'], answer: 2, why: 'A namespace does not separate servers. Resource usage is divided only once you set a quota.'},
+  {q: 'team-a\'s quota caps CPU requests at 4 cores and 3 are in use. A Deployment scales up a Pod that requests 2 cores, but the Pod count does not go up. Where do you see the reason?', options: ['The ReplicaSet events show exceeded quota, and kubectl describe quota shows Used and Hard', 'The new Pod\'s logs', 'The existing Pods are stopped to make room', 'The node\'s kubelet log shows OOMKilled'], answer: 0, why: 'The API server rejects the Pod at creation because 3 + 2 exceeds 4. With a Deployment, the reason appears as exceeded quota in the ReplicaSet events.'},
+  {q: 'In a namespace whose quota covers CPU and memory, a Pod without requests is rejected. What reduces this problem?', options: ['Raising the quota cap', 'A LimitRange that fills in default requests and limits', 'A ClusterRoleBinding for the team'], answer: 1, why: 'A quota adds up totals and cannot count empty values. A LimitRange fills in defaults for Pods that omit them.'},
+]} />
+
 Further reading: [Namespaces](https://kubernetes.io/docs/concepts/overview/working-with-objects/namespaces/) · [Resource quotas](https://kubernetes.io/docs/concepts/policy/resource-quotas/) · [Limit ranges](https://kubernetes.io/docs/concepts/policy/limit-range/) · [Using RBAC authorization](https://kubernetes.io/docs/reference/access-authn-authz/rbac/)

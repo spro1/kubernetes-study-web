@@ -1,0 +1,259 @@
+---
+id: keda
+title: Scaling on Events with KEDA
+sidebar_label: 10 · Event-driven Scaling (KEDA)
+description: Animated walkthrough of KEDA, from a ScaledObject with Kafka lag, queue, Prometheus or cron triggers to the HPA it creates, activation versus scaling thresholds, scale to zero and cold start, cooldownPeriod, ScaledJob for one Job per message, TriggerAuthentication for secrets, and fallback when the metric source is down
+summary: 'Scale consumers on queue backlog instead of CPU, down to zero. How KEDA feeds the HPA, and what happens when the queue cannot be reached.'
+icon: bell
+hide_table_of_contents: true
+---
+
+# Scaling on Events with KEDA
+
+A queue consumer can sit at low CPU while thousands of messages wait. Follow **KEDA** as it reads the backlog, drives an HPA, scales to zero and back, and decides what to do when it cannot reach the queue.
+
+<StepDiagram
+  width={1000}
+  height={460}
+  meta={{duration: '~13 min', level: 'Intermediate'}}
+  groups={[
+    {label: 'Kubernetes cluster', x: 220, y: 30, w: 760, h: 420, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'kafka', label: 'Kafka topic', sub: 'orders · lag', icon: 'archive', tone: 'ext', x: 110, y: 100, show: true},
+    {id: 'queue', label: 'Queue', sub: 'e.g. RabbitMQ, SQS', icon: 'archive', tone: 'ext', x: 110, y: 230},
+    {id: 'prom', label: 'Prometheus', sub: 'PromQL query', icon: 'chart', tone: 'ext', x: 110, y: 370},
+    {id: 'so', label: 'ScaledObject', sub: 'triggers · min · max', icon: 'gear', tone: 'store', x: 345, y: 100},
+    {id: 'ta', label: 'TriggerAuth', sub: 'Secret refs', icon: 'shield', tone: 'store', x: 345, y: 370},
+    {id: 'sj', label: 'ScaledJob', sub: 'Job template', icon: 'gear', tone: 'store', x: 590, y: 370},
+    {id: 'op', label: 'KEDA operator', sub: 'Polls triggers · 0↔1', icon: 'bell', tone: 'cp', x: 345, y: 230, w: 170},
+    {id: 'ma', label: 'Metrics server', sub: 'External metrics API', icon: 'chart', tone: 'cp', x: 590, y: 230, w: 170},
+    {id: 'hpa', label: 'HPA', sub: 'keda-hpa-orders · 1↔N', icon: 'scale', tone: 'cp', x: 590, y: 100, w: 180},
+    {id: 'dep', label: 'Deployment', sub: 'orders consumer', icon: 'pod', tone: 'app', x: 840, y: 230, w: 180, show: true},
+    {id: 'jobs', label: 'Jobs', sub: 'One per message', icon: 'box', tone: 'app', x: 840, y: 370, w: 180},
+  ]}
+  metrics={[
+    {id: 'lag', label: 'Lag / backlog'},
+    {id: 'replicas', label: 'Replicas'},
+    {id: 'state', label: 'KEDA'},
+  ]}
+  learn={[
+    {text: 'Why CPU misses queue backlog', at: 0},
+    {text: 'ScaledObject triggers and the HPA KEDA creates for you', at: 1},
+    {text: 'Activation (0↔1) versus scaling (1↔N) thresholds', at: 3},
+    {text: 'Scale to zero, cold start and cooldownPeriod', at: 4},
+    {text: 'Secrets with TriggerAuthentication, one Job per message with ScaledJob', at: 7},
+    {text: 'Fallback when the metric source is down', at: 9},
+  ]}
+  steps={[
+    {
+      short: 'Start',
+      kind: '시작',
+      title: 'Messages pile up while CPU stays low',
+      text: [
+        'The orders consumer reads from a Kafka topic. Most of its time goes to waiting on the database, so CPU stays near 20% even when the consumer group lags 5,000 messages behind.',
+        'A CPU-based HPA sees nothing to do. The number that matters is the backlog: how much work is waiting outside the Pods.',
+      ],
+      focus: ['kafka', 'dep'],
+      status: {kafka: 'warn'},
+      values: {lag: {text: '5,000', tone: 'bad'}, replicas: '2', state: '—'},
+    },
+    {
+      short: 'ScaledObject',
+      kind: '원리',
+      title: 'A ScaledObject names the target and its triggers',
+      text: [
+        'You write a ScaledObject. scaleTargetRef points to the Deployment. triggers lists event sources: here kafka with bootstrapServers, consumerGroup, topic and lagThreshold. minReplicaCount defaults to 0 and maxReplicaCount to 100.',
+        'Other triggers follow the same shape: queue length for RabbitMQ or SQS, a Prometheus query with a threshold, or a cron window. KEDA ships many scalers like these.',
+      ],
+      keyIdea: 'One ScaledObject per workload. Do not also attach your own HPA to the same Deployment: two controllers would fight over replicas.',
+      flows: [{from: 'op', to: 'so', label: 'Watch', type: 'watch'}],
+      focus: ['so'],
+      badges: {so: 'kafka lagThreshold 100'},
+      values: {state: 'ScaledObject created'},
+    },
+    {
+      short: 'Operator + HPA',
+      kind: '원리',
+      title: 'KEDA creates an HPA and serves it the metric',
+      text: [
+        'The KEDA operator sees the ScaledObject and creates an HPA named keda-hpa-orders with an External metric. The KEDA metrics server registers as the external metrics API, so when the HPA asks for the value, it gets the current lag.',
+        'The HPA does the usual math. With an AverageValue target of 100 messages per replica, a lag of 5,000 asks for 50 replicas. For Kafka, KEDA also caps replicas at the number of partitions unless allowIdleConsumers is set, since extra consumers would sit idle.',
+      ],
+      keyIdea: 'KEDA does not replace the HPA. It feeds it. kubectl describe hpa keda-hpa-orders shows the value it got.',
+      flows: [
+        {from: 'op', to: 'kafka', label: 'Read lag', type: 'request'},
+        {from: 'op', to: 'hpa', label: 'Creates', type: 'request'},
+        {from: 'hpa', to: 'ma', label: 'External metric', type: 'watch'},
+        {from: 'hpa', to: 'dep', label: 'replicas', type: 'request'},
+      ],
+      focus: ['op', 'ma', 'hpa'],
+      badges: {so: null, hpa: 'target 100 / replica'},
+      values: {replicas: '2 → 12 (12 partitions)', state: 'Active'},
+    },
+    {
+      short: 'Thresholds',
+      kind: '원리',
+      title: 'Activation decides 0 or 1, the threshold decides 1 to N',
+      text: [
+        'Each trigger has two numbers. The activation threshold (activationLagThreshold for Kafka, activationThreshold for Prometheus, default 0) decides whether the workload should run at all. The operator itself handles 0 ↔ 1, because an HPA cannot go to zero.',
+        'The scaling threshold (lagThreshold) is the target per replica the HPA uses between 1 and maxReplicaCount. Activation only fires when the metric is above the value, not equal to it.',
+      ],
+      keyIdea: 'Set activation above the background noise, for example a few stray messages, so one message at night does not wake a Pod every few minutes.',
+      flows: [
+        {from: 'op', to: 'dep', label: '0 ↔ 1', type: 'request', bend: 0.25},
+        {from: 'hpa', to: 'dep', label: '1 ↔ N', type: 'request'},
+      ],
+      focus: ['op', 'hpa'],
+      badges: {hpa: null, op: 'activation > 5'},
+      values: {lag: '5,000 → 300'},
+    },
+    {
+      short: 'To zero',
+      kind: '주의',
+      title: 'Scale to zero saves Pods, the next message pays for it',
+      text: [
+        'At night the lag stays at 0. After cooldownPeriod (300 seconds by default) with no active trigger, the operator sets replicas to 0. The HPA goes inactive.',
+        'When a message arrives, the operator sees it on its next poll (pollingInterval, 30 seconds by default) and sets replicas to 1. Then the Pod has to be scheduled, pull its image and start. Messages wait safely in the topic meanwhile. Plain HTTP traffic has no such buffer, which is why HTTP scale to zero needs something in front, like the KEDA HTTP add-on.',
+      ],
+      flows: [{from: 'op', to: 'dep', label: 'replicas 0', type: 'request', bend: 0.25}],
+      focus: ['op', 'dep'],
+      status: {dep: 'off', kafka: null},
+      badges: {op: null, dep: '0 replicas'},
+      values: {lag: '0', replicas: '0', state: 'Inactive'},
+    },
+    {
+      short: 'Cooldown',
+      kind: '주의',
+      title: 'cooldownPeriod only covers the last step to zero',
+      text: [
+        'cooldownPeriod applies only when going to 0. Scaling down from 12 to 3 is the HPA\'s job, and it follows the HPA scale-down stabilization window instead.',
+        'To tune that, set advanced.horizontalPodAutoscalerConfig.behavior in the ScaledObject. KEDA copies it into the HPA it manages. Editing the generated HPA directly does not stick.',
+      ],
+      keyIdea: 'Two clocks: cooldownPeriod for 1 → 0, HPA behavior for N → 1. Check both when Pods disappear too fast or linger too long.',
+      flows: [{from: 'so', to: 'hpa', label: 'behavior', type: 'watch'}],
+      focus: ['so', 'hpa'],
+      status: {dep: null},
+      badges: {dep: null, so: 'cooldownPeriod 300'},
+      values: {replicas: '12 → 3', state: 'Active'},
+    },
+    {
+      short: 'Cron',
+      kind: '원리',
+      title: 'Several triggers: the highest demand wins',
+      text: [
+        'Add a cron trigger with timezone, start, end and desiredReplicas: keep 4 replicas from 08:00 to 10:00 before the morning batch lands. Add a prometheus trigger on request latency too.',
+        'Each trigger becomes one metric on the same HPA. The HPA computes a replica count per metric and takes the largest, so a quiet queue does not cancel the cron floor.',
+      ],
+      flows: [
+        {from: 'op', to: 'prom', label: 'Query', type: 'request'},
+        {from: 'op', to: 'kafka', label: 'Lag', type: 'request'},
+      ],
+      focus: ['op', 'prom'],
+      badges: {so: 'kafka + cron + prometheus'},
+      values: {replicas: 'max(lag, cron 4, prom)'},
+    },
+    {
+      short: 'TriggerAuth',
+      kind: '원리',
+      title: 'TriggerAuthentication keeps credentials out of the ScaledObject',
+      text: [
+        'The Kafka cluster needs SASL credentials. A TriggerAuthentication maps trigger parameters such as sasl, username and password to keys in a Secret with secretTargetRef. The trigger points to it with authenticationRef.',
+        'ClusterTriggerAuthentication does the same for all namespaces. Instead of a Secret, it can also use a cloud workload identity through podIdentity.',
+      ],
+      keyIdea: 'If the ScaledObject is not Ready, check the auth first. A wrong key name looks the same as an unreachable broker.',
+      flows: [
+        {from: 'op', to: 'ta', label: 'Read Secret', type: 'request'},
+      ],
+      focus: ['ta', 'so'],
+      badges: {so: null, ta: 'sasl · user · password'},
+    },
+    {
+      short: 'ScaledJob',
+      kind: '원리',
+      title: 'ScaledJob runs one Job per message for long work',
+      text: [
+        'Video encoding takes 20 minutes per message. If the HPA scales a Deployment down mid-encode, the work is cut off. A ScaledJob avoids that: it holds a Job template, and KEDA creates Jobs from the queue length, up to maxReplicaCount.',
+        'Each Job takes one message, finishes it, and exits. Nothing is scaled in, because a Job is never removed while it is still running work. Old Jobs are cleaned up by successfulJobsHistoryLimit and failedJobsHistoryLimit.',
+      ],
+      flows: [
+        {from: 'sj', to: 'jobs', label: 'Create Jobs', type: 'request'},
+        {from: 'op', to: 'queue', label: 'Queue length', type: 'request'},
+      ],
+      focus: ['sj', 'jobs', 'queue'],
+      badges: {ta: null, jobs: '7 running'},
+      values: {state: 'ScaledJob · 7 Jobs'},
+    },
+    {
+      short: 'Fallback',
+      kind: '장애',
+      title: 'The broker is unreachable, and the metric disappears',
+      text: [
+        'The Kafka brokers go down for maintenance. The scaler errors on every poll, the ScaledObject shows Ready=False, and the HPA gets no value, so it stops scaling on that trigger. Replicas stay frozen at whatever they were.',
+        'With spec.fallback (failureThreshold 3, replicas 6), KEDA serves a value that makes the HPA go to 6 replicas after 3 failed polls in a row. behavior static is the default. Others, like currentReplicasIfHigher, keep the current count when that is safer. Fallback works for Value and AverageValue triggers except CPU and memory, and not for ScaledJob.',
+      ],
+      keyIdea: 'Pick fallback replicas as the count that is safe without knowing the load. Alert on the scaler errors, not just on the backlog.',
+      flows: [
+        {from: 'op', to: 'kafka', label: 'Error', type: 'request'},
+        {from: 'hpa', to: 'dep', label: 'Fallback 6', type: 'request'},
+      ],
+      focus: ['kafka', 'op', 'hpa'],
+      status: {kafka: 'error', op: 'warn'},
+      badges: {jobs: null, so: 'fallback 6'},
+      values: {lag: {text: 'Unknown', tone: 'bad'}, replicas: '6', state: {text: 'Ready=False · fallback', tone: 'bad'}},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Scale on the work waiting, and plan for zero and for errors',
+      text: [
+        'A ScaledObject lists triggers. The operator polls them, handles 0 ↔ 1 with the activation threshold, and creates an HPA that scales 1 ↔ N on the threshold through the KEDA metrics server.',
+        'Scale to zero trades cost for a cold start. cooldownPeriod guards only the step to zero. ScaledJob fits long one-message tasks. TriggerAuthentication holds secrets, and fallback decides what happens when the source is gone.',
+      ],
+      keyIdea: 'Check kubectl get scaledobject for READY and ACTIVE, then kubectl describe hpa for the value the HPA really used.',
+      flows: [
+        {from: 'op', to: 'kafka', label: 'Lag', type: 'request'},
+        {from: 'hpa', to: 'ma', label: 'Metric', type: 'watch'},
+        {from: 'hpa', to: 'dep', label: 'replicas', type: 'request'},
+      ],
+      focus: ['op', 'ma', 'hpa'],
+      status: {kafka: null, op: null},
+      badges: {so: null},
+    },
+  ]}
+/>
+
+## ScaledObject fields that change behavior
+
+| Field | Default | What it controls |
+|---|---|---|
+| `minReplicaCount` | 0 | Lowest replica count. Above 0, the activation threshold is ignored |
+| `maxReplicaCount` | 100 | Highest replica count passed to the HPA |
+| `pollingInterval` | 30 s | How often the operator checks each trigger |
+| `cooldownPeriod` | 300 s | Wait after the last active trigger before going to 0. Only for 1 → 0 |
+| `initialCooldownPeriod` | 0 s | Wait after creation before the first scale to 0 |
+| `idleReplicaCount` | unset | Replicas when no trigger is active (only 0 is supported, and it must be below `minReplicaCount`) |
+| `fallback.failureThreshold` / `fallback.replicas` | none | After this many failed polls, scale to this count |
+| `advanced.horizontalPodAutoscalerConfig.behavior` | HPA defaults | Scale-up and scale-down speed for 1 ↔ N |
+| trigger `activation…` (e.g. `activationLagThreshold`) | 0 | Metric must be above this to wake from 0 |
+
+## Try it yourself
+
+```bash
+kubectl get scaledobject -A                          # READY, ACTIVE, FALLBACK, TRIGGERS
+kubectl describe scaledobject orders                 # Conditions and events from the operator
+kubectl get hpa keda-hpa-orders                      # The HPA KEDA created
+kubectl describe hpa keda-hpa-orders                 # Current external metric value and scaling events
+kubectl get --raw "/apis/external.metrics.k8s.io/v1beta1" | head -c 400   # KEDA metrics server is registered
+kubectl get triggerauthentication,clustertriggerauthentication -A
+kubectl get scaledjob,jobs -A                        # ScaledJob and the Jobs it created
+kubectl logs -n keda deploy/keda-operator | tail     # Scaler errors (adjust namespace to your install)
+```
+
+<Quiz questions={[
+  {q: 'A ScaledObject has minReplicaCount 0, cooldownPeriod 300 and an HPA scale-down window of 300 seconds. Load falls from 10 replicas to none. Which part decides the drop from 10 to 1?', options: ['cooldownPeriod', 'The HPA and its scale-down behavior', 'pollingInterval'], answer: 1, why: 'cooldownPeriod only covers the final step from 1 to 0. Between 1 and N the HPA KEDA created does the scaling.'},
+  {q: 'A consumer scaled to zero. A single message arrives every 10 minutes at night, and a Pod keeps starting and stopping. What fixes this most directly?', options: ['Raise maxReplicaCount', 'Lower pollingInterval', 'Raise the activation threshold so a few stray messages do not wake the workload'], answer: 2, why: 'Activation decides 0 ↔ 1. Setting it above the background noise keeps the workload at zero until there is real work.'},
+  {q: 'The Prometheus server behind a trigger goes down and no fallback is set. What happens to replicas?', options: ['The HPA gets no metric value and stops scaling on that trigger, so replicas stay where they were', 'KEDA scales the workload to zero at once', 'KEDA scales to maxReplicaCount to be safe'], answer: 0, why: 'Without a value the HPA cannot compute a new count. With fallback set, KEDA would serve a value that moves the workload to fallback.replicas after failureThreshold failures.'},
+]} />
+
+Further reading: [KEDA concepts](https://keda.sh/docs/latest/concepts/) · [ScaledObject spec](https://keda.sh/docs/latest/reference/scaledobject-spec/) · [Scaling Jobs](https://keda.sh/docs/latest/concepts/scaling-jobs/) · [Kafka scaler](https://keda.sh/docs/latest/scalers/apache-kafka/) · [Authentication](https://keda.sh/docs/latest/concepts/authentication/) · [Scaling with Load (HPA)](../k8s/autoscaling.mdx) · [Autoscaling LLM Inference](../ai/llm-autoscaling.mdx) · [Run Once and Finish (Job · CronJob)](../k8s/job-cronjob.mdx)

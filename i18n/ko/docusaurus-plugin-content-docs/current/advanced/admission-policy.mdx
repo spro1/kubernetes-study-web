@@ -247,4 +247,10 @@ kubectl get validatingwebhookconfigurations                # 클러스터에 등
 kubectl get validatingwebhookconfigurations -o custom-columns=NAME:.metadata.name,POLICY:.webhooks[*].failurePolicy,TIMEOUT:.webhooks[*].timeoutSeconds
 ```
 
+<Quiz questions={[
+  {q: '메모리 limit을 요구하는 ValidatingAdmissionPolicy를 만들었는데, limit 없는 Deployment가 여전히 통과한다. 먼저 확인할 것은 무엇인가?', options: ['CEL 식이 비용 검사를 통과했는지', '이 정책을 쓰는 ValidatingAdmissionPolicyBinding이 범위와 동작을 갖고 있는지', '웹훅 파드가 돌고 있는지'], answer: 1, why: '정책만으로는 정의일 뿐이다. 바인딩이 정책 이름을 가리키고 범위와 validationActions를 정해야 움직이기 때문이다.'},
+  {q: '정책 웹훅의 파드가 죽어 서비스에 엔드포인트가 없다. 웹훅은 failurePolicy: Fail이고 모든 파드에 걸린다. 어떻게 되는가?', options: ['걸리는 요청이 검사 없이 통과한다', '기존 파드만 멈춘다', 'API 서버가 CEL 정책으로 대신 검사한다', '걸리는 요청이 타임아웃까지 기다린 뒤 거절되어, 웹훅 자신의 새 파드를 포함해 새 파드가 하나도 못 뜬다'], answer: 3, why: 'Fail이면 걸리는 요청은 타임아웃 뒤 모두 거절된다. 모든 파드를 거는 규칙이면 웹훅 자신의 새 파드도 막히기 때문이다.'},
+  {q: ':latest 금지 규칙을 Deny로 바꿨다. 지난달 :latest 이미지로 만든 Deployment가 아직 돈다. 그 Deployment는 어떻게 되는가?', options: ['계속 돌지만, 다음에 고칠 때는 레이블 하나만 바꿔도 거절된다', '즉시 지워진다', '어드미션이 다시 검사해 etcd에 invalid로 표시한다'], answer: 0, why: '어드미션은 생성·수정·삭제 요청만 보고 저장된 객체는 보지 않는다. 그래서 그 Deployment에 대한 다음 쓰기가 막히기 때문이다.'},
+]} />
+
 더 읽을거리: [Validating Admission Policy](https://kubernetes.io/docs/reference/access-authn-authz/validating-admission-policy/) · [Mutating Admission Policy](https://kubernetes.io/docs/reference/access-authn-authz/mutating-admission-policy/) · [동적 어드미션 컨트롤(웹훅)](https://kubernetes.io/docs/reference/access-authn-authz/extensible-admission-controllers/) · [쿠버네티스의 CEL](https://kubernetes.io/docs/reference/using-api/cel/) · [Kyverno](https://kyverno.io/docs/) · [OPA Gatekeeper](https://open-policy-agent.github.io/gatekeeper/website/docs/) · [API 요청이 저장되기까지](../advanced/api-request-path.mdx) · [파드 보안 기준과 securityContext](../advanced/pod-security.mdx)

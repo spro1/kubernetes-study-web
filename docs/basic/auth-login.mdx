@@ -1,7 +1,7 @@
 ---
 id: auth-login
 title: How Logging In Works (Sessions, JWT, OIDC)
-sidebar_label: 02 · How Logging In Works
+sidebar_label: 03 · How Logging In Works
 description: Animated walkthrough of logging in to a web app, from password hashing and session cookies to stateless JWTs, "Log in with Google" through the OAuth 2.0 authorization code flow with PKCE and OpenID Connect, ID, access and refresh tokens, and 401 versus 403
 summary: 'Password hashes, session cookies versus JWTs, the OIDC authorization code flow with PKCE, three kinds of token, and 401 versus 403.'
 icon: ticket
@@ -215,5 +215,11 @@ echo "$TOKEN" | cut -d. -f2 | tr '_-' '/+' | base64 -d; echo   # Payload: iss, s
 curl -i -H "Authorization: Bearer $TOKEN" https://api.example.com/me   # Watch for 200, 401 (+ WWW-Authenticate) or 403
 date -r 1767225600                                                     # Turn an exp value into a time (macOS; GNU: date -d @1767225600)
 ```
+
+<Quiz questions={[
+  {q: 'alice has a valid, fresh access token, but calling an admin endpoint returns 403. What should she do?', options: ['Get a new access token with the refresh token', 'Log in again', 'Get more permission granted, because her identity is known but the action is not allowed'], answer: 2, why: '403 means "I know who you are, and the answer is no". A new token will not help. 401 is the code for missing, invalid or expired credentials.'},
+  {q: 'A user\'s JWT is stolen. Why is it harder to cut off than a stolen session cookie?', options: ['A signed JWT stays valid until exp unless you add something like a denylist, while a session is revoked by deleting its record', 'JWTs are encrypted, so the server cannot read them', 'JWTs cannot carry an expiry time', 'Session cookies are never sent over the network'], answer: 0, why: 'Any server with the key accepts a validly signed JWT without a lookup. Deleting the session record stops a cookie at once, so keep JWT lifetimes short.'},
+  {q: 'In the authorization code flow, an attacker steals the one-time code from the redirect. Why can\'t they get tokens with it?', options: ['The code is encrypted with the user\'s password', 'Trading the code for tokens also needs the PKCE code_verifier, which only the client that made the challenge knows', 'The identity provider only accepts codes from Google domains'], answer: 1, why: 'The app sends the code together with the code_verifier to the token endpoint. Without the verifier, a stolen code alone is useless.'},
+]} />
 
 Further reading: [OAuth 2.0 (RFC 6749)](https://datatracker.ietf.org/doc/html/rfc6749) · [PKCE (RFC 7636)](https://datatracker.ietf.org/doc/html/rfc7636) · [OAuth 2.0 Security Best Current Practice (RFC 9700)](https://datatracker.ietf.org/doc/html/rfc9700) · [JWT (RFC 7519)](https://datatracker.ietf.org/doc/html/rfc7519) · [OpenID Connect Core](https://openid.net/specs/openid-connect-core-1_0.html) · [OWASP Password Storage Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html) · [OWASP Session Management Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html) · [Kubernetes OIDC authentication](https://kubernetes.io/docs/reference/access-authn-authz/authentication/#openid-connect-tokens) · [Permission Checks on One API Request (IAM)](../cloud/iam-request.mdx) · [Who Can Do What (RBAC)](../k8s/rbac.mdx)

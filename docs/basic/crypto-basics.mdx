@@ -1,0 +1,272 @@
+---
+id: crypto-basics
+title: Cryptography a Developer Needs
+sidebar_label: 04 · Cryptography basics
+description: Animated walkthrough of hashes, HMAC, AES-GCM, public and private keys, digital signatures, ECDHE key exchange and password hashing, where each appears in TLS, JWT, image signing, SSH and KMS, and the common mistakes
+summary: 'Hash, HMAC, symmetric and asymmetric keys, signatures and key exchange: what each one guarantees, where you meet it, and the mistakes that break it.'
+icon: shield
+hide_table_of_contents: true
+---
+
+# Cryptography a Developer Needs
+
+You rarely write crypto code, but you configure it every day: TLS, JWTs, SSH keys, signed images, secrets in a KMS. Follow one message from a sender to a receiver and see which tool guards which property, and how each one breaks when misused.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~12 min', level: 'Beginner'}}
+  nodes={[
+    {id: 'sender', label: 'Sender', sub: 'Has a message', icon: 'user', tone: 'app', x: 110, y: 230, show: true},
+    {id: 'net', label: 'Network', sub: 'Attacker can read', icon: 'alert', tone: 'ext', x: 500, y: 230, show: true},
+    {id: 'receiver', label: 'Receiver', sub: 'Wants to trust it', icon: 'server', tone: 'app', x: 890, y: 230, show: true},
+    {id: 'hash', label: 'SHA-256', sub: 'Hash · no key', icon: 'layers', tone: 'store', x: 310, y: 80},
+    {id: 'hmac', label: 'HMAC', sub: 'Hash + shared key', icon: 'ticket', tone: 'store', x: 500, y: 80},
+    {id: 'aes', label: 'AES-GCM', sub: 'One key, both ways', icon: 'box', tone: 'store', x: 690, y: 80},
+    {id: 'priv', label: 'Private key', sub: 'Never leaves owner', icon: 'shield', tone: 'cp', x: 310, y: 380},
+    {id: 'kex', label: 'ECDHE', sub: 'Key exchange', icon: 'split', tone: 'cp', x: 500, y: 380},
+    {id: 'pub', label: 'Public key', sub: 'Share with anyone', icon: 'gate', tone: 'cp', x: 690, y: 380},
+    {id: 'pwdb', label: 'Password DB', sub: 'Slow hashes only', icon: 'db', tone: 'store', x: 110, y: 390},
+  ]}
+  metrics={[
+    {id: 'tool', label: 'Tool'},
+    {id: 'gives', label: 'Guarantees'},
+    {id: 'key', label: 'Key'},
+    {id: 'where', label: 'You meet it in'},
+  ]}
+  learn={[
+    {text: 'A hash checks integrity but anyone can recompute it', at: 1},
+    {text: 'HMAC and AES-GCM: one shared key for integrity and secrecy', at: 2},
+    {text: 'ECB mode, nonce reuse, MD5 and SHA-1', at: 4},
+    {text: 'Signatures: sign with the private key, verify with the public key', at: 7},
+    {text: 'Why passwords are hashed slowly, never encrypted', at: 9},
+  ]}
+  steps={[
+    {
+      short: 'Start',
+      kind: '시작',
+      title: 'Four questions about one message',
+      text: [
+        'The sender sends a message over a network where an attacker can read and change bytes. The receiver wants answers to four questions.',
+        'Was it changed (integrity)? Can others read it (confidentiality)? Who really sent it (authenticity)? And how do two sides agree on a key without ever meeting? Each crypto tool answers some of these, never all.',
+      ],
+      flows: [
+        {from: 'sender', to: 'net', label: 'Message', type: 'request'},
+        {from: 'net', to: 'receiver', label: 'Maybe changed', type: 'request'},
+      ],
+      focus: ['sender', 'net', 'receiver'],
+      status: {net: 'warn'},
+    },
+    {
+      short: 'Hash',
+      kind: '원리',
+      title: 'A hash is a fingerprint that only goes one way',
+      text: [
+        'SHA-256 turns any input into a fixed 256-bit digest. Change one bit of the input and the digest looks completely different. You cannot turn a digest back into the input, and finding two inputs with the same digest is infeasible.',
+        'That makes it a good integrity check: download a file, hash it, and compare with the published digest. A container image digest (sha256:…) works the same way. But a hash has no key. An attacker who changes the message can simply compute a new hash.',
+      ],
+      keyIdea: 'A hash detects accidental change. Against an attacker, the digest itself must come from a trusted place.',
+      flows: [
+        {from: 'sender', to: 'hash', label: 'Data', type: 'request'},
+        {from: 'hash', to: 'receiver', label: 'Digest', type: 'response'},
+      ],
+      focus: ['hash'],
+      values: {tool: 'SHA-256', gives: 'Integrity (no key)', key: 'None', where: 'Image digests, checksums'},
+    },
+    {
+      short: 'HMAC',
+      kind: '원리',
+      title: 'HMAC mixes in a shared secret',
+      text: [
+        'HMAC computes a hash over the message together with a secret key that both sides hold. Without the key, an attacker cannot produce a valid tag for a changed message.',
+        'Webhooks use this: the provider sends an HMAC-SHA256 of the body in a header, and you recompute it with your shared secret. JWTs signed with HS256 are HMAC too. Compare tags with a constant-time function, not ==, so timing does not leak how many bytes matched.',
+      ],
+      flows: [
+        {from: 'hmac', to: 'sender', label: 'Shared key', type: 'watch'},
+        {from: 'hmac', to: 'receiver', label: 'Shared key', type: 'watch'},
+        {from: 'sender', to: 'net', label: 'Body + tag', type: 'request'},
+        {from: 'net', to: 'receiver', label: 'Recompute', type: 'request'},
+      ],
+      focus: ['hmac'],
+      status: {net: null},
+      values: {tool: 'HMAC-SHA256', gives: 'Integrity + who (shared)', key: 'One shared secret', where: 'Webhooks, JWT HS256'},
+    },
+    {
+      short: 'AES-GCM',
+      kind: '원리',
+      title: 'Symmetric encryption: one key locks and unlocks',
+      text: [
+        'AES is a symmetric cipher: the same key encrypts and decrypts, and it is very fast. GCM is a mode that also adds an authentication tag. If anyone changes the ciphertext, decryption fails instead of returning garbage.',
+        'Ciphers that give secrecy and integrity together are called AEAD (authenticated encryption). AES-GCM and ChaCha20-Poly1305 are the ones you see in TLS. Each message also needs a nonce, a value that must never repeat under the same key.',
+      ],
+      keyIdea: 'Pick an AEAD mode. Encryption without authentication lets attackers flip bits you will never notice.',
+      flows: [
+        {from: 'aes', to: 'sender', label: 'Key', type: 'watch'},
+        {from: 'aes', to: 'receiver', label: 'Same key', type: 'watch'},
+        {from: 'sender', to: 'net', label: 'Ciphertext + tag', type: 'request'},
+        {from: 'net', to: 'receiver', label: 'Decrypt + check', type: 'request'},
+      ],
+      focus: ['aes'],
+      status: {net: 'ok'},
+      badges: {net: 'Unreadable'},
+      values: {tool: 'AES-256-GCM', gives: 'Secrecy + integrity', key: 'One shared secret', where: 'TLS data, disk, KMS'},
+    },
+    {
+      short: 'ECB · nonce',
+      kind: '주의',
+      title: 'Right cipher, wrong mode: ECB and repeated nonces',
+      text: [
+        'ECB mode encrypts each 16-byte block on its own, so identical plaintext blocks give identical ciphertext blocks. Patterns in the data show through the encryption. Some libraries still default to it. Never use it.',
+        'With GCM, reusing a nonce under the same key is a disaster. It reveals the XOR of the two plaintexts and lets an attacker forge tags. Let the library generate a random 96-bit nonce per message, or use a counter, and rotate keys long before either could repeat.',
+      ],
+      flows: [{from: 'net', to: 'receiver', label: 'Same nonce twice', type: 'request'}],
+      focus: ['aes', 'net'],
+      status: {aes: 'error', net: 'error'},
+      badges: {net: 'Leaks', aes: 'Nonce reused'},
+    },
+    {
+      short: 'MD5 · SHA-1',
+      kind: '문제',
+      title: 'MD5 and SHA-1 are broken for security',
+      text: [
+        'Practical collisions exist for MD5 and SHA-1: researchers can build two different files with the same digest. An attacker can get one version signed or approved and then swap in the other.',
+        'They are still fine as non-security checksums, for example to spot a corrupted download from a source you already trust. For signatures, certificates, HMAC in new designs, or anything an attacker can influence, use SHA-256 or better.',
+      ],
+      flows: [{from: 'sender', to: 'hash', label: 'MD5?', type: 'request'}],
+      focus: ['hash'],
+      status: {aes: null, net: null, hash: 'error'},
+      badges: {aes: null, net: null, hash: 'Collisions'},
+      values: {tool: 'MD5 / SHA-1', gives: {text: 'No collision safety', tone: 'bad'}, key: 'None', where: 'Legacy only'},
+    },
+    {
+      short: 'Key pair',
+      kind: '원리',
+      title: 'Asymmetric keys: one private, one public',
+      text: [
+        'Symmetric keys leave one problem: how do both sides get the same secret? Asymmetric crypto uses a key pair. The private key stays with its owner. The public key can be given to anyone, because it cannot be turned back into the private key.',
+        'RSA is the oldest family. ECDSA and Ed25519 use elliptic curves and give much smaller keys and signatures for the same strength. In practice, key pairs are used to sign and to agree on keys, not to encrypt bulk data.',
+      ],
+      flows: [{from: 'priv', to: 'pub', label: 'Derives', type: 'watch'}],
+      focus: ['priv', 'pub'],
+      status: {hash: null},
+      badges: {hash: null, priv: 'Secret', pub: 'Published'},
+      values: {tool: 'RSA · ECDSA · Ed25519', gives: 'Building block', key: 'Private + public', where: 'SSH, TLS, JWT, signing'},
+    },
+    {
+      short: 'Signature',
+      kind: '원리',
+      title: 'Sign with the private key, verify with the public key',
+      text: [
+        'The sender hashes the message and signs it with the private key. Anyone holding the public key can verify the signature, but only the private key holder could have made it. Unlike HMAC, verifiers cannot forge.',
+        'You meet this everywhere: JWTs signed with RS256, ES256 or EdDSA are checked with the issuer\'s published keys (JWKS). Image signing tools such as cosign sign image digests. SSH proves your identity by signing a challenge. A certificate is a CA\'s signature that binds a public key to a name.',
+      ],
+      keyIdea: 'A signature answers "who sent this" for anyone who trusts the public key. Getting a trusted public key is the job of certificates and key distribution.',
+      flows: [
+        {from: 'priv', to: 'sender', label: 'Sign', type: 'watch'},
+        {from: 'sender', to: 'net', label: 'Msg + signature', type: 'request'},
+        {from: 'net', to: 'receiver', label: 'Verify', type: 'request'},
+        {from: 'pub', to: 'receiver', label: 'Public key', type: 'watch'},
+      ],
+      focus: ['priv', 'pub', 'receiver'],
+      status: {receiver: 'ok'},
+      badges: {receiver: 'Verified'},
+      values: {tool: 'Ed25519 / ECDSA / RSA', gives: 'Integrity + who (anyone checks)', key: 'Private signs, public verifies', where: 'JWT RS256, cosign, SSH'},
+    },
+    {
+      short: 'ECDHE',
+      kind: '원리',
+      title: 'Key exchange: agree on a secret that is never sent',
+      text: [
+        'With ECDHE, each side makes a fresh, throwaway key pair and sends only the public half. Each combines its own private half with the other\'s public half and gets the same shared secret. An eavesdropper sees both public halves and still cannot compute it.',
+        'TLS 1.3 uses ephemeral key exchange for every full handshake, then encrypts the data with AEAD keys derived from the secret. The server signs the handshake so you know you are not exchanging keys with an attacker in the middle. Because the throwaway keys are deleted, a server key stolen later cannot decrypt recorded traffic. This is forward secrecy.',
+      ],
+      flows: [
+        {from: 'sender', to: 'kex', label: 'Public half', type: 'request'},
+        {from: 'receiver', to: 'kex', label: 'Public half', type: 'request'},
+        {from: 'kex', to: 'aes', label: 'Session key', type: 'watch'},
+      ],
+      focus: ['kex', 'aes'],
+      status: {receiver: null},
+      badges: {receiver: null, priv: null, pub: null, kex: 'Ephemeral'},
+      values: {tool: 'ECDHE (X25519)', gives: 'Shared key + forward secrecy', key: 'Throwaway pairs', where: 'TLS 1.3, SSH'},
+    },
+    {
+      short: 'Passwords',
+      kind: '주의',
+      title: 'Passwords are hashed slowly, never encrypted',
+      text: [
+        'Encrypted passwords can be decrypted: whoever gets the key gets every password. Plain SHA-256 is no better, because GPUs try billions of guesses per second against a leaked hash.',
+        'Store passwords with a slow, salted password hashing function: Argon2id, scrypt or bcrypt. The per-user salt stops precomputed tables, and the tunable cost makes each guess expensive. To log in, hash the typed password the same way and compare.',
+      ],
+      keyIdea: 'Encrypt data you need to read back. Hash, slowly, data you only need to check.',
+      flows: [{from: 'sender', to: 'pwdb', label: 'Argon2id + salt', type: 'request'}],
+      focus: ['pwdb'],
+      badges: {kex: null, pwdb: 'Argon2id'},
+      values: {tool: 'Argon2id · bcrypt', gives: 'Slow to guess', key: 'Per-user salt', where: 'Login systems'},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Pick the tool by the question, and use a vetted library',
+      text: [
+        'Hash for integrity with no key. HMAC when both sides share a key. AES-GCM to keep data secret and untampered. Signatures when many must verify but only one may sign. ECDHE to agree on a session key with forward secrecy. Argon2id or bcrypt for passwords.',
+        'TLS uses nearly all of them in one handshake. A KMS keeps master keys inside managed hardware and wraps your data keys (envelope encryption). Do not invent your own scheme or combine primitives by hand. Use a well-reviewed library and its high-level API.',
+      ],
+      keyIdea: 'Most crypto failures are misuse, not broken math: wrong mode, reused nonce, weak hash, homemade protocol. Choose defaults from your library and your platform.',
+      flows: [
+        {from: 'sender', to: 'net', label: 'TLS', type: 'request'},
+        {from: 'net', to: 'receiver', type: 'request'},
+      ],
+      focus: ['hash', 'hmac', 'aes', 'priv', 'kex', 'pub'],
+      status: {net: 'ok'},
+      badges: {pwdb: null, net: 'Protected'},
+      values: {tool: '—', gives: '—', key: '—', where: '—'},
+    },
+  ]}
+/>
+
+## Which tool answers which question
+
+| Tool | Integrity | Secrecy | Who sent it | Key | Where you see it |
+|---|---|---|---|---|---|
+| Hash (SHA-256) | Yes, if the digest is trusted | No | No | None | Image digests, file checksums |
+| HMAC | Yes | No | Someone holding the shared key | One shared secret | Webhook signatures, JWT HS256, API request signing |
+| AEAD (AES-GCM, ChaCha20-Poly1305) | Yes | Yes | Someone holding the shared key | One shared secret | TLS records, disk and database encryption, KMS data keys |
+| Signature (Ed25519, ECDSA, RSA) | Yes | No | The private key holder, checkable by anyone | Private signs, public verifies | JWT RS256/ES256, cosign, SSH, certificates |
+| Key exchange (ECDHE) | — | Makes a shared key | Only with a signature on top | Throwaway key pairs | TLS 1.3, SSH |
+| Password hash (Argon2id, scrypt, bcrypt) | Checks a guess | — | — | Per-user salt, cost settings | User login databases |
+
+| Mistake | What goes wrong | Do instead |
+|---|---|---|
+| Homemade scheme or protocol | Subtle flaws that tests never catch | Use a vetted library's high-level API, and TLS for transport |
+| ECB mode | Equal blocks give equal ciphertext, patterns leak | Use an AEAD mode (GCM) |
+| Reusing a GCM nonce | Plaintext XOR leaks, tags can be forged | Random 96-bit nonce or counter per message, rotate keys |
+| MD5 or SHA-1 for security | Collisions let an attacker swap content | SHA-256 or better |
+| Encrypting or fast-hashing passwords | A key leak or a GPU recovers them | Argon2id, scrypt or bcrypt with a salt |
+| `==` to compare MACs | Timing leaks how many bytes matched | Constant-time compare |
+
+## Try it yourself
+
+```bash
+echo -n 'hello' | openssl dgst -sha256                    # Hash: same input, same digest
+echo -n 'hello!' | openssl dgst -sha256                   # One character changes everything
+echo -n 'payload' | openssl dgst -sha256 -hmac 'secret'   # HMAC with a shared key
+
+openssl genpkey -algorithm ed25519 -out key.pem           # Private key
+openssl pkey -in key.pem -pubout -out pub.pem             # Public key derived from it
+echo 'release v1' > msg.txt
+openssl pkeyutl -sign -inkey key.pem -rawin -in msg.txt -out msg.sig                  # Sign with private
+openssl pkeyutl -verify -pubin -inkey pub.pem -rawin -in msg.txt -sigfile msg.sig     # Verify with public
+
+openssl s_client -connect example.com:443 -tls1_3 </dev/null 2>/dev/null | grep -iE 'cipher|temp key|group'   # AEAD cipher and key exchange group (X25519, or hybrid X25519MLKEM768)
+ssh-keygen -t ed25519 -f ./demo_key -N '' && ssh-keygen -lf ./demo_key.pub   # SSH key pair and its SHA256 fingerprint
+htpasswd -nbBC 12 alice 'correct horse'                  # bcrypt hash, cost 12 ($2y$12$...)
+```
+
+<Quiz questions={[
+  {q: 'A file is published with its SHA-256 digest on the same server. An attacker controls that server. What does the digest protect against?', options: ['Tampering by the attacker, because SHA-256 cannot be reversed', 'Only accidental corruption, because the attacker can replace both the file and the digest', 'Nothing, because SHA-256 has known collisions'], answer: 1, why: 'A hash has no key. Anyone who can change the file can compute a new digest. To stop an attacker, the digest must come from a trusted place, or the file must be signed.'},
+  {q: 'Why do JWTs for many APIs use RS256 or ES256 instead of HS256?', options: ['Every API can verify tokens with a public key without being able to mint new ones', 'Signatures encrypt the payload so nobody can read the claims', 'HMAC is broken and should never be used'], answer: 0, why: 'With HS256 every verifier holds the same secret and could also forge tokens. With a signature only the issuer holds the private key, and verifiers get the public key from JWKS. The payload stays readable either way.'},
+  {q: 'An attacker records TLS 1.3 traffic today and steals the server\'s private key next year. What can they decrypt?', options: ['All recorded sessions, using the private key', 'Only sessions that used AES-GCM', 'None of the recorded sessions, because the session keys came from throwaway ECDHE keys'], answer: 2, why: 'In TLS 1.3 the server key only signs the handshake. Session keys come from ephemeral key exchange and are deleted, so the stolen key cannot recover them. This is forward secrecy.'},
+]} />
+
+Further reading: [OWASP Cryptographic Storage Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Cryptographic_Storage_Cheat_Sheet.html) · [OWASP Password Storage Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html) · [RFC 8446: TLS 1.3](https://datatracker.ietf.org/doc/html/rfc8446) · [Encrypting Secret Data at Rest (Kubernetes)](https://kubernetes.io/docs/tasks/administer-cluster/encrypt-data/) · [HTTPS and Certificates](../basic/https-cert.mdx) · [How Logging In Works (Sessions, JWT, OIDC)](../basic/auth-login.mdx)

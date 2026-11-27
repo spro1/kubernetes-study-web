@@ -1,0 +1,262 @@
+---
+id: reverse-proxy
+title: 리버스 프록시와 로드밸런싱
+sidebar_label: 02 · 리버스 프록시
+description: 포워드 프록시와 리버스 프록시, L4와 L7 로드밸런싱, 분산 알고리즘, 헬스 체크, 고정 세션, X-Forwarded-For와 클라이언트 IP, TLS 종료와 패스스루, 타임아웃과 502·504, 업스트림 keep-alive 풀을 애니메이션으로 본다
+summary: '리버스 프록시가 L4와 L7에서 보는 것, 백엔드를 고르고 확인하는 방식, 클라이언트 IP가 사라지는 이유, 502와 504의 진짜 뜻.'
+icon: split
+hide_table_of_contents: true
+---
+
+# 리버스 프록시와 로드밸런싱
+
+서비스로 들어오는 요청은 대부분 코드에 닿기 전에 nginx, HAProxy, Envoy 같은 리버스 프록시를 지난다. 요청 하나를 L4 로드밸런서와 L7 프록시로 따라가며 백엔드를 어떻게 고르고 확인하는지, 어떤 헤더가 붙는지, 502와 504가 어디서 나오는지 본다.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '약 12분', level: '중급'}}
+  groups={[
+    {label: '우리 서버', x: 215, y: 25, w: 770, h: 410, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'client', label: '클라이언트', sub: 'IP 203.0.113.7', icon: 'browser', tone: 'ext', x: 100, y: 230, show: true},
+    {id: 'fwd', label: '포워드 프록시', sub: '클라이언트 대신', icon: 'gate', tone: 'ext', x: 100, y: 390},
+    {id: 'l4', label: 'L4 로드밸런서', sub: 'IP:포트만 봄', icon: 'scale', tone: 'cp', x: 310, y: 230, w: 160},
+    {id: 'rp', label: '리버스 프록시', sub: 'L7 · 호스트·경로·헤더', icon: 'split', tone: 'node', x: 540, y: 230, w: 180},
+    {id: 'app1', label: '앱 1', sub: '10.0.1.11:8080', icon: 'server', tone: 'app', x: 840, y: 95},
+    {id: 'app2', label: '앱 2', sub: '10.0.1.12:8080', icon: 'server', tone: 'app', x: 840, y: 230},
+    {id: 'app3', label: '앱 3', sub: '10.0.1.13:8080', icon: 'server', tone: 'app', x: 840, y: 365},
+  ]}
+  metrics={[
+    {id: 'layer', label: '계층'},
+    {id: 'sees', label: '프록시가 보는 것'},
+    {id: 'ip', label: '앱이 아는 클라이언트'},
+    {id: 'status', label: '응답'},
+  ]}
+  learn={[
+    {text: '포워드 프록시와 리버스 프록시, L4와 L7의 차이', at: 1},
+    {text: '라운드 로빈, 최소 연결, 일관 해시', at: 3},
+    {text: '능동·수동 헬스 체크와 고정 세션을 피하는 이유', at: 4},
+    {text: 'X-Forwarded-For와 믿어도 되는 클라이언트 IP', at: 6},
+    {text: 'TLS 종료와 패스스루, 타임아웃, 502와 504, keep-alive 풀', at: 7},
+  ]}
+  steps={[
+    {
+      short: '시작',
+      kind: '시작',
+      title: '포워드 프록시는 클라이언트 편, 리버스 프록시는 서버 편',
+      text: [
+        '포워드 프록시는 클라이언트 쪽에 있다. 회사의 외부 접속용 프록시가 그 예다. 클라이언트가 이 프록시를 쓰도록 설정되어 있고, 프록시가 대신 어느 사이트든 찾아간다. 사이트는 클라이언트가 아니라 프록시를 본다.',
+        '리버스 프록시는 우리 서버 앞에 있다. 클라이언트는 이것이 프록시인 줄 모른다. 공개 주소 하나로 접속하면 프록시가 어느 백엔드가 답할지 정한다. 로드밸런서, 인그레스 컨트롤러, API 게이트웨이가 모두 리버스 프록시다.',
+      ],
+      flows: [
+        {from: 'client', to: 'fwd', label: '외부로', type: 'request'},
+        {from: 'client', to: 'l4', label: 'shop.example.com', type: 'request'},
+      ],
+      focus: ['fwd', 'l4', 'rp'],
+    },
+    {
+      short: 'L4',
+      kind: '원리',
+      title: 'L4 로드밸런서는 요청이 아니라 연결을 옮긴다',
+      text: [
+        'L4 로드밸런서는 TCP나 UDP를 다룬다. 출발지와 목적지의 IP와 포트를 보고, 연결이 열릴 때 대상을 하나 고른 뒤 그 연결의 모든 바이트를 같은 대상에 보낸다. URL이나 헤더는 읽지 못한다.',
+        '그래서 빠르고 프로토콜을 가리지 않는다. DB, gRPC, MQTT, TLS가 그대로 지나간다. 클라우드의 네트워크 로드밸런서, IPVS, mode tcp로 둔 HAProxy가 이렇게 동작한다.',
+      ],
+      flows: [
+        {from: 'client', to: 'l4', label: 'TCP :443', type: 'request'},
+        {from: 'l4', to: 'rp', label: '같은 연결', type: 'request'},
+      ],
+      focus: ['l4'],
+      values: {layer: 'L4 (TCP)', sees: '203.0.113.7 → :443'},
+    },
+    {
+      short: 'L7',
+      kind: '원리',
+      title: 'L7 프록시는 HTTP 요청을 하나하나 읽는다',
+      text: [
+        'L7 리버스 프록시는 클라이언트의 HTTP 연결을 자기가 받아 끝내고 요청마다 해석한다. 호스트, 경로, 헤더, 쿠키가 보이므로 /api는 이쪽 풀로, /는 저쪽 풀로 보내고, 경로를 바꾸고, 헤더를 붙이고, 재시도하거나 직접 오류를 돌려줄 수 있다.',
+        '그다음 백엔드로는 별도의 연결로 요청을 보낸다. 연결이 둘이니 타임아웃도 두 벌이다. nginx, mode http로 둔 HAProxy, Envoy가 이렇게 하고, 인그레스나 게이트웨이 컨트롤러도 속에서는 이것을 돌린다.',
+      ],
+      keyIdea: 'L4는 연결마다 한 번 정한다. L7은 요청마다 정하므로 keep-alive 연결 하나로 온 요청도 여러 백엔드로 나뉜다.',
+      flows: [
+        {from: 'l4', to: 'rp', label: 'GET /api/cart', type: 'request'},
+        {from: 'rp', to: 'app1', label: '새 연결', type: 'request'},
+      ],
+      focus: ['rp'],
+      values: {layer: 'L7 (HTTP)', sees: '호스트, /api/cart, 헤더'},
+    },
+    {
+      short: '알고리즘',
+      kind: '원리',
+      title: '라운드 로빈, 최소 연결, 일관 해시',
+      text: [
+        '라운드 로빈은 백엔드를 차례로 돌며, nginx와 Envoy의 기본값이다. 요청 비용이 비슷하면 이것으로 충분하다. 최소 연결(nginx의 least_conn, HAProxy의 leastconn, Envoy의 LEAST_REQUEST)은 처리 중인 요청이 가장 적은 백엔드로 보낸다. 일부 요청이 느릴 때 도움이 된다.',
+        '일관 해시는 URL이나 사용자 ID 같은 키를 백엔드에 대응시킨다. 같은 키는 계속 같은 백엔드로 가서 캐시에 좋고, 백엔드를 더하거나 빼도 전부 다시 섞이지 않고 일부 키만 옮겨 간다.',
+      ],
+      flows: [
+        {from: 'rp', to: 'app1', label: '1', type: 'request'},
+        {from: 'rp', to: 'app2', label: '2', type: 'request'},
+        {from: 'rp', to: 'app3', label: '3', type: 'request'},
+      ],
+      focus: ['rp', 'app1', 'app2', 'app3'],
+    },
+    {
+      short: '헬스 체크',
+      kind: '장애',
+      title: '죽은 백엔드는 풀에서 빠져야 한다',
+      text: [
+        '앱 3이 응답을 멈췄다. 능동 헬스 체크는 정해진 주기로 백엔드마다 GET /healthz 같은 요청을 보내고, 몇 번 실패하면 풀에서 뺀다. HAProxy는 server 줄의 check, Envoy는 클러스터의 health_checks로 설정한다. 오픈소스 nginx에는 능동 체크가 없다.',
+        '수동 체크는 실제 트래픽을 지켜본다. nginx에서는 fail_timeout 안에 max_fails번(기본 1번, 10초) 실패하면 그 서버를 fail_timeout 동안 쓰지 않는다. Envoy는 이것을 이상치 감지(outlier detection)라고 부른다. 추가 트래픽은 없지만 실제 요청이 실패한 뒤에야 알아챈다.',
+      ],
+      keyIdea: '되도록 둘 다 쓴다. 능동 체크는 사용자보다 먼저 죽은 백엔드를 찾고, 수동 체크는 /healthz엔 답하지만 실제 요청엔 실패하는 백엔드를 잡는다.',
+      flows: [
+        {from: 'rp', to: 'app3', label: 'GET /healthz', type: 'watch'},
+        {from: 'rp', to: 'app1', type: 'request'},
+        {from: 'rp', to: 'app2', type: 'request'},
+      ],
+      focus: ['rp', 'app3'],
+      status: {app3: 'error'},
+      badges: {app3: '제외됨'},
+    },
+    {
+      short: '고정 세션',
+      kind: '주의',
+      title: '고정 세션은 사용자를 묶어 두고, 나중에 탈이 난다',
+      text: [
+        '고정 세션(sticky session)은 클라이언트를 매번 같은 백엔드로 보낸다. 프록시가 심은 쿠키나 클라이언트 IP 해시로 정한다. 세션을 메모리에 두는 앱에는 이것이 꼭 필요해 보인다.',
+        '대가는 나중에 온다. 무거운 사용자 몇이 한 백엔드에 몰리면 부하가 고르지 않다. 그 백엔드가 죽거나 다시 배포되면 그 사용자들은 세션을 잃는다. 묶인 사용자가 계속 돌아오니 드레인도 오래 걸린다. 세션 상태는 공유 저장소나 토큰에 두어 어느 백엔드든 어느 요청이든 받게 한다.',
+      ],
+      flows: [{from: 'rp', to: 'app1', label: '늘 앱 1', type: 'request'}],
+      focus: ['rp', 'app1'],
+      status: {app1: 'warn'},
+      badges: {app1: '묶인 사용자'},
+    },
+    {
+      short: '클라이언트 IP',
+      kind: '문제',
+      title: '앱은 클라이언트가 아니라 프록시를 본다',
+      text: [
+        'L7에서 백엔드의 TCP 상대는 프록시다. 그래서 로그도, 속도 제한도, 지역 확인도 10.0.0.5를 본다. 프록시는 X-Forwarded-For: 203.0.113.7을 붙이고, 뒤의 프록시는 자기가 받은 상대 주소를 뒤에 덧붙인다. 표준 Forwarded 헤더(RFC 7239)는 같은 내용을 for=203.0.113.7로 담는다.',
+        '클라이언트도 X-Forwarded-For를 직접 보낼 수 있으니 맨 왼쪽 값은 가짜일 수 있다. 우리가 운영하는 프록시가 붙인 값만 믿는다. 목록을 오른쪽부터 보며 우리 프록시가 아닌 첫 주소에서 멈춘다. nginx에서는 set_real_ip_from과 real_ip_recursive on이 이 일을 한다. L4에는 헤더가 없으니 PROXY 프로토콜이나 출발지 IP를 보존하는 로드밸런서를 쓴다.',
+      ],
+      keyIdea: 'X-Forwarded-For의 첫 값을 그대로 믿지 않는다. 어떤 프록시를 믿을지 설정한다.',
+      flows: [
+        {from: 'rp', to: 'app1', label: 'X-Forwarded-For', type: 'request'},
+      ],
+      focus: ['rp', 'app1'],
+      status: {app1: null},
+      badges: {app1: 'XFF: 203.0.113.7'},
+      values: {ip: {text: '10.0.0.5 (프록시)', tone: 'bad'}},
+    },
+    {
+      short: 'TLS',
+      kind: '원리',
+      title: 'TLS를 프록시에서 끝내거나, 그대로 넘긴다',
+      text: [
+        'TLS 종료(termination)에서는 프록시가 인증서를 갖고 복호화한다. 그래야 경로와 헤더를 읽고, X-Forwarded-For를 붙이고, L7로 라우팅할 수 있다. 백엔드로는 평문 HTTP를 보내거나 새 TLS 연결을 연다(재암호화).',
+        'TLS 패스스루(passthrough)에서는 프록시가 암호화된 바이트를 손대지 않고 넘긴다. IP, 포트, ClientHello의 SNI 이름으로만 라우팅할 수 있고 인증서는 백엔드가 갖는다. 끝에서 끝까지 mTLS처럼 백엔드가 클라이언트의 TLS를 직접 봐야 할 때 쓴다.',
+      ],
+      flows: [
+        {from: 'l4', to: 'rp', label: 'TLS', type: 'request'},
+        {from: 'rp', to: 'app2', label: 'HTTP 또는 새 TLS', type: 'request'},
+      ],
+      focus: ['rp'],
+      badges: {app1: null, rp: '인증서 여기'},
+      values: {ip: {text: 'XFF에서, 믿는 홉만', tone: 'good'}, sees: '복호화된 요청'},
+    },
+    {
+      short: '502 · 504',
+      kind: '장애',
+      title: '502는 나쁜 응답, 504는 제때 오지 않은 응답',
+      text: [
+        '502 Bad Gateway는 프록시가 업스트림에 손을 뻗었는데 쓸 수 없는 것이 돌아왔다는 뜻이다. 연결 거부, 연결 리셋, 잘못된 응답이 그렇다. 앱이 죽었거나, 포트가 틀렸거나, 프록시가 막 쓰려던 연결을 앱이 닫은 경우가 흔하다.',
+        '504 Gateway Timeout은 업스트림이 요청을 받았지만 프록시의 타임아웃 안에 답하지 않았다는 뜻이다. nginx의 proxy_read_timeout 기본값은 60초이고, 응답 전체가 아니라 두 번의 읽기 사이 간격을 잰다. 일은 백엔드에서 끝날 수도 있다. Envoy는 건강한 업스트림이 하나도 없으면 503을 돌려준다.',
+      ],
+      keyIdea: '502면 앱과 연결을 본다. 504면 느린 쿼리와 타임아웃 사슬을 본다. 각 홉의 타임아웃은 그 뒤 홉보다 길어야 한다.',
+      flows: [
+        {from: 'rp', to: 'app2', label: '60초 대기', type: 'request'},
+        {from: 'rp', to: 'l4', label: '504', type: 'response'},
+      ],
+      focus: ['rp', 'app2'],
+      status: {app2: 'warn'},
+      badges: {rp: null, app2: '느린 쿼리'},
+      values: {status: {text: '504 Gateway Timeout', tone: 'bad'}},
+    },
+    {
+      short: 'keep-alive',
+      kind: '원리',
+      title: '업스트림 연결을 다시 쓰고, 유휴 타임아웃 순서를 맞춘다',
+      text: [
+        '요청마다 TCP와 TLS 연결을 새로 열면 시간과 포트가 낭비된다. 프록시는 백엔드마다 쉬고 있는 keep-alive 연결 풀을 두고 다시 쓴다. nginx에서는 upstream 블록의 keepalive 지시어가 이 일을 하고, 업스트림으로 HTTP/1.1을 써야 한다(nginx 1.29.7부터 기본값).',
+        '유휴 타임아웃은 순서가 맞아야 한다. 앱은 쉬는 연결을 5초 만에 닫는데 프록시는 60초 동안 쥐고 있으면, 프록시가 앱이 방금 닫은 연결에 요청을 실어 보내는 일이 생기고 사용자는 가끔 502를 본다. 백엔드의 유휴 타임아웃을 프록시보다 길게 둔다.',
+      ],
+      flows: [
+        {from: 'rp', to: 'app1', label: '재사용', type: 'request'},
+        {from: 'rp', to: 'app2', label: '재사용', type: 'request'},
+      ],
+      focus: ['rp'],
+      status: {app2: null},
+      badges: {app2: null, rp: '연결 풀'},
+      values: {status: {text: '200 OK', tone: 'good'}},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '밖에는 주소 하나, 안에서는 고르고 확인한다',
+      text: [
+        'L4 로드밸런서는 IP와 포트로 연결을 옮긴다. L7 프록시는 요청을 하나하나 읽고, 알고리즘으로 건강한 백엔드를 고르고, 진짜 클라이언트를 알리는 헤더를 붙인다.',
+        '놀랄 일은 대개 홉 사이 경계에서 생긴다. X-Forwarded-For용 신뢰 프록시 목록, TLS가 끝나는 위치, 클라이언트 쪽으로 갈수록 길어지는 타임아웃, 프록시 쪽으로 갈수록 짧아지는 유휴 타임아웃이 그렇다.',
+      ],
+      keyIdea: '사용자가 502나 504를 보면 프록시의 접근·오류 로그부터 읽는다. 어느 업스트림에 보냈는지, 얼마나 기다렸는지, 왜 포기했는지가 거기 있다.',
+      flows: [
+        {from: 'client', to: 'l4', type: 'request'},
+        {from: 'l4', to: 'rp', type: 'request'},
+        {from: 'rp', to: 'app1', type: 'request'},
+        {from: 'rp', to: 'app2', type: 'request'},
+      ],
+      focus: ['l4', 'rp'],
+      status: {app3: null},
+      badges: {app3: null, rp: null},
+      values: {status: '—'},
+    },
+  ]}
+/>
+
+## L4냐 L7이냐, 상태 코드마다 무슨 뜻인가
+
+| | L4 로드밸런서 | L7 리버스 프록시 |
+|---|---|---|
+| 다루는 것 | TCP·UDP 연결 | HTTP 요청 |
+| 보는 것 | IP와 포트(TLS 패스스루면 SNI) | 호스트, 경로, 헤더, 쿠키 |
+| 정하는 시점 | 연결마다 한 번 | 요청마다 |
+| 앱이 아는 클라이언트 IP | 모드에 따라 보존되거나 PROXY 프로토콜로 | `X-Forwarded-For`나 `Forwarded` 헤더 |
+| 할 수 있는 것 | 어떤 프로토콜이든, 아주 빠름 | 경로 라우팅, 경로 변경, 재시도, 인증, 헤더 변경 |
+| 예 | 클라우드 네트워크 LB, IPVS, HAProxy `mode tcp` | nginx, HAProxy `mode http`, Envoy, 클라우드 애플리케이션 LB |
+
+| 프록시가 준 상태 | 뜻 | 흔한 원인 | 확인할 것 |
+|---|---|---|---|
+| 502 Bad Gateway | 업스트림이 거부·리셋하거나 잘못된 응답을 보냈다 | 앱이 죽음, 포트 틀림, 업스트림이 쉬던 keep-alive 연결을 닫음 | 앱 로그, 업스트림 포트, 유휴 타임아웃 |
+| 503 Service Unavailable | 요청을 받을 백엔드가 없다 | 모든 백엔드가 헬스 체크에 실패, 또는 설정된 백엔드가 없음 | 헬스 체크 결과, 프록시 뒤의 엔드포인트 |
+| 504 Gateway Timeout | 업스트림이 프록시 타임아웃 안에 답하지 않았다 | 느린 쿼리나 하위 호출, 너무 짧은 타임아웃 | 업스트림 응답 시간, `proxy_read_timeout`이나 경로 타임아웃 |
+
+## 직접 확인해 보기
+
+```bash
+curl -sv -o /dev/null https://example.com/ 2>&1 | grep -iE '^< (server|via|x-cache)'   # 어느 프록시가 답했나
+curl -s -o /dev/null -w '%{http_code} %{time_total}s\n' https://example.com/           # 상태 코드와 전체 시간
+curl -s -H 'X-Forwarded-For: 1.2.3.4' http://localhost:8080/ip   # 앱이 위조한 헤더를 믿나 (직접 만든 테스트 엔드포인트)
+nginx -T 2>/dev/null | grep -E 'proxy_(connect|read|send)_timeout|keepalive|real_ip'   # 실제 적용된 nginx 타임아웃과 신뢰 설정
+echo 'show servers state' | socat stdio /var/run/haproxy.sock   # HAProxy 백엔드 상태 (stats 소켓 필요)
+curl -s localhost:9901/clusters | grep health_flags              # Envoy 관리 API: 업스트림 호스트별 상태
+kubectl logs -n ingress-nginx deploy/ingress-nginx-controller | grep -E '" 50[234] '   # 인그레스 접근 로그의 502/503/504
+```
+
+<Quiz questions={[
+  {q: '한 사용자의 요청이 모두 keep-alive 연결 하나로 온다. L4 로드밸런서 뒤에서는 늘 같은 백엔드로 가고, L7 프록시 뒤에서는 여러 백엔드로 나뉜다. 왜인가?', options: ['L4 로드밸런서는 기본으로 고정 세션을 쓰니까', 'L4는 연결마다 한 번 대상을 고르고, L7은 HTTP 요청마다 고르니까', 'L7 프록시는 요청마다 연결을 닫으니까'], answer: 1, why: 'L4 로드밸런서는 TCP 연결만 보므로 그 연결의 모든 바이트가 한 대상으로 간다. L7 프록시는 클라이언트 연결을 받아 끝내고 자기 업스트림 연결로 요청마다 다시 정한다.'},
+  {q: '앱이 로그인 속도 제한에 X-Forwarded-For의 첫 값을 클라이언트 IP로 쓴다. 무엇이 문제인가?', options: ['문제없다. 첫 값은 늘 진짜 클라이언트다', 'X-Forwarded-For는 L4에서만 붙는다', '클라이언트가 X-Forwarded-For를 직접 보낼 수 있어서 첫 값은 아무 값이나 될 수 있다'], answer: 2, why: '프록시는 들어온 헤더 뒤에 덧붙일 뿐이다. 믿는 프록시가 붙인 값만 믿을 수 있으니, 목록을 오른쪽부터 보며 믿지 않는 첫 주소에서 멈춘다.'},
+  {q: '사용자가 한 시간에 몇 번씩 무작위로 502를 본다. 앱은 멀쩡하다. 앱은 쉬는 연결을 5초 만에 닫고, 프록시는 쉬는 업스트림 연결을 60초 동안 둔다. 무슨 일인가?', options: ['프록시가 앱이 이미 닫은 연결을 다시 써서 요청이 실패한다', '앱이 너무 느려서 프록시가 타임아웃을 낸다', '헬스 체크가 잠깐 모든 백엔드를 뺀다'], answer: 0, why: '백엔드가 방금 닫은 연결로 보낸 요청은 거부되거나 리셋되고, 프록시는 이것을 502로 알린다. 타임아웃이었다면 504다. 백엔드의 유휴 타임아웃을 프록시보다 길게 둔다.'},
+]} />
+
+더 읽을거리: [nginx upstream 모듈](https://nginx.org/en/docs/http/ngx_http_upstream_module.html) · [HAProxy 설정 매뉴얼](https://docs.haproxy.org/) · [Envoy 로드밸런싱](https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/upstream/load_balancing/load_balancing) · [RFC 7239: Forwarded](https://datatracker.ietf.org/doc/html/rfc7239) · [주소창에 주소를 입력하면](../basic/web-request.mdx) · [요청이 파드에 닿기까지](../k8s/traffic.mdx) · [인그레스 규칙과 TLS](../feature/ingress.mdx)

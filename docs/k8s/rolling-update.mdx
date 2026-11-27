@@ -193,4 +193,10 @@ kubectl rollout undo deployment/try-web              # Roll back to 1.26
 kubectl delete deployment try-web                    # Clean up
 ```
 
+<Quiz questions={[
+  {q: 'During a rolling update of 3 pods with the default settings, when is an old v1 pod removed?', options: ['As soon as the new v2 pod is created', 'Only after a new v2 pod becomes Ready', 'After all three v2 pods are created at once'], answer: 1, why: 'The Deployment shrinks the old ReplicaSet only as new pods become Ready, so the number of serving pods never drops below 3.'},
+  {q: 'The new v2 pods never pass their readiness probe. What happens to the rollout?', options: ['The Deployment deletes ReplicaSet v1 anyway', 'The v2 pods receive requests even though they are not Ready', 'The rollout stops there and the v1 pods keep serving', 'Kubernetes automatically runs rollout undo'], answer: 2, why: 'Old pods are removed only as fast as new pods become Ready. If none become Ready, the rollout stalls and v1 keeps serving.'},
+  {q: 'Why can kubectl rollout undo roll back right away?', options: ['It rebuilds the old image from source', 'The old ReplicaSet is kept at count 0 with the previous template', 'It restores the pods from an etcd snapshot'], answer: 1, why: 'ReplicaSet v1 is not deleted; it stays at count 0. Rollback scales it back up, so no image rebuild is needed.'},
+]} />
+
 Further reading: [Deployments](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/) · [Performing a Rolling Update](https://kubernetes.io/docs/tutorials/kubernetes-basics/update/update-intro/)

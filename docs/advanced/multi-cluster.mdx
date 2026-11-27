@@ -1,0 +1,252 @@
+---
+id: multi-cluster
+title: Running a Fleet of Clusters
+sidebar_label: 15 · Multi-cluster fleet
+description: Animated walkthrough of running several Kubernetes clusters, why teams split clusters by blast radius, region, tenant and upgrades, fleet GitOps with the Argo CD ApplicationSet cluster generator, creating clusters declaratively with Cluster API, cross-cluster service discovery with ServiceExport, ServiceImport and clusterset.local, global load balancing, multi-cluster mesh, and config drift and version skew across a fleet
+summary: 'Why one cluster becomes many, how GitOps and Cluster API keep a fleet alike, how Services are found across clusters, and where drift and version skew creep in.'
+icon: layers
+hide_table_of_contents: true
+---
+
+# Running a Fleet of Clusters
+
+Sooner or later one cluster becomes several. Follow a small fleet as it grows: **Git → Argo CD → clusters**, a new cluster made by **Cluster API**, a Service shared across clusters, and the drift and version skew that a fleet collects over time.
+
+<StepDiagram
+  width={1000}
+  height={470}
+  meta={{duration: '~14 min', level: 'Advanced'}}
+  groups={[
+    {label: 'Management cluster', x: 180, y: 160, w: 260, h: 290, tone: 'mgmt'},
+    {label: 'prod-a · Seoul', x: 480, y: 140, w: 230, h: 150, tone: 'biz'},
+    {label: 'prod-b · Tokyo', x: 740, y: 140, w: 235, h: 150, tone: 'biz'},
+    {label: 'prod-c · new', x: 480, y: 320, w: 230, h: 130, tone: 'biz', from: 3},
+  ]}
+  nodes={[
+    {id: 'user', label: 'Users', sub: 'Korea and Japan', icon: 'user', tone: 'ext', x: 90, y: 70, show: true},
+    {id: 'glb', label: 'Global LB', sub: 'DNS or anycast', icon: 'split', tone: 'ext', x: 300, y: 70},
+    {id: 'git', label: 'Git repo', sub: 'Fleet desired state', icon: 'git', tone: 'store', x: 90, y: 260},
+    {id: 'argo', label: 'Argo CD', sub: 'ApplicationSet', icon: 'agent', tone: 'cp', x: 310, y: 230},
+    {id: 'capi', label: 'Cluster API', sub: 'Cluster · Machines', icon: 'hammer', tone: 'cp', x: 310, y: 380},
+    {id: 'appa', label: 'checkout', sub: 'k8s 1.34', icon: 'box', tone: 'app', x: 595, y: 225, show: true},
+    {id: 'appb', label: 'checkout', sub: 'k8s 1.34', icon: 'box', tone: 'app', x: 857, y: 225, show: true},
+    {id: 'appc', label: 'checkout', sub: 'k8s 1.35', icon: 'box', tone: 'app', x: 595, y: 390},
+    {id: 'imp', label: 'ServiceImport', sub: 'clusterset.local', icon: 'target', tone: 'store', x: 857, y: 385},
+  ]}
+  metrics={[
+    {id: 'clusters', label: 'Clusters'},
+    {id: 'sync', label: 'Sync'},
+    {id: 'dns', label: 'Cross-cluster name'},
+    {id: 'skew', label: 'Versions'},
+  ]}
+  learn={[
+    {text: 'Why teams run several clusters instead of one big one', at: 0},
+    {text: 'One ApplicationSet that deploys to every matching cluster', at: 2},
+    {text: 'Creating clusters declaratively with Cluster API', at: 3},
+    {text: 'ServiceExport, ServiceImport and clusterset.local names', at: 5},
+    {text: 'Drift and version skew across a fleet, and how to catch them', at: 8},
+  ]}
+  steps={[
+    {
+      short: 'Start',
+      kind: '시작',
+      title: 'Why one cluster becomes several',
+      text: [
+        'checkout runs in prod-a in Seoul and prod-b in Tokyo. Teams split clusters for a few reasons: a bad upgrade or a broken admission webhook only takes down one cluster (blast radius), users get a nearby region, data can stay in its country, and tenants or compliance zones stay apart.',
+        'Separate clusters also make upgrades safer. You can upgrade one cluster, watch it, and move on, or build a new cluster and shift traffic to it.',
+      ],
+      keyIdea: 'Every extra cluster is another control plane to patch, monitor and pay for. Split for a reason you can name.',
+      flows: [{from: 'user', to: 'appa', label: 'Requests', type: 'request'}],
+      focus: ['appa', 'appb'],
+      values: {clusters: '2', sync: '—', dns: '—', skew: '1.34 · 1.34'},
+    },
+    {
+      short: 'Fleet Git',
+      kind: '원리',
+      title: 'One Git repo, many clusters',
+      text: [
+        'Making each cluster by hand leads to clusters that differ in ways nobody wrote down. Instead, the fleet\'s desired state lives in Git: the baseline every cluster gets (namespaces, policies, monitoring) and the apps.',
+        'Argo CD runs in a management cluster. Each workload cluster is registered as a Secret labeled argocd.argoproj.io/secret-type: cluster, holding its API server address and credentials. Labels on that Secret, such as env=prod or region=apne2, describe the cluster.',
+      ],
+      flows: [
+        {from: 'git', to: 'argo', label: 'Pull', type: 'watch'},
+      ],
+      focus: ['git', 'argo'],
+    },
+    {
+      short: 'ApplicationSet',
+      kind: '원리',
+      title: 'The cluster generator stamps out one app per cluster',
+      text: [
+        'An ApplicationSet with a clusters generator and selector env=prod makes one Application for every registered cluster with that label. The template fills in {{name}} and {{server}} for each one.',
+        'So checkout is defined once and synced to prod-a and prod-b. Per-cluster differences, such as replica count or region, come from cluster labels or a values file per cluster, not from hand edits.',
+      ],
+      keyIdea: 'kubectl get applications -n argocd shows one Application per cluster. Each one is Synced or OutOfSync on its own.',
+      flows: [
+        {from: 'argo', to: 'appa', label: 'Sync', type: 'request'},
+        {from: 'argo', to: 'appb', label: 'Sync', type: 'request'},
+      ],
+      focus: ['argo', 'appa', 'appb'],
+      badges: {argo: 'env=prod'},
+      values: {sync: {text: '2 / 2 Synced', tone: 'good'}},
+    },
+    {
+      short: 'Cluster API',
+      kind: '원리',
+      title: 'Cluster API creates a cluster from YAML',
+      text: [
+        'The fleet needs a third cluster. With Cluster API, a cluster is also a set of resources in the management cluster: a Cluster, a control plane object such as KubeadmControlPlane, and a MachineDeployment for workers.',
+        'An infrastructure provider (for AWS, Azure, vSphere and others) turns those into real VMs and networks. Machines are immutable: changing the version or size replaces them one by one, much like a Deployment replaces Pods.',
+      ],
+      keyIdea: 'Keep the Cluster API manifests in Git too. Then the clusters themselves are reviewed, versioned and reproducible.',
+      flows: [{from: 'capi', to: 'appc', label: 'Create cluster', type: 'request'}],
+      focus: ['capi'],
+      badges: {capi: 'prod-c'},
+      values: {clusters: '3'},
+    },
+    {
+      short: 'Register',
+      kind: '원리',
+      title: 'A new cluster gets the baseline on its own',
+      text: [
+        'Cluster API writes the new cluster\'s kubeconfig to a Secret in the management cluster. A small script or controller turns it into an Argo CD cluster Secret with the label env=prod.',
+        'The cluster generator notices the new cluster and creates its Application. prod-c gets the same baseline and the same checkout as the others, with no manual steps.',
+      ],
+      flows: [
+        {from: 'capi', to: 'argo', label: 'kubeconfig', type: 'watch'},
+        {from: 'argo', to: 'appc', label: 'Sync', type: 'request'},
+      ],
+      focus: ['argo', 'appc'],
+      badges: {capi: null},
+      values: {sync: {text: '3 / 3 Synced', tone: 'good'}},
+    },
+    {
+      short: 'MCS',
+      kind: '원리',
+      title: 'ServiceExport shares a Service across clusters',
+      text: [
+        'A Service name like checkout.shop.svc.cluster.local only works inside its own cluster. The Multi-Cluster Services API adds a way across. You create a ServiceExport named checkout in namespace shop in prod-a.',
+        'The MCS controller then creates a ServiceImport in the shop namespace of every cluster in the clusterset. Clients use checkout.shop.svc.clusterset.local and reach endpoints exported from any cluster. A namespace with the same name is treated as the same namespace everywhere.',
+      ],
+      keyIdea: 'The MCS API is a spec. Implementations include GKE multi-cluster Services and Submariner. Check which one your fleet runs.',
+      flows: [
+        {from: 'appa', to: 'imp', label: 'ServiceExport', type: 'watch'},
+        {from: 'imp', to: 'appb', label: 'Endpoints', type: 'response'},
+      ],
+      focus: ['imp', 'appa'],
+      badges: {imp: 'shop/checkout'},
+      values: {dns: 'checkout.shop.svc.clusterset.local'},
+    },
+    {
+      short: 'Global LB',
+      kind: '원리',
+      title: 'A global load balancer sends users to a healthy cluster',
+      text: [
+        'Users need one name that reaches a nearby, healthy cluster. A DNS-based balancer answers with a different cluster\'s address by latency or geography. An anycast load balancer gives one IP and routes inside the provider\'s network.',
+        'Either way, health checks per cluster decide who gets traffic. With DNS, clients keep the old answer until the TTL runs out, so failover is never instant.',
+      ],
+      flows: [
+        {from: 'user', to: 'glb', label: 'shop.example.com', type: 'request'},
+        {from: 'glb', to: 'appa', label: 'Korea', type: 'request'},
+        {from: 'glb', to: 'appb', label: 'Japan', type: 'request'},
+      ],
+      focus: ['glb'],
+    },
+    {
+      short: 'Mesh',
+      kind: '원리',
+      title: 'A multi-cluster mesh needs shared trust',
+      text: [
+        'A service mesh can span clusters too. For example, Istio multi-primary has an istiod in each cluster that also watches the other clusters\' API servers to learn their endpoints. Traffic between networks goes through an east-west gateway.',
+        'For mTLS to work across clusters, every cluster\'s certificates must come from the same root of trust. Then the mesh can also fail over to another cluster when local endpoints are unhealthy.',
+      ],
+      keyIdea: 'Plan the shared root CA before the first cluster joins. Swapping it later touches every workload certificate.',
+      flows: [{from: 'appa', to: 'appb', label: 'mTLS · east-west', type: 'request'}],
+      focus: ['appa', 'appb'],
+    },
+    {
+      short: 'Drift',
+      kind: '문제',
+      title: 'One cluster quietly drifts from the rest',
+      text: [
+        'During an incident, someone runs kubectl edit in prod-b and raises a memory limit. Now prod-b no longer matches Git, and nobody else knows. Argo CD marks that Application OutOfSync. With self-heal on, it puts the Git version back.',
+        'Drift also hides in Git itself. Per-cluster overrides pile up until each cluster is special. Keep overrides small and visible, and fix incidents by changing Git.',
+      ],
+      flows: [{from: 'argo', to: 'appb', label: 'OutOfSync', type: 'watch'}],
+      focus: ['appb', 'argo'],
+      status: {appb: 'warn'},
+      badges: {appb: 'kubectl edit'},
+      values: {sync: {text: '2 / 3 Synced', tone: 'bad'}},
+    },
+    {
+      short: 'Version skew',
+      kind: '주의',
+      title: 'Clusters on different versions behave differently',
+      text: [
+        'prod-c was created on a newer Kubernetes minor version than prod-a and prod-b. A manifest that uses an API version removed in the newer release syncs fine in the old clusters and fails in prod-c. Add-ons such as CNI, ingress controllers and the mesh have their own supported version ranges too.',
+        'Kubernetes ships about three minor releases a year, and each gets about a year of patches. A fleet always has some skew, so upgrade in waves: a test cluster, then one production cluster, then the rest.',
+      ],
+      keyIdea: 'Keep a fleet inventory of each cluster\'s Kubernetes and add-on versions, and check manifests for removed APIs before each wave.',
+      flows: [{from: 'argo', to: 'appc', label: 'Sync failed', type: 'request'}],
+      focus: ['appc'],
+      status: {appb: null, appc: 'error'},
+      badges: {appb: null, appc: 'API removed'},
+      values: {sync: {text: '2 / 3 Synced', tone: 'bad'}, skew: {text: '1.34 · 1.34 · 1.35', tone: 'bad'}},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Treat clusters like cattle, managed from Git',
+      text: [
+        'Several clusters limit blast radius, put users near a region and keep tenants apart. Cluster API creates the clusters from manifests, and an ApplicationSet cluster generator gives every matching cluster the same apps.',
+        'The MCS API shares Services across clusters under clusterset.local, a global load balancer spreads users, and a multi-cluster mesh needs a shared root of trust. Watch for drift with sync status, and for version skew with an inventory and upgrade waves.',
+      ],
+      keyIdea: 'If a new cluster cannot join the fleet without manual steps, the fleet is not yet declarative.',
+      flows: [
+        {from: 'git', to: 'argo', label: 'Pull', type: 'watch'},
+        {from: 'argo', to: 'appa', label: 'Sync', type: 'request'},
+        {from: 'argo', to: 'appb', label: 'Sync', type: 'request'},
+        {from: 'argo', to: 'appc', label: 'Sync', type: 'request'},
+      ],
+      focus: ['git', 'argo', 'capi'],
+      status: {appc: null},
+      badges: {appc: null, argo: null, imp: null},
+    },
+  ]}
+/>
+
+## Multi-cluster building blocks
+
+| Need | Approach | Tool examples | Watch out for |
+|---|---|---|---|
+| Same apps on every cluster | GitOps with a per-cluster generator | Argo CD ApplicationSet, Flux | Per-cluster overrides that grow until every cluster is special |
+| Create and upgrade clusters | Declarative cluster lifecycle | Cluster API, Terraform, managed services | Machine replacement during upgrades needs spare capacity and PodDisruptionBudgets |
+| Find a Service in another cluster | Multi-Cluster Services API | GKE multi-cluster Services, Submariner | The same namespace name means the same owner in every cluster |
+| Send users to a healthy cluster | Global load balancing | DNS with health checks, anycast load balancers | DNS TTLs delay failover |
+| mTLS and failover between clusters | Multi-cluster mesh | Istio multi-primary, Linkerd multicluster, Cilium Cluster Mesh | A shared root CA and network reachability between clusters |
+| Know what runs where | Fleet inventory | Argo CD cluster list, Cluster API status, cloud consoles | Version skew in Kubernetes and add-ons |
+
+## Try it yourself
+
+```bash
+kubectl config get-contexts                                    # Which clusters this kubeconfig knows
+argocd cluster list                                            # Clusters registered with Argo CD
+kubectl get secret -n argocd -l argocd.argoproj.io/secret-type=cluster --show-labels   # Labels the generator selects on
+kubectl get applicationset -n argocd                           # Fleet-wide app definitions
+kubectl get applications -n argocd                             # One per cluster: SYNC STATUS and HEALTH
+kubectl get clusters,machinedeployments -A                     # On the management cluster (Cluster API)
+clusterctl describe cluster prod-c -n fleet                    # Control plane and machine readiness
+clusterctl get kubeconfig prod-c -n fleet > prod-c.kubeconfig  # Credentials for the new cluster
+kubectl get serviceexport,serviceimport -n shop                # Multi-Cluster Services objects
+for ctx in prod-a prod-b prod-c; do                            # Version skew across the fleet
+  echo "$ctx $(kubectl --context "$ctx" version -o json | jq -r .serverVersion.gitVersion)"
+done
+```
+
+<Quiz questions={[
+  {q: 'A new cluster with the label env=prod is registered in Argo CD. What does an ApplicationSet with a clusters generator selecting env=prod do?', options: ['Nothing until someone edits the ApplicationSet', 'It creates an Application for the new cluster and syncs the same apps there', 'It moves the existing Applications to the new cluster'], answer: 1, why: 'The cluster generator makes one Application per matching cluster, so a newly registered cluster gets the apps automatically.'},
+  {q: 'Why does a Pod in prod-b use checkout.shop.svc.clusterset.local instead of checkout.shop.svc.cluster.local?', options: ['cluster.local only resolves Services in the local cluster, and clusterset.local resolves the imported Service across the clusterset', 'clusterset.local is faster', 'cluster.local is deprecated'], answer: 0, why: 'With the MCS API, ServiceExport and ServiceImport make a Service reachable fleet-wide under the clusterset.local domain.'},
+  {q: 'The same manifest syncs in two clusters but fails in a third that was created later. What is the most likely cause?', options: ['Argo CD is out of date', 'The Git repo is different for that cluster', 'The newer cluster runs a Kubernetes version that removed an API the manifest still uses'], answer: 2, why: 'Version skew across a fleet means removed or changed APIs fail only in some clusters. Check versions and removed APIs before each upgrade wave.'},
+]} />
+
+Further reading: [Cluster API book](https://cluster-api.sigs.k8s.io/) · [Argo CD cluster generator](https://argo-cd.readthedocs.io/en/stable/operator-manual/applicationset/Generators-Cluster/) · [Multi-Cluster Services API (KEP-1645)](https://github.com/kubernetes/enhancements/tree/master/keps/sig-multicluster/1645-multi-cluster-services-api) · [SIG Multicluster](https://multicluster.sigs.k8s.io/) · [Istio multicluster installation](https://istio.io/latest/docs/setup/install/multicluster/) · [Kubernetes version skew policy](https://kubernetes.io/releases/version-skew-policy/) · [Helm and GitOps](../intermediate/gitops-sync.mdx) · [When a Whole Region Goes Down](../cloud/multi-region-dr.mdx)

@@ -1,0 +1,25 @@
+.quiz {
+  margin: 2rem 0;
+  padding: 1rem 1.25rem;
+  border: 1px solid var(--ifm-color-emphasis-300);
+  border-radius: 12px;
+}
+.title { font-size: 1.15rem; margin: 0 0 0.75rem; }
+.list { margin: 0; padding-left: 1.25rem; }
+.item { margin-bottom: 1rem; }
+.fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
+.q { font-weight: 600; margin-bottom: 0.4rem; padding: 0; }
+.opt {
+  display: flex; gap: 0.5rem; align-items: flex-start;
+  padding: 0.35rem 0.6rem; margin: 0.2rem 0;
+  border: 1px solid transparent; border-radius: 8px; cursor: pointer;
+}
+.opt:hover { background: var(--ifm-color-emphasis-100); }
+.fieldset:disabled .opt { cursor: default; }
+.opt input { margin-top: 0.3rem; }
+.correct { border-color: var(--ifm-color-success); background: color-mix(in srgb, var(--ifm-color-success) 12%, transparent); }
+.incorrect { border-color: var(--ifm-color-danger); background: color-mix(in srgb, var(--ifm-color-danger) 10%, transparent); }
+.whyOk, .whyBad { margin: 0.4rem 0 0; padding-left: 0.6rem; font-size: 0.92rem; border-left: 3px solid; }
+.whyOk { border-color: var(--ifm-color-success); }
+.whyBad { border-color: var(--ifm-color-danger); }
+.footer { display: flex; gap: 1rem; align-items: center; font-weight: 600; }

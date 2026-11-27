@@ -1,7 +1,7 @@
 ---
 id: linux-isolation
 title: How Linux Isolates a Container
-sidebar_label: 06 · How Linux Isolates a Container
+sidebar_label: 09 · How Linux Isolates a Container
 description: Animated walkthrough of what a container really is on Linux, an ordinary host process placed in namespaces (pid, net, mnt, uts, ipc, user) and limited by cgroup v2 files such as cpu.max and memory.max, with CPU throttling, OOM kill and exit code 137
 summary: 'A container is a host process: namespaces change what it can see, cgroups limit what it can use.'
 icon: layers
@@ -207,5 +207,11 @@ cat /proc/$PID/cgroup                                # Its cgroup path under /sy
 cat /sys/fs/cgroup/<that path>/{cpu.max,memory.max,cpu.stat,memory.events}   # Limits, throttling, oom_kill
 kubectl get pod <pod> -o jsonpath='{.status.containerStatuses[*].lastState.terminated.exitCode}'   # 137 after an OOM kill
 ```
+
+<Quiz questions={[
+  {q: 'A container has a 0.5 CPU limit. Under load its latency jumps, but it never restarts. What is happening?', options: ['The OOM killer is sending SIGKILL', 'The kernel throttles it after it uses its quota for the period, so it waits for the next period', 'Its network namespace is dropping packets'], answer: 1, why: 'Over cpu.max, the process is not killed but held back until the next period. cpu.stat counts this in nr_throttled and throttled_usec.'},
+  {q: 'A container exits with code 137 and Kubernetes shows OOMKilled. What does 137 mean?', options: ['The app returned 137 from its main function', 'The container was throttled 137 times', 'It hit its CPU limit', 'It was killed by SIGKILL (128 + 9) after reaching memory.max'], answer: 3, why: 'A process killed by a signal reports 128 plus the signal number. The OOM killer sends SIGKILL, which is 9, when the cgroup cannot stay under memory.max.'},
+  {q: 'An app runs as PID 1 in its container and has no SIGTERM handler. What happens when Kubernetes stops the Pod?', options: ['SIGTERM is ignored, so Kubernetes waits out the grace period and then sends SIGKILL', 'The app stops immediately on SIGTERM like any process', 'The host kernel restarts the container'], answer: 0, why: 'The kernel ignores signals that PID 1 has no handler for. Handle SIGTERM in the app or run a tiny init such as tini as PID 1.'},
+]} />
 
 Further reading: [namespaces(7)](https://man7.org/linux/man-pages/man7/namespaces.7.html) · [pid_namespaces(7)](https://man7.org/linux/man-pages/man7/pid_namespaces.7.html) · [user_namespaces(7)](https://man7.org/linux/man-pages/man7/user_namespaces.7.html) · [Control Group v2](https://docs.kernel.org/admin-guide/cgroup-v2.html) · [About cgroup v2 (Kubernetes)](https://kubernetes.io/docs/concepts/architecture/cgroups/) · [User Namespaces (Kubernetes)](https://kubernetes.io/docs/concepts/workloads/pods/user-namespaces/) · [From One Server to Containers](../basic/server-to-container.mdx) · [Requests and Limits](../intermediate/requests-limits.mdx)

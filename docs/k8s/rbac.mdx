@@ -203,4 +203,10 @@ kubectl auth can-i list pods -n <namespace> --as system:serviceaccount:<namespac
 kubectl auth can-i list nodes                        # Cluster-scoped, needs a ClusterRole
 ```
 
+<Quiz questions={[
+  {q: 'kim can list Pods in shop-dev, but deleting a Pod returns 403 Forbidden. What is the problem?', options: ['kim\'s certificate failed authentication', 'Authorization: the Role bound to kim does not allow delete', 'The Pod is cluster-scoped, so it needs a ClusterRole'], answer: 1, why: 'A 403 means authentication passed but the action is not allowed. RBAC only lists what is allowed, and the Role has no delete.'},
+  {q: 'You create a Role that allows get and list on Pods, but nobody can use it. What is missing?', options: ['A ClusterRole with the same rules', 'A ServiceAccount token mounted into the Pod', 'A user account resource for each person', 'A RoleBinding that links the Role to a subject'], answer: 3, why: 'A Role alone does nothing. It only takes effect when a RoleBinding links it to a user, group or ServiceAccount.'},
+  {q: 'kim needs to list nodes. Why can a Role in shop-dev not grant this?', options: ['Nodes are cluster-scoped, so the permission must come from a ClusterRole bound with a ClusterRoleBinding', 'Roles cannot include the list verb', 'Only ServiceAccounts may list nodes'], answer: 0, why: 'Nodes belong to no namespace. Cluster-scoped resources are granted through a ClusterRole and a ClusterRoleBinding.'},
+]} />
+
 Further reading: [Using RBAC Authorization](https://kubernetes.io/docs/reference/access-authn-authz/rbac/) · [Namespaces](https://kubernetes.io/docs/concepts/overview/working-with-objects/namespaces/)

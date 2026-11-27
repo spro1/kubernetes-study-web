@@ -209,4 +209,10 @@ etcdctl endpoint status --cluster -w table                  # 리더가 누구�
 etcdctl endpoint health --cluster -w table                  # 살아 있는 멤버: 과반이 되는지
 ```
 
+<Quiz questions={[
+  {q: '컨트롤 플레인 3대 중 2대가 꺼졌다. kubectl get pods는 되는데 생성과 삭제는 모두 실패한다. 왜인가?', options: ['남은 etcd 1대가 과반에 못 미쳐 쿼럼을 잃고 쓰기를 거부하기 때문이다', '로드밸런서가 조회 요청만 넘기기 때문이다', '워커 노드의 kubelet이 파드를 모두 멈췄기 때문이다', 'RBAC 권한이 초기화되었기 때문이다'], answer: 0, why: '쓰기는 과반이 기록해야 끝난다. 3대 중 1대는 과반이 아니므로 조회는 되어도 쓰기가 멈추기 때문이다.'},
+  {q: '고장을 더 견디려고 etcd를 3대에서 4대로 늘렸다. 이제 몇 대까지 고장을 견디는가?', options: ['한 대가 늘었으니 2대', '과반이 3대로 올라가므로 3대 구성과 같은 1대', '짝수는 리더를 뽑지 못하므로 0대'], answer: 1, why: '4대라면 쿼럼은 3대라서 견딜 수 있는 고장은 1대뿐이고 3대와 같다. 2대까지 견디려면 5대로 둬야 하기 때문이다.'},
+  {q: 'etcd가 쿼럼을 잃었다. 워커 노드에서 이미 실행 중인 컨테이너는 어떻게 되는가?', options: ['곧바로 멈춘다', '남은 컨트롤 플레인 노드로 옮겨진다', '한동안 그대로 돌지만, 고장 난 파드는 되살아나지 않는다', '재시작을 반복한다'], answer: 2, why: '실행 중인 컨테이너는 워커 노드의 kubelet이 계속 관리하지만, 고장 난 파드를 되살리는 것 같은 새 변화는 반영되지 않기 때문이다.'},
+]} />
+
 더 읽을거리: [쿠버네티스 컴포넌트](https://kubernetes.io/ko/docs/concepts/overview/components/) · [kubeadm으로 고가용성 클러스터 만들기](https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/high-availability/) · [etcd 클러스터 운영](https://kubernetes.io/docs/tasks/administer-cluster/configure-upgrade-etcd/)

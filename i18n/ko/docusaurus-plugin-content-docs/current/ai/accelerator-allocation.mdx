@@ -199,4 +199,10 @@ kubectl get resourceclaims -A                        # 파드별 요청서와 �
 kubectl get events -n <네임스페이스> --field-selector reason=FailedScheduling   # cannot allocate all claims (8단계)
 ```
 
+<Quiz questions={[
+  {q: '두 번째 모델 배포가 네임스페이스 할당량 검사는 통과했는데 파드가 Pending으로 남아 있다. 가장 그럴듯한 원인은 무엇인가?', options: ['할당량 검사가 실수로 건너뛰어졌다', '다른 파드가 조건에 맞는 장치를 다 쓰고 있다. 할당량은 상한일 뿐 남은 장치를 보장하지 않는다', 'DRA 드라이버가 DeviceClass를 올리지 않았다', 'Deployment의 레플리카가 API 서버에 너무 많다'], answer: 1, why: 'ResourceQuota는 쓸 수 있는 양에 상한을 걸 뿐 장치를 예약하지 않는다. 맞는 장치가 모두 쓰이고 있으면 스케줄러가 놓을 곳을 찾지 못하고 cannot allocate all claims를 남기기 때문이다.'},
+  {q: 'DRA로 같은 PCIe 루트에 붙은 GPU 2장과 네트워크 카드 1개를 요청하려면 어떻게 하는가?', options: ['파드 세 개를 따로 만들고 노드 어피니티를 건다', 'limits에 nvidia.com/gpu: 2와 네트워크 카드 개수를 적는다', '요청서 하나에 장치 요청을 여러 개 적고 resource.kubernetes.io/pcieRoot에 matchAttribute 제약을 건다', 'ResourceQuota에 GPU 모델을 적는다'], answer: 2, why: '요청서 하나에 여러 장치 요청을 담을 수 있고, matchAttribute가 pcieRoot 같은 장치 속성이 서로 맞도록 요구하기 때문이다.'},
+  {q: '파드가 Pending일 때 레슨이 권하는 확인 순서는 무엇인가?', options: ['할당량, 남은 장치, 조건이 너무 까다롭지 않은지 순서', 'kubelet 로그, 드라이버 로그, 노드 재부팅 순서', '조건 먼저, 그다음 요청서 삭제, 마지막으로 할당량'], answer: 0, why: '할당량 초과와 장치 부족은 비슷해 보여도 원인이 다르다. kubectl describe quota, resourceslices와 resourceclaims, 그다음 조건 순서로 봐야 하기 때문이다.'},
+]} />
+
 더 읽을거리: [동적 리소스 할당](https://kubernetes.io/docs/concepts/resource-management/dynamic-resource-allocation/) · [리소스 쿼터](https://kubernetes.io/docs/concepts/policy/resource-quotas/) · [Kueue](https://kueue.sigs.k8s.io/docs/overview/)

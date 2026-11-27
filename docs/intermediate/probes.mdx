@@ -196,4 +196,10 @@ kubectl get events --field-selector reason=Unhealthy   # Probe failed messages
 kubectl get endpointslices -l kubernetes.io/service-name=<service>   # Is the pod in the list?
 ```
 
+<Quiz questions={[
+  {q: 'kubectl get pods shows a pod with READY 0/1, but its RESTARTS count stays the same. Which probe is failing?', options: ['The liveness probe', 'The readiness probe', 'The startup probe'], answer: 1, why: 'A readiness failure only removes the pod from the Service endpoints without restarting it. Liveness and startup failures restart the container, so RESTARTS would rise.'},
+  {q: 'The liveness probe also checks the DB connection, and the DB slows down briefly. What happens?', options: ['Only the slowest pod is removed from the endpoints', 'Nothing, because liveness ignores dependencies', 'All pods restart together and no pod is left to take requests', 'The DB pod is restarted by the kubelet'], answer: 2, why: 'Every pod\'s liveness check fails at the same moment, so the kubelet restarts them all. A restart cannot fix a slow DB, so the outage grows. Check dependencies in readiness instead.'},
+  {q: 'An app needs about a minute to start, there is no startup probe, and liveness checks from 10 seconds. It ends in CrashLoopBackOff. What is the fix?', options: ['Add a startup probe or raise the initial delay', 'Remove the readiness probe', 'Make the readiness probe always return success'], answer: 0, why: 'Liveness fails before the app finishes starting, so it is restarted mid-start again and again. A startup probe holds back the other probes until startup is done.'},
+]} />
+
 Further reading: [Configure liveness, readiness and startup probes](https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/) · [Pod lifecycle — container probes](https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/#container-probes) · [When a Pod Dies (Self-Healing)](../k8s/self-healing.mdx) · [How a Request Reaches a Pod](../k8s/traffic.mdx)

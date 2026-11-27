@@ -185,4 +185,10 @@ kubectl exec <파드> -- nvidia-smi                     # 예: NVIDIA. 함께 �
 kubectl describe quota -n <네임스페이스>                # 파드가 아니라 요청서 단위로 계산 (8단계)
 ```
 
+<Quiz questions={[
+  {q: 'DRA에서 여러 파드가 GPU 한 장을 나눠 쓰게 되는 방법은 무엇인가?', options: ['파드마다 같은 ResourceClaimTemplate을 쓴다', '모두 이름이 있는 ResourceClaim 하나를 가리키고, 그 요청서의 설정에 공유 방식을 적는다', '파드마다 nvidia.com/gpu: 0.5를 요청한다', '다른 네임스페이스에서 같은 요청서 이름을 쓴다'], answer: 1, why: '요청서 틀은 파드마다 전용 요청서를 만들어 GPU를 통째로 준다. 같은 네임스페이스에서 이름이 있는 요청서 하나를 가리키는 파드끼리 배정된 장치를 함께 쓰기 때문이다.'},
+  {q: '시분할 요청서를 쓰는 배포 A를 레플리카 1에서 2로 늘렸다. 무엇을 예상해야 하는가?', options: ['GPU는 여전히 1장이고, 메모리 격리가 없으며, 처리량은 두 배가 되지 않는다', 'GPU 2장과 두 배의 처리량', '레플리카마다 GPU 메모리 절반이 예약된다', '두 번째 레플리카는 첫 번째가 끝날 때까지 기다린다'], answer: 0, why: '시분할은 같은 GPU를 번갈아 쓴다. 메모리를 함께 쓰고 GPU 수도 늘지 않으므로 레플리카 2개가 두 배 빠름을 뜻하지 않기 때문이다.'},
+  {q: '배포 B와 C가 MPS 요청서 하나를 함께 쓰고, DRA 장치에 ResourceQuota가 걸려 있다. GPU는 몇 장 차감되고, 주된 위험은 무엇인가?', options: ['배포마다 1장씩 2장이고, 따로 위험은 없다', '파드마다 1장씩이고, MPS가 오류를 완전히 격리한다', '공유 요청서는 무료라 0장이고, 위험은 스케줄링이 느려지는 것이다', '할당량은 요청서 기준이라 1장이고, 한 파드의 치명적 GPU 오류가 다른 파드에 영향을 줄 수 있다'], answer: 3, why: '할당량은 파드가 아니라 요청서의 장치 수로 센다. MPS는 상한을 정해 여러 프로세스를 함께 돌리므로 오류 격리가 약하기 때문이다.'},
+]} />
+
 더 읽을거리: [동적 리소스 할당](https://kubernetes.io/docs/concepts/resource-management/dynamic-resource-allocation/) · [NVIDIA GPU용 DRA 드라이버](https://dra-driver-nvidia-gpu.sigs.k8s.io/docs/) · [DRA 드라이버의 시분할](https://dra-driver-nvidia-gpu.sigs.k8s.io/docs/guides/gpu-allocation/time-slicing/) · [DRA 드라이버의 MPS](https://dra-driver-nvidia-gpu.sigs.k8s.io/docs/guides/mps/) · [NVIDIA MPS](https://docs.nvidia.com/deploy/mps/latest/index.html)

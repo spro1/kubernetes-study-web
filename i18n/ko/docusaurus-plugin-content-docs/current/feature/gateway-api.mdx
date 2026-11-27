@@ -215,4 +215,10 @@ kubectl get httproute store -n shop \
 kubectl get referencegrant -A                        # 다른 네임스페이스 참조를 누가 허락했는지
 ```
 
+<Quiz questions={[
+  {q: 'HTTPRoute의 kubectl apply는 성공했지만 status.parents에 Accepted=False, reason NotAllowedByListeners가 뜬다. 어떻게 고치는가?', options: ['백엔드 네임스페이스에 ReferenceGrant를 만든다', '리스너의 allowedRoutes를 바꾸거나, 경로의 네임스페이스에 셀렉터와 맞는 레이블을 단다', 'backendRef의 포트를 고친다', 'GatewayClass를 다시 만든다'], answer: 1, why: 'NotAllowedByListeners는 어느 리스너의 allowedRoutes도 이 경로를 허용하지 않는다는 뜻이기 때문이다. allowedRoutes를 넓히거나 리스너가 고르는 레이블을 네임스페이스에 단다.'},
+  {q: '경로는 Accepted인데 ResolvedRefs=False, reason RefNotPermitted이고 요청 일부가 HTTP 500을 받는다. 무엇이 빠졌는가?', options: ['대상 네임스페이스의 ReferenceGrant', '맞는 리스너 호스트 이름', 'Gateway의 Programmed 조건'], answer: 0, why: '다른 네임스페이스의 백엔드를 가리키려면 그 네임스페이스의 동의가 필요하기 때문이다. 그곳에 ReferenceGrant가 없으면 컨트롤러는 그 백엔드를 구성하지 않는다.'},
+  {q: 'backendRefs에 store는 weight 90, store-v2는 weight 10으로 적었다. 트래픽은 어떻게 나뉘는가?', options: ['weight 합이 100이 될 때까지 고르게 나뉜다', 'weight가 큰 store로 모두 간다', '약 90%는 store로, 10%는 store-v2로 간다', '각 서비스 뒤의 파드 수에 따라 나뉜다'], answer: 2, why: '각 백엔드는 자기 weight를 전체 합으로 나눈 비율만큼 받기 때문이다. weight는 비율이라 합이 100일 필요는 없다.'},
+]} />
+
 더 읽을거리: [게이트웨이 API 문서](https://gateway-api.sigs.k8s.io/) · [HTTPRoute](https://gateway-api.sigs.k8s.io/reference/api-types/httproute/) · [ReferenceGrant](https://gateway-api.sigs.k8s.io/reference/api-types/referencegrant/) · [쿠버네티스 문서의 게이트웨이 API](https://kubernetes.io/docs/concepts/services-networking/gateway/) · [인그레스 규칙과 TLS](../feature/ingress.mdx) · [입구 셋 비교](../feature/entry-compare.mdx)

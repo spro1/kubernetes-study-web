@@ -1,7 +1,7 @@
 ---
 id: hybrid-network
 title: 'Connecting Networks: Peering, Transit, VPN and Private Endpoints'
-sidebar_label: 09 · Connecting Networks
+sidebar_label: 13 · Connecting Networks
 description: Animated walkthrough of how private networks get connected, from VPC peering that is not transitive to a transit gateway hub, site-to-site VPN and dedicated links with BGP, hybrid DNS forwarding, private endpoints for one service, the missing return route and overlapping CIDRs
 summary: 'Peering, transit hubs, VPN and dedicated links, hybrid DNS, private endpoints, and why routes must exist both ways.'
 icon: route
@@ -257,5 +257,11 @@ traceroute 10.2.3.20          # Where does the path stop?
 dig db.data.internal          # Does the name resolve across the link?
 nc -vz 10.2.3.20 5432         # Refused (reached, nothing listening) or timeout (dropped)?
 ```
+
+<Quiz questions={[
+  {q: 'The office reaches VPC A over a VPN, and VPC A is peered with VPC B. All security groups allow the office range, yet the office cannot reach VPC B. Why?', options: ['The VPN tunnel does not have enough bandwidth', 'Peering is not transitive, so traffic from the office is dropped at the peering', 'VPC B needs its own internet gateway'], answer: 1, why: 'Peering only carries traffic whose source or destination is in one of the two peered VPCs. A hub such as a transit gateway is needed for office to B.'},
+  {q: 'A packet from the office reaches the DB, but the client times out. The DB subnet\'s route table only knows 10.1.0.0/16. What is missing?', options: ['A return route for the office range 10.50.0.0/16', 'A larger DB instance', 'A DNS record for the DB'], answer: 0, why: 'Every working path needs a route in both directions. Without a route back to 10.50.0.0/16, the reply goes to the default route or nowhere.'},
+  {q: 'The shop needs to call only a partner\'s payment API, without joining the two networks, and the CIDRs overlap. Which option fits?', options: ['VPC peering', 'A transit gateway attachment', 'A site-to-site VPN', 'A private endpoint'], answer: 3, why: 'A private endpoint reaches one service, in one direction, and overlapping CIDRs do not matter. Peering and a transit gateway join whole networks and need unique ranges.'},
+]} />
 
 Further reading: [VPC peering (AWS)](https://docs.aws.amazon.com/vpc/latest/peering/what-is-vpc-peering.html) · [Transit gateways (AWS)](https://docs.aws.amazon.com/vpc/latest/tgw/what-is-transit-gateway.html) · [Site-to-Site VPN (AWS)](https://docs.aws.amazon.com/vpn/latest/s2svpn/VPC_VPN.html) · [AWS PrivateLink](https://docs.aws.amazon.com/vpc/latest/privatelink/what-is-privatelink.html) · [Route 53 Resolver](https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/resolver.html) · [How a Request Travels Inside a VPC](../cloud/vpc-request.mdx) · [Under One Request: TCP/IP Layers](../basic/tcp-ip-layers.mdx)

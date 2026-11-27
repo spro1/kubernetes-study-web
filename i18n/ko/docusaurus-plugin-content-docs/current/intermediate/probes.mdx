@@ -196,4 +196,10 @@ kubectl get events --field-selector reason=Unhealthy   # probe failed 메시지
 kubectl get endpointslices -l kubernetes.io/service-name=<서비스>   # 파드가 목록에 있는지
 ```
 
+<Quiz questions={[
+  {q: 'kubectl get pods에서 파드가 READY 0/1인데 RESTARTS 수는 그대로다. 어떤 프로브가 실패하고 있는가?', options: ['liveness 프로브', 'readiness 프로브', 'startup 프로브'], answer: 1, why: 'readiness 실패는 재시작 없이 서비스 엔드포인트에서만 빠지기 때문이다. liveness·startup 실패라면 컨테이너가 재시작되어 RESTARTS가 올라간다.'},
+  {q: 'liveness 검사가 DB 연결까지 확인하는데 DB가 잠깐 느려졌다. 무슨 일이 생기는가?', options: ['가장 느린 파드만 엔드포인트에서 빠진다', 'liveness는 의존성을 무시하므로 아무 일도 없다', '모든 파드가 함께 재시작되어 요청을 받을 파드가 남지 않는다', 'kubelet이 DB 파드를 재시작한다'], answer: 2, why: '모든 파드의 liveness 검사가 동시에 실패해 kubelet이 전부 재시작하기 때문이다. 재시작으로는 느린 DB를 고칠 수 없어 장애가 커진다. 의존성은 readiness에서 확인한다.'},
+  {q: '시작에 1분쯤 걸리는 앱에 startup 프로브가 없고 liveness가 10초 뒤부터 묻는다. 결국 CrashLoopBackOff가 됐다. 바로잡는 방법은 무엇인가?', options: ['startup 프로브를 두거나 대기 시간을 늘린다', 'readiness 프로브를 없앤다', 'readiness 프로브가 항상 성공을 응답하게 한다'], answer: 0, why: '앱이 다 뜨기 전에 liveness가 실패해 시작 도중 재시작이 반복되기 때문이다. startup 프로브는 시작이 끝날 때까지 나머지 프로브를 미뤄 준다.'},
+]} />
+
 더 읽을거리: [Liveness, Readiness, Startup 프로브 구성](https://kubernetes.io/ko/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/) · [파드 라이프사이클 — 컨테이너 프로브](https://kubernetes.io/ko/docs/concepts/workloads/pods/pod-lifecycle/#container-probes) · [파드가 죽으면 (자가 치유)](../k8s/self-healing.mdx) · [요청이 파드에 닿기까지](../k8s/traffic.mdx)

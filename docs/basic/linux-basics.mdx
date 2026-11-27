@@ -1,0 +1,266 @@
+---
+id: linux-basics
+title: Linux Basics for Kubernetes
+sidebar_label: 07 · Linux basics
+description: Animated walkthrough of the Linux basics behind every node and container, from processes, PIDs and signals to exit codes, users and sudo, file permissions, systemd units, journalctl and where logs live
+summary: 'Processes and signals, what exit codes 127 and 137 mean, root and sudo, rwx permissions and "permission denied", systemd units and where logs live.'
+icon: server
+hide_table_of_contents: true
+---
+
+# Linux Basics for Kubernetes
+
+Every Kubernetes node is a Linux machine, and every container is a Linux process. Follow one app on one host: how it starts, how it is stopped, what its exit code says, why it gets "permission denied", and where its logs go.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~14 min', level: 'Beginner'}}
+  groups={[
+    {label: 'Linux host (e.g. a node)', x: 230, y: 30, w: 750, h: 410, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'you', label: 'You', sub: 'ssh · user dev', icon: 'user', tone: 'ext', x: 110, y: 110, show: true},
+    {id: 'systemd', label: 'systemd', sub: 'PID 1', icon: 'gear', tone: 'cp', x: 340, y: 110},
+    {id: 'kubelet', label: 'kubelet.service', sub: 'systemd unit', icon: 'server', tone: 'node', x: 340, y: 240, w: 170},
+    {id: 'journal', label: 'journald', sub: 'journalctl -u', icon: 'book', tone: 'store', x: 340, y: 370},
+    {id: 'shell', label: 'bash', sub: 'PID 2001 · uid dev', icon: 'hammer', tone: 'node', x: 580, y: 110},
+    {id: 'app', label: 'app', sub: 'PID 2002 · PPID 2001', icon: 'box', tone: 'app', x: 580, y: 240},
+    {id: 'child', label: 'worker', sub: 'PID 2003', icon: 'box', tone: 'app', size: 'sm', x: 580, y: 370},
+    {id: 'file', label: 'config.yaml', sub: '-rw------- root', icon: 'disk', tone: 'store', x: 830, y: 110, w: 160},
+    {id: 'varlog', label: '/var/log', sub: 'syslog · pods/', icon: 'archive', tone: 'store', x: 830, y: 240, w: 160},
+    {id: 'root', label: 'root', sub: 'UID 0 · via sudo', icon: 'shield', tone: 'cp', x: 830, y: 370, w: 160},
+  ]}
+  metrics={[
+    {id: 'tree', label: 'Process tree'},
+    {id: 'signal', label: 'Signal'},
+    {id: 'exit', label: 'Exit code'},
+    {id: 'perm', label: 'Access'},
+  ]}
+  learn={[
+    {text: 'PIDs, parents and children, and what PID 1 does', at: 1},
+    {text: 'SIGTERM vs SIGKILL vs SIGHUP, and trap', at: 2},
+    {text: 'Reading exit codes: 0, 1, 126, 127, 128+n and 137', at: 4},
+    {text: 'Users, root, sudo and rwx permissions', at: 5},
+    {text: 'systemd units, journalctl and where logs live', at: 8},
+  ]}
+  steps={[
+    {
+      short: 'Start',
+      kind: '시작',
+      title: 'On a node, everything is a process',
+      text: [
+        'You log in to a node over SSH and get a shell. The kubelet, the container runtime and every container on this node are ordinary Linux processes.',
+        'So the Linux basics are also Kubernetes basics. Exit codes in kubectl describe, a Pod that ignores shutdown, a "permission denied" in the logs: each one is a plain Linux story.',
+      ],
+      flows: [{from: 'you', to: 'shell', label: 'ssh login', type: 'request'}],
+      focus: ['you', 'shell'],
+      values: {tree: 'bash', signal: '—', exit: '—', perm: '—'},
+    },
+    {
+      short: 'PIDs',
+      kind: '원리',
+      title: 'Each process has a PID and a parent',
+      text: [
+        'You run ./app in the shell. The shell forks a child and runs the program in it, so app gets PID 2002 and its parent PID (PPID) is the shell, 2001. app then starts its own child, worker.',
+        'PID 1 is special. On a host it is the init system, usually systemd. If a parent dies first, its orphaned children are adopted by PID 1 (or a subreaper), which collects their exit status.',
+      ],
+      keyIdea: 'ps -ef shows PID and PPID. pstree -p draws the tree.',
+      flows: [
+        {from: 'shell', to: 'app', label: 'fork + exec', type: 'request'},
+        {from: 'app', to: 'child', label: 'fork', type: 'request'},
+      ],
+      focus: ['shell', 'app', 'child'],
+      values: {tree: 'bash → app → worker'},
+    },
+    {
+      short: 'Signals',
+      kind: '원리',
+      title: 'Signals ask, or force, a process to stop',
+      text: [
+        'A signal is a small message from the kernel. SIGTERM (15) asks a process to stop; it can catch it, finish its work and exit. SIGKILL (9) cannot be caught or ignored; the kernel ends the process at once.',
+        'SIGHUP (1) means the terminal hung up. Many daemons use it as "reload your config". In a shell script, trap \'cleanup\' TERM runs cleanup when SIGTERM arrives.',
+      ],
+      keyIdea: 'kill PID sends SIGTERM. Use kill -9 only when the process refuses to stop, because it gets no chance to clean up.',
+      flows: [{from: 'shell', to: 'app', label: 'SIGTERM', type: 'request'}],
+      focus: ['app'],
+      badges: {app: 'trap TERM'},
+      values: {signal: 'SIGTERM (15)'},
+    },
+    {
+      short: 'PID 1 trap',
+      kind: '주의',
+      title: 'In a container, your app is PID 1',
+      text: [
+        'A container has its own PID namespace, and its first process is PID 1 inside it. The kernel does not apply the default "terminate" action to PID 1. If the app has no SIGTERM handler, SIGTERM does nothing.',
+        'Kubernetes sends SIGTERM, waits terminationGracePeriodSeconds (30 seconds by default), then sends SIGKILL. An app that ignores SIGTERM always takes the full wait and dies hard. A shell-form CMD can also put sh in front as PID 1, and sh may not pass the signal on.',
+      ],
+      keyIdea: 'Handle SIGTERM in the app, use the exec form of CMD, or add a small init such as tini.',
+      flows: [{from: 'shell', to: 'app', label: 'SIGTERM ignored', type: 'request'}],
+      focus: ['app'],
+      status: {app: 'warn'},
+      badges: {app: 'PID 1 · no handler'},
+      values: {signal: {text: 'SIGTERM → wait → SIGKILL', tone: 'bad'}},
+    },
+    {
+      short: 'Exit codes',
+      kind: '원리',
+      title: 'The exit code says how the process ended',
+      text: [
+        'A process ends with a number from 0 to 255. 0 means success, and anything else is a failure the program chose, often 1. The shell adds its own: 126 is "found but not executable" and 127 is "command not found".',
+        'When a signal kills a process, the shell reports 128 + the signal number. 137 is 128 + 9, SIGKILL, often from the OOM killer or the end of the grace period. 143 is 128 + 15, SIGTERM.',
+      ],
+      keyIdea: 'echo $? shows the last exit code. kubectl describe pod shows Last State: Terminated with Exit Code and Reason, such as OOMKilled.',
+      flows: [{from: 'app', to: 'shell', label: 'exit 137', type: 'response'}],
+      focus: ['app', 'shell'],
+      status: {app: 'error', child: 'gone'},
+      badges: {app: 'killed'},
+      values: {exit: {text: '137 = 128 + 9', tone: 'bad'}},
+    },
+    {
+      short: 'Users',
+      kind: '원리',
+      title: 'Every process runs as a user',
+      text: [
+        'Each process has a user ID (UID) and group IDs. Your shell runs as dev, so app, started from it, also runs as dev. The kernel checks that UID on every file access.',
+        'root is UID 0 and skips most permission checks. sudo runs one command as root after checking /etc/sudoers, and the call is logged. Work as a normal user and use sudo only for the commands that need it.',
+      ],
+      keyIdea: 'id shows your UID, GID and groups. ps -o user,pid,cmd shows who each process runs as.',
+      flows: [{from: 'shell', to: 'root', label: 'sudo', type: 'request', bend: 40}],
+      focus: ['shell', 'root'],
+      status: {app: null, child: null},
+      badges: {app: null},
+      values: {tree: 'bash → app (uid dev)', signal: '—', exit: '—'},
+    },
+    {
+      short: 'Denied',
+      kind: '문제',
+      title: 'Permission denied: the file belongs to someone else',
+      text: [
+        'app starts again and opens config.yaml. ls -l shows -rw------- root root. The first character is the type (- for a file). Then come three rwx sets: owner, group, others.',
+        'Here only the owner, root, may read or write. dev is neither the owner nor in group root, so it falls under others, which have no rights. open() fails with EACCES and the app logs "permission denied".',
+      ],
+      keyIdea: 'Read ls -l from the left: who owns it, which group, and what each of the three sets allows.',
+      flows: [{from: 'app', to: 'file', label: 'open() → EACCES', type: 'request'}],
+      focus: ['app', 'file'],
+      status: {app: 'error'},
+      values: {perm: {text: 'Permission denied', tone: 'bad'}},
+    },
+    {
+      short: 'chmod',
+      kind: '원리',
+      title: 'Fix it with chown, chmod or a group',
+      text: [
+        'Give the file to the user who needs it: sudo chown dev config.yaml. Or share it with a group: chgrp app plus chmod 640 (owner rw, group r). Octal digits are r=4, w=2, x=1, added per set.',
+        'Directories need x to be entered, and scripts need x to run; without it you get 126. Do not reach for chmod 777. It lets every user on the machine change the file.',
+      ],
+      keyIdea: 'Secrets and keys: 600. Normal files: 644. Programs and directories: 755.',
+      flows: [{from: 'root', to: 'file', label: 'chown · chmod', type: 'request'}],
+      focus: ['file', 'root'],
+      status: {app: 'ok'},
+      badges: {file: '-rw-r----- dev app'},
+      values: {perm: {text: 'Read OK', tone: 'good'}},
+    },
+    {
+      short: 'systemd',
+      kind: '원리',
+      title: 'systemd runs services as units',
+      text: [
+        'Long-running services like the kubelet and the container runtime are systemd units. A unit file says which command to run, as which user, and whether to restart it when it exits.',
+        'systemctl status kubelet shows if it is running and its last log lines. systemctl restart restarts it, and systemctl enable starts it at boot. Their output goes to the journal.',
+      ],
+      keyIdea: 'journalctl -u kubelet -f follows one unit\'s logs. Add --since "10 min ago" to narrow it.',
+      flows: [
+        {from: 'systemd', to: 'kubelet', label: 'Start · restart', type: 'request'},
+        {from: 'kubelet', to: 'journal', label: 'stdout · stderr', type: 'response'},
+      ],
+      focus: ['systemd', 'kubelet', 'journal'],
+      badges: {kubelet: 'active (running)'},
+    },
+    {
+      short: 'Logs',
+      kind: '원리',
+      title: 'Where the logs live',
+      text: [
+        'Service logs sit in the systemd journal. Many distributions also write text files under /var/log, such as syslog (Debian, Ubuntu) or messages (RHEL family), and auth logs for logins and sudo.',
+        'On a Kubernetes node, the kubelet stores container logs under /var/log/pods, with links in /var/log/containers. kubectl logs reads those files through the kubelet.',
+      ],
+      keyIdea: 'Node problem: journalctl -u kubelet. App problem: kubectl logs, and kubectl logs --previous for the crashed container.',
+      flows: [
+        {from: 'journal', to: 'varlog', label: 'Forwarded (distro)', type: 'response', bend: 60},
+        {from: 'app', to: 'varlog', label: 'Container logs', type: 'response'},
+      ],
+      focus: ['journal', 'varlog'],
+      badges: {kubelet: null},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Processes, signals, users and files',
+      text: [
+        'Programs run as processes with a PID, a parent and a user. Signals stop them: SIGTERM politely, SIGKILL by force. The exit code tells you how they ended, and 128 + n means signal n.',
+        'The kernel checks the process user against the file owner, group and rwx bits. systemd keeps services running, and journalctl and /var/log show what they said.',
+      ],
+      keyIdea: 'Exit 137? Think SIGKILL: OOM or a missed grace period. Permission denied? Compare id with ls -l.',
+      flows: [{from: 'shell', to: 'app', label: 'Run', type: 'request'}],
+      focus: ['app', 'file', 'kubelet'],
+      badges: {file: null},
+    },
+  ]}
+/>
+
+## Exit codes and signals at a glance
+
+| Code | Meaning | Typical cause | What to check |
+|---|---|---|---|
+| 0 | Success | The program finished normally | — |
+| 1 | General error | The program reported a failure itself | App logs |
+| 2 | Misuse of a shell builtin or bad arguments (common convention) | Wrong flags | The command line |
+| 126 | Found but cannot run | Missing `x` bit, or a directory or wrong binary format | `ls -l`, `chmod +x` |
+| 127 | Command not found | Typo, or not in `PATH` (or missing in the image) | `which cmd`, `echo $PATH` |
+| 128 + n | Killed by signal n | — | Which signal, and who sent it |
+| 130 | 128 + 2, SIGINT | Ctrl+C | — |
+| 137 | 128 + 9, SIGKILL | OOM kill, grace period over, `kill -9` | `kubectl describe pod` Reason, `dmesg` |
+| 143 | 128 + 15, SIGTERM | Normal stop request, app did not catch it or exited with the default | Usually fine during shutdown |
+
+| Signal | Number | Can be caught? | Usual meaning |
+|---|---|---|---|
+| SIGHUP | 1 | Yes | Terminal closed, or "reload config" by convention |
+| SIGINT | 2 | Yes | Ctrl+C |
+| SIGKILL | 9 | No | Stop now, no cleanup |
+| SIGTERM | 15 | Yes | Please stop; the default from `kill` and from Kubernetes |
+
+## Try it yourself
+
+```bash
+# Processes, parents and users (on a Linux host or VM)
+echo $$                                  # PID of this shell
+ps -o pid,ppid,user,cmd -p $$
+sleep 300 &                              # child of this shell
+ps -o pid,ppid,cmd --ppid $$
+id                                       # your UID, GID and groups
+
+# Signals and exit codes
+sleep 300 & kill $!; wait $!; echo "exit $?"        # 143 = 128 + 15
+sleep 300 & kill -9 $!; wait $!; echo "exit $?"     # 137 = 128 + 9
+nosuchcmd; echo "exit $?"                           # 127
+bash -c 'trap "echo got TERM; exit 0" TERM; sleep 30 & wait' & sleep 1; kill $!; wait $!   # trap runs
+
+# Permissions
+echo secret > demo.txt && chmod 600 demo.txt && ls -l demo.txt   # -rw-------
+printf '#!/bin/sh\necho hi\n' > hi.sh; ./hi.sh; echo "exit $?"   # 126, no x bit
+chmod +x hi.sh && ./hi.sh
+
+# systemd and logs (on a Linux host or a kind node: docker exec -it lab-control-plane bash)
+systemctl status kubelet --no-pager
+journalctl -u kubelet --since "10 min ago" --no-pager | tail
+ls /var/log/pods /var/log/containers | head
+```
+
+<Quiz questions={[
+  {q: 'kubectl describe pod shows Last State: Terminated, Exit Code 137. What does that tell you first?', options: ['The program called exit(137) after a config error', 'The container was killed by SIGKILL (128 + 9), for example by the OOM killer or after the grace period', 'The image was not found on the node'], answer: 1, why: 'Exit codes above 128 mean "killed by signal n". 137 - 128 = 9, which is SIGKILL. Check Reason for OOMKilled.'},
+  {q: 'An app runs as PID 1 in its container and has no SIGTERM handler. What happens when Kubernetes deletes the Pod?', options: ['SIGTERM does nothing, so the container is killed with SIGKILL when the grace period ends', 'The app exits right away, because SIGTERM always terminates', 'Kubernetes notices and sends SIGHUP instead'], answer: 0, why: 'The kernel does not apply the default terminate action to PID 1 in a namespace. Without a handler the signal is ignored, and SIGKILL follows after terminationGracePeriodSeconds.'},
+  {q: 'A process running as user dev gets "permission denied" on a file shown as -rw------- root root. Which fix follows least privilege?', options: ['chmod 777 the file', 'Run the app as root', 'Give the file to dev (or a shared group) with chown/chgrp and a mode like 600 or 640'], answer: 2, why: 'Only the owner may read a 600 file. Changing ownership or group grants exactly the access needed. 777 and root give far more.'},
+]} />
+
+Further reading: [signal(7)](https://man7.org/linux/man-pages/man7/signal.7.html) · [chmod(1)](https://man7.org/linux/man-pages/man1/chmod.1.html) · [journalctl](https://www.freedesktop.org/software/systemd/man/latest/journalctl.html) · [Pod termination](https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/#pod-termination) · [Graceful shutdown — going down without losing requests](../intermediate/graceful-shutdown.mdx) · [How Linux Isolates a Container](../basic/linux-isolation.mdx)

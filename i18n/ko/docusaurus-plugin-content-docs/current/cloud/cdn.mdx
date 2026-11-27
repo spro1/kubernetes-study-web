@@ -1,7 +1,7 @@
 ---
 id: cdn
 title: CDN이 요청에 답하는 방식
-sidebar_label: 07 · CDN이 요청에 답하는 방식
+sidebar_label: 10 · CDN이 요청에 답하는 방식
 description: DNS로 가까운 엣지를 찾는 것부터 캐시 히트·미스, 오리진에서 가져오기, Cache-Control과 캐시 키, ETag와 304 재검증, 배포 후 퍼지, 개인 응답, 오리진 실드와 오리진 보호까지 CDN 요청을 애니메이션으로 따라간다
 summary: '가까운 엣지, 캐시 히트와 미스, Cache-Control, 304 재검증, 퍼지와 버전 붙은 파일 이름, 개인 페이지를 캐시에서 빼는 법.'
 icon: cloud
@@ -232,5 +232,11 @@ curl -sI https://<내-사이트>/<파일> | grep -iE 'cache-control|^age|etag|x-
 curl -sI -H 'If-None-Match: "<위에서 본 etag>"' https://<내-사이트>/<파일> | head -1     # 안 바뀌었으면 304
 curl -sI https://<내-사이트>/account | grep -i cache-control   # 개인 페이지는 private 이나 no-store 여야 한다
 ```
+
+<Quiz questions={[
+  {q: '새 app.js를 같은 이름으로 배포했는데 일부 사용자는 여전히 옛 스크립트를 받는다. 퍼지 없이 배포하려면 이 레슨은 무엇을 권하는가?', options: ['배포할 때마다 CDN에서 모든 경로를 퍼지한다', '정적 파일 이름에 내용 해시를 넣어 1년 캐시하고, HTML은 TTL을 짧게 준다', '엣지가 새 사본을 받도록 오리진 실드를 끈다'], answer: 1, why: '해시가 붙은 이름이면 배포는 HTML이 새 파일을 가리키게 하기만 하면 된다. 퍼지는 모든 엣지에 퍼지기까지 시간이 걸리고 브라우저 캐시는 지우지 못하기 때문이다.'},
+  {q: '캐시된 /account 페이지가 한 사용자의 이름을 다른 사용자에게 보여 줬다. 오리진은 이 페이지에 무엇을 보내야 하는가?', options: ['짧은 max-age를 붙인 Cache-Control: public', 'CDN이 알아서 건너뛰리라 믿고 Set-Cookie 헤더', 'Cache-Control: private 또는 no-store'], answer: 2, why: 'private는 브라우저만, no-store는 아무도 저장하지 못하게 한다. Set-Cookie에 대한 CDN 동작은 업체마다 달라 거기에 기댈 수 없기 때문이다.'},
+  {q: '/index.html은 max-age=60이다. 60초 뒤 사용자가 요청했고, 오리진의 파일은 바뀌지 않았다. 엣지는 무엇을 하는가?', options: ['저장해 둔 ETag를 If-None-Match에 담아 보내고, 304 Not Modified를 받아 사본을 내준다', '사본을 버리고 파일 전체를 다시 내려받는다', '묻지 않고 오래된 사본을 계속 내준다', '오리진이 새 파일을 보낼 때까지 404를 돌려준다'], answer: 0, why: '만료된 사본은 버리지 않고 다시 확인한다. ETag가 그대로면 오리진은 본문 없이 304로 답하고 네트워크로는 헤더만 오가기 때문이다.'},
+]} />
 
 더 읽을거리: [HTTP 캐싱 (MDN)](https://developer.mozilla.org/ko/docs/Web/HTTP/Guides/Caching) · [RFC 9111: HTTP Caching](https://www.rfc-editor.org/rfc/rfc9111) · [Cache-Control (MDN)](https://developer.mozilla.org/ko/docs/Web/HTTP/Reference/Headers/Cache-Control) · [주소창에 주소를 입력하면](../basic/web-request.mdx) · [오브젝트 스토리지는 이렇게 동작한다](../cloud/object-storage.mdx)

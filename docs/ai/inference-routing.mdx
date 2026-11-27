@@ -1,7 +1,7 @@
 ---
 id: inference-routing
 title: Which Replica Gets the Request (Inference Routing)
-sidebar_label: 10 · Inference Routing
+sidebar_label: 11 · Inference Routing
 description: Follow an inference request through the gateway to the endpoint picker (EPP), which chooses a replica by prefix cache and load, and see how it differs from round-robin load balancing.
 summary: 'How the gateway and endpoint picker (EPP) choose a replica from prefix-cache hits and load.'
 icon: gate
@@ -186,5 +186,11 @@ kubectl get httproutes -n <namespace>                # Gateway route pointing at
 curl -s http://<engine>:8000/metrics | grep -E 'vllm:(num_requests_waiting|kv_cache_usage_perc|gpu_cache_usage_perc)'   # e.g. vLLM: load the picker scores (step 4)
 curl -s http://<engine>:8000/metrics | grep vllm:prefix_cache   # Prefix cache queries and hits per replica (step 5)
 ```
+
+<Quiz questions={[
+  {q: 'In inference routing, which component decides which replica a request goes to?', options: ['The gateway, using the model name in the body', 'The endpoint picker (EPP), using each replica\'s state', 'The Service, using round-robin'], answer: 1, why: 'The gateway checks auth and limits and picks the target model. It then asks the EPP, which looks at replica state and returns one replica.'},
+  {q: 'Requests that share a system prompt all go to replica 2 because it has the prefix cached. Its queue grows while replicas 1 and 3 sit idle. What should the picker do?', options: ['Keep following the cache, since a cache hit is always fastest', 'Fall back to pure round-robin', 'Clear replica 2\'s prefix cache', 'Count load as well and send some requests to an idle replica'], answer: 3, why: 'Following the cache alone piles traffic onto one replica. When replica 2 is too busy, giving up the cache and sending to an idle replica is faster overall.'},
+  {q: 'You added replicas, but the first token is not getting faster. What should you check first?', options: ['The routing rules: compare waiting requests and prefix cache hit rate per replica', 'The API key cache refresh interval', 'The gateway\'s TLS settings', 'The model weight file size'], answer: 0, why: 'Per-replica waiting requests and prefix cache hit rate side by side show whether traffic is piling up on one replica or the cache is scattered.'},
+]} />
 
 Further reading: [Gateway API Inference Extension](https://gateway-api-inference-extension.sigs.k8s.io/) · [llm-d](https://llm-d.ai/) · [vLLM docs](https://docs.vllm.ai/)

@@ -1,7 +1,7 @@
 ---
 id: kustomize
 title: Kustomize로 환경별 배포 (CKA·CKAD)
-sidebar_label: 06 · Kustomize 환경별 배포
+sidebar_label: 07 · Kustomize 환경별 배포
 description: 공통 매니페스트(base) 위에 개발·운영 환경별 덧씌우기(overlay)를 적용해 이름 접두어·레플리카·이미지 태그를 바꾸고, kubectl kustomize로 결과를 미리 본 뒤 kubectl apply -k로 배포하는 흐름을 애니메이션으로 따라간다
 summary: 'base와 overlay로 환경마다 다른 매니페스트를 만드는 방법.'
 icon: split
@@ -190,5 +190,11 @@ kubectl kustomize overlays/prod | grep -E 'replicas|image:'   # 패치와 새 �
 kubectl kustomize overlays/dev | grep -E 'name: dev-|namespace:'   # namePrefix와 namespace
 kubectl diff -k overlays/prod                        # apply -k가 바꿀 내용
 ```
+
+<Quiz questions={[
+  {q: '운영은 레플리카 3개, 개발은 1개를 유지해야 한다. 어디를 고치는가?', options: ['base/deployment.yaml의 replicas를 고친다', 'replicas: 3만 담은 패치 파일을 overlays/prod의 patches에 건다', 'overlays/prod에 namePrefix: prod-를 적는다'], answer: 1, why: 'overlay에는 그 환경만 다른 값을 적기 때문이다. base를 직접 고치면 다른 환경도 바뀐다.'},
+  {q: 'kubectl kustomize overlays/prod를 쳤는데 클러스터에는 아무 변화가 없다. 이유는 무엇인가?', options: ['overlay에 ../../base가 빠졌다', '폴더 대신 -f를 써야 한다', 'prod 네임스페이스가 없다', 'kubectl kustomize는 합친 YAML을 찍기만 하고, 적용은 kubectl apply -k가 한다'], answer: 3, why: 'kubectl kustomize는 미리보기라 클러스터에 아무것도 보내지 않기 때문이다. kubectl apply -k가 같은 결과를 만들어 적용한다.'},
+  {q: 'kubectl apply -k overlays/prod로 잘못된 이미지 태그가 나갔다. 어떻게 되돌리는가?', options: ['Git에서 이전 kustomization.yaml을 꺼내 다시 apply -k 한다', 'kubectl rollback -k overlays/prod', 'Kustomize가 리비전을 저장하므로 helm rollback을 친다'], answer: 0, why: 'Kustomize에는 자체 설치 이력이 없기 때문이다. 이력은 Git이 맡으므로 이전 파일을 되살려 다시 적용한다.'},
+]} />
 
 더 읽을거리: [CNCF 자격증 출제 범위](https://github.com/cncf/curriculum) · [Kustomize를 이용한 쿠버네티스 오브젝트의 선언형 관리](https://kubernetes.io/ko/docs/tasks/manage-kubernetes-objects/kustomization/) · [Helm과 GitOps](../intermediate/gitops-sync.mdx)

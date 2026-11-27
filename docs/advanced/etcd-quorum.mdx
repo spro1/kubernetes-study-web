@@ -209,4 +209,10 @@ etcdctl endpoint status --cluster -w table                  # Who is leader, Raf
 etcdctl endpoint health --cluster -w table                  # Members alive: is a majority up?
 ```
 
+<Quiz questions={[
+  {q: 'A 3-node control plane loses two nodes. kubectl get pods works, but every create and delete fails. Why?', options: ['The remaining etcd member is short of a majority, lost quorum, and refuses writes', 'The load balancer only forwards read requests', 'The kubelets on the workers stopped all Pods', 'RBAC permissions were reset'], answer: 0, why: 'A write finishes only once a majority records it. One of three is not a majority, so writes stop even though reads may still work.'},
+  {q: 'To tolerate more failures, a team grows etcd from 3 to 4 members. How many failures can it survive now?', options: ['Two, because there is one more member', 'One, the same as three, because the majority rises to three', 'Zero, because even counts cannot elect a leader'], answer: 1, why: 'With four members the quorum is three, so only one failure is tolerated, same as three. To survive two, use five.'},
+  {q: 'etcd has lost quorum. What happens to containers already running on worker nodes?', options: ['They are stopped immediately', 'They are moved to the remaining control plane node', 'They keep running for a while, but failed Pods are not revived', 'They restart in a loop'], answer: 2, why: 'The kubelet on each worker keeps managing running containers, but new changes, such as reviving a failed Pod, are not applied.'},
+]} />
+
 Further reading: [Kubernetes components](https://kubernetes.io/docs/concepts/overview/components/) · [Creating highly available clusters with kubeadm](https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/high-availability/) · [Operating etcd clusters](https://kubernetes.io/docs/tasks/administer-cluster/configure-upgrade-etcd/)

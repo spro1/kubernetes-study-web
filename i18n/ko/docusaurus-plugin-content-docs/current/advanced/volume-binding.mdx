@@ -204,4 +204,10 @@ kubectl get volumeattachments                            # RWO 볼륨이 붙어 
 kubectl get volumesnapshotclass                          # 스냅샷이 동작할 준비가 됐는지
 ```
 
+<Quiz questions={[
+  {q: 'WaitForFirstConsumer 스토리지 클래스로 만든 새 PVC가 Pending이고, 아직 쓰는 파드가 없다. 무슨 뜻인가?', options: ['프로비저너가 고장 났다', '정상적인 기다림이다. 그 PVC를 쓰는 파드가 노드에 배치되면 볼륨이 만들어진다', '스토리지 클래스가 그 접근 모드를 지원하지 않는다', '노드에 남은 디스크가 없다'], answer: 1, why: '이 모드에서는 스케줄러가 파드 자리를 정한 뒤에야 볼륨을 만들므로, 파드가 생길 때까지 Pending은 정상이다. 이벤트에도 첫 소비자를 기다린다는 메시지가 찍히기 때문이다.'},
+  {q: 'RWO 볼륨 하나를 쓰는 db를 레플리카 1에서 2로 늘렸다. node-2에 놓인 파드만 ContainerCreating에 머문다. 왜인가?', options: ['RWO는 파드 하나라는 뜻이라 두 번째 파드를 거절한다', '볼륨이 아직 확장되지 않았다', 'node-2에 CNI가 설치되지 않았다', 'RWO는 한 노드라는 뜻이고, 볼륨이 이미 node-1에 붙어 있다'], answer: 3, why: 'RWO는 볼륨을 한 노드로 제한하고, 같은 노드의 파드끼리는 함께 쓸 수 있다. 여러 노드에서 쓰려면 RWX 스토리지가 필요하기 때문이다.'},
+  {q: 'node-1이 고장 났다. 그 db 파드는 node-1 디스크의 로컬 볼륨을 썼다. 파드를 node-2로 다시 배치하면 어떻게 되는가?', options: ['데이터가 node-1 디스크에만 있으므로 뜨지 못한다', '잠시 기다린 뒤 볼륨이 분리되어 node-2에 다시 붙는다', 'node-2에서 스냅샷이 자동으로 복구된다'], answer: 0, why: '로컬 볼륨은 노드와 운명을 같이한다. node-1이 돌아올 때까지 파드는 뜨지 못하므로, 로컬 볼륨을 쓰는 데이터베이스에는 자체 복제가 필요하기 때문이다.'},
+]} />
+
 더 읽을거리: [퍼시스턴트 볼륨](https://kubernetes.io/ko/docs/concepts/storage/persistent-volumes/) · [스토리지 클래스](https://kubernetes.io/docs/concepts/storage/storage-classes/) · [볼륨 스냅샷](https://kubernetes.io/docs/concepts/storage/volume-snapshots/)

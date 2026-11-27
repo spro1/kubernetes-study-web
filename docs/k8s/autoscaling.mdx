@@ -186,4 +186,10 @@ kubectl describe hpa <name>                          # Scaling events and condit
 kubectl get pods -A --field-selector=status.phase=Pending   # Pods stuck for lack of node room
 ```
 
+<Quiz questions={[
+  {q: 'An HPA targets 60% average CPU. 2 pods are running at 90%. How many pods does it want?', options: ['2', '3', '4', '6'], answer: 1, why: 'Desired pods = ceil(current pods × current usage ÷ target) = ceil(2 × 90 ÷ 60) = 3.'},
+  {q: 'kubectl get hpa shows the desired count went up, but the new pod stays Pending. What is most likely?', options: ['metrics-server is down', 'The HPA has not rewritten replicas yet', 'No node has enough free resources for the pod\'s requests'], answer: 2, why: 'The HPA only changes the count; the scheduler does placement. If no node has room for the requests, the pod stays Pending until nodes are added or other pods use less.'},
+  {q: 'The HPA shows usage as <unknown>. What should you check?', options: ['Whether metrics-server is running and the pods declare resource requests', 'Whether the scale-in stabilization window has passed', 'Whether Cluster Autoscaler is installed'], answer: 0, why: 'The HPA reads usage collected by metrics-server, and utilization is computed against requests. Without either, it cannot compute a value.'},
+]} />
+
 Further reading: [Horizontal Pod Autoscaling](https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/) · [HPA Walkthrough](https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale-walkthrough/)

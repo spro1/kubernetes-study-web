@@ -1,7 +1,7 @@
 ---
 id: observability-pipeline
 title: How Logs, Metrics and Traces Leave a Pod
-sidebar_label: 08 · Logs, Metrics and Traces
+sidebar_label: 10 · Logs, Metrics and Traces
 description: Animated walkthrough of how a Pod's stdout becomes a log file on the node, how kubectl logs and a log agent DaemonSet read it, how Prometheus discovers and scrapes /metrics, what metrics-server is for, and how traces are pushed over OTLP
 summary: 'Three signals, three paths: log files on the node, Prometheus pulling /metrics, and traces pushed over OTLP.'
 icon: chart
@@ -239,5 +239,11 @@ kubectl get servicemonitor,podmonitor -A             # If you use the Prometheus
 ```
 
 In Prometheus, run `up == 0` to list failing targets, and `topk(10, count by (__name__) ({__name__=~".+"}))` to find metrics with too many series.
+
+<Quiz questions={[
+  {q: 'A Pod crashed at 3 a.m. and the Deployment replaced it. kubectl logs shows only the new Pod\'s lines. Why?', options: ['kubectl logs only reads the last 50 lines by default', 'The old Pod\'s log files on the node were cleaned up with it, and no log agent shipped them off the node', 'Prometheus deleted the logs when it scraped the Pod'], answer: 1, why: 'kubectl logs reads files on the node through the kubelet. When the Pod is gone, so are its files, unless a DaemonSet log agent already sent them to a log store.'},
+  {q: 'An app hangs and Prometheus can no longer scrape it. Why might the error-rate alert stay silent?', options: ['The app\'s series simply stop getting samples, so there is no data to alert on; an alert on up == 0 is needed', 'Prometheus keeps the last error rate and repeats it', 'metrics-server takes over the scrape and reports zero errors', 'NetworkPolicy blocks alerts as well as scrapes'], answer: 0, why: 'A failed scrape sets up to 0 and the app\'s own series stop updating. Missing data does not trigger an error-rate alert, so alert on up == 0 for important jobs.'},
+  {q: 'You want to see what a Pod\'s CPU usage was yesterday. Where should you look?', options: ['kubectl top pod, which reads the Metrics API', 'The trace backend, such as Jaeger', 'Prometheus, which stores each scraped value with a timestamp'], answer: 2, why: 'metrics-server holds only the latest CPU and memory values for kubectl top and the HPA. History is Prometheus\'s job.'},
+]} />
 
 Further reading: [Logging architecture](https://kubernetes.io/docs/concepts/cluster-administration/logging/) · [Resource metrics pipeline](https://kubernetes.io/docs/tasks/debug/debug-cluster/resource-metrics-pipeline/) · [Prometheus kubernetes_sd_config](https://prometheus.io/docs/prometheus/latest/configuration/configuration/#kubernetes_sd_config) · [Prometheus naming and labels](https://prometheus.io/docs/practices/naming/) · [OTLP specification](https://opentelemetry.io/docs/specs/otlp/) · [OpenTelemetry Collector](https://opentelemetry.io/docs/collector/) · [SLOs and Alert Design](../advanced/slo-alert.mdx) · [Scaling with Load (HPA)](../k8s/autoscaling.mdx)

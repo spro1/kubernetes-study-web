@@ -1,7 +1,7 @@
 ---
 id: node-troubleshoot
 title: 노드 NotReady와 구성요소 장애 (CKA)
-sidebar_label: 04 · 노드·구성요소 장애
+sidebar_label: 05 · 노드·구성요소 장애
 description: 노드가 NotReady일 때 kubelet 상태와 로그로 원인을 좁히는 순서, 그리고 정적 파드로 도는 API 서버가 죽어 kubectl이 안 될 때 crictl로 확인하고 매니페스트를 고치는 과정을 애니메이션으로 따라간다
 summary: 'kubelet·런타임·정적 파드를 차례로 확인하는 노드 장애 해결.'
 icon: alert
@@ -197,5 +197,11 @@ sudo journalctl -u kubelet -n 50 --no-pager          # 최근 kubelet 오류
 sudo crictl ps -a --name kube-apiserver              # API 서버 컨테이너가 Exited인지
 sudo crictl logs <컨테이너-ID>                       # 마지막 오류
 ```
+
+<Quiz questions={[
+  {q: 'worker-1이 NotReady이고 describe에 Kubelet stopped posting node status가 찍혀 있다. 원인은 어디서 찾는가?', options: ['API 서버 파드에 kubectl logs를 친다', 'worker-1에 들어가 systemctl status kubelet, 이어서 journalctl -u kubelet을 본다', '스케줄러의 이벤트를 본다'], answer: 1, why: 'NotReady는 kubelet의 보고가 끊겼다는 뜻이고, API 서버는 노드 안을 들여다보지 못한다. 그래서 그 노드에 직접 들어가 kubelet 상태와 로그를 읽어야 하기 때문이다.'},
+  {q: 'kubectl get pods가 connection refused로 끝난다. kube-apiserver 컨테이너가 Exited인지는 어떻게 보는가?', options: ['컨트롤 플레인 노드에 ssh로 들어가 crictl ps -a, 이어서 crictl logs를 친다', 'kubectl describe pod kube-apiserver -n kube-system', 'kubectl get events -A', 'kubectl을 다시 시작한다'], answer: 0, why: 'kubectl은 API 서버를 거쳐야만 일한다. crictl은 API 서버를 거치지 않고 컨테이너 런타임에 바로 묻기 때문이다.'},
+  {q: 'API 서버 정적 파드의 매니페스트에 옵션 하나가 틀렸다. 어떻게 고치는가?', options: ['kubectl edit pod kube-apiserver -n kube-system', 'kubectl delete로 파드를 지워 다시 만들게 한다', '고친 YAML을 kubectl apply 한다', '/etc/kubernetes/manifests/kube-apiserver.yaml을 고친다. kubelet이 알아채고 다시 만든다'], answer: 3, why: '정적 파드는 kubelet이 /etc/kubernetes/manifests의 파일을 읽어 띄운다. kubectl로는 고칠 수 없고, 파일을 고쳐야 kubelet이 다시 만들기 때문이다.'},
+]} />
 
 더 읽을거리: [CNCF 자격증 출제 범위](https://github.com/cncf/curriculum) · [클러스터 트러블슈팅](https://kubernetes.io/docs/tasks/debug/debug-cluster/) · [crictl로 노드 디버깅](https://kubernetes.io/docs/tasks/debug/debug-cluster/crictl/) · [파드가 죽으면 (자가 치유)](../k8s/self-healing.mdx) · [클러스터 인증서 만료](../advanced/cluster-cert.mdx)

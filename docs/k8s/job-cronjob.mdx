@@ -1,7 +1,7 @@
 ---
 id: job-cronjob
 title: Run Once and Finish (Job · CronJob)
-sidebar_label: 09 · Run Once and Finish
+sidebar_label: 11 · Run Once and Finish
 description: Follow how a Job creates a Pod, watches it to completion, and retries on failure, and how a CronJob creates Jobs on a schedule and handles overlapping runs and history.
 summary: 'Tasks that run to completion and stop, retries on failure, and tasks that run on a schedule.'
 icon: spark
@@ -170,5 +170,11 @@ kubectl get job try-job                              # COMPLETIONS reaches 1/1
 kubectl logs job/try-job                             # Logs live in the Job's Pod
 kubectl delete job try-job                           # Clean up (deletes its Pod too)
 ```
+
+<Quiz questions={[
+  {q: 'A Job has backoffLimit: 3, and its first Pod exits with an error. What happens next?', options: ['The Job ends as Failed right away', 'The Job creates a new Pod to retry, and the failed Pod is kept so you can read its logs', 'The Job deletes the failed Pod and its logs'], answer: 1, why: 'A Job retries with a new Pod, waiting a little longer each time, until failures exceed backoffLimit. The failed Pod stays for debugging.'},
+  {q: 'A nightly CronJob at 02:00 is sometimes still running at 02:00 the next day, and two runs must not edit the same data at once. What should you do?', options: ['Set concurrencyPolicy to Forbid (or Replace), since the default Allow runs both side by side', 'Nothing, because a CronJob skips overlapping runs by default', 'Raise backoffLimit so the first run finishes sooner'], answer: 0, why: 'Allow is the default and creates another Job alongside the running one. Forbid skips the new run, and Replace swaps the running Job for a new one.'},
+  {q: 'After a Job finishes, its Pod shows Completed and does not restart. Is something wrong?', options: ['Yes, the Pod should restart like a Deployment\'s Pod', 'Yes, Completed means it ran out of retries', 'No, a Job aims to finish successfully, so exiting is normal'], answer: 2, why: 'A Deployment aims to keep running, while a Job aims to finish. A completed Pod stays as Completed and uses no more resources.'},
+]} />
 
 Further reading: [Jobs](https://kubernetes.io/docs/concepts/workloads/controllers/job/) · [CronJob](https://kubernetes.io/docs/concepts/workloads/controllers/cron-jobs/)

@@ -1,7 +1,7 @@
 ---
 id: entry-compare
 title: Three Entry Points Compared (Ingress · Mesh Gateway · Gateway API)
-sidebar_label: 08 · Entry Points Compared
+sidebar_label: 09 · Entry Points Compared
 description: Send the same external request through Ingress, a service mesh gateway with a VirtualService, and the Gateway API's Gateway and HTTPRoute, and compare who handles what on each path
 summary: 'What Ingress, the mesh gateway and the Gateway API each handle, compared with the same request.'
 icon: layers
@@ -181,5 +181,11 @@ kubectl get namespace shop --show-labels                          # Is istio-inj
 kubectl get gatewayclass                                          # Gateway API controller
 kubectl get gateways.gateway.networking.k8s.io,httproutes -n shop # Standard Gateway and routes
 ```
+
+<Quiz questions={[
+  {q: 'You created an Istio Gateway for shop.example.com, and requests reach it but never get to the api Service. What should you check first?', options: ['Whether the Ingress has the right annotations', 'Whether a VirtualService lists that gateway under gateways', 'Whether a GatewayClass exists in the cluster'], answer: 1, why: 'A mesh gateway only opens the door. Without a VirtualService that lists it under gateways, requests get through the door but have nowhere to go.'},
+  {q: 'You switch an Ingress to a different controller implementation, and its timeout setting quietly stops working. Why?', options: ['Ingress does not support timeouts at all', 'The new controller needs an HTTPRoute instead', 'The timeout lived in implementation-specific annotations, which another implementation can ignore without any error', 'Ingress rules are evaluated bottom to top'], answer: 2, why: 'Ingress has few standard fields, so settings like timeouts go into annotations that differ per implementation. A new implementation may silently ignore them.'},
+  {q: 'An app team creates an HTTPRoute in its own namespace, but it never attaches to the platform team\'s Gateway. What is most likely?', options: ['The Gateway\'s allowedRoutes policy does not accept routes from that namespace', 'HTTPRoutes can only be created by cluster admins', 'The namespace lacks the istio-injection=enabled label'], answer: 0, why: 'The Gateway\'s allowedRoutes policy decides which namespaces\' routes it accepts. Routes created outside the allowed scope do not attach.'},
+]} />
 
 Further reading: [Ingress](https://kubernetes.io/docs/concepts/services-networking/ingress/) · [Gateway API](https://kubernetes.io/docs/concepts/services-networking/gateway/) · [Gateway API docs](https://gateway-api.sigs.k8s.io/) · [Istio traffic management](https://istio.io/latest/docs/concepts/traffic-management/)

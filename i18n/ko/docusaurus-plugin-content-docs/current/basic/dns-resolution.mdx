@@ -246,4 +246,10 @@ nslookup www.example.com                  # 윈도우를 포함해 거의 어디
 
 같은 리졸버에 `dig www.example.com`을 두 번 실행해서 TTL이 줄어드는 것을 보자. 그게 캐시다.
 
+<Quiz questions={[
+  {q: '한 시간 전에 A 레코드를 .10에서 .20으로 바꿨는데, 아직 옛 서버로 가는 사용자가 있다. 왜인가?', options: ['권한 서버가 아직 변경을 읽어 들이지 않았다', '옛 답을 캐시한 리졸버가 옛 TTL이 끝날 때까지 그 답을 계속 돌려준다', '루트 서버가 아직 옛 IP를 갖고 있다'], answer: 1, why: '권한 서버는 곧바로 새 IP로 답하지만 캐시된 답은 TTL 동안 남기 때문이다. 가장 오래 걸리는 경우는 옛 TTL이므로 이전 작업 훨씬 전에 TTL을 낮춰 둔다.'},
+  {q: '조회 결과가 SERVFAIL이다. 이것이 알려 주는 것은 무엇인가?', options: ['그 이름은 확실히 존재하지 않는다', '요청이 내 컴퓨터를 벗어나지도 못했다', '그 리졸버를 쓸 권한이 없다', '리졸버가 올바른 답을 얻지 못했으니 네임서버·위임·DNSSEC를 확인해야 한다'], answer: 3, why: 'SERVFAIL은 이름이 없다는 뜻이 아니라 조회가 깨졌다는 뜻이다. 이름이 없다는 응답 코드는 NXDOMAIN이다.'},
+  {q: '레코드를 만들기 전에 그 이름을 찾은 사용자가 NXDOMAIN을 받았고, 레코드를 만든 뒤에도 계속 NXDOMAIN을 받는다. 이유는 무엇인가?', options: ['부정 응답도 SOA에서 나온 부정 TTL 동안 캐시되기 때문이다', '브라우저는 실패한 이름을 다시 묻지 않기 때문이다', '새 레코드는 TLD 서버가 갱신된 뒤에야 보이기 때문이다'], answer: 0, why: '리졸버는 NXDOMAIN도 SOA 레코드의 TTL과 MINIMUM 필드 중 작은 값만큼 캐시한다(RFC 2308). 그래서 방금 받은 사용자는 그 기간이 끝날 때까지 계속 받기 때문이다.'},
+]} />
+
 더 읽을거리: [RFC 1034: Domain Concepts](https://www.rfc-editor.org/rfc/rfc1034) · [RFC 2308: Negative Caching](https://www.rfc-editor.org/rfc/rfc2308) · [루트 서버 (IANA)](https://www.iana.org/domains/root/servers) · [resolv.conf(5)](https://man7.org/linux/man-pages/man5/resolv.conf.5.html) · [DNS (MDN 용어 사전)](https://developer.mozilla.org/ko/docs/Glossary/DNS) · [주소창에 주소를 입력하면](../basic/web-request.mdx) · [이름으로 찾아가기 (Service·DNS)](../k8s/service-dns.mdx)

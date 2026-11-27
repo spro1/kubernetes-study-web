@@ -190,4 +190,10 @@ aws sts assume-role --role-arn <역할-ARN> --role-session-name demo   # 만료 
 aws cloudtrail lookup-events --lookup-attributes AttributeKey=AccessKeyId,AttributeValue=<키-ID> --max-results 10   # 키 하나의 감사 로그
 ```
 
+<Quiz questions={[
+  {q: '요청이 인증은 통과했지만, 호출자에 붙은 정책 어디에도 이 동작을 허용하는 문장도 거부하는 문장도 없다. 어떻게 되는가?', options: ['인증을 통과했으므로 허용된다', '허용이 없으면 거부가 기본이므로 거부된다', '읽기 동작일 때만 허용된다'], answer: 1, why: '인증은 누구인지만 확인한다. 모은 정책 어디에도 허용이 없으면 정책 평가는 기본 거부로 끝나기 때문이다.'},
+  {q: '너무 넓게 준 관리자 정책은 운영 DB 삭제를 허용하지만, 조직 전체 정책이 이를 명시적으로 거부한다. 결과는 무엇인가?', options: ['관리자 정책이 더 구체적이므로 허용된다', '어느 정책이 먼저 붙었는지에 따라 다르다', '명시적 거부가 항상 허용을 이기므로 거부된다', '호출자가 MFA를 켰다면 허용된다'], answer: 2, why: '평가 순서는 명시적 거부, 명시적 허용, 기본 거부다. 그래서 조직 차원의 안전장치는 거부 정책으로 건다.'},
+  {q: '예전 장기 액세스 키가 공개 저장소로 유출되어 공격자가 썼다. 피해를 가장 크게 줄였을 설정은 무엇인가?', options: ['역할의 임시 자격 증명을 쓰고 일에 필요한 권한만 준다', '장기 키를 그대로 두되 1년에 한 번 바꾼다', '사람 관리자 계정에만 MFA를 켠다'], answer: 0, why: '임시 자격 증명은 곧 만료되고, 최소 권한이면 유출된 자격 증명도 좁은 범위에 갇힌다. 진짜 장기 키는 누가 들고 있든 인증을 통과하기 때문이다.'},
+]} />
+
 더 읽을거리: [IAM이란 무엇인가 (AWS)](https://docs.aws.amazon.com/IAM/latest/UserGuide/introduction.html) · [정책 평가 로직 (AWS)](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_evaluation-logic.html) · [누가 무엇을 할 수 있나 (RBAC)](../k8s/rbac.mdx)
