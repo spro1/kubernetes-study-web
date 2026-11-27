@@ -1,0 +1,234 @@
+---
+id: cluster-backup
+title: 클러스터 백업과 복구
+sidebar_label: 09 · 클러스터 백업과 복구
+description: 쿠버네티스 클러스터의 상태가 어디에 있는지, 클러스터 전체를 되살리는 etcd 스냅숏, API 오브젝트와 볼륨 데이터를 오브젝트 스토리지로 보내는 Velero 백업, 일관성을 맞추는 훅, TTL이 있는 스케줄, 다른 클러스터로의 복구를 애니메이션으로 따라간다
+summary: 'etcd 스냅숏, 오브젝트와 볼륨을 함께 담는 Velero 백업, 일관성 훅, 새 클러스터로의 복구.'
+icon: archive
+hide_table_of_contents: true
+---
+
+# 클러스터 백업과 복구
+
+클러스터의 상태는 여러 곳에 나뉘어 있고, 곳마다 다른 백업이 필요하다. **etcd 스냅숏**과 **Velero 백업**이 원본 클러스터에서 오브젝트 스토리지로 갔다가 새 클러스터로 돌아오는 길을 따라간다.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '약 12분', level: '고급'}}
+  groups={[
+    {label: '클러스터 A · 원본', x: 20, y: 30, w: 500, h: 290, tone: 'biz'},
+    {label: '클러스터 B · 복구', x: 790, y: 30, w: 190, h: 290, tone: 'plain'},
+  ]}
+  nodes={[
+    {id: 'etcd', label: 'etcd', sub: 'API 오브젝트', icon: 'db', tone: 'cp', x: 100, y: 110, show: true},
+    {id: 'api', label: 'API 서버', sub: 'etcd 읽기·쓰기', icon: 'gear', tone: 'cp', x: 100, y: 250, show: true},
+    {id: 'velero', label: 'Velero', sub: '백업 컨트롤러', icon: 'agent', tone: 'node', x: 300, y: 110},
+    {id: 'pod', label: '파드', sub: 'postgres', icon: 'pod', tone: 'app', size: 'sm', x: 300, y: 250, show: true},
+    {id: 'pv', label: 'PV', sub: '데이터 디스크', icon: 'disk', tone: 'store', x: 440, y: 250, w: 120, show: true},
+    {id: 'agent', label: 'node-agent', sub: '파일 복사', icon: 'agent', tone: 'node', x: 460, y: 110, w: 120},
+    {id: 'bucket', label: '오브젝트 스토리지', sub: '백업 버킷', icon: 'archive', tone: 'store', x: 660, y: 110, w: 160},
+    {id: 'vsnap', label: '볼륨 스냅숏', sub: 'CSI 스냅숏', icon: 'disk', tone: 'store', x: 660, y: 250},
+    {id: 'snapfile', label: 'etcd 스냅숏', sub: 'snapshot.db', icon: 'archive', tone: 'store', x: 660, y: 390},
+    {id: 'velero2', label: 'Velero', sub: '같은 버킷', icon: 'agent', tone: 'node', x: 885, y: 110},
+    {id: 'app2', label: '복구된 앱', sub: '오브젝트 + PVC', icon: 'pod', tone: 'app', x: 885, y: 250},
+    {id: 'git', label: 'Git 저장소', sub: '매니페스트', icon: 'git', tone: 'ext', x: 100, y: 390, show: true},
+    {id: 'extdb', label: '바깥 상태', sub: '클라우드 DB·DNS·볼트', icon: 'cloud', tone: 'ext', x: 330, y: 390, w: 170, show: true},
+  ]}
+  metrics={[
+    {id: 'objects', label: 'API 오브젝트'},
+    {id: 'volumes', label: '볼륨 데이터'},
+    {id: 'consistent', label: '일관성'},
+    {id: 'restore', label: '복구'},
+  ]}
+  learn={[
+    {text: '세 종류의 상태: API 오브젝트, 볼륨 데이터, 바깥 시스템', at: 0},
+    {text: 'etcd 스냅숏이 되살리는 것과 되감는 것', at: 1},
+    {text: 'Velero가 오브젝트와 볼륨을 오브젝트 스토리지에 담는 방식', at: 4},
+    {text: '크래시 일관성과 훅으로 맞추는 앱 일관성', at: 6},
+    {text: '다른 클러스터로 복구하기, 복구를 꼭 시험해야 하는 이유', at: 8},
+  ]}
+  steps={[
+    {
+      short: '시작',
+      kind: '시작',
+      title: '상태는 세 곳에 있다',
+      text: [
+        'API 오브젝트(Deployment, Service, Secret, PVC)는 etcd에 있다. 앱이 쓴 바이트는 etcd 밖의 볼륨에 있다. 클라우드 관리형 DB, DNS 레코드, 볼트의 시크릿처럼 아예 클러스터 밖에 있는 상태도 있다.',
+        '곳마다 따로 백업해야 한다. 매니페스트가 담긴 Git 저장소는 오브젝트를 다시 만드는 데는 도움이 되지만 데이터는 하나도 없다.',
+      ],
+      focus: ['etcd', 'pv', 'extdb'],
+      values: {objects: 'etcd', volumes: 'PV 디스크', consistent: '—', restore: '—'},
+    },
+    {
+      short: 'etcd 스냅숏',
+      kind: '원리',
+      title: 'etcd 스냅숏은 한 순간의 모든 오브젝트를 복사한다',
+      text: [
+        'etcdctl snapshot save는 TLS로 etcd에 붙으므로 엔드포인트, CA, 클라이언트 인증서와 키가 필요하다. 결과는 그 순간 클러스터의 모든 오브젝트가 담긴 파일 하나, snapshot.db다.',
+        '파일은 컨트롤 플레인 노드 밖으로 옮긴다. 잃어버릴 노드의 디스크에 있는 스냅숏은 백업이 아니다.',
+      ],
+      keyIdea: '스냅숏에는 Secret도 들어 있고, 저장 시 암호화를 켜지 않았다면 평문이다. 시크릿처럼 보관한다.',
+      flows: [{from: 'etcd', to: 'snapfile', label: 'snapshot save', type: 'request'}],
+      focus: ['etcd', 'snapfile'],
+      badges: {snapfile: '02:00'},
+      values: {objects: {text: 'snapshot.db', tone: 'good'}},
+    },
+    {
+      short: 'etcd 복구',
+      kind: '주의',
+      title: '스냅숏 복구는 클러스터 전체를 되감는다',
+      text: [
+        '복구하려면 먼저 모든 API 서버를 멈춘다. etcdutl snapshot restore가 스냅숏을 새 데이터 디렉터리에 풀고, etcd(kubeadm이라면 스태틱 파드 매니페스트)가 그 디렉터리를 보게 바꾼다. API 서버를 다시 켜고, 오래된 캐시가 남지 않게 스케줄러, 컨트롤러 매니저, kubelet도 재시작한다.',
+        '모든 것이 02:00으로 돌아간다. 그 뒤에 만든 오브젝트는 사라지고, 컨트롤러는 실행 중인 파드를 예전의 원하는 상태로 되돌린다.',
+      ],
+      keyIdea: 'etcd 복구는 컨트롤 플레인을 잃었을 때 쓰는 것이지, Deployment 하나를 지웠을 때 쓰는 것이 아니다. 모든 네임스페이스가 한꺼번에 되감긴다.',
+      flows: [{from: 'snapfile', to: 'etcd', label: 'snapshot restore', type: 'response'}],
+      focus: ['snapfile', 'etcd', 'api'],
+      status: {api: 'off'},
+      badges: {etcd: '새 데이터 디렉터리'},
+      values: {restore: {text: '클러스터 전체 → 02:00', tone: 'bad'}},
+    },
+    {
+      short: 'PV 데이터 없음',
+      kind: '문제',
+      title: '스냅숏에는 PVC가 있지 데이터가 있지 않다',
+      text: [
+        '복구가 끝나면 PVC와 PV 오브젝트는 돌아온다. 하지만 디스크 위의 바이트는 etcd에 없다. 디스크까지 잃었다면 PV는 아무것도 없거나 새로 만든 빈 볼륨을 가리킨다.',
+        '볼륨 데이터는 따로 백업해야 한다. 스토리지 스냅숏, 파일 단위 복사, 또는 데이터베이스 자체 덤프다.',
+      ],
+      focus: ['pv'],
+      status: {api: null, pv: 'error'},
+      badges: {etcd: null, pv: 'etcd에 없음'},
+      values: {volumes: {text: '백업 안 됨', tone: 'bad'}, restore: '—'},
+    },
+    {
+      short: 'Velero 백업',
+      kind: '원리',
+      title: 'Velero는 API 오브젝트를 오브젝트 스토리지로 내보낸다',
+      text: [
+        'Velero는 클러스터 안에서 돈다. velero backup create shop --include-namespaces shop처럼 Backup 리소스를 만들면, Velero가 API 서버를 통해 해당 오브젝트를 읽어 압축 파일로 버킷(BackupStorageLocation)에 쓴다.',
+        'API를 거쳐 일하므로 네임스페이스 하나나 레이블 셀렉터 단위로 백업하고 같은 단위로 복구할 수 있다. etcd를 직접 건드리지 않는다.',
+      ],
+      flows: [
+        {from: 'velero', to: 'api', label: '오브젝트 조회', type: 'request'},
+        {from: 'velero', to: 'bucket', label: '압축 파일', type: 'request'},
+      ],
+      focus: ['velero', 'bucket'],
+      status: {pv: null},
+      badges: {pv: null, bucket: 'shop-0200'},
+      values: {objects: {text: '네임스페이스 shop', tone: 'good'}, volumes: '—'},
+    },
+    {
+      short: '볼륨',
+      kind: '원리',
+      title: '볼륨 데이터는 스냅숏이나 파일 복사로 간다',
+      text: [
+        'CSI 스냅숏을 쓰면 Velero가 PVC마다 VolumeSnapshot을 만든다. 빠르지만 스냅숏은 보통 같은 스토리지 시스템, 같은 리전에 남는다. --snapshot-move-data를 주면 Velero가 스냅숏 데이터를 버킷으로 복사한다.',
+        '파일 시스템 백업(--default-volumes-to-fs-backup)은 볼륨 종류를 가리지 않는다. node-agent 데몬셋이 마운트된 볼륨에서 파일을 읽어 Kopia로 올린다. 어디로든 옮길 수 있지만 큰 볼륨에서는 느리다.',
+      ],
+      keyIdea: '볼륨과 같은 스토리지 시스템에 있는 스냅숏은 그 시스템이나 리전을 잃는 상황을 막아 주지 못한다.',
+      flows: [
+        {from: 'pv', to: 'vsnap', label: 'CSI 스냅숏', type: 'request'},
+        {from: 'agent', to: 'pv', label: '파일 읽기', type: 'request'},
+        {from: 'agent', to: 'bucket', label: 'Kopia 업로드', type: 'request'},
+      ],
+      focus: ['pv', 'vsnap', 'agent'],
+      values: {volumes: {text: '스냅숏 또는 파일 복사', tone: 'good'}, consistent: '크래시 일관성'},
+    },
+    {
+      short: '훅',
+      kind: '문제',
+      title: '바쁜 데이터베이스의 스냅숏은 크래시 일관성뿐이다',
+      text: [
+        '스냅숏은 쓰기 도중의 디스크를 정전된 것처럼 찍는다. 대부분의 데이터베이스는 여기서 회복하지만, 반쯤 쓴 파일이나 아직 메모리에 있던 페이지 때문에 데이터를 잃을 수 있다.',
+        '백업 훅이 이를 막는다. pre.hook.backup.velero.io/command 같은 파드 애너테이션은 백업 전에 컨테이너 안에서 fsfreeze --freeze나 볼륨으로의 pg_dump 같은 명령을 실행한다. 백업이 끝나면 포스트 훅이 동결을 푼다.',
+      ],
+      keyIdea: '데이터베이스는 데이터베이스 자체 덤프나 복제를 아는 백업을 우선한다. 볼륨 스냅숏은 두 번째 방어선으로 둔다.',
+      flows: [{from: 'velero', to: 'pod', label: '프리 훅', type: 'request'}],
+      focus: ['pod', 'velero'],
+      status: {pod: 'warn'},
+      badges: {pod: 'fsfreeze'},
+      values: {consistent: {text: '앱 일관성', tone: 'good'}},
+    },
+    {
+      short: '스케줄',
+      kind: '원리',
+      title: 'Schedule은 매일 밤 백업하고 오래된 것을 지운다',
+      text: [
+        'velero schedule create shop-daily --schedule="0 2 * * *" --ttl 720h는 매일 밤 02:00에 Backup을 만든다. TTL은 백업 하나를 보관하는 기간이고 기본값은 30일이다.',
+        '백업이 만료되면 Velero가 압축 파일과 그 백업에 딸린 스냅숏을 지운다. 백업 상태를 지켜본다. PartiallyFailed인 백업도 목록에는 있지만 빠진 조각이 있다.',
+      ],
+      flows: [{from: 'velero', to: 'bucket', label: '매일 밤', type: 'request'}],
+      focus: ['velero', 'bucket'],
+      status: {pod: null},
+      badges: {pod: null, bucket: '백업 30개'},
+    },
+    {
+      short: '복구',
+      kind: '원리',
+      title: '새 클러스터가 같은 버킷에서 복구한다',
+      text: [
+        '클러스터 A가 사라졌다. 클러스터 B에 Velero를 설치하고 같은 버킷을 가리키게 한다. B가 A의 백업을 지우지 못하게 ReadOnly 모드로 붙이는 것이 좋다. 그다음 velero restore create --from-backup shop-0200을 실행한다.',
+        'Velero는 순서대로 복구한다. CRD와 네임스페이스가 먼저, 다음은 스토리지와 PV·PVC, 그다음 Secret과 ConfigMap, 마지막이 워크로드다. B에 이미 있는 오브젝트는 --existing-resource-policy=update를 주지 않는 한 건너뛴다. 백업과 내용이 다르면 경고를 남긴다.',
+      ],
+      keyIdea: '클러스터 간 이전도 이렇게 한다. 새 클러스터에 같은 스토리지 클래스 이름과 이미지 레지스트리가 없을 수 있으니 확인한다.',
+      flows: [
+        {from: 'bucket', to: 'velero2', label: '백업 읽기', type: 'response'},
+        {from: 'velero2', to: 'app2', label: '다시 만들기', type: 'request'},
+      ],
+      focus: ['bucket', 'velero2', 'app2'],
+      status: {app2: 'ok'},
+      values: {restore: {text: '네임스페이스 shop → B', tone: 'good'}},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '복구해 본 백업만 백업이다',
+      text: [
+        'etcd 스냅숏은 잃어버린 컨트롤 플레인을 한꺼번에 되살린다. Velero는 네임스페이스를 볼륨과 함께 오브젝트 스토리지에 담고 어디로든 복구한다. 바깥 상태는 그 시스템 자체의 백업이 필요하다.',
+        'Git 저장소는 오브젝트를 다시 만들지만 데이터는 만들지 못한다. 정해진 주기로 임시 클러스터에 복구해 보고 걸린 시간을 잰다. 그 시간이 진짜 RTO다.',
+      ],
+      keyIdea: '적어도 한 벌은 다른 리전이나 다른 계정에 둔다. 같은 실수나 같은 공격자가 클러스터와 백업을 함께 지우지 못하게 하기 위해서다.',
+      flows: [
+        {from: 'etcd', to: 'snapfile', label: '컨트롤 플레인', type: 'request'},
+        {from: 'velero', to: 'bucket', label: '네임스페이스', type: 'request'},
+      ],
+      focus: ['snapfile', 'bucket', 'app2'],
+      status: {app2: null},
+      badges: {bucket: null, snapfile: null},
+    },
+  ]}
+/>
+
+## 방법마다 담는 것
+
+| 방법 | API 오브젝트 | 볼륨 데이터 | 범위 | 알맞은 상황 |
+|---|---|---|---|---|
+| etcd 스냅숏 | 전부, 한 순간 | 없음 | 클러스터 전체 | 컨트롤 플레인을 잃었을 때 |
+| Velero(오브젝트만) | 고른 네임스페이스·레이블 | 없음 | 네임스페이스, 레이블 | 지워진 리소스, 클러스터 이전 |
+| Velero + CSI 스냅숏 | 있음 | 있음, 같은 스토리지 시스템 안 | 네임스페이스 | 같은 리전 안의 빠른 복구 |
+| Velero + 데이터 무버 또는 파일 시스템 백업 | 있음 | 있음, 버킷으로 복사 | 네임스페이스 | 다른 리전·다른 클러스터로 복구 |
+| 데이터베이스 덤프·복제 | 없음 | 그 데이터베이스만, 일관성 있게 | 데이터베이스 하나 | 데이터베이스, 특정 시점 복구 |
+| Git(GitOps) | 직접 쓴 매니페스트 | 없음 | 저장소에 있는 것 | 설정 재구성, 데이터는 아님 |
+
+## 직접 해 보기
+
+```bash
+# etcd 스냅숏 (kubeadm 경로, 컨트롤 플레인 노드에서 실행)
+ETCDCTL_API=3 etcdctl --endpoints=https://127.0.0.1:2379 \
+  --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+  --cert=/etc/kubernetes/pki/etcd/server.crt \
+  --key=/etc/kubernetes/pki/etcd/server.key \
+  snapshot save /backup/snapshot.db
+etcdutl --write-out=table snapshot status /backup/snapshot.db   # 해시, 리비전, 키 수, 크기
+
+# Velero
+velero backup create shop-test --include-namespaces shop --wait
+velero backup describe shop-test --details        # 오브젝트, 볼륨 스냅숏, 경고
+velero backup logs shop-test | grep -i error
+velero restore create --from-backup shop-test --namespace-mappings shop:shop-restore-test   # 원본 옆에 복구해 보기
+velero restore describe <restore-name>            # 건너뛴 항목과 실패한 항목
+```
+
+더 읽을거리: [etcd 클러스터 운영: 백업과 복구](https://kubernetes.io/docs/tasks/administer-cluster/configure-upgrade-etcd/#backing-up-an-etcd-cluster) · [etcd 재해 복구](https://etcd.io/docs/latest/op-guide/recovery/) · [Velero 문서](https://velero.io/docs/) · [Velero 백업 훅](https://velero.io/docs/main/backup-hooks/) · [Velero 파일 시스템 백업](https://velero.io/docs/main/file-system-backup/) · [컨트롤 플레인 고가용성과 etcd 쿼럼](../advanced/etcd-quorum.mdx) · [멀티 리전 재해 복구](../cloud/multi-region-dr.mdx) · [오브젝트 스토리지는 이렇게 움직인다](../cloud/object-storage.mdx)

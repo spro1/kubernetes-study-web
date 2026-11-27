@@ -1,0 +1,211 @@
+---
+id: linux-isolation
+title: How Linux Isolates a Container
+sidebar_label: 06 · How Linux Isolates a Container
+description: Animated walkthrough of what a container really is on Linux, an ordinary host process placed in namespaces (pid, net, mnt, uts, ipc, user) and limited by cgroup v2 files such as cpu.max and memory.max, with CPU throttling, OOM kill and exit code 137
+summary: 'A container is a host process: namespaces change what it can see, cgroups limit what it can use.'
+icon: layers
+hide_table_of_contents: true
+---
+
+# How Linux Isolates a Container
+
+A container is not a small virtual machine. It is an ordinary process on the host that the kernel shows a smaller world (**namespaces**) and holds to a budget (**cgroups**). Follow one container from start to an OOM kill.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~10 min', level: 'Beginner'}}
+  groups={[
+    {label: 'Linux host · one shared kernel', x: 30, y: 30, w: 940, h: 410, tone: 'plain'},
+  ]}
+  nodes={[
+    {id: 'runtime', label: 'Container runtime', sub: 'containerd · runc', icon: 'gear', tone: 'cp', x: 140, y: 120, show: true, w: 170},
+    {id: 'kernel', label: 'Linux kernel', sub: 'Shared by all', icon: 'server', tone: 'node', x: 140, y: 330, show: true},
+    {id: 'proc', label: 'Process', sub: 'Host PID 4321', icon: 'box', tone: 'app', x: 420, y: 225},
+    {id: 'ns', label: 'Namespaces', sub: 'What it can see', icon: 'layers', tone: 'store', x: 680, y: 120},
+    {id: 'cg', label: 'cgroup', sub: 'What it can use', icon: 'gate', tone: 'store', x: 680, y: 330},
+    {id: 'net', label: 'Own network', sub: 'eth0 · own IP', icon: 'route', tone: 'ext', size: 'sm', x: 890, y: 70},
+    {id: 'fs', label: 'Own filesystem', sub: 'Image layers', icon: 'disk', tone: 'ext', size: 'sm', x: 890, y: 175},
+    {id: 'oom', label: 'OOM killer', sub: 'SIGKILL', icon: 'alert', tone: 'ext', size: 'sm', x: 890, y: 390},
+  ]}
+  metrics={[
+    {id: 'pid', label: 'PID (inside / host)'},
+    {id: 'cpu', label: 'CPU'},
+    {id: 'mem', label: 'Memory'},
+    {id: 'exit', label: 'Exit'},
+  ]}
+  learn={[
+    {text: 'A container is a normal process that ps on the host can see', at: 1},
+    {text: 'Each namespace hides one kind of resource: PIDs, network, mounts, hostname, IPC, users', at: 2},
+    {text: 'Why PID 1 inside a container is special', at: 3},
+    {text: 'cgroup v2 files: cpu.max throttles, memory.max kills', at: 5},
+    {text: 'Why an OOM-killed container exits with code 137', at: 7},
+  ]}
+  steps={[
+    {
+      short: 'Start',
+      kind: '시작',
+      title: 'The runtime asks the kernel for an isolated process',
+      text: [
+        'kubelet asks containerd to start a container, and containerd hands the job to a low-level runtime such as runc. runc does not boot anything. It calls the kernel (clone, unshare, setns) to create a process in new namespaces and a new cgroup, then runs the image\'s entrypoint.',
+        'There is still only one kernel. Every container on the host makes system calls into that same kernel.',
+      ],
+      flows: [
+        {from: 'runtime', to: 'kernel', label: 'clone · unshare', type: 'request'},
+        {from: 'kernel', to: 'proc', label: 'New process', type: 'request'},
+      ],
+      focus: ['runtime', 'kernel', 'proc'],
+      values: {pid: '1 / 4321'},
+    },
+    {
+      short: 'Host process',
+      kind: '원리',
+      title: 'From the host, it is just another process',
+      text: [
+        'Run ps on the host and the container\'s process is there, with a normal host PID such as 4321. The kernel schedules it like any other process.',
+        'This is why containers start in milliseconds to seconds: there is no guest operating system to boot. It is also why a kernel bug or a privileged container can affect the whole host.',
+      ],
+      keyIdea: 'The isolation is a view the kernel keeps per process, not a wall of hardware. Treat the host kernel as shared by every container on it.',
+      flows: [{from: 'kernel', to: 'proc', label: 'Schedules', type: 'watch'}],
+      focus: ['proc'],
+      badges: {proc: 'ps shows it'},
+    },
+    {
+      short: 'Namespaces',
+      kind: '원리',
+      title: 'Namespaces change what the process can see',
+      text: [
+        'Each namespace type wraps one kind of global resource. pid gives its own process numbers, net its own interfaces, IP and ports, mnt its own mount table (the image becomes /), uts its own hostname, ipc its own shared memory and message queues, and user its own UID mapping. Linux also has cgroup and time namespaces.',
+        'The process sees only what is in its namespaces. Two containers can both listen on port 8080 because each has its own network namespace.',
+      ],
+      flows: [
+        {from: 'proc', to: 'ns', label: 'Joins', type: 'request'},
+        {from: 'ns', to: 'net', label: 'net', type: 'watch'},
+        {from: 'ns', to: 'fs', label: 'mnt', type: 'watch'},
+      ],
+      focus: ['ns', 'net', 'fs'],
+      badges: {proc: null, ns: 'pid net mnt uts ipc'},
+    },
+    {
+      short: 'PID 1',
+      kind: '주의',
+      title: 'Inside, the app is PID 1, and PID 1 is special',
+      text: [
+        'In its PID namespace the entrypoint is PID 1, while the host still calls it 4321. The kernel gives PID 1 special treatment: signals it has no handler for, such as a plain SIGTERM, are ignored. Orphaned child processes are also re-parented to it, so it must reap zombies.',
+        'An app that never installs a SIGTERM handler as PID 1 does not stop on SIGTERM, and Kubernetes waits out the grace period before it sends SIGKILL.',
+      ],
+      keyIdea: 'Handle SIGTERM in your app, or run a tiny init (for example tini, or shareProcessNamespace in a Pod) as PID 1.',
+      flows: [{from: 'ns', to: 'proc', label: 'pid ns', type: 'watch'}],
+      focus: ['proc', 'ns'],
+      status: {proc: 'warn'},
+      badges: {proc: 'PID 1 inside'},
+      values: {pid: {text: '1 / 4321', tone: 'bad'}},
+    },
+    {
+      short: 'User ns',
+      kind: '원리',
+      title: 'A user namespace maps root inside to a normal user outside',
+      text: [
+        'Without a user namespace, UID 0 in the container is UID 0 on the host. If the process escapes its other namespaces, it is root on the node.',
+        'With a user namespace, UID 0 inside maps to an unprivileged UID range on the host, such as 100000 and up. Kubernetes can use this with hostUsers: false in the Pod spec, where the node and runtime support it.',
+      ],
+      flows: [{from: 'ns', to: 'kernel', label: 'UID 0 → 100000', type: 'watch'}],
+      focus: ['ns', 'kernel'],
+      status: {proc: null},
+      badges: {proc: null, ns: '+ user'},
+      values: {pid: '1 / 4321'},
+    },
+    {
+      short: 'cgroup',
+      kind: '원리',
+      title: 'A cgroup limits what the process can use',
+      text: [
+        'Namespaces do not limit CPU or memory. That is the job of cgroups. With cgroup v2 every container gets a directory under /sys/fs/cgroup, and its limits are plain files in it.',
+        'Kubernetes writes a container\'s CPU limit to cpu.max (quota and period, so "50000 100000" means 0.5 CPU), its CPU request to cpu.weight, and its memory limit to memory.max.',
+      ],
+      flows: [{from: 'proc', to: 'cg', label: 'Member', type: 'request'}],
+      focus: ['cg'],
+      badges: {cg: 'cpu.max · memory.max'},
+      values: {cpu: 'limit 0.5', mem: 'limit 256Mi'},
+    },
+    {
+      short: 'Throttle',
+      kind: '문제',
+      title: 'Over the CPU limit, the process is throttled',
+      text: [
+        'The app uses its 50ms of CPU quota early in a 100ms period. The kernel stops scheduling it until the next period starts. Nothing crashes, but latency jumps.',
+        'cpu.stat in the cgroup counts this: nr_throttled is how many periods hit the limit, and throttled_usec is the total time it was held back.',
+      ],
+      keyIdea: 'CPU over the limit means slow, not dead. Watch throttling metrics (for example container_cpu_cfs_throttled_periods_total) before raising limits.',
+      flows: [{from: 'cg', to: 'proc', label: 'Wait', type: 'watch'}],
+      focus: ['cg', 'proc'],
+      status: {proc: 'warn'},
+      badges: {proc: 'Throttled'},
+      values: {cpu: {text: 'throttled', tone: 'bad'}},
+    },
+    {
+      short: 'OOM kill',
+      kind: '장애',
+      title: 'Over memory.max, the OOM killer ends it with SIGKILL',
+      text: [
+        'Memory cannot be slowed down like CPU. When the cgroup cannot reclaim enough to stay under memory.max, the kernel\'s OOM killer picks a process in that cgroup and sends SIGKILL.',
+        'A process killed by a signal reports 128 plus the signal number, and SIGKILL is 9, so the exit code is 137. memory.events counts it under oom_kill, and Kubernetes shows the reason OOMKilled.',
+      ],
+      flows: [
+        {from: 'cg', to: 'oom', label: 'memory.max hit', type: 'request'},
+        {from: 'oom', to: 'proc', label: 'SIGKILL', type: 'request'},
+      ],
+      focus: ['oom', 'proc'],
+      status: {proc: 'error'},
+      badges: {proc: 'OOMKilled'},
+      values: {mem: {text: '256Mi / 256Mi', tone: 'bad'}, exit: {text: '137 (128 + 9)', tone: 'bad'}},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Namespaces for the view, cgroups for the budget',
+      text: [
+        'A container is a host process. Namespaces give it its own PIDs, network, filesystem, hostname, IPC and users. A cgroup holds it to a CPU and memory budget.',
+        'All containers on the host share one kernel. That makes them light and fast, and it is why host hardening, user namespaces and Pod security settings matter.',
+      ],
+      keyIdea: 'Slow under load: check CPU throttling. Exit code 137: check memory limits. Port clash or missing file: check which namespace you are looking from.',
+      flows: [
+        {from: 'proc', to: 'ns', label: 'View', type: 'watch'},
+        {from: 'proc', to: 'cg', label: 'Budget', type: 'watch'},
+      ],
+      focus: ['proc', 'ns', 'cg'],
+      status: {proc: null},
+      badges: {proc: null, oom: null},
+    },
+  ]}
+/>
+
+## Namespaces and cgroup files at a glance
+
+| What | Isolates or limits | Where to look |
+|---|---|---|
+| pid namespace | Process IDs; the entrypoint is PID 1 inside | `ls -l /proc/<pid>/ns/pid` |
+| net namespace | Interfaces, IP addresses, routes, ports | `ip netns`, `nsenter -t <pid> -n ip addr` |
+| mnt namespace | Mount table; the image is mounted as `/` | `cat /proc/<pid>/mountinfo` |
+| uts namespace | Hostname | `nsenter -t <pid> -u hostname` |
+| ipc namespace | System V IPC and POSIX message queues | `lsns -t ipc` |
+| user namespace | UID/GID mapping (root inside, unprivileged outside) | `cat /proc/<pid>/uid_map` |
+| `cpu.max` | CPU limit as quota and period; over it the process is throttled | `cat cpu.max`, `cat cpu.stat` |
+| `cpu.weight` | Share of CPU under contention (from requests) | `cat cpu.weight` |
+| `memory.max` | Hard memory limit; over it the OOM killer runs | `cat memory.max`, `cat memory.events` |
+
+## Try it yourself
+
+```bash
+sudo unshare --pid --fork --mount-proc --uts bash    # A shell in new pid and uts namespaces
+ps -ef; hostname demo; hostname                      # Inside: bash is PID 1, hostname change stays inside
+lsns                                                 # On the host: list namespaces and their first process
+PID=$(pgrep -f <container-cmd> | head -1)            # Host PID of a container process
+ls -l /proc/$PID/ns                                  # Its namespace IDs
+cat /proc/$PID/cgroup                                # Its cgroup path under /sys/fs/cgroup
+cat /sys/fs/cgroup/<that path>/{cpu.max,memory.max,cpu.stat,memory.events}   # Limits, throttling, oom_kill
+kubectl get pod <pod> -o jsonpath='{.status.containerStatuses[*].lastState.terminated.exitCode}'   # 137 after an OOM kill
+```
+
+Further reading: [namespaces(7)](https://man7.org/linux/man-pages/man7/namespaces.7.html) · [pid_namespaces(7)](https://man7.org/linux/man-pages/man7/pid_namespaces.7.html) · [user_namespaces(7)](https://man7.org/linux/man-pages/man7/user_namespaces.7.html) · [Control Group v2](https://docs.kernel.org/admin-guide/cgroup-v2.html) · [About cgroup v2 (Kubernetes)](https://kubernetes.io/docs/concepts/architecture/cgroups/) · [User Namespaces (Kubernetes)](https://kubernetes.io/docs/concepts/workloads/pods/user-namespaces/) · [From One Server to Containers](../basic/server-to-container.mdx) · [Requests and Limits](../intermediate/requests-limits.mdx)

@@ -1,0 +1,236 @@
+---
+id: quantization
+title: 모델을 작게 만들기 (양자화)
+sidebar_label: 05 · 양자화
+description: 가중치 메모리는 파라미터 수 × 바이트라는 계산부터 스케일 값과 이상치, 가중치만 줄이는 INT4(AWQ·GPTQ)와 가중치·활성값을 함께 줄이는 FP8, 하드웨어 지원, KV 캐시 양자화, 내 작업에서 정확도를 다시 재는 일까지 단계별 애니메이션으로 따라간다
+summary: '가중치당 비트를 줄이는 원리, 이상치가 문제인 이유, KV 캐시에 돌아가는 메모리, 정확도를 다시 재야 하는 이유.'
+icon: layers
+hide_table_of_contents: true
+---
+
+# 모델을 작게 만들기 (양자화)
+
+**양자화**는 모델의 숫자를 더 적은 비트로 저장하는 것이다. 예를 들어 16비트 대신 8비트나 4비트를 쓴다. 그러면 가속기가 덜 필요하고, KV 캐시에 쓸 메모리가 늘고, 토큰이 더 빨리 나온다. 대신 정확도가 조금 떨어지고, 얼마나 떨어지는지는 직접 재야 한다.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '약 12분', level: '고급'}}
+  groups={[
+    {label: '가속기 한 장 · 80GB', x: 545, y: 30, w: 440, h: 310, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'ckpt', label: 'BF16 체크포인트', sub: '70B · 140GB', icon: 'archive', tone: 'store', x: 120, y: 110, w: 160, show: true},
+    {id: 'quant', label: '양자화 도구', sub: '보정용 데이터', icon: 'gear', tone: 'cp', x: 120, y: 260, w: 160},
+    {id: 'qckpt', label: '양자화 체크포인트', sub: 'AWQ · GPTQ · FP8', icon: 'box', tone: 'store', x: 120, y: 395, w: 160},
+    {id: 'engine', label: '추론 엔진', sub: '예: vLLM', icon: 'spark', tone: 'node', x: 370, y: 260, w: 160, show: true},
+    {id: 'w', label: '가중치', sub: '고정 크기', icon: 'disk', tone: 'store', x: 665, y: 110},
+    {id: 'kv', label: 'KV 캐시', sub: '남은 메모리', icon: 'db', tone: 'store', x: 665, y: 265},
+    {id: 'core', label: '텐서 코어', sub: 'FP8 · INT8 · FP4', icon: 'server', tone: 'node', x: 875, y: 110},
+    {id: 'eval', label: '우리 평가 세트', sub: '같은 질문', icon: 'target', tone: 'app', x: 790, y: 405, w: 160},
+  ]}
+  metrics={[
+    {id: 'size', label: '가중치 크기'},
+    {id: 'gpus', label: '가속기 수'},
+    {id: 'kvroom', label: 'KV 캐시 여유'},
+    {id: 'speed', label: '디코드 속도'},
+    {id: 'acc', label: '정확도'},
+  ]}
+  learn={[
+    {text: '가중치 메모리는 파라미터 수 × 파라미터당 바이트라는 것', at: 1},
+    {text: '스케일 값으로 가중치를 적은 비트에 담는 방법과 이상치가 문제인 이유', at: 2},
+    {text: '가중치만 줄이는 INT4와 가중치·활성값을 함께 줄이는 FP8의 차이', at: 4},
+    {text: '메모리가 남고 토큰당 읽을 양이 줄어 동시 요청과 속도가 느는 이유', at: 6},
+    {text: 'KV 캐시 정밀도는 따로 정하고, 정확도는 직접 재야 한다는 것', at: 8},
+  ]}
+  steps={[
+    {
+      short: '시작',
+      kind: '시작',
+      title: 'BF16 70B 모델은 가속기 한 장에 안 들어간다',
+      text: [
+        '팀이 파라미터 700억 개(70B)짜리 모델을 서빙하려 한다. 체크포인트는 가중치를 BF16, 즉 가중치당 2바이트로 저장한다. KV 캐시를 빼고도 약 140GB다.',
+        '여기 가속기 한 장은 80GB다. 엔진은 텐서 병렬로 모델을 최소 두 장에 나눠야 하고, KV 캐시 자리까지 생각하면 실제로는 더 필요하다.',
+      ],
+      flows: [{from: 'ckpt', to: 'engine', label: '140GB 올리기', type: 'request'}],
+      focus: ['ckpt', 'engine'],
+      values: {size: '140GB', gpus: {text: '2장 이상 (1장 불가)', tone: 'bad'}, kvroom: '—', speed: '기준', acc: '기준'},
+    },
+    {
+      short: '바이트 계산',
+      kind: '원리',
+      title: '가중치 메모리 = 파라미터 수 × 파라미터당 바이트',
+      text: [
+        '계산은 단순하다. 70B × 2바이트(BF16) ≈ 140GB, 70B × 1바이트(FP8·INT8) ≈ 70GB, 70B × 0.5바이트(4비트) ≈ 35GB에 스케일 값이 조금 더해진다.',
+        '이것은 가중치만 센 것이다. 엔진은 활성값과, 무엇보다 KV 캐시에도 메모리가 필요하다. KV 캐시는 KV 캐시 레슨에서 본 것처럼 대화 길이와 동시 요청 수만큼 커진다.',
+      ],
+      keyIdea: '빠르게 어림하려면 파라미터 수(10억 단위)에 파라미터당 바이트를 곱한다. 그 값이 가중치의 GB다.',
+      focus: ['ckpt'],
+      badges: {ckpt: '2바이트 × 70B'},
+    },
+    {
+      short: '스케일',
+      kind: '원리',
+      title: '스케일 값으로 가중치를 몇 개 안 되는 칸에 담는다',
+      text: [
+        '양자화 도구는 BF16 가중치를 읽어 작은 정수와 공유 스케일 값으로 바꿔 저장한다. q = round(w / scale)로 저장하고, 쓸 때는 w ≈ q × scale로 되돌린다. INT4는 칸이 16개, INT8은 256개뿐이다.',
+        '텐서 전체에 스케일 하나는 너무 거칠다. 그래서 출력 채널마다, 또는 가중치 작은 묶음(예: 128개)마다 스케일을 둔다. 스케일이 많을수록 정확도는 좋아지고 메모리는 조금 더 든다.',
+      ],
+      flows: [
+        {from: 'ckpt', to: 'quant', label: 'BF16 가중치', type: 'request'},
+        {from: 'quant', to: 'qckpt', label: '정수 + 스케일', type: 'response'},
+      ],
+      focus: ['quant', 'qckpt'],
+      badges: {ckpt: null, quant: '묶음 크기 128'},
+    },
+    {
+      short: '이상치',
+      kind: '문제',
+      title: '큰 값 몇 개가 스케일을 늘려 나머지를 뭉갠다',
+      text: [
+        '스케일은 묶음에서 가장 큰 값까지 담아야 한다. 가중치 하나가 다른 것보다 50배 크면 스케일이 그만큼 커지고, 보통 가중치들은 한두 칸에 몰린다. 그 정보는 사라진다.',
+        '층 사이를 흐르는 값인 활성값에는 이런 이상치 채널이 더 심하다. 그래서 활성값 양자화가 가중치 양자화보다 어렵다. AWQ나 GPTQ 같은 방법은 작은 보정용 데이터로 중요한 채널을 찾고 반올림 오차를 메운다.',
+      ],
+      keyIdea: '양자화 품질은 비트 수만이 아니라 이상치를 어떻게 다루는지에 달려 있다. 보정용 데이터는 실제 트래픽과 비슷해야 한다.',
+      focus: ['quant'],
+      status: {quant: 'warn'},
+      badges: {quant: '이상치가 스케일 키움'},
+    },
+    {
+      short: 'W4A16·W8A8',
+      kind: '원리',
+      title: 'INT4 가중치 전용은 메모리를, FP8은 계산까지 줄인다',
+      text: [
+        'AWQ·GPTQ 같은 가중치 전용 방법은 가중치를 4비트로 저장하지만 계산은 16비트로 한다(W4A16). 커널이 가중치를 읽으면서 바로 16비트로 펼친다. 메모리와 토큰당 읽는 양은 줄지만 연산은 여전히 16비트다.',
+        'FP8은 보통 가중치와 활성값을 모두 줄인다(W8A8). 그러면 행렬 곱이 FP8 텐서 코어에서 돌아가, 메모리뿐 아니라 계산이 무거운 프리필도 빨라진다.',
+      ],
+      flows: [
+        {from: 'qckpt', to: 'engine', label: '올리기', type: 'request'},
+        {from: 'engine', to: 'core', label: 'FP8 행렬 곱', type: 'request'},
+      ],
+      focus: ['engine', 'core'],
+      status: {quant: null},
+      badges: {quant: null, qckpt: 'W4A16 또는 W8A8'},
+    },
+    {
+      short: '하드웨어',
+      kind: '주의',
+      title: '빨라지려면 그 숫자 형식을 아는 텐서 코어가 있어야 한다',
+      text: [
+        'FP8 텐서 코어는 NVIDIA Hopper(H100, H200)와 Ada(L4, L40S)부터 있다. Blackwell은 FP4를 더한다. INT8 텐서 코어는 그보다 오래되어 Ampere(A100)에도 있다. 다른 회사 가속기는 각자 지원 목록이 있다.',
+        'FP8 텐서 코어가 없는 GPU에서도 엔진이 FP8 가중치를 올려 커널 안에서 16비트로 펼쳐 돌릴 수 있다. 메모리는 아끼지만 계산은 빨라지지 않는다. 고르기 전에 엔진의 지원 표에서 GPU와 형식을 확인한다.',
+      ],
+      keyIdea: '파드가 실제로 올라갈 하드웨어에 맞춰 형식을 고른다. FP8 워크로드는 노드 셀렉터나 DRA 디바이스 클래스로 맞는 노드에 묶는다.',
+      focus: ['core'],
+      status: {core: 'warn'},
+      badges: {core: 'Hopper · Ada · Blackwell'},
+    },
+    {
+      short: '한 장에 들어감',
+      kind: '원리',
+      title: '가중치가 작아지면 KV 캐시 자리가 커진다',
+      text: [
+        '4비트 가중치면 70B 모델이 약 35–40GB라 80GB 가속기 한 장에 들어간다. 엔진이 가중치와 작업용 메모리에 쓰지 않는 나머지는 모두 KV 캐시가 된다.',
+        'KV 캐시가 크면 같은 하드웨어에서 동시 요청을 더 받거나 대화를 더 길게 받는다. 연속 배칭이 더 큰 배치를 채울 수 있다. 레플리카 하나에 드는 가속기가 줄어 같은 풀에서 레플리카를 더 띄울 수도 있다.',
+      ],
+      flows: [
+        {from: 'engine', to: 'w', label: '~37GB', type: 'request'},
+        {from: 'engine', to: 'kv', label: '나머지', type: 'request'},
+      ],
+      focus: ['w', 'kv'],
+      status: {core: null},
+      badges: {core: null, w: 'INT4 · ~37GB', kv: '~30GB 여유'},
+      values: {size: {text: '~37GB', tone: 'good'}, gpus: {text: '1장', tone: 'good'}, kvroom: {text: '~30GB', tone: 'good'}},
+    },
+    {
+      short: '빨라진 디코드',
+      kind: '원리',
+      title: '디코드는 토큰마다 가중치를 다 읽으니, 바이트가 줄면 빨라진다',
+      text: [
+        '디코드에서는 새 토큰 하나마다 가속기 메모리에서 가중치 전체를 한 번 읽는다. 그래서 프리필·디코드 레슨에서 본 것처럼 디코드는 메모리 대역폭에 묶인다. 가중치가 4분의 1이 되면 토큰마다 읽을 양이 크게 준다.',
+        '이득은 크기 비율보다 작다. 4비트 가중치를 펼치는 데 일이 들고, KV 캐시는 여전히 읽어야 하고, 배치가 커지면 디코드도 계산에 더 묶인다. 바꾸기 전과 후의 출력 토큰당 시간(TPOT)을 잰다.',
+      ],
+      flows: [{from: 'w', to: 'engine', label: '토큰마다 읽기', type: 'response'}],
+      focus: ['w', 'engine'],
+      values: {speed: {text: '빨라짐 (TPOT 측정)', tone: 'good'}},
+    },
+    {
+      short: 'KV 형식',
+      kind: '원리',
+      title: 'KV 캐시 정밀도는 따로 정하는 손잡이다',
+      text: [
+        '가중치 정밀도와 KV 캐시 정밀도는 따로 정한다. BF16 모델도 KV 캐시는 FP8로 둘 수 있고(예: vLLM --kv-cache-dtype fp8), 그러면 토큰당 KV 메모리가 16비트의 약 절반이 된다.',
+        '담을 수 있는 토큰이 두 배가 되어 동시 요청이나 대화 길이를 늘린다. 긴 대화는 KV 정밀도에 더 민감할 수 있으니 실제 프롬프트 길이로 시험한다.',
+      ],
+      flows: [{from: 'engine', to: 'kv', label: 'FP8 KV', type: 'request'}],
+      focus: ['kv'],
+      badges: {kv: 'FP8 · 토큰 2배'},
+      values: {kvroom: {text: '~30GB · 토큰 2배', tone: 'good'}},
+    },
+    {
+      short: '정확도',
+      kind: '문제',
+      title: '정확도 손실은 모델 카드가 아니라 우리 작업에서 드러난다',
+      text: [
+        '양자화 모델은 일반 벤치마크에서는 멀쩡해 보여도 코드, 수학, 긴 문서, 특정 언어에서 나빠질 수 있다. 4비트는 FP8보다 더 잃고, 작은 모델은 큰 모델보다 더 잃는다.',
+        '같은 평가 질문을 BF16 기준 모델과 양자화 모델에 넣고 점수를 비교한다. 체크포인트 형식이 엔진과 맞는지도 확인한다. 안 맞으면 올릴 때 실패하거나, 조용히 느린 경로로 돈다.',
+      ],
+      keyIdea: '양자화는 모델을 바꾸는 일로 다룬다. 운영에 내기 전에 우리 데이터로 평가하고, 비교할 기준 모델을 남겨 둔다.',
+      flows: [{from: 'engine', to: 'eval', label: '같은 질문', type: 'request'}],
+      focus: ['eval', 'engine'],
+      status: {eval: 'warn'},
+      badges: {eval: '코드 −3점?'},
+      values: {acc: {text: 'BF16과 비교 측정', tone: 'bad'}},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '비트를 줄이면: 가속기는 적게, KV 캐시는 크게, 디코드는 빠르게, 정확도는 재서',
+      text: [
+        '가중치 메모리는 파라미터 수 × 바이트다. 양자화 도구는 묶음별 스케일 값으로 가중치를 적은 칸에 담고, 얼마나 잃는지는 이상치를 어떻게 다루는지에 달렸다. INT4 가중치 전용이 메모리를 가장 많이 아끼고, FP8은 텐서 코어가 지원하면 계산도 빨라진다.',
+        '남은 메모리는 KV 캐시로 가고, 가중치가 작아지면 디코드가 빨라진다. KV 캐시 정밀도는 따로 정한다. 이 모든 선택은 우리 작업에서 정확도를 확인해야 한다.',
+      ],
+      keyIdea: '지원하는 하드웨어라면 FP8부터 시작한다. 메모리가 한계일 때 4비트로 내려가고, 평가에서 손실을 받아들일 만하다고 나온 뒤에만 쓴다.',
+      flows: [
+        {from: 'qckpt', to: 'engine', label: '올리기', type: 'request'},
+        {from: 'engine', to: 'w', label: '가중치', type: 'request'},
+        {from: 'engine', to: 'kv', label: 'KV 캐시', type: 'request'},
+      ],
+      focus: ['qckpt', 'w', 'kv', 'eval'],
+      status: {eval: null},
+      badges: {eval: null, qckpt: null},
+    },
+  ]}
+/>
+
+## 정밀도와 가중치 크기
+
+70B 모델의 가중치만 센 크기다. KV 캐시와 작업용 메모리는 따로 더 든다.
+
+| 정밀도 | 파라미터당 바이트 | 70B 가중치 | 참고 |
+|---|---|---|---|
+| FP32 | 4 | ~280GB | 학습에 쓰고 서빙에는 안 쓴다 |
+| BF16 / FP16 | 2 | ~140GB | 보통의 기준 체크포인트 |
+| FP8 (W8A8) | 1 | ~70GB | Hopper·Ada·Blackwell의 FP8 텐서 코어. 대개 기준에 가까운 정확도 |
+| INT8 (W8A8 또는 W8A16) | 1 | ~70GB | INT8 텐서 코어는 Ampere에도 있다. W8A8은 활성값 이상치를 다뤄야 한다(예: SmoothQuant) |
+| INT4 (W4A16: AWQ, GPTQ) | 0.5 + 스케일 | ~35–40GB | 메모리 절약이 가장 크고 디코드가 빨라진다. 계산은 16비트. 정확도 위험이 더 크다 |
+| FP4 (예: NVFP4, MXFP4) | 0.5 + 스케일 | ~35–40GB | Blackwell의 FP4 텐서 코어 |
+
+## 쿠버네티스에서 운영할 때
+
+- 양자화는 미리 한 번 해 두고, 결과를 모델 레지스트리에 별도 체크포인트로 두거나 OCI 아티팩트로 저장한다. 그러면 여느 모델과 똑같이 올리고, 체크포인트가 작아 콜드 스타트 때 내려받기도 빨라진다.
+- 미리 양자화된 체크포인트는 대개 자기 형식을 적어 둔다(vLLM이라면 `config.json`의 `quantization_config`). 엔진이 플래그 없이도 맞는 커널을 고른다. `--quantization`은 방법을 강제하거나 올릴 때 바로 양자화하려 할 때만 준다.
+- 형식을 Deployment의 노드 선택에 반영한다. FP8 모델을 FP8 텐서 코어가 없는 노드에 올리면 돌기는 하지만 계획한 속도는 안 나온다.
+- 지표는 전과 같은 엔진 지표를 본다. KV 캐시 사용률, 대기 요청 수, TTFT와 TPOT이다. 양자화가 효과가 있다면 같은 부하에서 KV 캐시 사용률이 내려가거나, 레플리카 하나가 더 많은 요청을 받는다.
+
+## 직접 해 보기
+
+```bash
+vllm serve Qwen/Qwen2.5-7B-Instruct-AWQ                       # 미리 양자화된 4비트 체크포인트. 방법은 config.json에서 읽는다
+vllm serve <모델> --quantization fp8_per_tensor               # BF16 가중치를 올리면서 FP8로 양자화(예전 vLLM: fp8)
+vllm serve <모델> --kv-cache-dtype fp8                        # KV 캐시를 FP8로. 가중치 정밀도와 따로
+nvidia-smi --query-gpu=name,memory.used,memory.total --format=csv   # 예: NVIDIA. GPU 모델과 메모리
+curl -s http://<엔진>:8000/metrics | grep -E 'vllm:(kv_cache_usage_perc|num_requests_running)'   # 같은 부하에서 KV 여유
+```
+
+더 읽을거리: [vLLM 양자화](https://docs.vllm.ai/en/latest/features/quantization/) · [AWQ 논문](https://arxiv.org/abs/2306.00978) · [GPTQ 논문](https://arxiv.org/abs/2210.17323) · [SmoothQuant 논문](https://arxiv.org/abs/2211.10438) · [딥러닝용 FP8 형식](https://arxiv.org/abs/2209.05433) · [KV 캐시가 차오르기까지](../llm/kv-cache.mdx) · [질문 읽기와 답 쓰기 (프리필·디코드)](../llm/prefill-decode.mdx) · [모델이 처음 뜨기까지 (콜드 스타트)](../ai/cold-start.mdx)

@@ -1,0 +1,228 @@
+---
+id: infra-as-code
+title: Infrastructure as Code with Terraform
+sidebar_label: 12 · Infrastructure as Code
+description: Animated walkthrough of Terraform (or OpenTofu) from .tf code to init, plan and apply, the state file in a remote backend with locking, drift from console changes, replace versus update in place, and destroy
+summary: 'Code, init, plan and apply, shared state with a lock, drift, and why a -/+ in the plan deserves a second look.'
+icon: layers
+hide_table_of_contents: true
+---
+
+# Infrastructure as Code with Terraform
+
+Clicking through a cloud console works once. It is hard to review, hard to repeat and easy to forget. With infrastructure as code (IaC), you write the servers and firewalls you want in files and let a tool make the cloud match. Follow **code → init → plan → apply → state** with Terraform. OpenTofu, an open-source fork, uses the same files and commands (`tofu` instead of `terraform`). The network being built here is explained in [How a Request Travels Inside a VPC](../cloud/vpc-request.mdx).
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~10 min', level: 'Intermediate'}}
+  groups={[
+    {label: 'Cloud account', x: 650, y: 30, w: 335, h: 410, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'dev', label: 'Engineer', sub: 'Laptop or CI', icon: 'user', tone: 'ext', x: 90, y: 230, show: true},
+    {id: 'code', label: 'Code (.tf)', sub: 'Git repository', icon: 'git', tone: 'store', x: 290, y: 110, show: true},
+    {id: 'tf', label: 'terraform', sub: 'init · plan · apply', icon: 'hammer', tone: 'cp', x: 290, y: 320},
+    {id: 'state', label: 'State', sub: 'Remote backend', icon: 'disk', tone: 'store', x: 520, y: 110},
+    {id: 'provider', label: 'Provider', sub: 'e.g. aws plugin', icon: 'gear', tone: 'node', x: 520, y: 320},
+    {id: 'api', label: 'Cloud API', sub: 'Create · update', icon: 'cloud', tone: 'cp', x: 750, y: 320, w: 140},
+    {id: 'vm', label: 'VM web', sub: 'Instance', icon: 'server', tone: 'app', size: 'sm', x: 915, y: 110},
+    {id: 'sg', label: 'Security grp', sub: 'Port 443', icon: 'shield', tone: 'app', size: 'sm', x: 915, y: 220},
+    {id: 'console', label: 'Colleague', sub: 'Console click', icon: 'user', tone: 'ext', size: 'sm', x: 915, y: 390},
+  ]}
+  metrics={[
+    {id: 'phase', label: 'Command'},
+    {id: 'plan', label: 'Plan'},
+    {id: 'lock', label: 'State lock'},
+    {id: 'drift', label: 'Drift'},
+  ]}
+  learn={[
+    {text: 'Declarative code: you describe the result, not the clicks', at: 1},
+    {text: 'What init, plan and apply each do', at: 2},
+    {text: 'Why state lives in a remote backend with a lock', at: 5},
+    {text: 'How a plan reveals drift from console changes', at: 6},
+    {text: 'Why -/+ (replace) is more dangerous than ~ (update)', at: 7},
+  ]}
+  steps={[
+    {
+      short: 'Code',
+      kind: '시작',
+      title: 'Write the result you want, not the steps',
+      text: [
+        'The engineer writes .tf files in HCL: a resource "aws_instance" "web" and a resource "aws_security_group" "web" that allows port 443. The code says what should exist, not which buttons to press.',
+        'The files go into Git like any other code. Changes get reviewed in a merge request before they touch the cloud.',
+      ],
+      flows: [{from: 'dev', to: 'code', label: 'Commit', type: 'request'}],
+      focus: ['dev', 'code'],
+      values: {phase: '—', plan: '—', lock: '—', drift: '—'},
+    },
+    {
+      short: 'init',
+      kind: '원리',
+      title: 'terraform init downloads providers and connects the backend',
+      text: [
+        'Terraform itself does not know any cloud. The required_providers block names plugins (providers), such as hashicorp/aws. init downloads them into .terraform/ and records exact versions and checksums in .terraform.lock.hcl.',
+        'init also sets up the backend block, the place where state is kept. Run it once per working directory, and again after changing providers or the backend.',
+      ],
+      keyIdea: 'Commit .terraform.lock.hcl so everyone and CI use the same provider versions. Do not commit the .terraform/ directory.',
+      flows: [
+        {from: 'tf', to: 'provider', label: 'Install', type: 'request'},
+        {from: 'tf', to: 'state', label: 'Backend', type: 'watch'},
+      ],
+      focus: ['tf', 'provider'],
+      values: {phase: 'init'},
+    },
+    {
+      short: 'plan',
+      kind: '원리',
+      title: 'terraform plan compares code, state and the real cloud',
+      text: [
+        'plan reads the state, asks the provider for the current values of every resource in it (refresh), and compares that with the code. The difference becomes a list of actions.',
+        'Nothing exists yet, so the plan shows + create for both resources and ends with "Plan: 2 to add, 0 to change, 0 to destroy." plan changes nothing in the cloud.',
+      ],
+      keyIdea: 'Save the plan with terraform plan -out=tfplan and apply that file. Then exactly what was reviewed gets applied.',
+      flows: [
+        {from: 'code', to: 'tf', label: 'Desired', type: 'request'},
+        {from: 'state', to: 'tf', label: 'Recorded', type: 'response'},
+        {from: 'provider', to: 'api', label: 'Read', type: 'request'},
+      ],
+      focus: ['tf'],
+      values: {phase: 'plan', plan: '+2 ~0 -0'},
+    },
+    {
+      short: 'apply',
+      kind: '원리',
+      title: 'terraform apply makes the calls and records the result',
+      text: [
+        'apply takes the state lock, then the provider calls the cloud API in dependency order. The security group comes first because the instance refers to it.',
+        'Each created resource is written to the state with its real ID, such as the instance ID. That mapping between code address (aws_instance.web) and real object is what the state is for.',
+      ],
+      flows: [
+        {from: 'tf', to: 'provider', label: 'Apply', type: 'request'},
+        {from: 'provider', to: 'api', label: 'Create', type: 'request'},
+        {from: 'api', to: 'sg', label: 'Create', type: 'request'},
+        {from: 'api', to: 'vm', label: 'Create', type: 'request'},
+        {from: 'tf', to: 'state', label: 'Write IDs', type: 'response'},
+      ],
+      focus: ['vm', 'sg', 'state'],
+      status: {vm: 'ok', sg: 'ok'},
+      values: {phase: 'apply', lock: {text: 'Held during apply', tone: 'good'}},
+    },
+    {
+      short: 'Shared state',
+      kind: '주의',
+      title: 'State lives in a remote backend, with a lock',
+      text: [
+        'By default the state is a local terraform.tfstate file. On one laptop, teammates and CI cannot see it, and it can hold secrets such as database passwords in plain text.',
+        'A remote backend (for example S3, GCS, azurerm or HCP Terraform) keeps one shared copy. Locking stops two applies at once: the second one fails with "Error acquiring the state lock" instead of corrupting the state.',
+      ],
+      keyIdea: 'Restrict and encrypt the state bucket. Use terraform force-unlock only when you are sure the lock holder has died.',
+      flows: [{from: 'tf', to: 'state', label: 'Lock', type: 'watch'}],
+      focus: ['state'],
+      badges: {state: 'Locked'},
+      values: {lock: {text: '2nd apply refused', tone: 'good'}},
+    },
+    {
+      short: 'Drift',
+      kind: '문제',
+      title: 'A console click makes the cloud drift from the code',
+      text: [
+        'A colleague opens port 22 on the security group in the console to debug. The code and the state still say only 443. The cloud has drifted.',
+        'The next plan refreshes, prints "Objects have changed outside of Terraform", and proposes ~ update in place to remove port 22. Applying it silently undoes the colleague\'s change.',
+      ],
+      keyIdea: 'terraform plan -refresh-only shows drift without proposing fixes. Then either put the change into the code or let apply revert it, on purpose.',
+      flows: [
+        {from: 'console', to: 'sg', label: 'Open :22', type: 'request'},
+        {from: 'provider', to: 'api', label: 'Refresh', type: 'request'},
+      ],
+      focus: ['console', 'sg'],
+      status: {sg: 'warn'},
+      badges: {state: null, sg: '22 open'},
+      values: {phase: 'plan', plan: '+0 ~1 -0', lock: '—', drift: {text: 'Port 22 not in code', tone: 'bad'}},
+    },
+    {
+      short: 'Replace',
+      kind: '주의',
+      title: '~ changes in place, -/+ destroys and recreates',
+      text: [
+        'Some attributes cannot be changed on a live object. Changing the instance\'s image (ami) shows -/+ and "# forces replacement": the old instance is destroyed, then a new one is created with a new ID and new private IP.',
+        'For a VM that may be fine. For a database it means data loss. lifecycle { create_before_destroy = true } shrinks the gap, and prevent_destroy = true makes such a plan fail.',
+      ],
+      keyIdea: 'Always read the plan summary. "1 to destroy" in a change you thought was small is the moment to stop.',
+      flows: [
+        {from: 'provider', to: 'api', label: 'Destroy, create', type: 'request'},
+        {from: 'api', to: 'vm', label: 'Replace', type: 'request'},
+      ],
+      focus: ['vm'],
+      status: {sg: 'ok', vm: 'warn'},
+      badges: {sg: null, vm: 'New ID'},
+      values: {plan: {text: '+1 ~0 -1 (replace)', tone: 'bad'}, drift: '—'},
+    },
+    {
+      short: 'destroy',
+      kind: '원리',
+      title: 'terraform destroy removes what the state knows',
+      text: [
+        'destroy plans a - for every resource in the state and deletes them in reverse dependency order: the instance first, then the security group.',
+        'Objects created by hand in the console are not in the state, so Terraform neither sees nor deletes them. To bring an existing object under Terraform, use an import block or terraform import.',
+      ],
+      flows: [
+        {from: 'provider', to: 'api', label: 'Delete', type: 'request'},
+        {from: 'api', to: 'vm', label: 'Delete', type: 'request'},
+        {from: 'api', to: 'sg', label: 'Delete', type: 'request'},
+      ],
+      focus: ['vm', 'sg'],
+      status: {vm: 'gone', sg: 'gone'},
+      badges: {vm: null},
+      values: {phase: 'destroy', plan: '+0 ~0 -2'},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Code says what, plan says how, state remembers which',
+      text: [
+        'The code is the desired state, reviewed in Git. init fetches providers and connects the backend. plan diffs code against state and the real cloud. apply carries out the plan and records real IDs in the state.',
+        'Keep the state remote and locked, change the cloud only through code, and read every plan before you apply it.',
+      ],
+      keyIdea: 'Run plan in CI on every merge request and apply only the saved plan after review. This is the same desired-state loop as GitOps, one layer below Kubernetes.',
+      flows: [
+        {from: 'code', to: 'tf', label: 'Desired', type: 'request'},
+        {from: 'tf', to: 'provider', label: 'Apply', type: 'request'},
+        {from: 'tf', to: 'state', label: 'Record', type: 'response'},
+      ],
+      focus: ['code', 'tf', 'state'],
+      status: {vm: null, sg: null},
+      values: {phase: 'plan → apply', plan: '—'},
+    },
+  ]}
+/>
+
+## Reading plan symbols
+
+| Symbol | Action | Meaning |
+|---|---|---|
+| `+` | create | The resource is in the code but not in the state. It will be created |
+| `-` | destroy | The resource is in the state but no longer in the code. It will be deleted |
+| `~` | update in place | Some attributes change on the existing object. Its ID stays the same |
+| `-/+` | replace | Destroy first, then create a new object. Look for `# forces replacement` |
+| `+/-` | replace (create first) | `create_before_destroy` is set: the new object is created before the old one is deleted |
+| `<=` | read | A data source is read during apply because it depends on values not known yet |
+
+The last line of every plan sums it up: `Plan: X to add, Y to change, Z to destroy.` Check Z before anything else.
+
+## Try it yourself
+
+```bash
+terraform init                      # Download providers, set up the backend
+terraform fmt -check && terraform validate   # Style and syntax
+terraform plan -out=tfplan          # Diff code vs state vs cloud, save the plan
+terraform show tfplan               # Review the saved plan
+terraform apply tfplan              # Apply exactly that plan
+terraform plan -refresh-only        # Only show drift from changes made outside Terraform
+terraform state list                # Resources Terraform manages
+terraform state show aws_instance.web   # Recorded attributes and real ID
+terraform destroy                   # Delete everything in the state (asks first)
+# OpenTofu: the same commands with tofu instead of terraform
+```
+
+Further reading: [What is Terraform?](https://developer.hashicorp.com/terraform/intro) · [terraform plan](https://developer.hashicorp.com/terraform/cli/commands/plan) · [State](https://developer.hashicorp.com/terraform/language/state) · [State locking](https://developer.hashicorp.com/terraform/language/state/locking) · [The lifecycle meta-argument](https://developer.hashicorp.com/terraform/language/meta-arguments/lifecycle) · [OpenTofu docs](https://opentofu.org/docs/) · [How a Request Travels Inside a VPC](../cloud/vpc-request.mdx) · [Permission Checks on One API Request (IAM)](../cloud/iam-request.mdx) · [Helm and GitOps](../intermediate/gitops-sync.mdx)

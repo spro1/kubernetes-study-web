@@ -1,0 +1,262 @@
+---
+id: cloud-cost
+title: 클라우드 청구서는 어디서 나오나
+sidebar_label: 11 · 클라우드 청구서는 어디서 나오나
+description: 컴퓨팅 요금 방식, 잊힌 스토리지, NAT와 가용 영역 간 데이터 전송, 놀고 있는 관리형 서비스 등 청구서를 키우는 요인과 비용 할당 태그, 쿠버네티스 요청값이 노드 비용을 정하는 이유, OpenCost 네임스페이스별 비용, 예산 알림과 FinOps 순환을 애니메이션으로 따라간다
+summary: '컴퓨팅·스토리지·데이터 전송·유휴 서비스, 쿠버네티스 요청값이 노드 비용을 정하는 이유, FinOps 순환.'
+icon: chart
+hide_table_of_contents: true
+---
+
+# 클라우드 청구서는 어디서 나오나
+
+이번 달 청구서가 예산보다 30% 많이 나왔는데 아무도 이유를 모른다. 청구서를 줄 단위로 따라가 본다. **컴퓨팅, 스토리지, 데이터 전송, 관리형 서비스**를 차례로 보고, 쿠버네티스 클러스터 안으로 들어가 파드 요청값이 노드 수를 조용히 정하는 모습을 본다. 이름과 가격은 AWS를 예로 든다. 다른 클라우드도 같은 종류의 항목에 요금을 매긴다.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '약 11분', level: '중급'}}
+  groups={[
+    {label: '클라우드 계정', x: 220, y: 30, w: 755, h: 410, tone: 'plain'},
+    {label: '쿠버네티스 클러스터', x: 450, y: 50, w: 330, h: 250, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'team', label: '팀', sub: '예산 책임', icon: 'user', tone: 'ext', x: 100, y: 100, show: true},
+    {id: 'bill', label: '월 청구서', sub: '예산 대비 +30%', icon: 'chart', tone: 'cp', x: 100, y: 300, show: true},
+    {id: 'compute', label: '컴퓨팅', sub: 'VM · 노드', icon: 'server', tone: 'node', x: 330, y: 100},
+    {id: 'storage', label: '스토리지', sub: '디스크 · 스냅샷', icon: 'disk', tone: 'store', x: 330, y: 240},
+    {id: 'nat', label: 'NAT 게이트웨이', sub: '시간 + GB당 요금', icon: 'gate', tone: 'cp', x: 330, y: 380, w: 160},
+    {id: 'node1', label: '노드 1', sub: '4 vCPU', icon: 'server', tone: 'app', size: 'sm', x: 540, y: 130},
+    {id: 'node2', label: '노드 2', sub: '4 vCPU', icon: 'server', tone: 'app', size: 'sm', x: 690, y: 130},
+    {id: 'shop', label: 'ns shop', sub: '운영', icon: 'pod', tone: 'app', size: 'sm', x: 540, y: 245},
+    {id: 'dev', label: 'ns dev', sub: '테스트 환경', icon: 'pod', tone: 'app', size: 'sm', x: 690, y: 245},
+    {id: 'db', label: '관리형 DB', sub: '시간당 과금', icon: 'db', tone: 'store', x: 610, y: 380},
+    {id: 'opencost', label: 'OpenCost', sub: '네임스페이스별 비용', icon: 'chart', tone: 'cp', x: 880, y: 130},
+    {id: 'budget', label: '예산 알림', sub: '예측 · 이상 감지', icon: 'bell', tone: 'cp', x: 880, y: 260},
+    {id: 'internet', label: '인터넷', sub: '나가는 GB당 요금', icon: 'cloud', tone: 'ext', x: 880, y: 385},
+  ]}
+  metrics={[
+    {id: 'bill', label: '월 청구액'},
+    {id: 'line', label: '지금 보는 항목'},
+    {id: 'ratio', label: 'CPU 사용 / 요청'},
+  ]}
+  learn={[
+    {text: '온디맨드, 약정, 스팟: 같은 VM을 사는 세 가지 방법', at: 1},
+    {text: '스토리지와 관리형 서비스는 아무도 안 써도 요금이 나간다는 것', at: 2},
+    {text: 'NAT와 가용 영역 간 데이터 전송이 놀라움을 주는 이유', at: 3},
+    {text: '쿠버네티스 노드 수는 사용량이 아니라 요청값으로 정해진다는 것', at: 6},
+    {text: '태그와 OpenCost로 비용을 팀별로 나누고 FinOps 순환을 돌리는 법', at: 8},
+  ]}
+  steps={[
+    {
+      short: '시작',
+      kind: '시작',
+      title: '청구서가 30% 늘었고, 합계만으로는 알 수 없다',
+      text: [
+        '팀은 이번 달 약 1만 달러를 예상했는데 1만 3천 달러가 나왔다. 합계 하나로는 누가 무엇에 썼는지 알 수 없다.',
+        '클라우드 청구서의 거의 모든 줄은 네 묶음에 들어간다. 컴퓨팅(VM, 노드), 스토리지(디스크, 스냅샷, 버킷), 데이터 전송(과금 경계를 넘는 바이트), 시간 단위로 과금하는 관리형 서비스다. 하나씩 살펴본다.',
+      ],
+      flows: [{from: 'bill', to: 'team', label: '청구', type: 'response'}],
+      focus: ['bill', 'team'],
+      values: {bill: {text: '$13,000 · +30%', tone: 'bad'}, line: '—', ratio: '—'},
+    },
+    {
+      short: '컴퓨팅',
+      kind: '원리',
+      title: '같은 VM에 가격이 세 가지 있다',
+      text: [
+        '온디맨드는 약정 없이 초나 시간 단위로 낸다. Savings Plans나 예약 인스턴스는 1년이나 3년 사용을 약정하는 대신 크게 깎아 준다(AWS 기준 최대 72%). 스팟은 남는 용량을 최대 90% 싸게 쓰지만, 클라우드가 2분 전에 알리고 회수할 수 있다.',
+        '흔한 조합은 이렇다. 확실한 기본 부하에는 약정, 중단을 견디는 무상태·배치 작업에는 스팟, 나머지는 온디맨드.',
+      ],
+      keyIdea: '확실히 쓸 만큼만 약정한다. 쓰지 않은 약정도 매시간 돈이 나간다.',
+      flows: [{from: 'compute', to: 'bill', label: '가장 큰 항목', type: 'response'}],
+      focus: ['compute'],
+      badges: {compute: '전부 온디맨드'},
+      values: {line: '컴퓨팅 · 55%'},
+    },
+    {
+      short: '스토리지',
+      kind: '주의',
+      title: 'VM이 사라진 뒤에도 디스크와 스냅샷은 과금된다',
+      text: [
+        '블록 볼륨은 읽든 말든 할당한 크기만큼 요금이 나간다. VM을 지워도 추가 볼륨은 "available"(연결 안 됨) 상태로 남아 계속 과금될 수 있다. 오래된 스냅샷도 같은 식으로 쌓인다.',
+        '오브젝트 스토리지는 저장한 GB와 요청 수로 과금한다. 오래된 객체를 더 싼 클래스로 옮기거나 지우는 수명 주기 규칙이 없으면 끝없이 커진다.',
+      ],
+      flows: [{from: 'storage', to: 'bill', label: '연결 안 된 디스크', type: 'response'}],
+      focus: ['storage'],
+      status: {storage: 'warn'},
+      badges: {compute: null, storage: '미연결 12개'},
+      values: {line: '스토리지 · 12%'},
+    },
+    {
+      short: '데이터 전송',
+      kind: '문제',
+      title: '뜻밖의 항목: NAT와 가용 영역 간 트래픽',
+      text: [
+        '인터넷에서 들어오는 데이터는 보통 무료다. 인터넷으로 나가는 데이터는 GB당 과금한다. 가용 영역 사이 트래픽도 과금하며, AWS는 양방향 각각에 매긴다.',
+        'NAT 게이트웨이는 시간당 요금과 처리한 GB당 요금을 받는다. 프라이빗 서브넷의 노드가 NAT 게이트웨이를 거쳐 이미지를 받거나 클라우드 스토리지 API를 부르면 바이트마다 그 요금이 붙는다. 코드를 아무도 안 바꿨는데 이 항목이 커지는 일이 흔하다.',
+      ],
+      keyIdea: '클라우드 서비스에는 프라이빗 엔드포인트를 쓰고(AWS의 S3·DynamoDB 게이트웨이 엔드포인트는 요금이 없다), 대화가 많은 서비스는 같은 영역에 둔다.',
+      flows: [
+        {from: 'node1', to: 'nat', label: '이미지 받기', type: 'request'},
+        {from: 'nat', to: 'internet', label: 'GB당 과금', type: 'request'},
+      ],
+      focus: ['nat', 'internet'],
+      status: {storage: null, nat: 'error'},
+      badges: {storage: null, nat: '4 TB 처리'},
+      values: {line: {text: '데이터 전송 · 18%', tone: 'bad'}},
+    },
+    {
+      short: '유휴 서비스',
+      kind: '주의',
+      title: '관리형 서비스는 쓰든 안 쓰든 시간당 과금된다',
+      text: [
+        '관리형 데이터베이스, 로드밸런서, NAT 게이트웨이는 존재하는 매시간 요금이 나간다. 운영과 같은 크기로 24시간 7일 내내 켜 둔 테스트 DB는 새벽 3시에도 정오와 똑같이 돈이 든다.',
+        '운영이 아닌 자원은 업무 시간 밖에 끄거나 줄이고, 대상 없는 로드밸런서 같은 잔여물은 지운다.',
+      ],
+      flows: [{from: 'db', to: 'bill', label: '24×7', type: 'response'}],
+      focus: ['db'],
+      status: {nat: null, db: 'warn'},
+      badges: {nat: null, db: 'dev · 밤에 놂'},
+      values: {line: '관리형 서비스 · 15%'},
+    },
+    {
+      short: '태그',
+      kind: '원리',
+      title: '태그가 각 줄의 주인을 말해 준다',
+      text: [
+        '모든 자원에 team=shop, env=dev 같은 비용 할당 태그를 달면 청구서를 주인별로 묶을 수 있다. AWS에서는 결제 콘솔에서 태그를 비용 할당 태그로 활성화해야 비용 보고서에 나타나고, 이전 달 비용은 백필해야만 보인다(최대 12개월).',
+        '태그 없는 지출은 주인이 없어서 아무도 손대지 않는다. 그래서 많은 팀이 IaC 템플릿이나 정책으로 만들 때부터 태그를 강제한다.',
+      ],
+      flows: [{from: 'bill', to: 'team', label: '태그별', type: 'response'}],
+      focus: ['bill', 'team'],
+      status: {db: null},
+      badges: {db: null, bill: 'team · env'},
+      values: {line: '태그 없음 · 20%'},
+    },
+    {
+      short: '요청값',
+      kind: '문제',
+      title: '쿠버네티스 안에서는 요청값이 노드 비용을 정한다',
+      text: [
+        '클러스터는 노드 위에서 돌고 요금은 노드 단위로 나간다. 스케줄러는 실제 사용량이 아니라 CPU·메모리 요청값으로 파드를 배치한다. 요청값 합이 할당 가능 용량에 닿으면 노드는 "꽉 찬" 것이다.',
+        '여기서는 파드가 각각 CPU 2를 요청하지만 실제로는 0.2쯤 쓴다. 노드는 꽉 차 보이고 새 파드는 Pending이 되며 클러스터 오토스케일러가 노드를 늘린다. 실제 일은 1 vCPU쯤인데 8 vCPU 값을 낸다.',
+      ],
+      keyIdea: 'kubectl top 결과를 요청값과 비교한다. 차이가 크면 예약만 해 두고 놀고 있는 용량에 돈을 쓰고 있는 것이다.',
+      flows: [
+        {from: 'shop', to: 'node1', label: 'CPU 2 요청', type: 'request'},
+        {from: 'dev', to: 'node2', label: 'CPU 2 요청', type: 'request'},
+        {from: 'node2', to: 'compute', label: '노드 추가', type: 'response'},
+      ],
+      focus: ['node1', 'node2', 'shop', 'dev'],
+      status: {node1: 'warn', node2: 'warn'},
+      badges: {bill: null, node1: '요청으로 꽉 참', node2: '요청으로 꽉 참'},
+      values: {ratio: {text: '1 / 8 vCPU · 12%', tone: 'bad'}, line: '노드'},
+    },
+    {
+      short: '적정 크기',
+      kind: '원리',
+      title: '요청값을 맞추고 노드를 촘촘히 채운다',
+      text: [
+        '측정한 사용량에 피크 여유를 더해 요청값을 정한다. VPA 추천값이나 몇 주치 지표가 좋은 출발점이다. 요청값이 줄면 노드마다 파드가 더 들어간다.',
+        '그다음 오토스케일러가 비었거나 덜 찬 노드를 없애게 하고(통합, consolidation), 중단을 견디는 무상태 워크로드는 스팟 노드에서 돌린다. 꽉 찬 노드 몇 대가 더 싸다.',
+      ],
+      flows: [
+        {from: 'shop', to: 'node1', label: 'CPU 0.4 요청', type: 'request'},
+        {from: 'dev', to: 'node1', label: 'CPU 0.4 요청', type: 'request'},
+      ],
+      focus: ['node1', 'node2'],
+      status: {node1: 'ok', node2: 'off'},
+      badges: {node1: '촘촘히 채움', node2: '제거됨'},
+      values: {ratio: {text: '1 / 4 vCPU · 25%', tone: 'good'}},
+    },
+    {
+      short: '네임스페이스별',
+      kind: '원리',
+      title: 'OpenCost가 노드 비용을 네임스페이스별로 나눈다',
+      text: [
+        '노드 하나를 여러 팀이 함께 쓰므로 그 값을 나눠야 한다. OpenCost(CNCF 프로젝트이며 Kubecost가 이 위에 만들어졌다)는 노드와 디스크 가격을 가져와 네임스페이스마다 요청값과 사용량에 따라 나눈다. 어떤 파드도 차지하지 않은 비용은 유휴(idle)로 드러난다.',
+        '그 결과 ns dev가 밤과 주말에도 계속 돈다는 것을 찾는다. 업무 시간 밖에 dev 디플로이먼트를 0으로 줄이면 비용 대부분이 사라진다.',
+      ],
+      flows: [
+        {from: 'node1', to: 'opencost', label: '사용량 · 요청값', type: 'watch'},
+        {from: 'opencost', to: 'team', label: '네임스페이스별', type: 'response', bend: 0.25},
+      ],
+      focus: ['opencost', 'dev'],
+      status: {dev: 'warn'},
+      badges: {dev: '밤에 놂'},
+    },
+    {
+      short: '예산',
+      kind: '원리',
+      title: '예산과 이상 감지 알림이 다음 달에는 미리 잡아 준다',
+      text: [
+        '예산은 실제 지출이나 예측 지출이 기준을 넘으면 팀에 알린다. 그래서 청구서가 올 때가 아니라 첫 주에 안다. 이상 감지(예: AWS Cost Anomaly Detection)는 NAT 데이터 처리처럼 한 서비스가 갑자기 뛰면 짚어 준다.',
+        '이것이 FinOps 순환이다. 알기(inform, 누가 무엇에 쓰는지 본다), 최적화(optimize, 크기 조정·약정·삭제), 운영(operate, 예산·태그 규칙·정기 검토). 매달 다시 돈다.',
+      ],
+      flows: [{from: 'budget', to: 'team', label: '예측 90%', type: 'response', bend: -0.2}],
+      focus: ['budget', 'team'],
+      status: {dev: null},
+      badges: {dev: null, budget: '기준 90%'},
+      values: {bill: {text: '$10,400 · 예산 안', tone: 'good'}},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '청구서는 요인별로 읽고, 모든 줄에 주인을 정한다',
+      text: [
+        '컴퓨팅은 꾸준한 부하에 약정, 견디는 작업에 스팟, 그리고 크기 조정으로 줄인다. 스토리지와 유휴 서비스는 지우고 일정을 걸어 줄인다. 데이터 전송은 트래픽을 NAT 게이트웨이 밖으로, 한 영역 안으로 두어 줄인다.',
+        '쿠버네티스에서는 요청값이 비용을 낼 노드 수를 정한다. 태그와 OpenCost가 모든 줄에 주인을 붙이고, 예산 알림이 다음 놀라움을 일찍 잡는다.',
+      ],
+      keyIdea: '비용은 한 번 치우고 끝나는 일이 아니라 도는 순환이다. 보고, 가장 큰 줄을 고치고, 다시 늘지 않게 안전장치를 건다.',
+      flows: [
+        {from: 'compute', to: 'bill', type: 'response'},
+        {from: 'opencost', to: 'team', type: 'response', bend: 0.25},
+        {from: 'budget', to: 'team', type: 'response', bend: -0.2},
+      ],
+      focus: ['bill', 'opencost', 'budget'],
+      status: {node1: null, node2: null},
+      badges: {node1: null, node2: null, budget: null},
+      values: {line: '—'},
+    },
+  ]}
+/>
+
+## 비용 요인과 흔한 낭비
+
+| 비용 요인 | 흔한 낭비 | 고치는 법 |
+|---|---|---|
+| 컴퓨팅 (VM, 노드) | 전부 온디맨드, 너무 큰 인스턴스 유형 | 꾸준한 부하는 약정, 견디는 작업은 스팟, 인스턴스 유형 크기 조정 |
+| 쿠버네티스 요청값 | 사용량보다 훨씬 큰 요청값 때문에 꽉 찼지만 노는 노드 | 측정한 사용량으로 요청값 설정, 노드 통합 켜기 |
+| 블록 스토리지 | 연결 안 된 볼륨, 너무 크게 잡은 크기 | `available` 볼륨을 찾아 지우거나 스냅샷으로 남기기 |
+| 스냅샷과 백업 | 보존 규칙 없이 몇 년 쌓인 스냅샷 | 보존·수명 주기 정책 |
+| 오브젝트 스토리지 | 가장 비싼 클래스에 남은 오래된 데이터 | 더 차가운 클래스로 옮기거나 지우는 수명 주기 규칙 |
+| NAT 게이트웨이 | GB당 처리되는 이미지 다운로드와 클라우드 API 트래픽 | 클라우드 서비스용 프라이빗 엔드포인트, VPC 안 풀스루 캐시나 레지스트리 |
+| 가용 영역 간 트래픽 | 여러 영역에 흩어진 대화 많은 서비스 | 토폴로지 인식 라우팅, 많이 주고받는 서비스는 한 영역에 |
+| 인터넷 송신 | 큰 파일을 서버에서 바로 내보냄 | 앞단에 CDN, 압축 |
+| 관리형 서비스 | 24시간 켜 둔 운영 외 데이터베이스 | 업무 시간 밖 중지·축소 일정, 잔여물 삭제 |
+| 태그 없는 자원 | 주인 없는 지출 | 만들 때 필수 태그 강제 |
+
+## 직접 확인해 보기
+
+```bash
+# 지난달 서비스별 비용 (AWS Cost Explorer)
+aws ce get-cost-and-usage --time-period Start=2026-10-01,End=2026-11-01 \
+  --granularity MONTHLY --metrics UnblendedCost \
+  --group-by Type=DIMENSION,Key=SERVICE
+
+# 활성화한 비용 할당 태그로 묶어 보기
+aws ce get-cost-and-usage --time-period Start=2026-10-01,End=2026-11-01 \
+  --granularity MONTHLY --metrics UnblendedCost --group-by Type=TAG,Key=team
+
+# 연결 안 된 채 과금 중인 볼륨
+aws ec2 describe-volumes --filters Name=status,Values=available \
+  --query 'Volumes[].[VolumeId,Size,CreateTime]' --output table
+
+# 쿠버네티스: 실제 사용량과 요청값 비교
+kubectl top pods -A --sort-by=cpu
+kubectl get pods -A -o custom-columns='NS:.metadata.namespace,POD:.metadata.name,CPU_REQ:.spec.containers[*].resources.requests.cpu,MEM_REQ:.spec.containers[*].resources.requests.memory'
+kubectl describe nodes | grep -A 8 'Allocated resources'   # 노드마다 요청된 비율
+```
+
+더 읽을거리: [FinOps 프레임워크](https://www.finops.org/framework/) · [Amazon EC2 요금](https://aws.amazon.com/ec2/pricing/) · [Savings Plans](https://aws.amazon.com/savingsplans/) · [스팟 인스턴스](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/using-spot-instances.html) · [VPC 요금 (NAT 게이트웨이)](https://aws.amazon.com/vpc/pricing/) · [비용 할당 태그](https://docs.aws.amazon.com/awsaccountbilling/latest/aboutv2/cost-alloc-tags.html) · [OpenCost](https://www.opencost.io/docs/) · [요청값과 상한값](../intermediate/requests-limits.mdx) · [가상 머신 자동 증감 (오토스케일링 그룹)](../cloud/auto-scaling-group.mdx)

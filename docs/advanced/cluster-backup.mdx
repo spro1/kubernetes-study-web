@@ -1,0 +1,234 @@
+---
+id: cluster-backup
+title: Backing Up and Restoring a Cluster
+sidebar_label: 09 · Cluster Backup and Restore
+description: Animated walkthrough of what state a Kubernetes cluster holds, an etcd snapshot for whole-cluster recovery, Velero backups of API objects and volume data to object storage, app-consistent hooks, schedules with TTL, and restoring into another cluster
+summary: 'etcd snapshots, Velero backups of objects and volumes, consistent hooks, and a restore into a new cluster.'
+icon: archive
+hide_table_of_contents: true
+---
+
+# Backing Up and Restoring a Cluster
+
+A cluster keeps state in several places, and each place needs its own backup. Follow an **etcd snapshot** and a **Velero backup** from the source cluster to object storage, and back into a new cluster.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~12 min', level: 'Advanced'}}
+  groups={[
+    {label: 'Cluster A · source', x: 20, y: 30, w: 500, h: 290, tone: 'biz'},
+    {label: 'Cluster B · restore', x: 790, y: 30, w: 190, h: 290, tone: 'plain'},
+  ]}
+  nodes={[
+    {id: 'etcd', label: 'etcd', sub: 'API objects', icon: 'db', tone: 'cp', x: 100, y: 110, show: true},
+    {id: 'api', label: 'API server', sub: 'Reads and writes etcd', icon: 'gear', tone: 'cp', x: 100, y: 250, show: true},
+    {id: 'velero', label: 'Velero', sub: 'Backup controller', icon: 'agent', tone: 'node', x: 300, y: 110},
+    {id: 'pod', label: 'Pod', sub: 'postgres', icon: 'pod', tone: 'app', size: 'sm', x: 300, y: 250, show: true},
+    {id: 'pv', label: 'PV', sub: 'Disk with data', icon: 'disk', tone: 'store', x: 440, y: 250, w: 120, show: true},
+    {id: 'agent', label: 'node-agent', sub: 'File copy', icon: 'agent', tone: 'node', x: 460, y: 110, w: 120},
+    {id: 'bucket', label: 'Object storage', sub: 'Backup bucket', icon: 'archive', tone: 'store', x: 660, y: 110},
+    {id: 'vsnap', label: 'Volume snapshot', sub: 'CSI snapshot', icon: 'disk', tone: 'store', x: 660, y: 250},
+    {id: 'snapfile', label: 'etcd snapshot', sub: 'snapshot.db', icon: 'archive', tone: 'store', x: 660, y: 390},
+    {id: 'velero2', label: 'Velero', sub: 'Same bucket', icon: 'agent', tone: 'node', x: 885, y: 110},
+    {id: 'app2', label: 'Restored app', sub: 'Objects + PVC', icon: 'pod', tone: 'app', x: 885, y: 250},
+    {id: 'git', label: 'Git repo', sub: 'Manifests', icon: 'git', tone: 'ext', x: 100, y: 390, show: true},
+    {id: 'extdb', label: 'Outside state', sub: 'Cloud DB · DNS · vault', icon: 'cloud', tone: 'ext', x: 330, y: 390, w: 170, show: true},
+  ]}
+  metrics={[
+    {id: 'objects', label: 'API objects'},
+    {id: 'volumes', label: 'Volume data'},
+    {id: 'consistent', label: 'Consistency'},
+    {id: 'restore', label: 'Restore'},
+  ]}
+  learn={[
+    {text: 'Three kinds of state: API objects, volume data, outside systems', at: 0},
+    {text: 'What an etcd snapshot restores, and what it rewinds', at: 1},
+    {text: 'How Velero backs up objects and volumes to object storage', at: 4},
+    {text: 'Crash-consistent versus app-consistent backups with hooks', at: 6},
+    {text: 'Restoring into another cluster, and why restores must be tested', at: 8},
+  ]}
+  steps={[
+    {
+      short: 'Start',
+      kind: '시작',
+      title: 'State lives in three places',
+      text: [
+        'API objects (Deployments, Services, Secrets, PVCs) live in etcd. The bytes your app writes live on volumes, outside etcd. Some state lives outside the cluster entirely: a managed cloud database, DNS records, secrets in a vault.',
+        'Each place needs its own backup. A Git repo with your manifests helps rebuild objects, but it holds none of the data.',
+      ],
+      focus: ['etcd', 'pv', 'extdb'],
+      values: {objects: 'etcd', volumes: 'PV disks', consistent: '—', restore: '—'},
+    },
+    {
+      short: 'etcd snapshot',
+      kind: '원리',
+      title: 'An etcd snapshot copies every object at one moment',
+      text: [
+        'etcdctl snapshot save talks to etcd over TLS, so it needs the endpoint, the CA, and a client certificate and key. The result is one file, snapshot.db, with every object in the cluster at that moment.',
+        'Copy the file off the control plane node. A snapshot on the disk of the node you lose is no backup.',
+      ],
+      keyIdea: 'The snapshot holds Secrets too, in plain text unless encryption at rest is on. Store it like a secret.',
+      flows: [{from: 'etcd', to: 'snapfile', label: 'snapshot save', type: 'request'}],
+      focus: ['etcd', 'snapfile'],
+      badges: {snapfile: '02:00'},
+      values: {objects: {text: 'snapshot.db', tone: 'good'}},
+    },
+    {
+      short: 'etcd restore',
+      kind: '주의',
+      title: 'Restoring a snapshot rewinds the whole cluster',
+      text: [
+        'To restore, stop every API server first. Then etcdutl snapshot restore writes the snapshot into a new data directory, and you point etcd (for kubeadm, the static Pod manifest) at it. Restart the API servers, then the scheduler, controller manager and kubelets so no stale cache survives.',
+        'Everything goes back to 02:00. Objects created after that are gone, and controllers reconcile running Pods back to the old desired state.',
+      ],
+      keyIdea: 'An etcd restore is for losing the control plane, not for one deleted Deployment. It rewinds every namespace at once.',
+      flows: [{from: 'snapfile', to: 'etcd', label: 'snapshot restore', type: 'response'}],
+      focus: ['snapfile', 'etcd', 'api'],
+      status: {api: 'off'},
+      badges: {etcd: 'New data dir'},
+      values: {restore: {text: 'Whole cluster → 02:00', tone: 'bad'}},
+    },
+    {
+      short: 'No PV data',
+      kind: '문제',
+      title: 'The snapshot has the PVC, not the data',
+      text: [
+        'After the restore, the PVC and PV objects are back. The bytes on the disk are not in etcd. If the disk was lost too, the PV points at nothing, or at a fresh empty volume.',
+        'Volume data needs its own backup: storage snapshots, a file-level copy, or the database\'s own dump.',
+      ],
+      focus: ['pv'],
+      status: {api: null, pv: 'error'},
+      badges: {etcd: null, pv: 'Not in etcd'},
+      values: {volumes: {text: 'Not covered', tone: 'bad'}, restore: '—'},
+    },
+    {
+      short: 'Velero backup',
+      kind: '원리',
+      title: 'Velero exports API objects to object storage',
+      text: [
+        'Velero runs in the cluster. You create a Backup resource, for example with velero backup create shop --include-namespaces shop. Velero reads the matching objects through the API server and writes them as a compressed archive to a bucket, its BackupStorageLocation.',
+        'Because it works through the API, Velero can back up one namespace or one label selector, and restore the same way. etcd is never touched directly.',
+      ],
+      flows: [
+        {from: 'velero', to: 'api', label: 'List objects', type: 'request'},
+        {from: 'velero', to: 'bucket', label: 'Archive', type: 'request'},
+      ],
+      focus: ['velero', 'bucket'],
+      status: {pv: null},
+      badges: {pv: null, bucket: 'shop-0200'},
+      values: {objects: {text: 'Namespace shop', tone: 'good'}, volumes: '—'},
+    },
+    {
+      short: 'Volumes',
+      kind: '원리',
+      title: 'Volume data goes by snapshot or by file copy',
+      text: [
+        'With CSI snapshots, Velero creates a VolumeSnapshot for each PVC. It is fast, but the snapshot usually stays in the same storage system and region. With --snapshot-move-data, Velero copies the snapshot\'s data into the bucket.',
+        'File System Backup (--default-volumes-to-fs-backup) works with any volume type. The node-agent DaemonSet reads files from the mounted volume and uploads them with Kopia. It is portable, but slower on large volumes.',
+      ],
+      keyIdea: 'A snapshot that lives in the same storage system as the volume does not protect you from losing that system or region.',
+      flows: [
+        {from: 'pv', to: 'vsnap', label: 'CSI snapshot', type: 'request'},
+        {from: 'agent', to: 'pv', label: 'Read files', type: 'request'},
+        {from: 'agent', to: 'bucket', label: 'Kopia upload', type: 'request'},
+      ],
+      focus: ['pv', 'vsnap', 'agent'],
+      values: {volumes: {text: 'Snapshot or file copy', tone: 'good'}, consistent: 'Crash-consistent'},
+    },
+    {
+      short: 'Hooks',
+      kind: '문제',
+      title: 'A snapshot of a busy database is only crash-consistent',
+      text: [
+        'The snapshot catches the disk mid-write, as if the power went out. Most databases can recover from that, but half-written files or pages still in memory can cost data.',
+        'Backup hooks fix this. Pod annotations like pre.hook.backup.velero.io/command run a command in the container before the backup, such as fsfreeze --freeze or a pg_dump to the volume. A post hook unfreezes it afterwards.',
+      ],
+      keyIdea: 'For databases, prefer the database\'s own dump or replication-aware backup. Treat the volume snapshot as a second line.',
+      flows: [{from: 'velero', to: 'pod', label: 'Pre hook', type: 'request'}],
+      focus: ['pod', 'velero'],
+      status: {pod: 'warn'},
+      badges: {pod: 'fsfreeze'},
+      values: {consistent: {text: 'App-consistent', tone: 'good'}},
+    },
+    {
+      short: 'Schedule',
+      kind: '원리',
+      title: 'A Schedule makes backups every night and deletes old ones',
+      text: [
+        'velero schedule create shop-daily --schedule="0 2 * * *" --ttl 720h creates a Backup every night at 02:00. TTL is how long each backup is kept. The default is 30 days.',
+        'When a backup expires, Velero deletes its archive and the snapshots that belong to it. Watch backup status: a PartiallyFailed backup still counts in the list but is missing pieces.',
+      ],
+      flows: [{from: 'velero', to: 'bucket', label: 'Every night', type: 'request'}],
+      focus: ['velero', 'bucket'],
+      status: {pod: null},
+      badges: {pod: null, bucket: '30 backups'},
+    },
+    {
+      short: 'Restore',
+      kind: '원리',
+      title: 'A new cluster restores from the same bucket',
+      text: [
+        'Cluster A is gone. Install Velero in cluster B and point it at the same bucket, ideally in ReadOnly mode so B cannot delete A\'s backups. Then velero restore create --from-backup shop-0200.',
+        'Velero restores in order: CRDs and namespaces first, then storage, PVs and PVCs, then Secrets and ConfigMaps, then workloads. Objects that already exist in B are skipped, with a warning if they differ from the backup, unless you pass --existing-resource-policy=update.',
+      ],
+      keyIdea: 'This is also how you migrate between clusters. Check storage class names and image registries, because the new cluster may not have the same ones.',
+      flows: [
+        {from: 'bucket', to: 'velero2', label: 'Read backup', type: 'response'},
+        {from: 'velero2', to: 'app2', label: 'Recreate', type: 'request'},
+      ],
+      focus: ['bucket', 'velero2', 'app2'],
+      status: {app2: 'ok'},
+      values: {restore: {text: 'Namespace shop → B', tone: 'good'}},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'A backup counts only after you restore it',
+      text: [
+        'etcd snapshots recover a lost control plane, all at once. Velero backs up namespaces with their volumes to object storage and restores them anywhere. Outside state needs the backup of its own system.',
+        'A Git repo rebuilds objects but not data. Run a restore into a scratch cluster on a schedule, and time it. That time is your real RTO.',
+      ],
+      keyIdea: 'Keep at least one copy in another region or account, so the same mistake or attacker cannot delete the cluster and its backups together.',
+      flows: [
+        {from: 'etcd', to: 'snapfile', label: 'Control plane', type: 'request'},
+        {from: 'velero', to: 'bucket', label: 'Namespaces', type: 'request'},
+      ],
+      focus: ['snapfile', 'bucket', 'app2'],
+      status: {app2: null},
+      badges: {bucket: null, snapfile: null},
+    },
+  ]}
+/>
+
+## What each method covers
+
+| Method | API objects | Volume data | Scope | Good for |
+|---|---|---|---|---|
+| etcd snapshot | All, at one moment | No | Whole cluster | Losing the control plane |
+| Velero (objects only) | Selected namespaces or labels | No | Namespace, label | Deleted resources, migration |
+| Velero + CSI snapshots | Yes | Yes, in the same storage system | Namespace | Fast restore in the same region |
+| Velero + data mover or File System Backup | Yes | Yes, copied to the bucket | Namespace | Restore in another region or cluster |
+| Database dump or replication | No | The database only, consistent | One database | Databases, point-in-time recovery |
+| Git (GitOps) | Manifests you wrote | No | Whatever is in the repo | Rebuilding config, not data |
+
+## Try it yourself
+
+```bash
+# etcd snapshot (kubeadm paths; run on a control plane node)
+ETCDCTL_API=3 etcdctl --endpoints=https://127.0.0.1:2379 \
+  --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+  --cert=/etc/kubernetes/pki/etcd/server.crt \
+  --key=/etc/kubernetes/pki/etcd/server.key \
+  snapshot save /backup/snapshot.db
+etcdutl --write-out=table snapshot status /backup/snapshot.db   # Hash, revision, keys, size
+
+# Velero
+velero backup create shop-test --include-namespaces shop --wait
+velero backup describe shop-test --details        # Objects, volume snapshots, warnings
+velero backup logs shop-test | grep -i error
+velero restore create --from-backup shop-test --namespace-mappings shop:shop-restore-test   # Restore beside the original
+velero restore describe <restore-name>            # Skipped and failed items
+```
+
+Further reading: [Operating etcd clusters: backup and restore](https://kubernetes.io/docs/tasks/administer-cluster/configure-upgrade-etcd/#backing-up-an-etcd-cluster) · [etcd disaster recovery](https://etcd.io/docs/latest/op-guide/recovery/) · [Velero docs](https://velero.io/docs/) · [Velero backup hooks](https://velero.io/docs/main/backup-hooks/) · [Velero File System Backup](https://velero.io/docs/main/file-system-backup/) · [Control Plane HA and etcd Quorum](../advanced/etcd-quorum.mdx) · [Multi-region disaster recovery](../cloud/multi-region-dr.mdx) · [How Object Storage Works](../cloud/object-storage.mdx)

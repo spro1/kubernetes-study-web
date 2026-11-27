@@ -15,32 +15,63 @@ hide_table_of_contents: true
 
 ## 기초: 웹·서버·컨테이너
 
-웹 요청과 HTTPS, 서버에서 컨테이너로, 이미지, Git과 CI/CD. 쿠버네티스 전에 알아 둘 것.
+웹 요청, TCP/IP 계층, DNS, HTTPS, 서버에서 컨테이너로, 리눅스 격리, 이미지, Git과 CI/CD. 쿠버네티스 전에 알아 둘 것.
 
 <LessonGrid>
   <LessonCard no="01" to="/basic/web-request" track="foundations" icon="browser" title="주소창에 주소를 입력하면" duration="약 8분" steps={9} level="기초">
     DNS 조회부터 연결·HTTP 요청·로드밸런서·응답 코드까지, 웹 요청 한 번의 여행.
   </LessonCard>
-  <LessonCard no="02" to="/basic/https-cert" track="foundations" icon="shield" title="HTTPS와 인증서" duration="약 8분" steps={9} level="기초">
+  <LessonCard no="02" to="/basic/tcp-ip-layers" track="foundations" icon="layers" title="요청 한 번의 아래층: TCP/IP 계층" duration="약 12분" steps={10} level="기초">
+    세그먼트·패킷·프레임, 포트·IP·MAC, 핸드셰이크, 거부와 시간 초과의 차이.
+  </LessonCard>
+  <LessonCard no="03" to="/basic/dns-resolution" track="foundations" icon="book" title="DNS가 주소를 찾아가는 길" duration="약 10분" steps={10} level="기초">
+    스텁 리졸버, 재귀 리졸버, 루트·TLD·권한 서버, TTL 캐시, 그리고 NXDOMAIN과 SERVFAIL과 시간 초과의 차이.
+  </LessonCard>
+  <LessonCard no="04" to="/basic/https-cert" track="foundations" icon="shield" title="HTTPS와 인증서" duration="약 8분" steps={9} level="기초">
     인증서로 상대를 확인하는 과정, 사설 인증서와 신뢰 체인, 만료되면 생기는 일.
   </LessonCard>
-  <LessonCard no="03" to="/basic/server-to-container" track="foundations" icon="server" title="서버 한 대에서 컨테이너까지" duration="약 8분" steps={9} level="기초">
+  <LessonCard no="05" to="/basic/server-to-container" track="foundations" icon="server" title="서버 한 대에서 컨테이너까지" duration="약 8분" steps={9} level="기초">
     서버의 네 가지 자원, 프로세스, 가상 머신, 커널을 나눠 쓰는 컨테이너.
   </LessonCard>
-  <LessonCard no="04" to="/basic/container-image" track="foundations" icon="box" title="이미지가 만들어지고 실행되기까지" duration="약 9분" steps={9} level="기초">
+  <LessonCard no="06" to="/basic/linux-isolation" track="foundations" icon="layers" title="리눅스는 컨테이너를 어떻게 격리하나" duration="약 10분" steps={9} level="기초">
+    컨테이너는 호스트 프로세스다. 네임스페이스는 보이는 것을, cgroup은 쓸 수 있는 양을 바꾼다.
+  </LessonCard>
+  <LessonCard no="07" to="/basic/container-image" track="foundations" icon="box" title="이미지가 만들어지고 실행되기까지" duration="약 9분" steps={9} level="기초">
     Dockerfile·레이어·이름과 태그·레지스트리, 노드가 받아 실행하기까지.
   </LessonCard>
-  <LessonCard no="05" to="/basic/git-merge-request" track="foundations" icon="git" title="브랜치에서 머지 리퀘스트까지" duration="약 10분" steps={9} level="기초">
+  <LessonCard no="08" to="/basic/git-merge-request" track="foundations" icon="git" title="브랜치에서 머지 리퀘스트까지" duration="약 10분" steps={9} level="기초">
     브랜치·커밋·머지 리퀘스트·리뷰·충돌·태그로 이어지는 협업 흐름.
   </LessonCard>
-  <LessonCard no="06" to="/basic/cicd-pipeline" track="foundations" icon="hammer" title="파이프라인이 도는 순서" duration="약 10분" steps={9} level="기초">
+  <LessonCard no="09" to="/basic/cicd-pipeline" track="foundations" icon="hammer" title="파이프라인이 도는 순서" duration="약 10분" steps={9} level="기초">
     트리거 → 빌드 → 테스트 → 아티팩트 → 환경별 배포, 실패하면 멈추는 곳.
+  </LessonCard>
+</LessonGrid>
+
+## 애플리케이션 기초: HTTP·인증·데이터
+
+HTTP 버전, 로그인과 토큰, 데이터베이스, 캐시, 메시지 큐. 서비스를 만드는 부품들.
+
+<LessonGrid>
+  <LessonCard no="01" to="/basic/http-versions" track="appbasics" icon="layers" title="HTTP/1.1, HTTP/2, HTTP/3" duration="약 10분" steps={10} level="기초">
+    같은 요청을 나르는 세 가지 방식. keep-alive, TCP 연결 하나 위의 HTTP/2 스트림, QUIC 위의 HTTP/3, 그리고 로드밸런서에 미치는 영향.
+  </LessonCard>
+  <LessonCard no="02" to="/basic/auth-login" track="appbasics" icon="ticket" title="로그인은 이렇게 동작한다 (세션, JWT, OIDC)" duration="약 12분" steps={9} level="기초">
+    비밀번호 해시, 세션 쿠키와 JWT, PKCE를 쓰는 OIDC 인가 코드 흐름, 세 가지 토큰, 401과 403.
+  </LessonCard>
+  <LessonCard no="03" to="/basic/database-basics" track="appbasics" icon="db" title="앱이 데이터베이스에 저장할 때" duration="약 12분" steps={11} level="기초">
+    커넥션 풀, 실행 계획과 인덱스, 트랜잭션과 WAL, 잠금, 읽기 복제본과 복제 지연.
+  </LessonCard>
+  <LessonCard no="04" to="/basic/caching" track="appbasics" icon="bulb" title="애플리케이션 캐시는 이렇게 움직인다" duration="약 12분" steps={10} level="입문">
+    캐시 어사이드 읽기, 쓰기 때 무효화, TTL과 축출, 인기 키의 스탬피드, 캐시가 죽었을 때 DB가 받는 부하.
+  </LessonCard>
+  <LessonCard no="05" to="/basic/message-queue" track="appbasics" icon="layers" title="메시지 큐가 서비스를 떼어 놓는 방식" duration="약 12분" steps={10} level="기초">
+    토픽·파티션·컨슈머 그룹, 최소 한 번 전달이라 컨슈머가 멱등해야 하는 이유, 컨슈머 랙, 데드 레터 큐.
   </LessonCard>
 </LessonGrid>
 
 ## 클라우드 기초
 
-IaaS·PaaS·SaaS, VPC 요청 경로, 가용 영역 장애 조치, 오토스케일링 그룹, IAM.
+IaaS·PaaS·SaaS, VPC 요청 경로, 가용 영역 장애 조치, 오토스케일링 그룹, IAM, 오브젝트 스토리지, CDN, 서버리스, 하이브리드 네트워크, 멀티 리전 DR, 비용 관리, 코드형 인프라, 관리형 쿠버네티스.
 
 <LessonGrid>
   <LessonCard no="01" to="/cloud/service-models" track="cloud" icon="layers" title="누가 어디까지 맡나 (IaaS·PaaS·SaaS)" duration="약 8분" steps={9} level="기초">
@@ -58,35 +89,62 @@ IaaS·PaaS·SaaS, VPC 요청 경로, 가용 영역 장애 조치, 오토스케�
   <LessonCard no="05" to="/cloud/iam-request" track="cloud" icon="shield" title="API 요청 하나의 권한 검사 (IAM)" duration="약 9분" steps={9} level="기초">
     인증, 기본 거부·명시적 허용·명시적 거부, 임시 자격 증명.
   </LessonCard>
+  <LessonCard no="06" to="/cloud/object-storage" track="cloud" icon="archive" title="오브젝트 스토리지는 이렇게 움직인다" duration="약 11분" steps={10} level="기초">
+    버킷과 키, 서명된 요청, 403과 실수로 공개된 버킷, 미리 서명된 URL, 버전 관리와 수명 주기 규칙.
+  </LessonCard>
+  <LessonCard no="07" to="/cloud/cdn" track="cloud" icon="cloud" title="CDN이 요청에 답하는 방식" duration="약 10분" steps={10} level="기초">
+    가까운 엣지, 캐시 히트와 미스, Cache-Control, 304 재검증, 퍼지와 버전 붙은 파일 이름, 개인 페이지를 캐시에서 빼는 법.
+  </LessonCard>
+  <LessonCard no="08" to="/cloud/serverless" track="cloud" icon="spark" title="서버리스 함수는 이렇게 실행된다" duration="약 11분" steps={10} level="중급">
+    이벤트, 콜드·웜 스타트, 동시성 한도와 스로틀링, 재시도와 멱등성, 무엇에 돈을 내는지.
+  </LessonCard>
+  <LessonCard no="09" to="/cloud/hybrid-network" track="cloud" icon="route" title="네트워크 잇기: 피어링·트랜짓·VPN·프라이빗 엔드포인트" duration="약 12분" steps={10} level="중급">
+    피어링, 트랜짓 허브, VPN과 전용선, 하이브리드 DNS, 프라이빗 엔드포인트, 그리고 경로가 양방향으로 있어야 하는 이유.
+  </LessonCard>
+  <LessonCard no="10" to="/cloud/multi-region-dr" track="cloud" icon="shield" title="리전 전체가 멈추면" duration="약 12분" steps={10} level="중급">
+    백업과 복제의 차이, 네 가지 DR 전략의 RPO·RTO·비용, DNS 장애 조치와 훈련.
+  </LessonCard>
+  <LessonCard no="11" to="/cloud/cloud-cost" track="cloud" icon="chart" title="클라우드 청구서는 어디서 나오나" duration="약 11분" steps={11} level="중급">
+    컴퓨팅·스토리지·데이터 전송·유휴 서비스, 쿠버네티스 요청값이 노드 비용을 정하는 이유, FinOps 순환.
+  </LessonCard>
+  <LessonCard no="12" to="/cloud/infra-as-code" track="cloud" icon="layers" title="테라폼으로 하는 코드형 인프라" duration="약 10분" steps={9} level="중급">
+    코드·init·plan·apply, 잠금이 걸린 공유 상태, 드리프트, 그리고 plan의 -/+를 다시 봐야 하는 이유.
+  </LessonCard>
+  <LessonCard no="13" to="/cloud/managed-kubernetes" track="cloud" icon="cloud" title="관리형 쿠버네티스 — 누가 무엇을 운영하나" duration="약 11분" steps={10} level="중급">
+    컨트롤 플레인은 클라우드가, 노드는 내가. IAM·로드 밸런서·디스크·오토스케일링·업그레이드가 클라우드와 이어지는 방식.
+  </LessonCard>
 </LessonGrid>
 
 ## 쿠버네티스 핵심
 
-원하는 상태, 워크로드 종류, 파드가 뜨는 과정, Service와 DNS, 설정과 볼륨, Job.
+원하는 상태, 매니페스트 읽기, 워크로드 종류, 파드가 뜨는 과정, Service와 DNS, 설정과 볼륨, Job.
 
 <LessonGrid>
   <LessonCard no="01" to="/basic/desired-state" track="core" icon="target" title="원하는 상태와 컨트롤 루프" duration="약 10분" steps={8} level="기초">
     원하는 상태를 적으면 컨트롤러가 현재 상태를 맞춘다. 레이블과 셀렉터까지.
   </LessonCard>
-  <LessonCard no="02" to="/basic/workload-types" track="core" icon="layers" title="워크로드 종류" duration="약 10분" steps={9} level="기초">
+  <LessonCard no="02" to="/k8s/manifest-anatomy" track="core" icon="book" title="매니페스트 읽고 적용하기" duration="약 10분" steps={9} level="입문">
+    매니페스트의 최상위 필드 넷, API 서버가 그것을 검사하는 방식, create·apply·diff·서버 사이드 적용의 차이.
+  </LessonCard>
+  <LessonCard no="03" to="/basic/workload-types" track="core" icon="layers" title="워크로드 종류" duration="약 10분" steps={9} level="기초">
     디플로이먼트·스테이트풀셋·데몬셋이 파드를 다루는 방식과 고르는 기준.
   </LessonCard>
-  <LessonCard no="03" to="/k8s/pod-startup" track="core" icon="pod" title="파드가 뜨기까지" duration="약 10분" steps={9} level="기초">
+  <LessonCard no="04" to="/k8s/pod-startup" track="core" icon="pod" title="파드가 뜨기까지" duration="약 10분" steps={9} level="기초">
     kubectl apply 한 줄이 API 서버·etcd·컨트롤러·스케줄러·kubelet을 거쳐 실행 중인 파드가 되기까지.
   </LessonCard>
-  <LessonCard no="04" to="/k8s/traffic" track="core" icon="route" title="요청이 파드에 닿기까지" duration="약 10분" steps={8} level="기초">
+  <LessonCard no="05" to="/k8s/traffic" track="core" icon="route" title="요청이 파드에 닿기까지" duration="약 10분" steps={8} level="기초">
     로드밸런서 → Ingress → Service → 파드로 이어지는 트래픽 경로와, 준비되지 않은 파드가 빠지는 원리.
   </LessonCard>
-  <LessonCard no="05" to="/k8s/service-dns" track="core" icon="book" title="이름으로 찾아가기 (Service·DNS)" duration="약 10분" steps={9} level="기초">
+  <LessonCard no="06" to="/k8s/service-dns" track="core" icon="book" title="이름으로 찾아가기 (Service·DNS)" duration="약 10분" steps={9} level="기초">
     파드가 서비스 이름으로 다른 서비스를 부를 때 일어나는 일과, 네임스페이스가 다르면 생기는 차이.
   </LessonCard>
-  <LessonCard no="06" to="/k8s/config-secret" track="core" icon="gear" title="설정과 비밀값 (ConfigMap·Secret)" duration="약 8분" steps={9} level="기초">
+  <LessonCard no="07" to="/k8s/config-secret" track="core" icon="gear" title="설정과 비밀값 (ConfigMap·Secret)" duration="약 8분" steps={9} level="기초">
     설정값을 이미지 밖에 두고 파드에 넘기는 방법, 값을 바꿨을 때 반영되는 시점의 차이.
   </LessonCard>
-  <LessonCard no="07" to="/k8s/storage-volume" track="core" icon="disk" title="저장 공간이 붙기까지 (PVC·PV)" duration="약 10분" steps={9} level="중급">
+  <LessonCard no="08" to="/k8s/storage-volume" track="core" icon="disk" title="저장 공간이 붙기까지 (PVC·PV)" duration="약 10분" steps={9} level="중급">
     저장 공간을 신청하면 볼륨이 만들어지고 파드에 붙기까지, 파드가 죽어도 데이터가 남는 이유.
   </LessonCard>
-  <LessonCard no="08" to="/k8s/job-cronjob" track="core" icon="spark" title="한 번 돌고 끝나는 일 (Job·CronJob)" duration="약 10분" steps={8} level="기초">
+  <LessonCard no="09" to="/k8s/job-cronjob" track="core" icon="spark" title="한 번 돌고 끝나는 일 (Job·CronJob)" duration="약 10분" steps={8} level="기초">
     끝까지 실행되고 멈추는 작업, 실패했을 때의 재시도, 일정마다 도는 작업.
   </LessonCard>
 </LessonGrid>
@@ -164,35 +222,47 @@ Service 종류, Ingress와 TLS, 게이트웨이 API, 네트워크 정책, Istio 
 
 ## 보안과 멀티테넌시
 
-RBAC, 네임스페이스 쿼터, 파드 보안 표준, 공급망 보안, 런타임 보안, 감사 로그, 위협 모델.
+RBAC, 서비스 어카운트 토큰, 네임스페이스 쿼터, 파드 보안 표준, 시크릿 관리, 인증서 자동화, 어드미션 정책, 공급망 보안, 런타임 보안, 감사 로그, 위협 모델.
 
 <LessonGrid>
   <LessonCard no="01" to="/k8s/rbac" track="security" icon="ticket" title="누가 무엇을 할 수 있나 (RBAC)" duration="약 10분" steps={9} level="기초">
     사람과 파드의 요청이 인증·인가를 거치는 과정, 역할과 바인딩, 최소 권한.
   </LessonCard>
-  <LessonCard no="02" to="/feature/namespace-quota" track="security" icon="box" title="네임스페이스와 리소스 쿼터" duration="약 8분" steps={8} level="기초">
+  <LessonCard no="02" to="/advanced/serviceaccount-token" track="security" icon="ticket" title="파드는 자신을 어떻게 증명하나 (서비스 어카운트 토큰)" duration="약 12분" steps={10} level="고급">
+    kubelet이 파드마다 마운트하는 짧은 수명의 바운드 토큰, API 서버의 토큰 검사, 401과 403의 차이, 클라우드 워크로드 아이덴티티를 위한 OIDC 신뢰.
+  </LessonCard>
+  <LessonCard no="03" to="/feature/namespace-quota" track="security" icon="box" title="네임스페이스와 리소스 쿼터" duration="약 8분" steps={8} level="기초">
     구획을 나누고 상한을 거는 방법, 상한을 넘으면 파드가 늘지 않는 이유.
   </LessonCard>
-  <LessonCard no="03" to="/advanced/pod-security" track="security" icon="shield" title="파드 보안 기준과 securityContext" duration="약 10분" steps={9} level="고급">
+  <LessonCard no="04" to="/advanced/pod-security" track="security" icon="shield" title="파드 보안 기준과 securityContext" duration="약 10분" steps={9} level="고급">
     네임스페이스 보안 기준이 위험한 파드를 거절하는 과정과 securityContext.
   </LessonCard>
-  <LessonCard no="04" to="/advanced/supply-chain" track="security" icon="registry" title="이미지와 공급망 보안" duration="약 10분" steps={9} level="고급">
+  <LessonCard no="05" to="/advanced/secret-management" track="security" icon="shield" title="시크릿을 안전하게 지키기" duration="약 12분" steps={10} level="고급">
+    시크릿이 실제로 놓이는 곳, KMS로 저장 시 암호화, 누가 읽을 수 있나, Git에서 빼기, 외부 보관소에서 동기화하고 교체하기.
+  </LessonCard>
+  <LessonCard no="06" to="/advanced/cert-manager" track="security" icon="shield" title="cert-manager로 TLS 인증서 자동 발급하기" duration="약 12분" steps={10} level="중급">
+    인그레스 어노테이션에서 서명된 인증서까지: Issuer·Certificate·Order·Challenge, HTTP-01과 DNS-01, 갱신, 발급이 멈추는 곳.
+  </LessonCard>
+  <LessonCard no="07" to="/advanced/admission-policy" track="security" icon="shield" title="CEL과 웹훅으로 거는 어드미션 정책" duration="약 12분" steps={10} level="고급">
+    API 서버 입구에 거는 우리 규칙: CEL 정책과 바인딩, 거절 전에 경고, 웹훅 엔진, 웹훅이 죽으면 무엇이 깨지는지.
+  </LessonCard>
+  <LessonCard no="08" to="/advanced/supply-chain" track="security" icon="registry" title="이미지와 공급망 보안" duration="약 10분" steps={9} level="고급">
     검사·서명·다이제스트 고정, 배포 시점에 출처를 확인하는 흐름.
   </LessonCard>
-  <LessonCard no="05" to="/cert/runtime-security" track="security" icon="alert" title="런타임 보안 — 이상 행동 잡기 (CKS)" duration="약 10분" steps={9} level="고급">
+  <LessonCard no="09" to="/cert/runtime-security" track="security" icon="alert" title="런타임 보안 — 이상 행동 잡기 (CKS)" duration="약 10분" steps={9} level="고급">
     Falco 탐지, seccomp·AppArmor 차단, 불변 컨테이너.
   </LessonCard>
-  <LessonCard no="06" to="/advanced/audit-log" track="security" icon="book" title="감사 로그" duration="약 10분" steps={9} level="고급">
+  <LessonCard no="10" to="/advanced/audit-log" track="security" icon="book" title="감사 로그" duration="약 10분" steps={9} level="고급">
     API 요청마다 누가·언제·무엇을 남기는지와 감사 정책의 기록 수준.
   </LessonCard>
-  <LessonCard no="07" to="/cert/threat-model" track="security" icon="shield" title="4C와 위협 모델로 클러스터 보기 (KCSA·KCNA)" duration="약 12분" steps={9} level="중급">
+  <LessonCard no="11" to="/cert/threat-model" track="security" icon="shield" title="4C와 위협 모델로 클러스터 보기 (KCSA·KCNA)" duration="약 12분" steps={9} level="중급">
     공격자가 경계를 넘는 길을 따라가며 경계마다의 방어를 본다.
   </LessonCard>
 </LessonGrid>
 
 ## 클러스터 운영
 
-스케줄링, 노드 비우기, kubeadm 업그레이드, 노드 장애 분석, Kustomize, GitOps, SLO 알림.
+스케줄링, 노드 비우기, kubeadm 업그레이드, 노드 장애 분석, Helm, Kustomize, GitOps, 관측 파이프라인, 백업과 복구, SLO 알림.
 
 <LessonGrid>
   <LessonCard no="01" to="/k8s/scheduling" track="operations" icon="target" title="파드를 어느 노드에 둘까 (스케줄링)" duration="약 10분" steps={8} level="중급">
@@ -207,13 +277,22 @@ RBAC, 네임스페이스 쿼터, 파드 보안 표준, 공급망 보안, 런타�
   <LessonCard no="04" to="/cert/node-troubleshoot" track="operations" icon="alert" title="노드 NotReady와 구성요소 장애 (CKA)" duration="약 10분" steps={9} level="중급">
     kubelet·런타임·정적 파드를 차례로 확인하는 노드 장애 해결.
   </LessonCard>
-  <LessonCard no="05" to="/cert/kustomize" track="operations" icon="split" title="Kustomize로 환경별 배포 (CKA·CKAD)" duration="약 10분" steps={9} level="중급">
+  <LessonCard no="05" to="/k8s/helm-release" track="operations" icon="wheel" title="헬름 릴리스의 설치·업그레이드·롤백" duration="약 12분" steps={9} level="중급">
+    차트와 values가 매니페스트가 되고, 설치·업그레이드마다 시크릿에 리비전이 쌓이며, 롤백은 새 리비전을 쓴다.
+  </LessonCard>
+  <LessonCard no="06" to="/cert/kustomize" track="operations" icon="split" title="Kustomize로 환경별 배포 (CKA·CKAD)" duration="약 10분" steps={9} level="중급">
     base와 overlay로 환경마다 다른 매니페스트를 만드는 방법.
   </LessonCard>
-  <LessonCard no="06" to="/intermediate/gitops-sync" track="operations" icon="git" title="Helm과 GitOps" duration="약 10분" steps={9} level="중급">
+  <LessonCard no="07" to="/intermediate/gitops-sync" track="operations" icon="git" title="Helm과 GitOps" duration="약 10분" steps={9} level="중급">
     차트와 릴리스, Git을 정본으로 클러스터를 맞추는 동기화와 드리프트.
   </LessonCard>
-  <LessonCard no="07" to="/advanced/slo-alert" track="operations" icon="bell" title="SLO와 알람 설계" duration="약 10분" steps={9} level="고급">
+  <LessonCard no="08" to="/k8s/observability-pipeline" track="operations" icon="chart" title="로그·메트릭·트레이스가 파드를 떠나는 길" duration="약 12분" steps={11} level="중급">
+    신호 셋, 길 셋: 노드의 로그 파일, 프로메테우스가 당겨 가는 /metrics, OTLP로 밀어 보내는 트레이스.
+  </LessonCard>
+  <LessonCard no="09" to="/advanced/cluster-backup" track="operations" icon="archive" title="클러스터 백업과 복구" duration="약 12분" steps={10} level="고급">
+    etcd 스냅숏, 오브젝트와 볼륨을 함께 담는 Velero 백업, 일관성 훅, 새 클러스터로의 복구.
+  </LessonCard>
+  <LessonCard no="10" to="/advanced/slo-alert" track="operations" icon="bell" title="SLO와 알람 설계" duration="약 10분" steps={9} level="고급">
     SLI·SLO·오류 예산, 소진 속도로 울리는 알람과 원인 좁히기.
   </LessonCard>
 </LessonGrid>
@@ -251,7 +330,7 @@ API 요청 경로, 파이널라이저, CRD와 오퍼레이터, etcd 쿼럼, 인�
 
 ## 쿠버네티스 위의 AI · GPU/NPU
 
-디바이스 플러그인과 DRA, GPU 나눠 쓰기, 모델 패키징, 학습 작업, 콜드 스타트, 추론 요청과 라우팅.
+디바이스 플러그인과 DRA, GPU 나눠 쓰기, 모델 패키징, 학습 작업, 콜드 스타트, 추론 요청과 라우팅, 오토스케일링, RAG.
 
 <LessonGrid>
   <LessonCard no="01" to="/ai/device-plugin" track="ai" icon="server" title="GPU·NPU가 노드 자원이 되기까지 (디바이스 플러그인)" duration="약 10분" steps={10} level="중급">
@@ -284,11 +363,17 @@ API 요청 경로, 파이널라이저, CRD와 오퍼레이터, etcd 쿼럼, 인�
   <LessonCard no="10" to="/ai/inference-routing" track="ai" icon="gate" title="요청을 어느 레플리카로 보낼까 (추론 라우팅)" duration="약 10분" steps={9} level="중급">
     게이트웨이와 엔드포인트 선택기(EPP)가 프리픽스 캐시와 부하를 보고 레플리카를 고르는 원리.
   </LessonCard>
+  <LessonCard no="11" to="/ai/llm-autoscaling" track="ai" icon="scale" title="LLM 추론 오토스케일링" duration="약 11분" steps={10} level="고급">
+    GPU 사용률이 아니라 대기 요청과 KV 캐시 사용률로 LLM 레플리카를 늘리고, 콜드 스타트와 GPU 노드 지연을 감안하는 법.
+  </LessonCard>
+  <LessonCard no="12" to="/ai/rag-pipeline" track="ai" icon="book" title="RAG 파이프라인이 문서로 답하기까지" duration="약 14분" steps={11} level="중급">
+    문서를 청크로 나눠 임베딩·색인하고, 검색·리랭킹한 청크를 LLM에 건네는 과정과 답이 틀어지는 곳.
+  </LessonCard>
 </LessonGrid>
 
 ## LLM 서빙은 이렇게 움직인다
 
-토큰 생성, 프리필과 디코드, KV 캐시, 연속 배칭, KV 오프로딩, 프리필·디코드 분리.
+토큰 생성, 프리필과 디코드, KV 캐시, 연속 배칭, 양자화, 추측 디코딩, KV 오프로딩, 모델 병렬화, 프리필·디코드 분리.
 
 <LessonGrid>
   <LessonCard no="01" to="/llm/token-generation" track="llm" icon="spark" title="답이 한 토큰씩 만들어지기까지" duration="약 8분" steps={9} level="기초">
@@ -303,10 +388,19 @@ API 요청 경로, 파이널라이저, CRD와 오퍼레이터, etcd 쿼럼, 인�
   <LessonCard no="04" to="/llm/continuous-batching" track="llm" icon="layers" title="요청을 묶어 처리하기 (연속 배칭)" duration="약 9분" steps={9} level="중급">
     여러 요청을 한 묶음으로 계산하는 이유와 매 반복마다 묶음을 다시 짜는 방식.
   </LessonCard>
-  <LessonCard no="05" to="/llm/kv-offloading" track="llm" icon="disk" title="넘치는 KV 캐시 내려 두기 (오프로딩)" duration="약 10분" steps={9} level="고급">
+  <LessonCard no="05" to="/llm/quantization" track="llm" icon="layers" title="모델을 작게 만들기 (양자화)" duration="약 12분" steps={11} level="고급">
+    가중치당 비트를 줄이는 원리, 이상치가 문제인 이유, KV 캐시에 돌아가는 메모리, 정확도를 다시 재야 하는 이유.
+  </LessonCard>
+  <LessonCard no="06" to="/llm/speculative-decoding" track="llm" icon="spark" title="미리 추측하고 한 번에 확인하기 (추측 디코딩)" duration="약 10분" steps={9} level="심화">
+    값싼 초안이 토큰 여러 개를 추측하고 큰 모델이 한 번에 확인한다. 수락률이 디코드 속도를 정한다.
+  </LessonCard>
+  <LessonCard no="07" to="/llm/kv-offloading" track="llm" icon="disk" title="넘치는 KV 캐시 내려 두기 (오프로딩)" duration="약 10분" steps={9} level="고급">
     밀려나는 KV 캐시를 CPU 메모리·NVMe·공유 저장소로 내려 두었다가 다시 쓰는 흐름과 한계.
   </LessonCard>
-  <LessonCard no="06" to="/llm/pd-disaggregation" track="llm" icon="split" title="읽는 곳과 쓰는 곳 나누기 (프리필·디코드 분리)" duration="약 10분" steps={9} level="고급">
+  <LessonCard no="08" to="/llm/model-parallelism" track="llm" icon="split" title="모델을 여러 GPU에 나눠 싣기 (TP·PP·EP)" duration="약 12분" steps={11} level="고급">
+    복사하기, 층을 가로로 쪼개기, 층 묶음을 세로로 나누기, 전문가 흩어 놓기. GPU 한 장에 안 들어가는 모델을 서빙하는 네 가지 방법과 그 비용.
+  </LessonCard>
+  <LessonCard no="09" to="/llm/pd-disaggregation" track="llm" icon="split" title="읽는 곳과 쓰는 곳 나누기 (프리필·디코드 분리)" duration="약 10분" steps={9} level="고급">
     프리필과 디코드를 다른 레플리카에 맡기고 KV 캐시를 넘겨 이어 쓰는 방식과 그 전제.
   </LessonCard>
 </LessonGrid>

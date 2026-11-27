@@ -1,0 +1,252 @@
+---
+id: model-parallelism
+title: 모델을 여러 GPU에 나눠 싣기 (TP·PP·EP)
+sidebar_label: 08 · 모델을 여러 GPU에 나눠 싣기 (TP·PP·EP)
+description: GPU 한 장에 안 들어가는 모델을 데이터·텐서·파이프라인·전문가 병렬로 나눠 서빙할 때 GPU 사이에 무엇이 오가고 KV 캐시 자리가 어떻게 바뀌는지, 쿠버네티스에서 LeaderWorkerSet으로 여러 노드에 걸친 레플리카를 어떻게 띄우는지 단계별 애니메이션으로 따라간다
+summary: '복사하기, 층을 가로로 쪼개기, 층 묶음을 세로로 나누기, 전문가 흩어 놓기. GPU 한 장에 안 들어가는 모델을 서빙하는 네 가지 방법과 그 비용.'
+icon: split
+hide_table_of_contents: true
+---
+
+# 모델을 여러 GPU에 나눠 싣기 (TP·PP·EP)
+
+16비트 가중치로 된 70B 모델은 약 140GB다. 80GB GPU 한 장에는 가중치도, KV 캐시도 들어가지 않는다. 같은 모델을 **복사하고, 층을 가로로 쪼개고, 층 묶음을 세로로 나누고, 전문가를 흩어 놓으며** 각 방법이 GPU 사이에 무엇을 주고받는지 따라간다.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '약 12분', level: '고급'}}
+  groups={[
+    {label: '노드 A · GPU 4장 NVLink', x: 295, y: 30, w: 330, h: 405, tone: 'biz'},
+    {label: '노드 B · GPU 4장 NVLink', x: 650, y: 30, w: 330, h: 405, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'model', label: '모델 가중치', sub: '70B · FP16 ≈ 140GB', icon: 'box', tone: 'store', x: 130, y: 100, w: 170, show: true},
+    {id: 'gw', label: '게이트웨이', sub: '요청', icon: 'gate', tone: 'ext', x: 130, y: 240, w: 150, show: true},
+    {id: 'lws', label: 'LeaderWorkerSet', sub: '레플리카 1 = 그룹 1', icon: 'gear', tone: 'cp', x: 130, y: 380, w: 170},
+    {id: 'g0', label: 'GPU 0', sub: '80GB', icon: 'layers', tone: 'node', size: 'sm', x: 385, y: 140, show: true},
+    {id: 'g1', label: 'GPU 1', sub: '80GB', icon: 'layers', tone: 'node', size: 'sm', x: 535, y: 140, show: true},
+    {id: 'g2', label: 'GPU 2', sub: '80GB', icon: 'layers', tone: 'node', size: 'sm', x: 385, y: 310, show: true},
+    {id: 'g3', label: 'GPU 3', sub: '80GB', icon: 'layers', tone: 'node', size: 'sm', x: 535, y: 310, show: true},
+    {id: 'g4', label: 'GPU 4', sub: '80GB', icon: 'layers', tone: 'node', size: 'sm', x: 740, y: 140, show: true},
+    {id: 'g5', label: 'GPU 5', sub: '80GB', icon: 'layers', tone: 'node', size: 'sm', x: 890, y: 140, show: true},
+    {id: 'g6', label: 'GPU 6', sub: '80GB', icon: 'layers', tone: 'node', size: 'sm', x: 740, y: 310, show: true},
+    {id: 'g7', label: 'GPU 7', sub: '80GB', icon: 'layers', tone: 'node', size: 'sm', x: 890, y: 310, show: true},
+  ]}
+  metrics={[
+    {id: 'layout', label: '배치 방식'},
+    {id: 'weights', label: 'GPU당 가중치'},
+    {id: 'comm', label: 'GPU 사이 통신'},
+    {id: 'kv', label: 'KV 캐시 자리'},
+  ]}
+  learn={[
+    {text: '데이터 병렬은 모델을 나누지 않고 복사한다는 것', at: 2},
+    {text: '텐서 병렬은 모든 층을 쪼개고 층마다 통신한다는 것', at: 3},
+    {text: '나눠 실으면 KV 캐시 자리가 생기는 이유', at: 5},
+    {text: '파이프라인 병렬은 층 묶음을 노드 사이에 나눈다는 것', at: 6},
+    {text: '전문가 병렬은 MoE 전문가를 흩어 놓고 토큰을 all-to-all로 보낸다는 것', at: 8},
+    {text: '쿠버네티스에서 여러 노드에 걸친 레플리카와 그것이 통째로 멈추는 이유', at: 9},
+  ]}
+  steps={[
+    {
+      short: '시작',
+      kind: '시작',
+      title: '가중치만으로도 GPU 한 장보다 크다',
+      text: [
+        '파라미터 70B개를 2바이트(FP16·BF16)로 담으면 가중치가 약 140GB다. 여기 GPU는 한 장에 메모리가 80GB다.',
+        '서빙 엔진은 실행 중인 요청마다 KV 캐시와 활성값을 둘 메모리도 필요하다. 그래서 모델을 여러 GPU에 나눠 실어야 하고, 문제는 어떻게 자르느냐다.',
+      ],
+      flows: [{from: 'model', to: 'g0', label: '140GB?', type: 'request'}],
+      focus: ['model', 'g0'],
+      status: {g0: 'error'},
+      badges: {g0: '안 들어감'},
+      values: {layout: 'GPU 1장', weights: {text: '140GB > 80GB', tone: 'bad'}, comm: '—', kv: {text: '없음', tone: 'bad'}},
+    },
+    {
+      short: '데이터 병렬',
+      kind: '원리',
+      title: '데이터 병렬은 나누지 않고 복사한다',
+      text: [
+        '데이터 병렬(DP)은 모델 전체를 담은 독립 사본을 여러 개 띄우고, 게이트웨이가 요청을 사본들에 나눠 보낸다. 답을 만드는 동안 사본끼리는 통신하지 않는다.',
+        'DP는 처리량을 늘리지 메모리를 늘리지 않는다. 사본 하나는 여전히 어딘가에 들어가야 한다. GPU 한 장에 들어가는 모델이면 DP는 그냥 "레플리카를 더 띄우기"다. 이 모델은 사본마다 먼저 아래의 나누기가 필요하다.',
+      ],
+      keyIdea: '쿠버네티스에서 DP는 보통 로드밸런서나 추론 게이트웨이 뒤에 있는 서빙 워크로드의 레플리카 수다.',
+      flows: [
+        {from: 'gw', to: 'g0', label: '사본 1', type: 'request'},
+        {from: 'gw', to: 'g4', label: '사본 2', type: 'request'},
+      ],
+      focus: ['gw', 'g0', 'g4'],
+      status: {g0: null},
+      badges: {g0: '전체 사본', g4: '전체 사본'},
+      values: {layout: 'DP: 복사', weights: {text: '사본마다 여전히 140GB', tone: 'bad'}, comm: '사본 사이 없음'},
+    },
+    {
+      short: '텐서 병렬',
+      kind: '원리',
+      title: '텐서 병렬은 모든 층을 GPU 여러 장에 쪼갠다',
+      text: [
+        '텐서 병렬(TP)은 층 안의 가중치 행렬을 조각으로 자른다. TP 크기가 4면 GPU 0~3이 모든 층의 4분의 1씩, 약 35GB를 맡는다.',
+        '어텐션 헤드는 GPU들에 나눠 주고, 큰 피드포워드 행렬은 열과 행으로 자른다. 모든 GPU가 모든 토큰을 처리하되 각자 자기 조각만 계산한다.',
+      ],
+      flows: [
+        {from: 'model', to: 'g0', label: '1/4', type: 'request'},
+        {from: 'model', to: 'g2', label: '1/4', type: 'request'},
+      ],
+      focus: ['g0', 'g1', 'g2', 'g3'],
+      badges: {g0: 'TP 1/4', g1: 'TP 1/4', g2: 'TP 1/4', g3: 'TP 1/4', g4: null},
+      values: {layout: 'TP 4', weights: {text: '≈ 35GB', tone: 'good'}},
+    },
+    {
+      short: 'all-reduce',
+      kind: '주의',
+      title: '층마다 조각 결과를 합쳐야 한다',
+      text: [
+        '각 GPU는 부분 결과만 계산한다. 흔히 쓰는 Megatron 방식에서는 순전파마다 층당 두 번쯤(어텐션 뒤, 피드포워드 뒤) all-reduce로 부분 결과를 더한다.',
+        '토큰 하나를 만들 때마다 작고 지연에 민감한 교환이 수십 번 일어난다. 노드 안 NVLink로는 빠르다. 노드 사이 일반 네트워크로 하면 토큰마다 멈춘다.',
+      ],
+      keyIdea: 'TP 묶음은 NVLink 같은 빠른 링크로 이어진 한 노드 안의 GPU에 둔다. nvidia-smi topo -m 으로 GPU가 어떻게 이어져 있는지 본다.',
+      flows: [
+        {from: 'g0', to: 'g1', label: 'all-reduce', type: 'response'},
+        {from: 'g2', to: 'g3', label: 'all-reduce', type: 'response'},
+        {from: 'g0', to: 'g2', type: 'response'},
+      ],
+      focus: ['g0', 'g1', 'g2', 'g3'],
+      values: {comm: {text: '층마다 all-reduce', tone: 'bad'}},
+    },
+    {
+      short: 'KV 자리',
+      kind: '원리',
+      title: '가중치를 나누면 KV 캐시 자리가 생긴다',
+      text: [
+        '엔진은 GPU에 남은 자리를 KV 캐시 블록으로 채운다. TP 4면 가중치가 약 35GB라, 활성값과 여유분을 빼고도 GPU마다 대략 30GB 넘게 KV 캐시에 쓸 수 있다. TP 2(장당 70GB)라면 거의 남지 않는다.',
+        'KV 캐시도 어텐션 헤드 기준으로 나뉘므로 TP가 클수록 동시 요청과 긴 문맥을 더 받는다. 대신 통신이 늘고, TP 크기는 모델의 어텐션 헤드 수를 나눠떨어지게 해야 한다.',
+      ],
+      keyIdea: 'KV 캐시가 차서 요청이 줄을 선다면, 레플리카를 늘리는 것만큼 TP를 키우거나 가중치 형식을 줄이는 것도 효과가 있다.',
+      flows: [{from: 'gw', to: 'g0', label: '요청 더 받기', type: 'request'}],
+      focus: ['g0', 'g1', 'g2', 'g3'],
+      values: {kv: {text: 'GPU당 ≈ 30GB 이상', tone: 'good'}},
+    },
+    {
+      short: '파이프라인 병렬',
+      kind: '원리',
+      title: '파이프라인 병렬은 층 묶음을 노드 사이에 나눈다',
+      text: [
+        '모델이 더 크거나 노드 하나보다 KV 자리가 더 필요하면 층을 깊이 방향으로 잘라 단계(stage)로 나눈다. 1단계(앞쪽 절반 층)는 노드 A에서 TP 4로, 2단계는 노드 B에서 TP 4로 돈다. TP 4 × PP 2 = GPU 8장, 장당 가중치 약 17.5GB다.',
+        '단계 사이에는 배치의 활성값만, 스텝마다 단계 경계 한 번씩, 일대일로 건너간다. TP보다 훨씬 적은 양이라 노드 사이 네트워크로도 버틴다. 그래도 InfiniBand나 RoCE 같은 빠른 네트워크가 있으면 낫다.',
+      ],
+      flows: [
+        {from: 'gw', to: 'g0', label: '1단계', type: 'request'},
+        {from: 'g1', to: 'g4', label: '활성값', type: 'request'},
+      ],
+      focus: ['g1', 'g4'],
+      badges: {g0: '1단계', g1: '1단계', g2: '1단계', g3: '1단계', g4: '2단계', g5: '2단계', g6: '2단계', g7: '2단계'},
+      values: {layout: 'TP 4 × PP 2', weights: {text: '≈ 17.5GB', tone: 'good'}, comm: '노드 안 TP · 노드 사이 PP'},
+    },
+    {
+      short: '버블',
+      kind: '주의',
+      title: '한 단계가 일하는 동안 다른 단계는 기다린다',
+      text: [
+        '2단계는 1단계가 활성값을 넘겨줘야 스텝을 시작한다. 요청이 하나뿐이면 노드 하나는 늘 놀고 있다. 이 빈 시간이 파이프라인 "버블"이다.',
+        '서빙 엔진은 여러 배치를 동시에 흘려 보내 부하가 있을 때 두 단계가 함께 일하게 한다. 그래도 단계 경계마다 토큰이 네트워크를 한 번 더 건너므로 PP는 토큰당 지연을 조금 늘린다.',
+      ],
+      keyIdea: '흔한 원칙: TP는 노드 하나의 GPU 수까지, 그 너머는 노드 사이 PP로.',
+      flows: [{from: 'g1', to: 'g4', label: '기다림', type: 'request'}],
+      focus: ['g0', 'g1', 'g2', 'g3', 'g4', 'g5', 'g6', 'g7'],
+      status: {g4: 'warn', g5: 'warn', g6: 'warn', g7: 'warn'},
+      values: {comm: {text: '저부하에서 노는 단계', tone: 'bad'}},
+    },
+    {
+      short: '전문가 병렬',
+      kind: '원리',
+      title: 'MoE 모델은 전문가를 흩어 놓는다',
+      text: [
+        'MoE(mixture-of-experts) 모델은 층마다 피드포워드 "전문가"가 여럿 있고, 라우터가 토큰마다 그중 몇 개만 고른다. 전문가 병렬(EP)은 전문가 하나하나를 쪼개는 대신 전문가마다 다른 GPU에 둔다.',
+        '그러면 층마다 all-to-all 교환이 필요하다. 토큰이 고른 전문가가 있는 GPU로 건너가고 결과가 돌아온다. 어텐션 부분은 보통 DP나 TP로 돈다. 특정 전문가에 토큰이 몰리면 그 GPU가 병목이 된다.',
+      ],
+      flows: [
+        {from: 'g0', to: 'g5', label: '토큰 → 전문가', type: 'request'},
+        {from: 'g6', to: 'g3', label: '결과', type: 'response'},
+      ],
+      focus: ['g0', 'g3', 'g5', 'g6'],
+      status: {g4: null, g5: null, g6: null, g7: null},
+      badges: {g0: '전문가 1–8', g1: '전문가 9–16', g2: '전문가 17–24', g3: '전문가 25–32', g4: '전문가 33–40', g5: '전문가 41–48', g6: '전문가 49–56', g7: '전문가 57–64'},
+      values: {layout: 'EP 8 (MoE)', comm: 'MoE 층마다 all-to-all', weights: '맡은 전문가 + 공통 부분'},
+    },
+    {
+      short: 'LeaderWorkerSet',
+      kind: '원리',
+      title: '쿠버네티스에서 레플리카 하나는 파드 묶음이 된다',
+      text: [
+        '노드 두 대에 걸친 레플리카는 함께 떠야 하는 파드 두 개다. LeaderWorkerSet(LWS)이 이것을 표현한다. 그룹마다 리더 파드(vLLM이라면 API 서버와 분산 런타임의 헤드, 예: Ray)와 워커 파드가 있고, replicas는 그룹 수를 센다.',
+        '그룹은 모든 파드가 떠야 쓸모가 있다. 노드 A에만 빈 GPU가 있으면 리더만 떠서 GPU 4장을 쥔 채 기다린다. 갱 스케줄링(전부 아니면 전무), 예를 들어 Kueue나 Volcano가 이런 반쪽 배치를 막는다.',
+      ],
+      keyIdea: '그룹은 한 네트워크 영역(같은 랙이나 패브릭) 안에 둔다. GPU 수만큼 토폴로지를 고려한 배치가 중요하다.',
+      flows: [
+        {from: 'lws', to: 'g0', label: '리더 파드', type: 'watch'},
+        {from: 'lws', to: 'g6', label: '워커 파드', type: 'watch'},
+      ],
+      focus: ['lws', 'g0', 'g6'],
+      badges: {g0: '리더', g1: null, g2: null, g3: null, g4: '워커', g5: null, g6: null, g7: null},
+      values: {layout: 'TP 4 × PP 2 · 그룹 1'},
+    },
+    {
+      short: 'GPU 하나 고장',
+      kind: '장애',
+      title: 'GPU 한 장이 고장 나면 레플리카 전체가 멈춘다',
+      text: [
+        'GPU 6에 오류가 나서 노드 B의 워커 파드가 죽는다. 2단계가 사라지니 1단계는 활성값을 넘길 곳이 없다. GPU 7장이 멀쩡해도 이 레플리카의 요청은 모두 실패한다.',
+        'restartPolicy가 RecreateGroupOnPodRestart면 LWS가 그룹 전체를 다시 만들고, 새 그룹은 140GB 가중치를 다시 올린 뒤에야 서빙한다. 그동안 트래픽이 다른 그룹으로 가도록 게이트웨이 뒤에 레플리카를 두 개 이상 둔다.',
+      ],
+      keyIdea: '레플리카당 GPU가 많을수록 레플리카를 멈출 수 있는 부품도 많다. 메모리만이 아니라 장애 범위도 함께 정한다.',
+      flows: [{from: 'g1', to: 'g6', label: '받을 곳 없음', type: 'request'}],
+      focus: ['g6', 'lws'],
+      status: {g6: 'error', g4: 'off', g5: 'off', g7: 'off', g0: 'warn', g1: 'warn', g2: 'warn', g3: 'warn'},
+      badges: {g6: 'GPU 오류'},
+      values: {layout: {text: '레플리카 중단', tone: 'bad'}, kv: {text: '그룹과 함께 사라짐', tone: 'bad'}},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '노드 안에서는 가로로, 노드 사이에서는 세로로 나눈다',
+      text: [
+        'DP는 처리량을 위해 모델을 복사한다. TP는 층을 쪼개고 빠른 링크가 필요해 노드 안에 머문다. PP는 층 묶음을 나눠 적은 통신으로 노드를 건너지만 버블과 한 번의 홉이 붙는다. EP는 MoE 전문가를 흩어 놓고 all-to-all로 토큰을 보낸다.',
+        '나눠 실으면 KV 캐시 자리도 생긴다. 쿠버네티스에서 여러 노드에 걸친 레플리카는 LeaderWorkerSet 그룹이고, 한 단위로 스케줄링되고 재시작된다.',
+      ],
+      keyIdea: '가중치와 충분한 KV 캐시가 들어가는 가장 작은 나누기부터 시작하고, 처리량은 레플리카(DP)로 늘린다.',
+      flows: [
+        {from: 'gw', to: 'g0', label: '요청', type: 'request'},
+        {from: 'g1', to: 'g4', label: '2단계', type: 'request'},
+      ],
+      focus: ['g0', 'g4'],
+      status: {g0: null, g1: null, g2: null, g3: null, g4: null, g5: null, g6: null, g7: null},
+      badges: {g0: 'TP 4 · 1단계', g4: 'TP 4 · 2단계'},
+      values: {layout: 'TP 4 × PP 2', weights: '≈ 17.5GB', comm: '노드 안 TP · 노드 사이 PP', kv: {text: '여유 있음', tone: 'good'}},
+    },
+  ]}
+/>
+
+## 네 가지 나누기 비교
+
+| 방식 | 무엇을 나누나 | GPU 사이 통신 | 어디에 맞나 |
+|---|---|---|---|
+| 데이터 병렬(DP) | 나누지 않음: 전체 사본 | 서빙 중 없음 | 사본 하나가 들어갈 때 처리량 늘리기 |
+| 텐서 병렬(TP) | 모든 층 안의 행렬 | 스텝마다 층당 두 번쯤 all-reduce | 한 노드 안, NVLink 같은 링크 위 |
+| 파이프라인 병렬(PP) | 층 묶음을 단계로 | 단계 경계마다 활성값, 일대일 | 노드 하나로 모자랄 때 노드 사이 |
+| 전문가 병렬(EP) | MoE 전문가를 GPU마다 | MoE 층마다 all-to-all 토큰 라우팅 | MoE 모델, 어텐션은 DP나 TP와 함께 |
+
+서로 섞어 쓴다. 큰 배포는 노드 안에서 TP, 노드 사이에서 PP, 그런 레플리카 여럿을 DP로 둔다.
+
+## 직접 확인해 보기
+
+```bash
+nvidia-smi topo -m                                    # NV# = GPU 사이 NVLink, SYS/PHB = 느린 경로
+vllm serve <모델> --tensor-parallel-size 4            # 예: vLLM. 한 노드, GPU 4장
+vllm serve <모델> --tensor-parallel-size 4 \
+  --pipeline-parallel-size 2                          # 노드 2대, GPU 8장 (Ray 같은 멀티 노드 런타임 필요)
+vllm serve <MoE모델> --tensor-parallel-size 8 --enable-expert-parallel   # MoE 전문가를 GPU에 흩어 놓기
+kubectl get leaderworkerset -A                        # 그룹과 그룹 크기
+kubectl get pods -L leaderworkerset.sigs.k8s.io/worker-index   # 0 = 리더, 1부터 = 워커
+```
+
+더 읽을거리: [vLLM 병렬화와 확장](https://docs.vllm.ai/en/stable/serving/parallelism_scaling.html) · [LeaderWorkerSet](https://lws.sigs.k8s.io/) · [Megatron-LM 논문](https://arxiv.org/abs/1909.08053) · [Kueue](https://kueue.sigs.k8s.io/) · [KV 캐시가 차오르기까지](../llm/kv-cache.mdx) · [읽는 곳과 쓰는 곳 나누기](../llm/pd-disaggregation.mdx) · [조건으로 GPU 받기 (DRA)](../k8s/dra.mdx)

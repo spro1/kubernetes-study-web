@@ -1,0 +1,249 @@
+---
+id: dns-resolution
+title: DNS가 주소를 찾아가는 길
+sidebar_label: 03 · DNS가 주소를 찾아가는 길
+description: 스텁 리졸버와 /etc/resolv.conf에서 재귀 리졸버, 루트·TLD·권한 서버까지 DNS 조회 과정과 TTL 캐시, NXDOMAIN·SERVFAIL·시간 초과가 각각 무엇을 뜻하는지 단계별 애니메이션으로 따라간다
+summary: '스텁 리졸버, 재귀 리졸버, 루트·TLD·권한 서버, TTL 캐시, 그리고 NXDOMAIN과 SERVFAIL과 시간 초과의 차이.'
+icon: book
+hide_table_of_contents: true
+---
+
+# DNS가 주소를 찾아가는 길
+
+[주소창에 주소를 입력하면](../basic/web-request.mdx)에서는 DNS를 이름을 IP로 바꿔 주는 상자 하나로만 봤다. 여기서는 그 상자를 열어 본다. 누가 누구에게 묻는지, 왜 답을 캐시에 담아 두는지, DNS를 바꿔도 왜 바로 반영되지 않는지를 따라간다. 클러스터 안의 이름 풀이는 [이름으로 찾아가기 (Service·DNS)](../k8s/service-dns.mdx)에서 이어서 본다.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '약 10분', level: '기초'}}
+  groups={[
+    {label: '내 컴퓨터', x: 15, y: 150, w: 365, h: 165, tone: 'plain'},
+    {label: '인터넷의 DNS 계층', x: 690, y: 25, w: 290, h: 415, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'app', label: '브라우저', sub: 'IP가 필요하다', icon: 'browser', tone: 'ext', x: 100, y: 235, show: true},
+    {id: 'stub', label: '스텁 리졸버', sub: 'OS · /etc/hosts', icon: 'gear', tone: 'node', x: 285, y: 235, w: 160},
+    {id: 'rec', label: '재귀 리졸버', sub: 'ISP · 8.8.8.8 · 캐시', icon: 'archive', tone: 'cp', x: 525, y: 235, w: 180},
+    {id: 'root', label: '루트 서버', sub: '영역 "."', icon: 'book', tone: 'store', x: 835, y: 95},
+    {id: 'tld', label: 'TLD 서버', sub: '영역 .com', icon: 'book', tone: 'store', x: 835, y: 235},
+    {id: 'auth', label: '권한 서버', sub: '영역 example.com', icon: 'book', tone: 'store', x: 835, y: 375, w: 170},
+  ]}
+  metrics={[
+    {id: 'query', label: '질문'},
+    {id: 'answer', label: '답'},
+    {id: 'ttl', label: 'TTL'},
+    {id: 'rcode', label: '응답 코드'},
+  ]}
+  learn={[
+    {text: 'OS가 먼저 보는 곳: /etc/hosts와 /etc/resolv.conf', at: 0},
+    {text: '재귀 리졸버와 루트·TLD·권한 서버의 역할 차이', at: 2},
+    {text: '모든 답이 TTL 동안 캐시되는 이유', at: 5},
+    {text: '레코드를 바꿔도 모두에게 퍼지기까지 시간이 걸리는 이유', at: 6},
+    {text: 'NXDOMAIN, SERVFAIL, 시간 초과가 가리키는 문제가 서로 다르다는 것', at: 7},
+  ]}
+  steps={[
+    {
+      short: '시작',
+      kind: '시작',
+      title: '앱은 먼저 자기 OS에 묻는다',
+      text: [
+        '브라우저는 www.example.com의 IP가 필요하다. 브라우저가 인터넷의 DNS와 직접 이야기하지는 않는다. OS의 리졸버 라이브러리, 곧 스텁 리졸버(stub resolver)를 부른다.',
+        '스텁 리졸버는 먼저 /etc/hosts를 본다(대부분의 리눅스에서는 이 순서를 /etc/nsswitch.conf가 정한다). 항목이 없으니 /etc/resolv.conf의 nameserver 줄을 읽어 어느 서버에 물을지 정한다.',
+      ],
+      flows: [{from: 'app', to: 'stub', label: 'www.example.com?', type: 'request'}],
+      focus: ['app', 'stub'],
+      values: {query: 'www.example.com A', answer: '—', ttl: '—', rcode: '—'},
+    },
+    {
+      short: '재귀 질의',
+      kind: '원리',
+      title: '스텁은 일 전체를 재귀 리졸버에게 맡긴다',
+      text: [
+        '스텁은 resolv.conf에 적힌 리졸버에게 재귀 질의 하나를 보낸다. 보통 UDP 53번 포트를 쓴다. 이 리졸버는 대개 집 공유기, ISP, 회사 DNS 서버, 또는 8.8.8.8이나 1.1.1.1 같은 공용 리졸버다.',
+        '재귀 질의는 "최종 답을 달라"는 뜻이다. 발품은 재귀 리졸버가 판다. 이 이름은 캐시에 없으니 트리 맨 위부터 시작한다.',
+      ],
+      flows: [{from: 'stub', to: 'rec', label: '재귀 질의', type: 'request'}],
+      focus: ['stub', 'rec'],
+      badges: {rec: '캐시: 비어 있음'},
+    },
+    {
+      short: '루트',
+      kind: '원리',
+      title: '루트는 답을 모른다. 다음에 누구에게 물을지만 안다',
+      text: [
+        '리졸버는 루트 서버 주소(root hints)를 처음부터 갖고 있다. 루트 서버 이름은 a부터 m까지 13개이고, 전 세계의 수많은 애니캐스트(anycast) 인스턴스가 응답한다.',
+        '루트는 www.example.com을 모른다. 대신 위임(referral)을 돌려준다. .com 서버들의 NS 레코드와, 리졸버가 그 서버에 찾아갈 수 있도록 IP(글루 레코드)를 함께 준다.',
+      ],
+      flows: [
+        {from: 'rec', to: 'root', label: 'www.example.com?', type: 'request'},
+        {from: 'root', to: 'rec', label: '.com에 물어라 (NS)', type: 'response'},
+      ],
+      focus: ['root'],
+      values: {answer: '위임 → .com'},
+    },
+    {
+      short: 'TLD',
+      kind: '원리',
+      title: 'TLD 서버는 도메인 자신의 네임서버를 알려 준다',
+      text: [
+        '리졸버가 .com 서버에 같은 질문을 한다. 여기도 A 레코드는 없다. 대신 example.com의 NS 레코드, 곧 도메인 주인이 등록 대행사(registrar)에서 지정한 서버들을 알려 준다.',
+        '각 단계는 바로 아래 단계만 안다. 이 위임 구조 덕분에 어느 서버 하나가 세상의 모든 이름을 알 필요가 없다.',
+      ],
+      flows: [
+        {from: 'rec', to: 'tld', label: 'www.example.com?', type: 'request'},
+        {from: 'tld', to: 'rec', label: 'ns1.example에 물어라', type: 'response'},
+      ],
+      focus: ['tld'],
+      values: {answer: '위임 → example.com NS'},
+    },
+    {
+      short: '권한 서버',
+      kind: '원리',
+      title: '권한 서버가 진짜 답을 준다',
+      text: [
+        'example.com의 권한 서버(authoritative server)는 영역(zone) 데이터를 갖고 있다. www.example.com A 203.0.113.10, TTL 300으로 답하고 AA(authoritative answer) 플래그를 켠다.',
+        'www가 CNAME(다른 이름을 가리키는 별칭)이었다면 리졸버는 그 이름도 따라가서 전체 사슬을 돌려준다. 리졸버가 결과를 스텁에 넘기고, 브라우저는 그 IP로 접속한다.',
+      ],
+      flows: [
+        {from: 'rec', to: 'auth', label: 'www.example.com?', type: 'request'},
+        {from: 'auth', to: 'rec', label: 'A 203.0.113.10', type: 'response'},
+        {from: 'rec', to: 'stub', label: '203.0.113.10', type: 'response'},
+        {from: 'stub', to: 'app', label: '203.0.113.10', type: 'response'},
+      ],
+      focus: ['auth', 'app'],
+      status: {auth: 'ok'},
+      values: {answer: {text: '203.0.113.10', tone: 'good'}, ttl: '300초', rcode: {text: 'NOERROR', tone: 'good'}},
+    },
+    {
+      short: '캐시',
+      kind: '원리',
+      title: '모든 답은 TTL 동안 캐시된다',
+      text: [
+        '리졸버는 받은 레코드를 각각의 TTL 동안 보관한다. .com과 example.com의 NS 레코드(흔히 하루 이상)와 A 레코드(300초)다. OS와 브라우저도 짧은 자체 캐시를 둘 수 있다.',
+        '1분 뒤 같은 리졸버를 쓰는 다른 사용자가 www.example.com을 묻는다. 리졸버는 다른 서버에 묻지 않고 캐시에서 남은 TTL(약 240초)과 함께 답한다.',
+      ],
+      keyIdea: '캐시 덕분에 DNS는 빠르고 규모가 커져도 버틴다. 대부분의 질의는 루트나 권한 서버까지 가지 않는다.',
+      flows: [
+        {from: 'stub', to: 'rec', label: 'www.example.com?', type: 'request'},
+        {from: 'rec', to: 'stub', label: '캐시에서', type: 'response'},
+      ],
+      focus: ['rec'],
+      status: {auth: null},
+      badges: {rec: '캐시됨 · 240초 남음'},
+      values: {ttl: '240초 (줄어드는 중)'},
+    },
+    {
+      short: '레코드 변경',
+      kind: '주의',
+      title: '레코드를 바꿔도 캐시가 끝나기 전에는 보이지 않는다',
+      text: [
+        '팀이 사이트를 옮기면서 A 레코드를 203.0.113.20으로 바꾼다. 권한 서버는 곧바로 새 IP로 답하지만, 옛 답을 캐시한 리졸버들은 TTL이 끝날 때까지 203.0.113.10을 계속 돌려준다.',
+        '그래서 한동안은 어떤 사용자는 새 서버로, 어떤 사용자는 옛 서버로 간다. 가장 오래 걸리는 경우는 새 TTL이 아니라 옛 TTL만큼이다.',
+      ],
+      keyIdea: '이전 작업 전에 옛 TTL 한 주기 이상 앞서 TTL을 낮춰 둔다(예: 60초). 옛 TTL이 다 지날 때까지 옛 서버를 끄지 않는다.',
+      flows: [
+        {from: 'rec', to: 'stub', label: '옛 203.0.113.10', type: 'response'},
+      ],
+      focus: ['rec', 'auth'],
+      status: {rec: 'warn'},
+      badges: {auth: '새 .20', rec: '아직 옛 .10'},
+      values: {answer: {text: '.10 (TTL 끝날 때까지 옛 값)', tone: 'bad'}},
+    },
+    {
+      short: 'NXDOMAIN',
+      kind: '문제',
+      title: 'NXDOMAIN: 이름이 없다. 이 답도 캐시된다',
+      text: [
+        '누군가 오타인 wwww.example.com을 찾는다. 권한 서버는 이 이름이 없다고 답한다. 응답 코드는 NXDOMAIN(3)이고, 영역의 SOA 레코드를 함께 보낸다.',
+        '리졸버는 이 부정 응답도 캐시한다(RFC 2308). 기간은 SOA 레코드의 TTL과 SOA의 MINIMUM 필드 중 작은 값이다. 그래서 바로 뒤에 레코드를 만들어도, 방금 NXDOMAIN을 받은 사용자는 그 부정 TTL이 끝날 때까지 계속 NXDOMAIN을 받는다.',
+      ],
+      flows: [
+        {from: 'rec', to: 'auth', label: 'wwww.example.com?', type: 'request'},
+        {from: 'auth', to: 'rec', label: 'NXDOMAIN + SOA', type: 'response'},
+      ],
+      focus: ['auth', 'rec'],
+      status: {rec: null},
+      badges: {auth: null, rec: '부정 캐시'},
+      values: {query: 'wwww.example.com A', answer: '없음', ttl: 'SOA 부정 TTL', rcode: {text: 'NXDOMAIN', tone: 'bad'}},
+    },
+    {
+      short: 'SERVFAIL',
+      kind: '장애',
+      title: 'SERVFAIL과 시간 초과는 이름이 없다는 뜻이 아니다. 조회가 깨졌다는 뜻이다',
+      text: [
+        '이번에는 example.com 네임서버가 죽었다(또는 DNSSEC 서명이 깨졌다). 리졸버는 답을 얻지 못하고 SERVFAIL(2)을 돌려준다. 이름은 멀쩡히 있을 수 있다. 리졸버가 확인하지 못했을 뿐이다.',
+        '스텁에 아무 응답도 오지 않으면, 예를 들어 방화벽이 UDP 53을 막으면, 스텁은 기다렸다가 다시 묻는다. resolv.conf의 glibc 기본값은 서버마다 5초 시간 초과에 2번 시도라서, 오류가 뜨기 전에 페이지가 몇 초씩 멈춘 듯 보일 수 있다.',
+      ],
+      keyIdea: 'NXDOMAIN은 권한 서버가 이름이 없다고 말한 것이다. SERVFAIL은 리졸버가 답을 얻지 못한 것이다. 시간 초과는 답이 나에게 닿지 않은 것이다. 이름, 네임서버, 네트워크 경로 순으로 확인한다.',
+      flows: [
+        {from: 'rec', to: 'auth', label: '응답 없음', type: 'request'},
+        {from: 'rec', to: 'stub', label: 'SERVFAIL', type: 'response'},
+      ],
+      focus: ['auth', 'rec', 'stub'],
+      status: {auth: 'error', rec: 'warn'},
+      badges: {rec: null, auth: '다운'},
+      values: {query: 'www.example.com A', answer: '없음', ttl: '—', rcode: {text: 'SERVFAIL', tone: 'bad'}},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '가까운 곳에 묻고, 트리를 따라 내려가고, TTL만큼 캐시한다',
+      text: [
+        '스텁 리졸버는 /etc/hosts를 보고 /etc/resolv.conf의 서버에 묻는다. 재귀 리졸버는 위임을 따라 루트 → TLD → 권한 서버로 내려가고, 받은 답을 모두 TTL 동안 캐시한다.',
+        'TTL은 긍정 응답이든 부정 응답이든 변경이 얼마나 빨리 퍼지는지를 정한다. 응답 코드가 볼 곳을 알려 준다. NXDOMAIN이면 이름을, SERVFAIL이면 네임서버를, 시간 초과면 네트워크를 본다.',
+      ],
+      keyIdea: 'dig +trace로 이 과정을 직접 따라가 보고, dig @서버로 리졸버마다 무엇을 캐시하고 있는지 비교한다.',
+      flows: [
+        {from: 'stub', to: 'rec', label: '질의', type: 'request'},
+        {from: 'rec', to: 'root', label: '.', type: 'request'},
+        {from: 'rec', to: 'tld', label: '.com', type: 'request'},
+        {from: 'rec', to: 'auth', label: 'example.com', type: 'request'},
+      ],
+      focus: ['stub', 'rec', 'root', 'tld', 'auth'],
+      status: {auth: null, rec: null},
+      badges: {auth: null},
+    },
+  ]}
+/>
+
+## 자주 보는 레코드
+
+| 종류 | 담는 것 | 예시 |
+|---|---|---|
+| A | IPv4 주소 | `www.example.com. 300 IN A 203.0.113.10` |
+| AAAA | IPv6 주소 | `www.example.com. 300 IN AAAA 2001:db8::10` |
+| CNAME | 다른 이름을 가리키는 별칭. CNAME이 있는 이름에는 다른 레코드를 둘 수 없어서 영역 꼭대기(apex)에는 쓸 수 없다 | `shop.example.com. CNAME lb-123.example.net.` |
+| MX | 도메인의 메일 서버와 우선순위 숫자 | `example.com. MX 10 mail.example.com.` |
+| TXT | 자유 텍스트. SPF, 도메인 소유 확인 등에 쓴다 | `example.com. TXT "v=spf1 -all"` |
+| NS | 영역의 권한 네임서버 | `example.com. NS ns1.example.net.` |
+| SOA | 영역 메타데이터. 부정 캐시 TTL도 여기서 나온다 | `example.com. SOA ns1... hostmaster... ` |
+
+## 응답 코드
+
+| 코드 | 뜻 | 확인할 것 |
+|---|---|---|
+| NOERROR, 답 있음 | 성공 | — |
+| NOERROR, 답 없음 (NODATA) | 이름은 있지만 물은 종류의 레코드가 없다(예: AAAA만 없음) | 물어본 레코드 종류 |
+| NXDOMAIN | 영역에 그 이름이 없다 | 철자, 영역 파일, 방금 만들었는지(부정 캐시) |
+| SERVFAIL | 리졸버가 올바른 답을 얻지 못했다 | 권한 서버 상태, 위임(NS) 설정, DNSSEC 유효성 |
+| REFUSED | 서버가 정책상 답하지 않는다 | 그 리졸버를 쓸 권한이 있는지 |
+| 시간 초과 (응답 없음) | 아무것도 돌아오지 않았다 | UDP/TCP 53 방화벽, resolv.conf의 nameserver |
+
+## 직접 확인해 보기
+
+```bash
+cat /etc/resolv.conf                      # 스텁이 묻는 리졸버, search/options
+getent hosts www.example.com              # 앱과 같은 방식으로 풀이(/etc/hosts 포함)
+dig www.example.com                       # status:, flags, ANSWER 섹션과 TTL
+dig +trace www.example.com                # 루트 → TLD → 권한 서버를 직접 따라간다
+dig @8.8.8.8 www.example.com +short       # 특정 리졸버에 묻기
+dig @1.1.1.1 www.example.com +short       # 리졸버끼리 캐시 비교
+dig example.com NS +short                 # 권한 서버가 누구인지
+dig example.com SOA                       # 마지막 필드가 부정 캐시용 MINIMUM
+dig wwww.example.com | grep status        # NXDOMAIN
+nslookup www.example.com                  # 윈도우를 포함해 거의 어디에나 있다
+```
+
+같은 리졸버에 `dig www.example.com`을 두 번 실행해서 TTL이 줄어드는 것을 보자. 그게 캐시다.
+
+더 읽을거리: [RFC 1034: Domain Concepts](https://www.rfc-editor.org/rfc/rfc1034) · [RFC 2308: Negative Caching](https://www.rfc-editor.org/rfc/rfc2308) · [루트 서버 (IANA)](https://www.iana.org/domains/root/servers) · [resolv.conf(5)](https://man7.org/linux/man-pages/man5/resolv.conf.5.html) · [DNS (MDN 용어 사전)](https://developer.mozilla.org/ko/docs/Glossary/DNS) · [주소창에 주소를 입력하면](../basic/web-request.mdx) · [이름으로 찾아가기 (Service·DNS)](../k8s/service-dns.mdx)

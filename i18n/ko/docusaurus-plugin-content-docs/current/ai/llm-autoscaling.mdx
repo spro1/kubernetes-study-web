@@ -1,0 +1,266 @@
+---
+id: llm-autoscaling
+title: LLM 추론 오토스케일링
+sidebar_label: 11 · LLM 추론 오토스케일링
+description: CPU·GPU 사용률이 LLM 오토스케일러를 속이는 이유, 대기 요청·KV 캐시 사용률·TTFT가 엔진에서 Prometheus와 KEDA 또는 Prometheus Adapter를 거쳐 HPA로 가는 길, 콜드 스타트·GPU 노드 추가·축소·0까지 줄이기가 결과를 어떻게 바꾸는지 단계별 애니메이션으로 따라간다
+summary: 'GPU 사용률이 아니라 대기 요청과 KV 캐시 사용률로 LLM 레플리카를 늘리고, 콜드 스타트와 GPU 노드 지연을 감안하는 법.'
+icon: scale
+hide_table_of_contents: true
+---
+
+# LLM 추론 오토스케일링
+
+[부하에 맞춰 늘어나기 (HPA)](../k8s/autoscaling.mdx)의 HPA는 CPU를 보는 웹 파드에는 잘 맞는다. LLM 레플리카는 다르다. GPU는 늘 바빠 보이고, 새 레플리카는 뜨는 데 몇 분이 걸리며, 너무 일찍 내리면 답변이 스트리밍 도중 끊긴다. 트래픽 급증 한 번을 따라가며 무엇을 보고 늘려야 하는지, 지연은 어디서 생기는지 본다.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '약 11분', level: '고급'}}
+  groups={[
+    {label: '쿠버네티스 클러스터', x: 185, y: 30, w: 800, h: 405, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'user', label: '사용자', sub: '채팅 요청', icon: 'user', tone: 'ext', x: 90, y: 230, w: 140, show: true},
+    {id: 'gw', label: '입구·라우터', sub: 'Ready 레플리카로 보냄', icon: 'gate', tone: 'cp', x: 280, y: 230, w: 160, show: true},
+    {id: 'pod1', label: '레플리카 1', sub: 'vLLM · GPU 1장', icon: 'pod', tone: 'app', x: 480, y: 100, w: 140, show: true},
+    {id: 'pod2', label: '레플리카 2', sub: 'vLLM · GPU 1장', icon: 'pod', tone: 'app', x: 480, y: 230, w: 140, show: true},
+    {id: 'pod3', label: '레플리카 3', sub: '새로 뜨는 중', icon: 'pod', tone: 'app', x: 480, y: 360, w: 140},
+    {id: 'prom', label: 'Prometheus', sub: '/metrics 수집', icon: 'chart', tone: 'store', x: 690, y: 100, w: 150},
+    {id: 'keda', label: 'KEDA / 어댑터', sub: 'HPA용 지표', icon: 'gear', tone: 'cp', x: 690, y: 230, w: 160},
+    {id: 'hpa', label: 'HPA', sub: '원하는 레플리카 수', icon: 'scale', tone: 'cp', x: 690, y: 360, w: 150},
+    {id: 'node', label: 'GPU 노드 풀', sub: '빈 GPU가 있나', icon: 'server', tone: 'node', x: 895, y: 230, w: 150},
+    {id: 'ca', label: '노드 오토스케일러', sub: '예: Karpenter', icon: 'cloud', tone: 'cp', x: 895, y: 360, w: 150},
+  ]}
+  metrics={[
+    {id: 'gpu', label: 'GPU 사용률'},
+    {id: 'waiting', label: '대기 요청'},
+    {id: 'kv', label: 'KV 캐시 사용률'},
+    {id: 'ttft', label: 'TTFT p95'},
+    {id: 'replicas', label: '레플리카'},
+  ]}
+  learn={[
+    {text: 'GPU·CPU 사용률이 LLM 확장 신호로 나쁜 이유', at: 1},
+    {text: '엔진이 내보내는 대기 요청·KV 캐시 사용률·TTFT', at: 2},
+    {text: '지표가 KEDA나 어댑터를 거쳐 HPA에 닿는 길', at: 3},
+    {text: 'GPU 노드 추가와 콜드 스타트가 확장을 늦춘다는 것', at: 4},
+    {text: '축소할 때는 진행 중인 스트림을 끝내야 한다는 것', at: 7},
+    {text: '0까지 줄이기가 아끼는 것과 치르는 대가', at: 8},
+  ]}
+  steps={[
+    {
+      short: '시작',
+      kind: '시작',
+      title: '레플리카 둘, 트래픽이 오르기 시작한다',
+      text: [
+        '채팅 모델이 vLLM 레플리카 두 개짜리 Deployment로 돈다. 레플리카마다 GPU 한 장이다. 입구는 Ready인 레플리카에 요청을 나눠 보낸다.',
+        '아침이 되어 트래픽이 오른다. 무언가 깨지기 전에, 어떤 숫자가 오토스케일러에게 레플리카를 늘리라고 알려야 하는지가 문제다.',
+      ],
+      flows: [
+        {from: 'user', to: 'gw', label: '요청', type: 'request'},
+        {from: 'gw', to: 'pod1', label: '스트림', type: 'request'},
+        {from: 'gw', to: 'pod2', label: '스트림', type: 'request'},
+      ],
+      focus: ['pod1', 'pod2'],
+      values: {gpu: '97%', waiting: '0', kv: '40%', ttft: '0.6초', replicas: '2'},
+    },
+    {
+      short: '나쁜 신호',
+      kind: '문제',
+      title: 'GPU 사용률은 부하가 적어도 많아도 "바쁘다"고 한다',
+      text: [
+        '흔히 보는 GPU 사용률 지표(예: DCGM_FI_DEV_GPU_UTIL)는 어떤 커널이든 돌고 있던 시간의 비율이다. 요청 하나만 디코드 중이어도 엔진은 단계마다 커널을 띄우므로, 부하가 적을 때나 많을 때나 100% 가까이에 머문다.',
+        'CPU도 나을 게 없다. 엔진 프로세스는 대부분 GPU를 기다리므로 사용자가 줄을 서도 CPU는 낮다. GPU 사용률로 HPA를 걸면 바로 늘고 다시 줄지 않는다. CPU로 걸면 아예 늘지 않는다.',
+      ],
+      keyIdea: '사용률은 GPU가 쓰이고 있다는 것만 알려 줄 뿐, 얼마나 더 받을 수 있는지는 말해 주지 않는다. LLM은 엔진 자신의 대기열과 메모리 숫자로 늘린다.',
+      flows: [{from: 'gw', to: 'pod1', label: '스트림', type: 'request'}],
+      focus: ['pod1', 'pod2'],
+      status: {pod1: 'warn', pod2: 'warn'},
+      values: {gpu: {text: '98% (어느 쪽이든 꽉 차 보임)', tone: 'bad'}},
+    },
+    {
+      short: '좋은 신호',
+      kind: '원리',
+      title: '엔진이 얼마나 밀려 있는지 직접 알려 준다',
+      text: [
+        'vLLM은 /metrics에 Prometheus 지표를 낸다. vllm:num_requests_waiting은 도착했지만 아직 배치에 자리가 없는 요청 수다. vllm:kv_cache_usage_perc는 KV 캐시가 얼마나 찼는지다(예전 버전 이름은 vllm:gpu_cache_usage_perc). vllm:time_to_first_token_seconds는 TTFT 히스토그램이다.',
+        '이제 급증이 또렷이 보인다. 요청 12개가 기다리고, KV 캐시는 95% 찼고, 첫 토큰까지 걸리는 시간 p95가 0.6초에서 4초 넘게 뛰었다.',
+      ],
+      keyIdea: '대기 요청은 가장 먼저 반응하고 "레플리카가 모자라다"와 바로 이어진다. KV 캐시 사용률은 대기열이 생기기 직전에 경고한다. TTFT는 사용자가 느끼는 값이지만 이미 기다리고 난 뒤에야 움직인다.',
+      flows: [
+        {from: 'prom', to: 'pod1', label: '수집', type: 'watch'},
+        {from: 'prom', to: 'pod2', label: '수집', type: 'watch'},
+      ],
+      focus: ['prom', 'pod1', 'pod2'],
+      status: {pod1: 'error', pod2: 'error'},
+      badges: {pod1: '대기 6', pod2: '대기 6'},
+      values: {waiting: {text: '12', tone: 'bad'}, kv: {text: '95%', tone: 'bad'}, ttft: {text: '4.2초', tone: 'bad'}},
+    },
+    {
+      short: 'HPA로',
+      kind: '원리',
+      title: 'KEDA나 어댑터가 쿼리 결과를 HPA 지표로 바꾼다',
+      text: [
+        'HPA는 Prometheus를 직접 읽지 못한다. KEDA(prometheus 트리거를 단 ScaledObject)나 Prometheus Adapter가 sum(vllm:num_requests_waiting) 같은 쿼리를 돌리고, 결과를 external 또는 custom metrics API로 내준다. KEDA는 HPA까지 대신 만들어 관리한다.',
+        '레플리카당 대기 요청 목표를 5로 두면 HPA는 ceil(12 / 5) = 3을 계산해 Deployment를 2에서 3으로 올린다.',
+      ],
+      keyIdea: 'kubectl describe hpa는 현재 지표 값과 목표를 나란히 보여 준다. unknown이 나오면 확장 규칙이 아니라 쿼리나 metrics API가 고장 난 것이다.',
+      flows: [
+        {from: 'keda', to: 'prom', label: '쿼리', type: 'request'},
+        {from: 'hpa', to: 'keda', label: 'external 지표', type: 'watch'},
+      ],
+      focus: ['keda', 'hpa'],
+      badges: {pod1: null, pod2: null, hpa: '2 → 3'},
+      values: {replicas: {text: '2 → 3 (원하는 수)', tone: 'bad'}},
+    },
+    {
+      short: 'GPU 없음',
+      kind: '문제',
+      title: '빈 GPU가 없어 새 파드가 노드를 기다린다',
+      text: [
+        '레플리카 3이 만들어지지만 Pending에 머문다. 풀의 GPU가 모두 쓰이고 있다. 노드 오토스케일러(Cluster Autoscaler나 Karpenter)가 배치되지 못한 파드를 보고 클라우드에 GPU VM을 하나 더 요청한다.',
+        '이 일은 몇 분 걸린다. VM이 부팅해 클러스터에 붙고, GPU 드라이버와 디바이스 플러그인이 떠야 노드가 nvidia.com/gpu를 내놓는다. 리전에 GPU 재고가 아예 없을 수도 있다.',
+      ],
+      keyIdea: '지연에 민감한 모델이라면 여유 GPU를 미리 준비해 둔다(대기 노드나 우선순위 낮은 자리 맡기 파드). 그래야 확장이 VM 부팅부터 시작하지 않는다.',
+      flows: [
+        {from: 'hpa', to: 'pod3', label: '생성', type: 'request'},
+        {from: 'ca', to: 'node', label: 'GPU VM 추가', type: 'request'},
+      ],
+      focus: ['pod3', 'node', 'ca'],
+      status: {pod3: 'warn'},
+      badges: {hpa: null, pod3: 'Pending', ca: '노드 +1'},
+      values: {replicas: {text: '2 Ready · 1 Pending', tone: 'bad'}},
+    },
+    {
+      short: '콜드 스타트',
+      kind: '주의',
+      title: '새 레플리카는 몇 분 동안 Running이지만 Ready가 아니다',
+      text: [
+        '배치된 뒤에도 레플리카 3은 수십 GB 가중치를 GPU 메모리에 올리고 엔진을 준비해야 한다(콜드 스타트 레슨 참고). 준비 프로브는 모델이 다 올라간 뒤에야 통과해야 하므로, 라우터는 계속 기존 두 레플리카로만 보낸다.',
+        '그동안 대기열은 계속 자란다. 노드 지연과 콜드 스타트 때문에 LLM 확장은 일찍 시작해야 한다. 대기 요청 기준을 낮게 잡고, 최소 레플리카를 0보다 크게 두고, KV 캐시 사용률을 조기 경보로 쓴다.',
+      ],
+      keyIdea: '모델이 올라가기 전에 Ready를 알리는 레플리카는 답할 수 없는 요청을 받는다. 준비 프로브는 엔진의 health 엔드포인트를 보게 하고, 기동 프로브에는 적재에 충분한 시간을 준다.',
+      flows: [{from: 'node', to: 'pod3', label: '가중치 적재', type: 'request'}],
+      focus: ['pod3'],
+      badges: {ca: null, pod3: '가중치 적재 중'},
+      values: {waiting: {text: '18', tone: 'bad'}, ttft: {text: '6.0초', tone: 'bad'}},
+    },
+    {
+      short: 'Ready',
+      kind: '원리',
+      title: 'Ready가 되면 라우터가 넣어 주고 대기열이 빠진다',
+      text: [
+        '엔진이 적재를 마치고 준비 프로브가 통과한다. 파드가 Service 엔드포인트에 들어가고, 입구(또는 추론 라우팅의 엔드포인트 선택기)가 새 요청을 보내기 시작한다.',
+        '대기 요청은 1개 안팎으로 떨어지고 KV 캐시 사용률이 내려가며 TTFT는 1초 아래로 돌아온다. 지표가 목표 아래로 내려왔으니 HPA는 3에서 멈춘다.',
+      ],
+      flows: [
+        {from: 'gw', to: 'pod1', label: '스트림', type: 'request'},
+        {from: 'gw', to: 'pod2', label: '스트림', type: 'request'},
+        {from: 'gw', to: 'pod3', label: '스트림', type: 'request'},
+      ],
+      focus: ['gw', 'pod3'],
+      status: {pod1: 'ok', pod2: 'ok', pod3: 'ok'},
+      badges: {pod3: 'Ready'},
+      values: {gpu: '98%', waiting: {text: '1', tone: 'good'}, kv: {text: '60%', tone: 'good'}, ttft: {text: '0.8초', tone: 'good'}, replicas: {text: '3', tone: 'good'}},
+    },
+    {
+      short: '축소',
+      kind: '주의',
+      title: '줄일 때 답변을 반쯤에서 자르면 안 된다',
+      text: [
+        '저녁이 되어 대기열이 0에 머물자 HPA는 다시 둘을 원한다. 축소 안정화 창(기본 300초) 때문에 낮은 값이 한동안 이어져야 줄인다. 잠깐 한가하다고 다시 띄우는 데 몇 분 걸리는 레플리카를 내리지 않게 하려는 것이다.',
+        '내려갈 레플리카가 아직 긴 답변을 스트리밍 중일 수 있다. 라우터가 먼저 새 요청을 끊어야 하고, terminationGracePeriodSeconds와 preStop 대기가 가장 긴 생성 시간을 덮어야 한다. 아니면 그 사용자는 답변이 문장 중간에서 멈추는 것을 본다.',
+      ],
+      keyIdea: 'LLM은 웹 파드보다 축소 창을 길게, 유예 시간은 기본 30초가 아니라 최대 출력 길이에 맞춰 잡는다.',
+      flows: [
+        {from: 'hpa', to: 'pod3', label: '제거', type: 'request'},
+        {from: 'gw', to: 'pod1', label: '스트림', type: 'request'},
+      ],
+      focus: ['hpa', 'pod3'],
+      status: {pod3: 'warn'},
+      badges: {pod3: '스트림 마무리 중', hpa: '3 → 2'},
+      values: {waiting: '0', kv: '30%', ttft: '0.5초', replicas: '3 → 2'},
+    },
+    {
+      short: '0으로',
+      kind: '주의',
+      title: '0까지 줄이면 GPU는 아끼지만 첫 사용자가 값을 치른다',
+      text: [
+        '일반 HPA는 레플리카를 최소 하나 남긴다. KEDA는 0까지 줄일 수 있고(minReplicaCount: 0), 쿼리 값이 활성화 기준을 넘으면 Deployment를 깨운다. 레플리카가 0이면 놀고 있는 모델은 GPU 비용이 들지 않는다.',
+        '대가는 다음 요청이 치르는 전체 지연이다. GPU 노드를 새로 띄울 수도 있고, 그다음 콜드 스타트 전체를 기다린다. 그동안 요청을 붙잡아 둘 무언가도 있어야 한다. 아니면 요청은 실패한다. 0은 개발용, 배치, 드물게 쓰는 모델에 맞고, 답을 기다리는 채팅 사용자에게는 맞지 않는다.',
+      ],
+      flows: [{from: 'keda', to: 'hpa', label: '0 ↔ 1', type: 'watch'}],
+      focus: ['keda'],
+      status: {pod3: 'gone', pod2: 'off', pod1: 'off'},
+      badges: {pod3: null, hpa: null, keda: 'minReplicas 0'},
+      values: {replicas: {text: '0 (유휴)', tone: 'bad'}, ttft: {text: '깨울 때 수 분', tone: 'bad'}},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '대기열을 보고, 일찍 늘리고, 천천히 줄인다',
+      text: [
+        'GPU·CPU 사용률로는 LLM 레플리카가 얼마나 더 받을 수 있는지 알 수 없다. 엔진의 대기 요청과 KV 캐시 사용률은 알려 준다. Prometheus가 모으고, KEDA나 어댑터가 HPA에 넘기고, HPA가 레플리카 수를 정한다.',
+        '늘릴 때마다 GPU 노드와 콜드 스타트를 기다리므로 일찍 반응하고 여유를 둔다. 줄일 때마다 진행 중인 스트림을 마쳐야 하므로 긴 유예 시간으로 천천히 줄인다.',
+      ],
+      keyIdea: '확장이 늦다고 느껴지면 구간별로 잰다. Pending(GPU 노드 없음), Running인데 Ready 아님(콜드 스타트), 그리고 Ready. 가장 긴 구간부터 고친다.',
+      flows: [
+        {from: 'prom', to: 'pod1', label: '수집', type: 'watch'},
+        {from: 'keda', to: 'prom', label: '쿼리', type: 'request'},
+        {from: 'hpa', to: 'keda', label: '지표', type: 'watch'},
+      ],
+      focus: ['prom', 'keda', 'hpa'],
+      status: {pod1: 'ok', pod2: 'ok', pod3: null},
+      badges: {keda: null},
+      values: {replicas: '2', waiting: '0', ttft: '0.6초'},
+    },
+  ]}
+/>
+
+## 무엇을 보고 늘릴까
+
+| 신호 | LLM에 맞나 | 이유 |
+|---|---|---|
+| CPU 사용률 | 아니다 | 엔진은 대부분 GPU를 기다리므로 사용자가 줄을 서도 CPU는 낮다 |
+| GPU 사용률(예: `DCGM_FI_DEV_GPU_UTIL`) | 아니다 | 커널이 돈 시간의 비율이라, 요청 하나만 디코드해도 100% 가까이 나온다 |
+| 대기 요청(`vllm:num_requests_waiting`) | 맞다, 주 신호 | 레플리카가 배치에 요청을 더 못 넣는 순간 바로 오른다 |
+| KV 캐시 사용률(`vllm:kv_cache_usage_perc`) | 맞다, 조기 경보 | 100% 가까우면 새 요청이 기다리거나 진행 중인 요청이 밀려난다 |
+| TTFT p95(`vllm:time_to_first_token_seconds`) | SLO·알림용 | 사용자가 느끼는 값이지만 이미 기다린 뒤에야 움직인다 |
+| 초당 요청 수 | 약하다 | 프롬프트와 답변 길이가 제각각이라 같은 수치가 가벼울 수도 무거울 수도 있다 |
+
+## 직접 확인해 보기
+
+```bash
+kubectl port-forward deploy/llm 8000:8000 &
+curl -s localhost:8000/metrics | grep -E '^vllm:(num_requests_waiting|num_requests_running|kv_cache_usage_perc)'   # 엔진 자신의 부하
+kubectl get hpa -w                                   # 부하에 따라 TARGETS(현재/목표)와 REPLICAS가 바뀌는 것
+kubectl describe hpa keda-hpa-llm                    # 지표 값, 이벤트, 늘거나 늘지 않은 이유
+kubectl get scaledobject                             # KEDA: READY와 ACTIVE
+kubectl get pods -l app=llm -w                       # Pending(GPU 노드 없음) → Running → Ready(모델 적재 완료)
+```
+
+대기 요청으로 늘리는 KEDA `ScaledObject`:
+
+```yaml
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: llm
+spec:
+  scaleTargetRef:
+    name: llm                  # vLLM Deployment
+  minReplicaCount: 1           # 0이면 0까지 줄이고, 깨울 때 콜드 스타트
+  maxReplicaCount: 8
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleDown:
+          stabilizationWindowSeconds: 600   # 천천히 줄인다
+  triggers:
+    - type: prometheus
+      metadata:
+        serverAddress: http://prometheus.monitoring:9090
+        query: sum(vllm:num_requests_waiting{model_name="chat"})
+        threshold: "5"         # 레플리카당 대기 요청 목표
+```
+
+더 읽을거리: [vLLM 지표](https://docs.vllm.ai/en/latest/design/metrics.html) · [KEDA Prometheus 스케일러](https://keda.sh/docs/latest/scalers/prometheus/) · [Horizontal Pod Autoscaling](https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/) · [Karpenter](https://karpenter.sh/) · [부하에 맞춰 늘어나기 (HPA)](../k8s/autoscaling.mdx) · [모델이 처음 뜨기까지 (콜드 스타트)](../ai/cold-start.mdx) · [요청을 어느 레플리카로 보낼까 (추론 라우팅)](../ai/inference-routing.mdx) · [정상 종료 — 요청을 잃지 않고 내려가기](../intermediate/graceful-shutdown.mdx)

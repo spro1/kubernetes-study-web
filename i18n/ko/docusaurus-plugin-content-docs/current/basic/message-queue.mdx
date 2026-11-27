@@ -1,0 +1,229 @@
+---
+id: message-queue
+title: 메시지 큐가 서비스를 떼어 놓는 방식
+sidebar_label: 05 · 메시지 큐와 카프카
+description: 카프카를 예로 토픽·파티션·키, 프로듀서 acks와 복제, 컨슈머 그룹과 오프셋 커밋, 장애 뒤 재전달, 컨슈머 랙, 데드 레터 큐, 큐와 발행·구독의 차이를 애니메이션으로 본다
+summary: '토픽·파티션·컨슈머 그룹, 최소 한 번 전달이라 컨슈머가 멱등해야 하는 이유, 컨슈머 랙, 데드 레터 큐.'
+icon: layers
+hide_table_of_contents: true
+---
+
+# 메시지 큐가 서비스를 떼어 놓는 방식
+
+주문 서비스는 **이벤트** 하나를 발행한다. 배송과 이메일은 저마다 자기 속도로 그것을 읽는다. 이벤트를 **프로듀서 → 토픽 파티션 → 컨슈머 그룹 → 오프셋 커밋** 순서로 따라간 뒤, 컨슈머가 죽거나 뒤처지거나 끝내 처리할 수 없는 메시지를 만났을 때 무슨 일이 생기는지 본다.
+
+<StepDiagram
+  width={1000}
+  height={480}
+  meta={{duration: '약 12분', level: '기초'}}
+  groups={[
+    {label: '카프카 클러스터 · 토픽 orders', x: 300, y: 40, w: 300, h: 380, tone: 'mgmt'},
+    {label: '컨슈머 그룹 shipping', x: 700, y: 40, w: 270, h: 230, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'order', label: '주문 서비스', sub: '프로듀서', icon: 'box', tone: 'app', x: 130, y: 230, show: true},
+    {id: 'p0', label: '파티션 0', sub: '리더 브로커 1', icon: 'layers', tone: 'store', x: 450, y: 110},
+    {id: 'p1', label: '파티션 1', sub: '리더 브로커 2', icon: 'layers', tone: 'store', x: 450, y: 230},
+    {id: 'p2', label: '파티션 2', sub: '리더 브로커 3', icon: 'layers', tone: 'store', x: 450, y: 350},
+    {id: 'c1', label: '배송 1', sub: 'p0, p1 담당', icon: 'server', tone: 'node', x: 835, y: 110},
+    {id: 'c2', label: '배송 2', sub: 'p2 담당', icon: 'server', tone: 'node', x: 835, y: 220},
+    {id: 'email', label: '이메일 서비스', sub: '그룹 email', icon: 'bell', tone: 'node', x: 835, y: 330},
+    {id: 'dlq', label: 'DLQ 토픽', sub: 'orders.dlq', icon: 'alert', tone: 'ext', x: 835, y: 430},
+  ]}
+  metrics={[
+    {id: 'msg', label: '메시지'},
+    {id: 'offset', label: '커밋된 오프셋'},
+    {id: 'lag', label: '컨슈머 랙'},
+    {id: 'delivery', label: '전달'},
+  ]}
+  learn={[
+    {text: '서비스 셋을 직접 부르는 대신 이벤트를 발행하는 이유', at: 0},
+    {text: '토픽·파티션·키, 그리고 순서가 지켜지는 범위', at: 1},
+    {text: '컨슈머 그룹이 파티션을 나누고 오프셋을 커밋하는 방식', at: 3},
+    {text: '장애가 나면 다시 전달되므로 컨슈머는 멱등해야 한다는 것', at: 5},
+    {text: '랙, 독이 든 메시지, 데드 레터 큐', at: 7},
+  ]}
+  steps={[
+    {
+      short: '시작',
+      kind: '시작',
+      title: '모두를 부르는 대신 한 번 발행한다',
+      text: [
+        '주문이 들어온다. 배송·이메일·포인트가 모두 이 사실을 알아야 한다. 주문 서비스가 하나하나 직접 부르면, 하나만 느리거나 고장 나도 주문이 실패하고, 서비스가 늘 때마다 주문 코드를 고쳐야 한다.',
+        '대신 주문 서비스는 "주문 42 생성" 이벤트 하나를 토픽에 발행하고 돌아간다. 관심 있는 서비스는 준비될 때 이벤트를 읽는다. 여기서는 카프카를 예로 든다. RabbitMQ와 Amazon SQS도 같은 문제를 다른 모델로 푼다.',
+      ],
+      flows: [{from: 'order', to: 'p1', label: '발행', type: 'request'}],
+      focus: ['order'],
+      values: {msg: '주문 42 생성'},
+    },
+    {
+      short: '파티션',
+      kind: '원리',
+      title: '토픽은 파티션으로 나뉘고, 키가 파티션을 고른다',
+      text: [
+        '토픽 orders에는 파티션이 셋 있다. 파티션마다 뒤에 덧붙이기만 하는 로그이고, 들어오는 메시지는 다음 번호, 곧 오프셋을 받는다.',
+        '프로듀서는 키 order-42를 붙여 보낸다. 기본 파티셔너가 키를 해시하므로 주문 42의 이벤트는 늘 같은 파티션, 여기서는 파티션 1로 간다. 순서는 파티션 하나 안에서만 보장되고, 토픽 전체에서는 보장되지 않는다.',
+      ],
+      keyIdea: '순서가 지켜져야 하는 단위로 키를 고른다. 같은 주문 id → 같은 파티션 → 그 주문의 이벤트는 쓴 순서대로 읽힌다.',
+      flows: [{from: 'order', to: 'p1', label: 'key order-42', type: 'request'}],
+      focus: ['p0', 'p1', 'p2'],
+      badges: {p1: 'offset 1041'},
+      values: {msg: 'p1 · offset 1041'},
+    },
+    {
+      short: '복제',
+      kind: '원리',
+      title: '복제와 acks가 쓰기가 안전해지는 때를 정한다',
+      text: [
+        '파티션마다 한 브로커에 리더가, 다른 브로커에 그것을 복사하는 팔로워가 있다. 복제 계수가 3이면 팔로워가 따라잡은 뒤 메시지는 브로커 세 곳에 있다.',
+        'acks=all(카프카 3.0부터 기본값)이면 리더는 동기화된 복제본(ISR)이 모두 메시지를 받은 뒤에야 답한다. min.insync.replicas=2면 브로커 한 곳에만 남는 쓰기는 실패로 돌려준다. acks=1이면 리더 혼자 답하므로, 리더가 죽으면 메시지를 잃을 수 있다.',
+      ],
+      keyIdea: '잃으면 안 되는 데이터에는 복제 계수 3, acks=all, min.insync.replicas=2가 흔한 조합이다. 브로커 하나가 죽어도 쓰기를 잃지 않는다.',
+      flows: [{from: 'p1', to: 'order', label: 'ack (ISR 전부)', type: 'response'}],
+      focus: ['p1', 'order'],
+      badges: {p1: 'ISR 3/3'},
+    },
+    {
+      short: '그룹',
+      kind: '원리',
+      title: '컨슈머 그룹은 파티션을 구성원끼리 나눈다',
+      text: [
+        '배송 인스턴스 둘이 컨슈머 그룹 shipping에 들어온다. 카프카는 파티션 하나를 그룹 안의 구성원 딱 하나에게 준다. 배송 1은 파티션 0과 1을, 배송 2는 파티션 2를 읽는다.',
+        '그래서 파티션 수가 병렬성의 상한이다. 배송 인스턴스가 셋까지는 도움이 될 수 있지만, 네 번째는 읽을 파티션이 없어 논다.',
+      ],
+      flows: [
+        {from: 'p0', to: 'c1', label: '폴링', type: 'request'},
+        {from: 'p1', to: 'c1', label: '폴링', type: 'request'},
+        {from: 'p2', to: 'c2', label: '폴링', type: 'request'},
+      ],
+      focus: ['c1', 'c2'],
+      badges: {p1: null, c1: 'p0, p1', c2: 'p2'},
+    },
+    {
+      short: '커밋',
+      kind: '원리',
+      title: '처리하고 나서 오프셋을 커밋한다',
+      text: [
+        '배송 1이 오프셋 1041을 읽고 배송을 잡은 뒤 "파티션 1은 다음 오프셋 1042부터"라고 커밋한다. 카프카는 그룹별로 커밋된 오프셋을 내부 토픽에 저장한다. 메시지 자체는 보존 기간이 지나 지워질 때까지 로그에 남는다.',
+        '어디서 커밋하느냐가 보장을 정한다. 처리한 뒤 커밋하면 장애 때 일을 두 번 할 수 있다. 처리하기 전에 커밋하면 장애 때 일을 빠뜨릴 수 있다.',
+      ],
+      flows: [{from: 'c1', to: 'p1', label: '1042 커밋', type: 'response'}],
+      focus: ['c1'],
+      status: {c1: 'ok'},
+      values: {offset: 'p1 → 1042', delivery: '한 번 처리'},
+    },
+    {
+      short: '장애',
+      kind: '장애',
+      title: '커밋 전에 죽으면 메시지가 다시 온다',
+      text: [
+        '배송 1이 오프셋 1043을 읽고 배송을 잡은 뒤, 커밋하기 전에 죽는다. 하트비트가 끊기자 그룹이 리밸런스되고, 이제 배송 2가 파티션 0·1·2를 모두 맡는다.',
+        '배송 2는 파티션 1을 마지막 커밋 오프셋 1043부터 읽고, 같은 배송을 한 번 더 잡는다. 이것이 최소 한 번(at-least-once) 전달이다. 잃는 것은 없지만 중복이 생긴다.',
+      ],
+      keyIdea: '컨슈머를 멱등하게 만든다. 처리한 주문 id를 기록하거나 upsert·유니크 키를 써서, 같은 메시지가 두 번 와도 아무것도 바뀌지 않게 한다.',
+      flows: [
+        {from: 'p1', to: 'c2', label: '1043 다시 전달', type: 'request'},
+        {from: 'p0', to: 'c2', label: '리밸런스', type: 'request'},
+      ],
+      focus: ['c1', 'c2'],
+      status: {c1: 'gone', c2: 'warn'},
+      badges: {c1: null, c2: 'p0, p1, p2'},
+      values: {offset: 'p1 → 1043', delivery: {text: '배송이 두 번 잡힘', tone: 'bad'}},
+    },
+    {
+      short: '발행·구독',
+      kind: '원리',
+      title: '다른 그룹은 같은 이벤트를 따로 읽는다',
+      text: [
+        '이메일 서비스는 다른 그룹 email에 속한다. 같은 토픽의 모든 파티션을 자기 커밋 오프셋으로 읽는다. 배송과 이메일은 서로를 느리게 만들지 않고, 새 서비스는 나중에 들어와 보존 기간의 처음부터 다시 읽을 수도 있다.',
+        '이것이 발행·구독(pub/sub)이다. SQS나 RabbitMQ 큐 같은 고전적인 큐는 다르다. 컨슈머가 메시지를 두고 경쟁하고, 확인(ack)된 메시지는 지워진다. 카프카는 둘 다 된다. 한 그룹 안의 구성원은 경쟁하고, 서로 다른 그룹은 각자 모든 메시지를 받는다.',
+      ],
+      flows: [
+        {from: 'p0', to: 'email', label: '자기 오프셋', type: 'request'},
+        {from: 'p1', to: 'email', label: '자기 오프셋', type: 'request'},
+        {from: 'p2', to: 'email', label: '자기 오프셋', type: 'request'},
+      ],
+      focus: ['email'],
+      status: {c1: 'ok', c2: 'ok'},
+      badges: {c1: 'p0, p1', c2: 'p2', email: '모든 파티션'},
+      values: {delivery: '그룹마다 모든 메시지'},
+    },
+    {
+      short: '랙',
+      kind: '주의',
+      title: '프로듀서가 컨슈머보다 빠르면 랙이 쌓인다',
+      text: [
+        '세일로 주문이 세 배가 된다. 배송 컨슈머가 따라가지 못한다. 랙은 파티션의 가장 새 오프셋과 그룹이 커밋한 오프셋의 차이이고, 계속 커진다.',
+        '랙은 이벤트가 늦는다는 뜻이지 잃었다는 뜻은 아니다. 다만 아무도 읽지 않은 메시지를 보존 기간이 지워 버리면 그때는 잃는다. 파티션 수까지 컨슈머를 늘리거나, 처리를 빠르게 하거나, 파티션을 늘린다(키가 가는 파티션이 바뀐다).',
+      ],
+      keyIdea: 'CPU가 아니라 랙이나 가장 오래 기다린 메시지의 나이로 알림을 건다. KEDA 같은 오토스케일러는 랙으로 컨슈머 수를 조절할 수 있다.',
+      flows: [
+        {from: 'order', to: 'p0', label: '3배 유입', type: 'request'},
+        {from: 'order', to: 'p2', label: '3배 유입', type: 'request'},
+      ],
+      focus: ['p0', 'p1', 'p2'],
+      status: {c1: 'warn', c2: 'warn'},
+      values: {lag: {text: '48,000 계속 증가', tone: 'bad'}},
+    },
+    {
+      short: '독 메시지',
+      kind: '문제',
+      title: '독이 든 메시지는 DLQ로 보낼 때까지 파티션을 막는다',
+      text: [
+        '메시지 하나의 내용이 깨져 있다. 배송 2가 오류를 내고, 커밋하지 않고, 다시 읽고, 또 실패한다. 파티션 2에서 그 뒤에 있는 메시지는 모두 기다린다.',
+        '해법은 데드 레터 큐(DLQ)다. 몇 번 재시도한 뒤 컨슈머가 나쁜 메시지를 오류 내용과 함께 orders.dlq에 쓰고, 커밋하고, 넘어간다. 사람이 DLQ를 살펴보고 고친 뒤 다시 흘려 보낸다. SQS는 이 기능이 내장돼 있고(maxReceiveCount를 쓰는 redrive 정책), RabbitMQ에는 데드 레터 익스체인지가 있으며, 카프카에서는 컨슈머 코드나 프레임워크가 맡는다.',
+      ],
+      flows: [
+        {from: 'p2', to: 'c2', label: '재시도 ×3', type: 'request'},
+        {from: 'c2', to: 'dlq', label: '데드 레터', type: 'request'},
+      ],
+      focus: ['c2', 'dlq'],
+      status: {c1: 'ok', c2: 'ok', dlq: 'warn'},
+      badges: {dlq: '메시지 1개'},
+      values: {lag: '줄어드는 중', delivery: '나쁜 메시지 격리'},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '오래 남는 로그, 나눠 맡는 일, 멱등한 컨슈머',
+      text: [
+        '프로듀서는 키로 고른 파티션에 한 번 쓰고, 복제와 acks=all이 그것을 지킨다. 컨슈머 그룹마다 모든 메시지를 받는다. 그룹 안에서는 구성원이 파티션을 나눠 맡고, 커밋된 오프셋이 진행 상황을 기록한다.',
+        '장애는 재전달을 부르므로 최소 한 번 전달을 전제로 컨슈머를 멱등하게 만든다. 랙을 지켜보고, 끝내 성공할 수 없는 메시지는 끝없이 재시도하지 말고 데드 레터 큐로 옮긴다.',
+      ],
+      keyIdea: '뭔가 이상하면 그룹부터 본다. kafka-consumer-groups.sh --describe 가 파티션별 담당 컨슈머, 커밋 오프셋, LAG을 보여 준다.',
+      flows: [
+        {from: 'order', to: 'p1', label: '발행', type: 'request'},
+        {from: 'p1', to: 'c1', label: '폴링', type: 'request'},
+        {from: 'p1', to: 'email', label: '폴링', type: 'request'},
+      ],
+      focus: ['order', 'p1', 'c1', 'email'],
+      status: {c1: null, c2: null, dlq: null},
+      badges: {p1: null},
+    },
+  ]}
+/>
+
+## 전달 보장
+
+| 보장 | 얻는 방법 | 장애 때 생기는 일 | 쓰는 곳 |
+|---|---|---|---|
+| 최대 한 번 (at-most-once) | 처리하기 전에 오프셋을 커밋한다 | 메시지를 잃을 수 있다 | 일부 표본 지표처럼 빈 곳이 생겨도 괜찮은 데이터 |
+| 최소 한 번 (at-least-once) | 처리한 뒤 오프셋을 커밋한다 | 메시지가 두 번 처리될 수 있다 | 일반적인 기본값. 멱등한 컨슈머와 함께 쓴다 |
+| 정확히 한 번 (exactly-once) | 카프카 멱등 프로듀서와 트랜잭션, `isolation.level=read_committed` 컨슈머 | 카프카 안에서의 읽기-처리-쓰기는 한 번만 일어난다 | 카프카 토픽에서 카프카 토픽으로 가는 스트림 처리. 이메일·결제 호출처럼 카프카 밖의 부수 효과는 여전히 멱등 키가 필요하다 |
+
+## 직접 확인해 보기
+
+```bash
+kafka-topics.sh --bootstrap-server localhost:9092 --create --topic orders \
+  --partitions 3 --replication-factor 3                      # 브로커 3대가 필요하다
+kafka-topics.sh --bootstrap-server localhost:9092 --describe --topic orders   # 파티션별 Leader, Replicas, Isr
+kafka-console-producer.sh --bootstrap-server localhost:9092 --topic orders \
+  --property parse.key=true --property key.separator=:        # 입력 예: order-42:created
+kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic orders \
+  --group shipping --from-beginning --property print.key=true --property print.partition=true
+kafka-consumer-groups.sh --bootstrap-server localhost:9092 --describe --group shipping   # CURRENT-OFFSET, LOG-END-OFFSET, LAG
+```
+
+같은 `--group`으로 컨슈머 둘을 띄우면 파티션을 나눠 갖는다. 다른 그룹으로 하나를 띄우면 모든 메시지를 다시 받는다.
+
+더 읽을거리: [카프카 문서](https://kafka.apache.org/documentation/) · [카프카 설계: 메시지 전달 의미](https://kafka.apache.org/documentation/#semantics) · [KEDA Apache Kafka 스케일러](https://keda.sh/docs/latest/scalers/apache-kafka/) · [Amazon SQS 데드 레터 큐](https://docs.aws.amazon.com/ko_kr/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-dead-letter-queues.html) · [RabbitMQ 데드 레터 익스체인지](https://www.rabbitmq.com/docs/dlx) · [부하에 맞춰 늘어나기 (HPA)](../k8s/autoscaling.mdx) · [데이터베이스 기초](../basic/database-basics.mdx)

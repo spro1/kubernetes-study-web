@@ -1,0 +1,236 @@
+---
+id: helm-release
+title: 헬름 릴리스의 설치·업그레이드·롤백
+sidebar_label: 05 · 헬름 릴리스
+description: 차트와 values가 매니페스트로 렌더링되는 과정, 시크릿에 저장되는 릴리스 리비전, 실패하는 업그레이드, 새 리비전으로 쓰이는 롤백, kubectl로 직접 고친 값이 어떻게 되는지를 애니메이션으로 본다
+summary: '차트와 values가 매니페스트가 되고, 설치·업그레이드마다 시크릿에 리비전이 쌓이며, 롤백은 새 리비전을 쓴다.'
+icon: wheel
+hide_table_of_contents: true
+---
+
+# 헬름 릴리스의 설치·업그레이드·롤백
+
+shop이라는 릴리스 하나를 **차트 + values → 렌더링 → 적용 → 리비전** 순서로 따라간다. 헬름이 이력을 어디에 두는지, 망가진 업그레이드가 왜 "deployed"라고 나올 수 있는지, 롤백이 실제로 무엇을 하는지 본다.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '약 12분', level: '중급'}}
+  groups={[
+    {label: '쿠버네티스 클러스터 · ns shop', x: 470, y: 30, w: 505, h: 410, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'chart', label: '차트', sub: '저장소 또는 OCI 레지스트리', icon: 'registry', tone: 'ext', x: 110, y: 100, show: true},
+    {id: 'values', label: '내 values', sub: '-f prod.yaml · --set', icon: 'book', tone: 'ext', x: 110, y: 380, show: true},
+    {id: 'helm', label: 'helm CLI', sub: '내 PC에서 렌더링', icon: 'wheel', tone: 'cp', x: 330, y: 245, show: true},
+    {id: 'ops', label: '동료', sub: 'kubectl edit', icon: 'user', tone: 'ext', x: 330, y: 400},
+    {id: 'api', label: 'API 서버', sub: '매니페스트 적용', icon: 'gear', tone: 'cp', x: 590, y: 245},
+    {id: 'secret', label: '릴리스 시크릿', sub: 'sh.helm.release.v1', icon: 'archive', tone: 'store', x: 590, y: 390, w: 170},
+    {id: 'deploy', label: '디플로이먼트', sub: 'shop', icon: 'layers', tone: 'node', x: 830, y: 150},
+    {id: 'pods', label: '파드', sub: 'shop', icon: 'pod', tone: 'app', size: 'sm', x: 830, y: 300},
+  ]}
+  metrics={[
+    {id: 'rev', label: '리비전'},
+    {id: 'status', label: '상태'},
+    {id: 'image', label: '이미지'},
+    {id: 'replicas', label: '레플리카'},
+  ]}
+  learn={[
+    {text: '차트는 템플릿과 기본 values이고, 내 values가 그것을 덮어쓴다는 것', at: 1},
+    {text: '헬름은 클라이언트에서 렌더링하고 API 서버에는 평범한 매니페스트를 보낸다는 것', at: 2},
+    {text: '설치·업그레이드 하나가 시크릿 하나로 저장되는 리비전이라는 것', at: 3},
+    {text: '--wait 없이는 "deployed"가 "정상 동작"이 아닌 이유', at: 5},
+    {text: '롤백은 이력을 되감지 않고 새 리비전을 쓴다는 것', at: 7},
+  ]}
+  steps={[
+    {
+      short: '시작',
+      kind: '시작',
+      title: '차트와 내 values',
+      text: [
+        '저장소(index.yaml이 있는 https://…)나 OCI 레지스트리(oci://…)의 차트로 helm install shop을 실행한다. 차트는 폴더다. Chart.yaml에 이름과 버전, templates/에 자리 표시자가 든 매니페스트, values.yaml에 기본값이 있다.',
+        '차트는 고치지 않는다. 내 값을 넘긴다. 파일은 -f prod.yaml로, 키 하나는 --set image.tag=1.3으로 준다.',
+      ],
+      flows: [
+        {from: 'chart', to: 'helm', label: '차트 받기', type: 'request'},
+        {from: 'values', to: 'helm', label: 'values', type: 'request'},
+      ],
+      focus: ['chart', 'values', 'helm'],
+    },
+    {
+      short: '렌더링',
+      kind: '원리',
+      title: '헬름은 내 PC에서 values를 합치고 템플릿을 렌더링한다',
+      text: [
+        'values는 순서대로 합쳐진다. 차트의 values.yaml이 먼저, 다음은 -f 파일(뒤의 파일이 이긴다), 마지막이 --set(모두를 이긴다)이다. 그 결과로 템플릿을 채우면 평범한 쿠버네티스 YAML이 나온다.',
+        '렌더링은 helm CLI 안에서 일어난다. 헬름 3부터는 클러스터 안의 Tiller 서버가 없다. 헬름은 내 kubeconfig로 API 서버와 말하므로, 무엇을 만들 수 있는지는 내 RBAC가 정한다.',
+      ],
+      keyIdea: 'helm template shop ./chart -f prod.yaml은 클러스터를 건드리지 않고 렌더링된 YAML만 출력한다. 첫 설치 전에 한 번 읽어 본다.',
+      flows: [
+        {from: 'chart', to: 'helm', label: '템플릿', type: 'request'},
+        {from: 'values', to: 'helm', label: '덮어쓰기', type: 'request'},
+      ],
+      focus: ['helm'],
+      badges: {helm: 'tag=1.3'},
+    },
+    {
+      short: '설치',
+      kind: '원리',
+      title: '매니페스트가 API 서버로 가고, 리비전 1이 저장된다',
+      text: [
+        '헬름이 렌더링한 객체를 API 서버로 보낸다. 디플로이먼트 컨트롤러는 평소처럼 shop:1.3 이미지로 파드를 만든다. 이후 헬름은 클러스터에서 돌지 않는다. 적용만 했을 뿐이다.',
+        '헬름은 릴리스도 저장한다. 릴리스 네임스페이스에 helm.sh/release.v1 타입의 시크릿 sh.helm.release.v1.shop.v1을 만든다. 리비전 1의 차트, 합쳐진 values, 렌더링된 매니페스트가 압축·인코딩되어 들어 있다.',
+      ],
+      keyIdea: '릴리스는 내 노트북이 아니라 네임스페이스에 산다. 권한이 있는 사람은 누구나 helm list -n shop, helm get values shop으로 같은 내용을 본다.',
+      flows: [
+        {from: 'helm', to: 'api', label: '적용', type: 'request'},
+        {from: 'api', to: 'deploy', label: '생성', type: 'request'},
+        {from: 'deploy', to: 'pods', label: '파드', type: 'request'},
+        {from: 'helm', to: 'secret', label: '리비전 1', type: 'request'},
+      ],
+      focus: ['api', 'secret', 'deploy'],
+      status: {pods: 'ok'},
+      badges: {secret: 'v1 deployed'},
+      values: {rev: '1', status: {text: 'deployed', tone: 'good'}, image: 'shop:1.3', replicas: '3'},
+    },
+    {
+      short: '업그레이드',
+      kind: '원리',
+      title: '업그레이드는 새 리비전이다',
+      text: [
+        'helm upgrade shop ./chart -f prod.yaml --set image.tag=1.4는 다시 렌더링하고 바뀐 부분만 적용한다. 디플로이먼트가 새 이미지를 롤아웃한다.',
+        '헬름은 상태 deployed인 시크릿 …shop.v2를 쓰고 v1을 superseded로 바꾼다. 업그레이드는 기본으로 리비전을 10개까지 남긴다(--history-max).',
+      ],
+      keyIdea: '업그레이드는 helm upgrade --dry-run=server나 helm-diff 플러그인(helm diff upgrade)으로 미리 본다. 설치된 것과 무엇이 다른지 보여 준다.',
+      flows: [
+        {from: 'helm', to: 'api', label: '업그레이드', type: 'request'},
+        {from: 'api', to: 'deploy', label: 'tag 1.4', type: 'request'},
+        {from: 'helm', to: 'secret', label: '리비전 2', type: 'request'},
+      ],
+      focus: ['helm', 'secret'],
+      badges: {helm: 'tag=1.4', secret: 'v2 · v1 superseded'},
+      values: {rev: '2', image: 'shop:1.4'},
+    },
+    {
+      short: '망가진 업그레이드',
+      kind: '문제',
+      title: '망가진 업그레이드도 "deployed"라고 나올 수 있다',
+      text: [
+        '다음에 누군가 --set image.tag=1.5-typo로 업그레이드한다. API 서버는 디플로이먼트를 받아들이므로, 헬름은 성공을 알리고 v3을 deployed로 쓴다.',
+        '하지만 새 파드는 ImagePullBackOff에 머문다. --wait가 없으면 헬름은 API 서버가 객체를 받아들였는지만 본다. 파드가 준비될 때까지 기다리지 않는다.',
+      ],
+      keyIdea: '릴리스 상태는 앱이 아니라 적용에 대한 것이다. 업그레이드마다 kubectl get pods나 kubectl rollout status로 확인하거나, 헬름이 기다리게 한다.',
+      flows: [
+        {from: 'helm', to: 'api', label: '업그레이드', type: 'request'},
+        {from: 'api', to: 'deploy', label: 'tag 1.5-typo', type: 'request'},
+        {from: 'helm', to: 'secret', label: '리비전 3', type: 'request'},
+      ],
+      focus: ['deploy', 'pods'],
+      status: {pods: 'error'},
+      badges: {helm: 'tag=1.5-typo', pods: 'ImagePullBackOff', secret: 'v3 deployed'},
+      values: {rev: '3', status: {text: 'deployed (파드 고장)', tone: 'bad'}, image: {text: 'shop:1.5-typo', tone: 'bad'}},
+    },
+    {
+      short: '기다리기',
+      kind: '주의',
+      title: '헬름이 기다리게 하고, 실패하면 되돌리게 한다',
+      text: [
+        '--wait를 주면 헬름은 디플로이먼트의 파드가 준비될 때까지 --timeout(기본 5m)만큼 기다린다. 준비되지 않으면 리비전을 failed로 표시하고 0이 아닌 코드로 끝나므로 CI가 알아챈다.',
+        '--rollback-on-failure(헬름 3의 --atomic. 지금도 경고와 함께 받아 준다)는 한 걸음 더 간다. --wait을 켜고, 실패하면 헬름이 스스로 마지막 정상 리비전으로 롤백한다.',
+      ],
+      keyIdea: '파이프라인에서는 --wait와 현실적인 --timeout을 쓴다. 파드가 망가진 초록 빌드보다 파이프라인을 막는 failed 상태가 낫다.',
+      flows: [
+        {from: 'api', to: 'helm', label: '준비 안 됨', type: 'response'},
+        {from: 'helm', to: 'secret', label: 'v3 failed', type: 'request'},
+      ],
+      focus: ['helm', 'pods'],
+      badges: {secret: 'v3 failed'},
+      values: {status: {text: 'failed', tone: 'bad'}},
+    },
+    {
+      short: '롤백',
+      kind: '원리',
+      title: '롤백은 리비전 2를 복사한 리비전 4를 쓴다',
+      text: [
+        'helm rollback shop 2는 리비전 2에 저장된 매니페스트를 꺼내 다시 적용한다. 디플로이먼트는 shop:1.4로 돌아가고 파드가 살아난다.',
+        '헬름은 리비전 3을 지우지 않는다. 리비전 2의 내용으로 새 리비전 4를 쓴다. helm history에는 1 superseded, 2 superseded, 3 failed, 4 deployed가 보이고, 4의 설명은 "Rollback to 2"다.',
+      ],
+      keyIdea: '리비전 번호는 올라가기만 한다. 번호 없이 helm rollback shop을 하면 바로 앞 리비전으로 간다.',
+      flows: [
+        {from: 'secret', to: 'helm', label: 'v2 읽기', type: 'response'},
+        {from: 'helm', to: 'api', label: 'v2 적용', type: 'request'},
+        {from: 'api', to: 'deploy', label: 'tag 1.4', type: 'request'},
+        {from: 'helm', to: 'secret', label: '리비전 4', type: 'request'},
+      ],
+      focus: ['secret', 'deploy'],
+      status: {pods: 'ok'},
+      badges: {helm: 'rollback 2', pods: null, secret: 'v4 deployed'},
+      values: {rev: '4', status: {text: 'deployed', tone: 'good'}, image: {text: 'shop:1.4', tone: 'good'}},
+    },
+    {
+      short: '직접 수정',
+      kind: '주의',
+      title: 'kubectl로 고친 값은 다음 업그레이드에 덮어써진다',
+      text: [
+        '트래픽이 몰리자 동료가 kubectl scale deployment shop --replicas=6을 실행한다. 차트는 replicas를 3으로 둔다. 헬름이 저장한 릴리스는 이 변경을 모른다.',
+        '다음 업그레이드나 롤백 때 헬름은 이전 매니페스트, 새 매니페스트, 실제 객체를 비교해 차트가 정하는 필드를 되돌린다. 그래서 replicas는 3이 된다. 주입된 사이드카처럼 차트가 정하지 않는 필드는 그대로 둔다. 헬름 4는 새 릴리스에 서버 사이드 적용을 쓴다. 그때는 업그레이드가 필드 충돌로 실패한다. --force-conflicts를 주면 덮어쓴다.',
+      ],
+      keyIdea: '차트가 가진 값은 kubectl이 아니라 values로 바꾼다. HPA가 replicas를 맡는다면 차트 템플릿에서 replicas를 뺀다.',
+      flows: [
+        {from: 'ops', to: 'api', label: 'replicas=6', type: 'request'},
+        {from: 'helm', to: 'api', label: '업그레이드', type: 'request'},
+      ],
+      focus: ['ops', 'deploy'],
+      status: {deploy: 'warn'},
+      badges: {deploy: '6 → 3', helm: null},
+      values: {replicas: {text: '업그레이드 후 6 → 3', tone: 'bad'}},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: 'values를 넣고, 리비전이 나온다',
+      text: [
+        '차트는 템플릿과 기본값이다. 내 values가 그것을 덮어쓰고, 헬름이 클라이언트에서 렌더링하고, API 서버가 평범한 매니페스트를 적용한다.',
+        '설치·업그레이드·롤백은 모두 번호가 붙은 리비전이고, 릴리스 네임스페이스의 시크릿에 저장된다. 롤백은 옛 리비전을 새 리비전으로 다시 적용한다.',
+      ],
+      keyIdea: 'values 파일은 Git에 두고, helm template이나 helm diff로 미리 보고, --wait로 업그레이드하고, 문제가 생기면 helm history를 읽는다.',
+      flows: [
+        {from: 'values', to: 'helm', label: 'values', type: 'request'},
+        {from: 'helm', to: 'api', label: '적용', type: 'request'},
+        {from: 'helm', to: 'secret', label: '리비전', type: 'request'},
+      ],
+      focus: ['values', 'helm', 'secret'],
+      status: {deploy: null},
+      badges: {deploy: null},
+      values: {replicas: '3'},
+    },
+  ]}
+/>
+
+## 릴리스 상태 읽기
+
+`helm status shop`과 `helm history shop`은 리비전마다 상태 하나를 보여 준다.
+
+| 상태 | 뜻 | 할 일 |
+|---|---|---|
+| deployed | 현재 리비전. API 서버가 객체를 받아들였다 | 그래도 파드를 본다. `--wait` 없이는 deployed가 준비됨을 뜻하지 않는다 |
+| superseded | 교체된 옛 리비전 | 없다. 롤백할 수 있는 이력이다 |
+| failed | 적용이 거부됐거나, 훅이 실패했거나, `--wait`가 시간 초과됐다 | `helm history`와 파드 이벤트를 읽고, values를 고쳐 다시 업그레이드하거나 롤백한다 |
+| pending-install / pending-upgrade / pending-rollback | 작업이 시작됐지만 끝나지 않았다(예: CLI가 강제 종료됨) | 새 작업이 "another operation is in progress"로 실패한다. 마지막 정상 리비전으로 롤백한다 |
+| uninstalled | `helm uninstall --keep-history`로 지웠다 | `helm rollback`으로 되살릴 수 있다 |
+
+## 직접 확인해 보기
+
+```bash
+helm create demo                                        # 차트 뼈대 만들기: Chart.yaml, values.yaml, templates/
+helm show values ./demo | head -20                      # 덮어쓸 수 있는 기본값
+helm template shop ./demo --set replicaCount=3          # 렌더링만, 클러스터는 안 건드림
+helm install shop ./demo -n shop --create-namespace --set replicaCount=3
+helm upgrade shop ./demo -n shop --set replicaCount=2 --wait --timeout 3m
+helm history shop -n shop                               # REVISION, STATUS, DESCRIPTION
+helm get values shop -n shop                            # 내가 넘긴 values
+kubectl get secret -n shop -l owner=helm                # 리비전마다 시크릿 하나
+helm rollback shop 1 -n shop                            # 새 리비전을 쓴다
+```
+
+더 읽을거리: [헬름 문서](https://helm.sh/docs/) · [헬름 사용하기](https://helm.sh/docs/intro/using_helm/) · [values 파일](https://helm.sh/docs/chart_template_guide/values_files/) · [helm rollback](https://helm.sh/docs/helm/helm_rollback/) · [헬름 4 개요](https://helm.sh/docs/overview/) · [Kustomize로 환경별 배포](../cert/kustomize.mdx) · [GitOps 동기화](../intermediate/gitops-sync.mdx)

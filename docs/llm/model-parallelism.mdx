@@ -1,0 +1,252 @@
+---
+id: model-parallelism
+title: Splitting a Model Across GPUs (TP, PP, EP)
+sidebar_label: 08 · Splitting a Model Across GPUs (TP, PP, EP)
+description: Animated walkthrough of serving a model too big for one GPU with data, tensor, pipeline and expert parallelism, what each one sends between GPUs, how it changes KV cache room, and how a LeaderWorkerSet runs one replica across nodes on Kubernetes
+summary: 'Copy, split each layer, split the layer stack, or spread the experts: four ways to serve a model that does not fit one GPU, and what they cost.'
+icon: split
+hide_table_of_contents: true
+---
+
+# Splitting a Model Across GPUs (TP, PP, EP)
+
+A 70B model in 16-bit weights takes about 140 GB. One 80 GB GPU cannot hold it, let alone its KV cache. Follow the same model as it is **copied, split by layer width, split by layer depth and spread by expert**, and see what each choice sends between GPUs.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~12 min', level: 'Advanced'}}
+  groups={[
+    {label: 'Node A · 4 GPUs on NVLink', x: 295, y: 30, w: 330, h: 405, tone: 'biz'},
+    {label: 'Node B · 4 GPUs on NVLink', x: 650, y: 30, w: 330, h: 405, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'model', label: 'Model weights', sub: '70B · FP16 ≈ 140 GB', icon: 'box', tone: 'store', x: 130, y: 100, w: 170, show: true},
+    {id: 'gw', label: 'Gateway', sub: 'Requests', icon: 'gate', tone: 'ext', x: 130, y: 240, w: 150, show: true},
+    {id: 'lws', label: 'LeaderWorkerSet', sub: '1 replica = 1 group', icon: 'gear', tone: 'cp', x: 130, y: 380, w: 170},
+    {id: 'g0', label: 'GPU 0', sub: '80 GB', icon: 'layers', tone: 'node', size: 'sm', x: 385, y: 140, show: true},
+    {id: 'g1', label: 'GPU 1', sub: '80 GB', icon: 'layers', tone: 'node', size: 'sm', x: 535, y: 140, show: true},
+    {id: 'g2', label: 'GPU 2', sub: '80 GB', icon: 'layers', tone: 'node', size: 'sm', x: 385, y: 310, show: true},
+    {id: 'g3', label: 'GPU 3', sub: '80 GB', icon: 'layers', tone: 'node', size: 'sm', x: 535, y: 310, show: true},
+    {id: 'g4', label: 'GPU 4', sub: '80 GB', icon: 'layers', tone: 'node', size: 'sm', x: 740, y: 140, show: true},
+    {id: 'g5', label: 'GPU 5', sub: '80 GB', icon: 'layers', tone: 'node', size: 'sm', x: 890, y: 140, show: true},
+    {id: 'g6', label: 'GPU 6', sub: '80 GB', icon: 'layers', tone: 'node', size: 'sm', x: 740, y: 310, show: true},
+    {id: 'g7', label: 'GPU 7', sub: '80 GB', icon: 'layers', tone: 'node', size: 'sm', x: 890, y: 310, show: true},
+  ]}
+  metrics={[
+    {id: 'layout', label: 'Layout'},
+    {id: 'weights', label: 'Weights per GPU'},
+    {id: 'comm', label: 'Between GPUs'},
+    {id: 'kv', label: 'KV cache room'},
+  ]}
+  learn={[
+    {text: 'Data parallelism copies the model, it does not split it', at: 2},
+    {text: 'Tensor parallelism splits every layer and talks after every layer', at: 3},
+    {text: 'Why splitting frees room for the KV cache', at: 5},
+    {text: 'Pipeline parallelism splits the layer stack across nodes', at: 6},
+    {text: 'Expert parallelism spreads MoE experts and routes tokens all-to-all', at: 8},
+    {text: 'One replica across nodes on Kubernetes, and why it fails as a unit', at: 9},
+  ]}
+  steps={[
+    {
+      short: 'Start',
+      kind: '시작',
+      title: 'The weights alone are bigger than one GPU',
+      text: [
+        'A 70B-parameter model at 2 bytes per parameter (FP16 or BF16) is about 140 GB of weights. A GPU here has 80 GB of memory.',
+        'The serving engine also needs memory for the KV cache of every running request and for activations. So the model has to be spread over several GPUs, and the question is how to cut it.',
+      ],
+      flows: [{from: 'model', to: 'g0', label: '140 GB?', type: 'request'}],
+      focus: ['model', 'g0'],
+      status: {g0: 'error'},
+      badges: {g0: 'Does not fit'},
+      values: {layout: '1 GPU', weights: {text: '140 GB > 80 GB', tone: 'bad'}, comm: '—', kv: {text: 'none', tone: 'bad'}},
+    },
+    {
+      short: 'Data parallel',
+      kind: '원리',
+      title: 'Data parallelism makes copies, it does not split',
+      text: [
+        'Data parallelism (DP) runs full, independent copies of the model, and the gateway spreads requests over them. The copies do not talk to each other while answering.',
+        'DP adds throughput, not memory. Each copy still has to fit somewhere. For a model that fits one GPU, DP is just "more replicas". For this model, each copy first needs one of the splits below.',
+      ],
+      keyIdea: 'On Kubernetes, DP is usually just the replica count of the serving workload behind a load balancer or inference gateway.',
+      flows: [
+        {from: 'gw', to: 'g0', label: 'Copy 1', type: 'request'},
+        {from: 'gw', to: 'g4', label: 'Copy 2', type: 'request'},
+      ],
+      focus: ['gw', 'g0', 'g4'],
+      status: {g0: null},
+      badges: {g0: 'Full copy', g4: 'Full copy'},
+      values: {layout: 'DP: copies', weights: {text: 'still 140 GB each', tone: 'bad'}, comm: 'none between copies'},
+    },
+    {
+      short: 'Tensor parallel',
+      kind: '원리',
+      title: 'Tensor parallelism splits every layer across GPUs',
+      text: [
+        'Tensor parallelism (TP) cuts the weight matrices inside each layer into slices. With TP size 4, GPUs 0 to 3 each hold a quarter of every layer: about 35 GB.',
+        'Attention heads are divided among the GPUs, and the large feed-forward matrices are split by columns and rows. Every GPU works on every token, each on its own slice.',
+      ],
+      flows: [
+        {from: 'model', to: 'g0', label: '1/4', type: 'request'},
+        {from: 'model', to: 'g2', label: '1/4', type: 'request'},
+      ],
+      focus: ['g0', 'g1', 'g2', 'g3'],
+      badges: {g0: 'TP 1/4', g1: 'TP 1/4', g2: 'TP 1/4', g3: 'TP 1/4', g4: null},
+      values: {layout: 'TP 4', weights: {text: '≈ 35 GB', tone: 'good'}},
+    },
+    {
+      short: 'All-reduce',
+      kind: '주의',
+      title: 'The slices must be combined after every layer',
+      text: [
+        'Each GPU computes only a partial result. In the common Megatron-style split, the GPUs run an all-reduce about twice per layer (after attention and after the feed-forward block) to add the parts together, for every forward pass.',
+        'That is dozens of small, latency-sensitive exchanges per generated token. Inside a node over NVLink this is fast. Over a regular network between nodes it would stall every token.',
+      ],
+      keyIdea: 'Keep a TP group inside one node, on GPUs joined by NVLink or a similar fast link. nvidia-smi topo -m shows how the GPUs are connected.',
+      flows: [
+        {from: 'g0', to: 'g1', label: 'all-reduce', type: 'response'},
+        {from: 'g2', to: 'g3', label: 'all-reduce', type: 'response'},
+        {from: 'g0', to: 'g2', type: 'response'},
+      ],
+      focus: ['g0', 'g1', 'g2', 'g3'],
+      values: {comm: {text: 'all-reduce every layer', tone: 'bad'}},
+    },
+    {
+      short: 'KV room',
+      kind: '원리',
+      title: 'Splitting the weights frees room for the KV cache',
+      text: [
+        'The engine fills what is left of each GPU with KV cache blocks. With TP 4, about 35 GB of weights leaves roughly 30 GB or more per GPU for KV cache after activations and headroom. With TP 2 (70 GB each) almost nothing would be left.',
+        'The KV cache is split by attention heads too, so a larger TP size means more concurrent requests and longer contexts. The cost is more communication, and the TP size should divide the model\'s attention head count.',
+      ],
+      keyIdea: 'If requests queue because KV cache is full, a larger TP size (or a smaller weight format) can help as much as more replicas.',
+      flows: [{from: 'gw', to: 'g0', label: 'More requests', type: 'request'}],
+      focus: ['g0', 'g1', 'g2', 'g3'],
+      values: {kv: {text: '≈ 30 GB+ per GPU', tone: 'good'}},
+    },
+    {
+      short: 'Pipeline parallel',
+      kind: '원리',
+      title: 'Pipeline parallelism splits the layer stack across nodes',
+      text: [
+        'For a bigger model, or more KV room than one node gives, the layers are cut by depth into stages. Stage 1 (the first half of the layers) runs on node A with TP 4, and stage 2 on node B with TP 4. That is TP 4 × PP 2 = 8 GPUs, about 17.5 GB of weights each.',
+        'Between stages only the activations of the batch cross, once per stage boundary per step, point to point. That is far less traffic than TP, so it tolerates the network between nodes. A fast fabric such as InfiniBand or RoCE still helps.',
+      ],
+      flows: [
+        {from: 'gw', to: 'g0', label: 'Stage 1', type: 'request'},
+        {from: 'g1', to: 'g4', label: 'Activations', type: 'request'},
+      ],
+      focus: ['g1', 'g4'],
+      badges: {g0: 'Stage 1', g1: 'Stage 1', g2: 'Stage 1', g3: 'Stage 1', g4: 'Stage 2', g5: 'Stage 2', g6: 'Stage 2', g7: 'Stage 2'},
+      values: {layout: 'TP 4 × PP 2', weights: {text: '≈ 17.5 GB', tone: 'good'}, comm: 'TP inside node · PP between'},
+    },
+    {
+      short: 'Bubbles',
+      kind: '주의',
+      title: 'A stage waits while the other one works',
+      text: [
+        'Stage 2 cannot start a step until stage 1 hands over its activations. With a single request, one node is always idle: the pipeline "bubble".',
+        'Serving engines fill the pipeline by keeping several batches in flight, so both stages work at once under load. Each stage boundary still adds a network hop to every token, so PP adds a little latency per token.',
+      ],
+      keyIdea: 'Common rule of thumb: TP up to the GPU count of one node, then PP across nodes.',
+      flows: [{from: 'g1', to: 'g4', label: 'Waits', type: 'request'}],
+      focus: ['g0', 'g1', 'g2', 'g3', 'g4', 'g5', 'g6', 'g7'],
+      status: {g4: 'warn', g5: 'warn', g6: 'warn', g7: 'warn'},
+      values: {comm: {text: 'idle stage at low load', tone: 'bad'}},
+    },
+    {
+      short: 'Expert parallel',
+      kind: '원리',
+      title: 'Mixture-of-experts models spread the experts',
+      text: [
+        'A mixture-of-experts (MoE) model has many feed-forward "experts" per layer, and a router sends each token to only a few of them. Expert parallelism (EP) places different experts on different GPUs instead of slicing every expert.',
+        'Each layer then needs an all-to-all exchange: tokens travel to the GPUs holding their chosen experts and the results come back. The attention parts usually run with DP or TP. If one expert is popular, its GPU becomes the hot spot.',
+      ],
+      flows: [
+        {from: 'g0', to: 'g5', label: 'Tokens → experts', type: 'request'},
+        {from: 'g6', to: 'g3', label: 'Results', type: 'response'},
+      ],
+      focus: ['g0', 'g3', 'g5', 'g6'],
+      status: {g4: null, g5: null, g6: null, g7: null},
+      badges: {g0: 'Experts 1–8', g1: 'Experts 9–16', g2: 'Experts 17–24', g3: 'Experts 25–32', g4: 'Experts 33–40', g5: 'Experts 41–48', g6: 'Experts 49–56', g7: 'Experts 57–64'},
+      values: {layout: 'EP 8 (MoE)', comm: 'all-to-all every MoE layer', weights: 'its experts + shared parts'},
+    },
+    {
+      short: 'LeaderWorkerSet',
+      kind: '원리',
+      title: 'On Kubernetes, one replica becomes a group of Pods',
+      text: [
+        'A replica that spans two nodes is two Pods that must start together. A LeaderWorkerSet (LWS) models this: each group has a leader Pod (for vLLM, the API server and the distributed runtime head, e.g. Ray) and worker Pods, and replicas counts whole groups.',
+        'The group is useless until every Pod is running. If only node A has free GPUs, the leader sits waiting and holds 4 GPUs for nothing. Gang scheduling (all or nothing), for example with Kueue or Volcano, avoids that partial placement.',
+      ],
+      keyIdea: 'Also keep a group inside one network domain (same rack or fabric). Topology-aware placement matters as much as GPU count.',
+      flows: [
+        {from: 'lws', to: 'g0', label: 'Leader Pod', type: 'watch'},
+        {from: 'lws', to: 'g6', label: 'Worker Pod', type: 'watch'},
+      ],
+      focus: ['lws', 'g0', 'g6'],
+      badges: {g0: 'Leader', g1: null, g2: null, g3: null, g4: 'Worker', g5: null, g6: null, g7: null},
+      values: {layout: 'TP 4 × PP 2 · 1 group'},
+    },
+    {
+      short: 'One GPU fails',
+      kind: '장애',
+      title: 'One failed GPU stops the whole replica',
+      text: [
+        'GPU 6 throws an error and the worker Pod on node B dies. Stage 2 is gone, so stage 1 has nobody to hand its activations to. Every request on this replica fails, even though 7 GPUs are healthy.',
+        'With restartPolicy RecreateGroupOnPodRestart, LWS recreates the whole group, which then reloads 140 GB of weights before it serves again. Keep at least two replicas behind the gateway so traffic moves to the other group meanwhile.',
+      ],
+      keyIdea: 'More GPUs per replica means more parts that can each take the replica down. Size the failure domain, not just the memory.',
+      flows: [{from: 'g1', to: 'g6', label: 'No receiver', type: 'request'}],
+      focus: ['g6', 'lws'],
+      status: {g6: 'error', g4: 'off', g5: 'off', g7: 'off', g0: 'warn', g1: 'warn', g2: 'warn', g3: 'warn'},
+      badges: {g6: 'GPU error'},
+      values: {layout: {text: 'replica down', tone: 'bad'}, kv: {text: 'lost with the group', tone: 'bad'}},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Split by width inside a node, by depth across nodes',
+      text: [
+        'DP copies the model for throughput. TP splits each layer and needs a fast link, so it stays inside a node. PP splits the layer stack and crosses nodes with little traffic but adds bubbles and a hop. EP spreads MoE experts with all-to-all routing.',
+        'Splitting also frees memory for the KV cache. On Kubernetes, a multi-node replica is a LeaderWorkerSet group that must be scheduled and restarted as one unit.',
+      ],
+      keyIdea: 'Start with the smallest split that fits weights plus enough KV cache, then add replicas (DP) for throughput.',
+      flows: [
+        {from: 'gw', to: 'g0', label: 'Requests', type: 'request'},
+        {from: 'g1', to: 'g4', label: 'Stage 2', type: 'request'},
+      ],
+      focus: ['g0', 'g4'],
+      status: {g0: null, g1: null, g2: null, g3: null, g4: null, g5: null, g6: null, g7: null},
+      badges: {g0: 'TP 4 · stage 1', g4: 'TP 4 · stage 2'},
+      values: {layout: 'TP 4 × PP 2', weights: '≈ 17.5 GB', comm: 'TP inside · PP between', kv: {text: 'room to spare', tone: 'good'}},
+    },
+  ]}
+/>
+
+## Four ways to split, compared
+
+| Kind | What is split | Traffic between GPUs | Where it fits |
+|---|---|---|---|
+| Data parallel (DP) | Nothing: full copies | None while serving | More throughput when one copy fits |
+| Tensor parallel (TP) | The matrices inside every layer | All-reduce about twice per layer, every step | Inside one node, over NVLink or similar |
+| Pipeline parallel (PP) | The layer stack, into stages | Activations at each stage boundary, point to point | Across nodes, when one node is not enough |
+| Expert parallel (EP) | MoE experts, placed on different GPUs | All-to-all token routing every MoE layer | MoE models, combined with DP or TP for attention |
+
+They combine. A large deployment can be TP inside each node, PP across nodes, and DP for many such replicas.
+
+## Try it yourself
+
+```bash
+nvidia-smi topo -m                                    # NV# = NVLink between GPUs, SYS/PHB = slower paths
+vllm serve <model> --tensor-parallel-size 4           # e.g. vLLM: one node, 4 GPUs
+vllm serve <model> --tensor-parallel-size 4 \
+  --pipeline-parallel-size 2                          # 8 GPUs over 2 nodes (needs a multi-node runtime such as Ray)
+vllm serve <moe-model> --tensor-parallel-size 8 --enable-expert-parallel   # MoE experts spread over GPUs
+kubectl get leaderworkerset -A                        # Groups and their size
+kubectl get pods -L leaderworkerset.sigs.k8s.io/worker-index   # 0 = leader, 1.. = workers
+```
+
+Further reading: [vLLM parallelism and scaling](https://docs.vllm.ai/en/stable/serving/parallelism_scaling.html) · [LeaderWorkerSet](https://lws.sigs.k8s.io/) · [Megatron-LM paper](https://arxiv.org/abs/1909.08053) · [Kueue](https://kueue.sigs.k8s.io/) · [How the KV Cache Fills Up](../llm/kv-cache.mdx) · [Splitting Prefill and Decode](../llm/pd-disaggregation.mdx) · [Requesting GPUs by Criteria (DRA)](../k8s/dra.mdx)

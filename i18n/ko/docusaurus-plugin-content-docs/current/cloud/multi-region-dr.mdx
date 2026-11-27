@@ -1,0 +1,249 @@
+---
+id: multi-region-dr
+title: 리전 전체가 멈추면
+sidebar_label: 10 · 리전 전체가 멈추면
+description: 여러 리전에 걸친 재해 복구를 애니메이션으로 따라간다. 복제가 백업이 아닌 이유, 3-2-1 규칙과 변경 불가 백업, 백업·복원부터 액티브-액티브까지 네 가지 전략의 RPO·RTO·비용, DNS 장애 조치와 전환 훈련
+summary: '백업과 복제의 차이, 네 가지 DR 전략의 RPO·RTO·비용, DNS 장애 조치와 훈련.'
+icon: shield
+hide_table_of_contents: true
+---
+
+# 리전 전체가 멈추면
+
+가용 영역에 나눠 두면 데이터센터 하나가 멈추는 일은 견딘다. 하지만 리전 전체가 장애를 겪거나 누군가 실수로 테이블을 지우면 소용이 없다. 쇼핑몰이 두 번째 리전을 준비하고, 결국 그 리전을 쓰게 되는 과정을 따라가 본다.
+
+<StepDiagram
+  width={1000}
+  height={460}
+  meta={{duration: '약 12분', level: '중급'}}
+  groups={[
+    {label: '리전 A · 주', x: 225, y: 25, w: 330, h: 290, tone: 'biz'},
+    {label: '리전 B · 복구', x: 610, y: 25, w: 375, h: 290, tone: 'biz'},
+    {label: '백업 계정 · 별도 자격 증명', x: 225, y: 340, w: 760, h: 110, tone: 'plain'},
+  ]}
+  nodes={[
+    {id: 'user', label: '사용자', sub: 'shop.example.com', icon: 'browser', tone: 'ext', x: 100, y: 110, show: true},
+    {id: 'dns', label: 'DNS 장애 조치', sub: '헬스 체크 · TTL', icon: 'route', tone: 'cp', x: 100, y: 270},
+    {id: 'appA', label: '앱', sub: '리전 A · 서비스 중', icon: 'server', tone: 'app', x: 390, y: 110, show: true},
+    {id: 'dbA', label: 'DB 주', sub: '리전 A', icon: 'db', tone: 'store', x: 390, y: 245, show: true},
+    {id: 'appB', label: '앱', sub: '리전 B', icon: 'server', tone: 'app', x: 720, y: 110},
+    {id: 'dbB', label: '리전 B의 DB', sub: '복제본 또는 복원', icon: 'db', tone: 'store', x: 720, y: 245},
+    {id: 'iac', label: 'IaC 템플릿', sub: '인프라 다시 만들기', icon: 'layers', tone: 'cp', x: 895, y: 175, w: 140},
+    {id: 'backup', label: '백업 사본', sub: '변경 불가 · 잠금', icon: 'archive', tone: 'store', x: 600, y: 395, w: 170},
+  ]}
+  metrics={[
+    {id: 'strategy', label: '전략'},
+    {id: 'rpo', label: '잃는 데이터 (RPO)'},
+    {id: 'rto', label: '멈추는 시간 (RTO)'},
+    {id: 'cost', label: '평소 비용'},
+  ]}
+  learn={[
+    {text: '복제만으로는 백업이 되지 않는 이유', at: 1},
+    {text: '3-2-1 규칙, 별도 계정, 변경 불가 백업', at: 2},
+    {text: '백업·복원, 파일럿 라이트, 웜 스탠바이, 액티브-액티브', at: 3},
+    {text: 'DNS 장애 조치와 복제 지연이 실제 RTO·RPO를 정하는 방식', at: 6},
+    {text: '숨은 의존성, 스플릿 브레인, 훈련이 필요한 이유', at: 7},
+  ]}
+  steps={[
+    {
+      short: '한 리전',
+      kind: '시작',
+      title: '모든 것이 한 리전에 있다',
+      text: [
+        '쇼핑몰은 앱과 주 DB를 리전 A에서 돌리고, 여러 가용 영역에 나눠 두었다. 영역 하나의 장애는 리전 안에서 처리된다.',
+        '처리되지 않는 재해가 두 가지 있다. 모든 영역을 한꺼번에 덮치는 리전 전체 장애(잘못된 네트워크 변경, 공유 서비스 고장)와, 데이터 자체가 망가지는 일(테이블 삭제, 잘못된 마이그레이션, 랜섬웨어)이다.',
+      ],
+      keyIdea: '재해 복구(DR)는 사업 쪽과 합의한 두 숫자에서 시작한다. RPO는 최근 데이터를 얼마나 잃어도 되는지, RTO는 서비스가 얼마나 멈춰도 되는지다.',
+      flows: [
+        {from: 'user', to: 'appA', label: '주문', type: 'request'},
+        {from: 'appA', to: 'dbA', label: '쓰기', type: 'request'},
+      ],
+      focus: ['appA', 'dbA'],
+      status: {appA: 'ok', dbA: 'ok'},
+      values: {strategy: '아직 없음', rpo: '?', rto: '?', cost: '리전 1개'},
+    },
+    {
+      short: '복제',
+      kind: '주의',
+      title: '복제본은 실수도 함께 복사한다',
+      text: [
+        '팀은 리전 B에 리전 간 읽기 복제본을 둔다. 주 DB는 변경 내용을 비동기로 보내므로 복제본은 보통 몇 초 뒤처진다. 이 차이가 복제 지연(replication lag)이다.',
+        '복제는 리전 A를 잃는 상황에는 대비가 되지만, 잘못된 데이터에는 대비가 안 된다. DROP TABLE이나 행을 암호화하는 랜섬웨어도 정상 쓰기처럼 몇 초 안에 복제본에 도착한다.',
+      ],
+      keyIdea: '복제는 가용성을 위한 것이고, 백업은 과거로 돌아가기 위한 것이다. 둘 다 필요하다.',
+      flows: [{from: 'dbA', to: 'dbB', label: '비동기 복제', type: 'request'}],
+      focus: ['dbA', 'dbB'],
+      status: {dbB: 'ok'},
+      badges: {dbB: '지연 ~2초'},
+    },
+    {
+      short: '백업',
+      kind: '원리',
+      title: '백업: 3-2-1, 다른 계정, 그리고 잠금',
+      text: [
+        '정기 스냅샷과 연속 로그 백업이 있으면 실수가 일어나기 직전 시점으로 복원할 수 있다. 3-2-1 규칙은 데이터 사본을 최소 3개, 서로 다른 저장 매체 2종류에, 그중 1개는 다른 장소에 두라는 것이다.',
+        '클라우드에서 "다른 장소"는 다른 리전, 가능하면 자격 증명이 분리된 다른 계정을 뜻한다. 관리자 키 하나를 도둑맞아도 데이터와 백업을 함께 지울 수 없게 하기 위해서다. 변경 불가 잠금(예: S3 Object Lock, 잠긴 백업 볼트)을 걸면 만료 전에는 누구도 사본을 지울 수 없다.',
+      ],
+      keyIdea: '한 번도 복원해 보지 않은 백업은 백업이 아니라 희망이다. 복원 테스트를 일정에 넣고 시간을 잰다.',
+      flows: [{from: 'dbA', to: 'backup', label: '스냅샷 복사', type: 'request'}],
+      focus: ['backup'],
+      status: {backup: 'ok'},
+      badges: {dbB: null, backup: '30일 잠금'},
+    },
+    {
+      short: '백업·복원',
+      kind: '원리',
+      title: '전략 1: 백업과 복원',
+      text: [
+        '가장 싼 전략은 리전 B에 아무것도 띄워 두지 않는다. 백업만 그곳에 복사해 둔다. 재해가 나면 IaC 템플릿으로 인프라를 만들고, 최신 백업으로 DB를 복원하고, 앱을 배포한 뒤 DNS를 그쪽으로 돌린다.',
+        'RPO는 마지막으로 쓸 수 있는 백업 이후의 시간이고, RTO는 이 단계를 모두 거치는 시간이라 보통 몇 시간이다. 내부 도구나 한동안 멈춰도 되는 시스템에 맞다.',
+      ],
+      flows: [
+        {from: 'iac', to: 'appB', label: '생성', type: 'request'},
+        {from: 'backup', to: 'dbB', label: '복원', type: 'request'},
+      ],
+      focus: ['iac', 'backup', 'dbB'],
+      status: {appB: 'off', dbB: 'off'},
+      badges: {dbB: '복원', backup: null},
+      values: {strategy: '백업·복원', rpo: '몇 시간', rto: '몇 시간', cost: '$'},
+    },
+    {
+      short: '파일럿 라이트',
+      kind: '원리',
+      title: '전략 2: 파일럿 라이트',
+      text: [
+        '데이터는 복제본으로 리전 B에 살아 있게 두고, 앱 서버는 꺼 두거나 0대로 줄여 둔다. 가스레인지의 불씨(pilot light)처럼 핵심만 켜 두고 나머지는 빨리 키울 수 있게 한다.',
+        '재해가 나면 복제본을 승격하고 앱을 띄우거나 늘린다. RPO는 복제 지연(몇 초~몇 분)으로, RTO는 수십 분으로 줄어든다. 평소 비용은 대부분 복제본 값이다.',
+      ],
+      flows: [{from: 'dbA', to: 'dbB', label: '복제', type: 'request'}],
+      focus: ['dbB', 'appB'],
+      status: {dbB: 'ok', appB: 'off'},
+      badges: {dbB: '복제본', appB: '0대'},
+      values: {strategy: '파일럿 라이트', rpo: '몇 초~몇 분', rto: '수십 분', cost: '$$'},
+    },
+    {
+      short: '웜·액티브',
+      kind: '원리',
+      title: '전략 3·4: 웜 스탠바이와 액티브-액티브',
+      text: [
+        '웜 스탠바이는 리전 B에 작지만 완전한 스택을 띄워 둔다. 바로 트래픽을 받을 수 있고 전환하면서 규모를 키우므로 RTO가 몇 분이다.',
+        '멀티 사이트 액티브-액티브는 두 리전 모두 늘 사용자를 받으므로 한쪽을 잃어도 거의 멈추지 않는다. 어려운 것은 데이터다. 두 리전이 모두 쓰기를 받으려면 그런 용도로 만든 데이터베이스가 있거나, 레코드마다 담당 리전을 하나로 정하는 설계가 필요하다. 비용도 가장 크다.',
+      ],
+      keyIdea: '한 단계 올라갈 때마다 RPO·RTO는 줄고 평소 비용과 복잡도는 늘어난다. 회사 전체에 전략 하나를 정하지 말고 시스템별로 고른다.',
+      flows: [
+        {from: 'user', to: 'appA', label: '트래픽', type: 'request'},
+        {from: 'user', to: 'appB', label: '트래픽', type: 'request', bend: -40},
+        {from: 'dbA', to: 'dbB', label: '복제', type: 'request'},
+      ],
+      focus: ['appB'],
+      status: {appB: 'ok'},
+      badges: {appB: '실행 중'},
+      values: {strategy: '웜 스탠바이 → 액티브-액티브', rpo: '몇 초 → 거의 0', rto: '몇 분 → 거의 0', cost: '$$$ → $$$$'},
+    },
+    {
+      short: '리전 장애',
+      kind: '장애',
+      title: '리전 A가 멈춘다: DNS가 전환되고 복제본이 승격된다',
+      text: [
+        '쇼핑몰은 웜 스탠바이를 쓴다. 리전 A가 응답하지 않는다. DNS 헬스 체크(예: 30초마다 확인, 3번 연속 실패 시)가 리전 A를 비정상으로 표시하고, DNS는 리전 B의 주소로 답하기 시작한다.',
+        '클라이언트와 리졸버는 TTL이 끝날 때까지 옛 답을 쓰므로 60초 같은 짧은 TTL이 중요하다. 리전 B의 복제본이 주 DB로 승격된다. 그 순간까지 복제되지 않은 데이터는 사라지므로, 실제 RPO는 장애 순간의 복제 지연과 같다.',
+      ],
+      keyIdea: '복제 지연 지표를 매일 본다. 계획서에 적힌 숫자가 아니라 이 값이 실제 RPO다.',
+      flows: [
+        {from: 'dns', to: 'appA', label: '확인 실패', type: 'watch'},
+        {from: 'user', to: 'dns', label: '조회', type: 'request'},
+        {from: 'user', to: 'appB', label: '주문', type: 'request', bend: -40},
+        {from: 'appB', to: 'dbB', label: '쓰기', type: 'request'},
+      ],
+      focus: ['dns', 'appB', 'dbB'],
+      status: {appA: 'error', dbA: 'error'},
+      badges: {dns: '→ 리전 B', dbB: '승격', appB: '규모 확대'},
+      values: {rpo: {text: '주문 ~2초분', tone: 'bad'}, rto: {text: '~5분', tone: 'good'}},
+    },
+    {
+      short: '함정',
+      kind: '주의',
+      title: '숨은 의존성, 스플릿 브레인, 데이터를 둘 수 있는 곳',
+      text: [
+        '전환은 아무도 목록에 적지 않은 것 때문에 자주 실패한다. 컨테이너 레지스트리, 시크릿, 암호화 키, CI 시스템이 리전 A에만 있었던 경우다. 복구는 멈춘 리전의 컨트롤 플레인이 아니라 리전 B에 이미 있는 것에 기대야 한다.',
+        '리전 A가 돌아왔을 때 옛 주 DB가 다시 쓰기를 받으면 안 된다. 그러면 주 DB 두 개가 서로 다르게 갈라진다(스플릿 브레인). 되돌아갈 때(failback)는 먼저 B의 데이터로 A를 다시 맞춘다. 데이터 거주 규정도 확인한다. 개인정보 관련 법이 개인 데이터를 둘 수 있는 리전을 제한할 수 있다.',
+      ],
+      flows: [{from: 'dbA', to: 'dbB', label: '쓰기 금지!', type: 'watch'}],
+      focus: ['dbA', 'dbB'],
+      status: {appA: 'warn', dbA: 'warn'},
+      badges: {dbA: '격리', appB: null},
+    },
+    {
+      short: '훈련',
+      kind: '원리',
+      title: '연습한다: 전환 훈련과 복원 테스트',
+      text: [
+        'DR 계획은 한 번 실제로 돌려 봐야 진짜가 된다. 팀은 정기적으로 훈련(게임 데이)을 한다. 일부러 리전 B로 전환하고, 실제 RTO와 RPO를 재고, 예상 못 한 수작업을 모두 적는다.',
+        '복원 테스트는 백업에 같은 일을 한다. 백업 하나를 골라 빈 환경에 복원하고, 앱이 그 데이터를 읽을 수 있는지 확인한다. 그다음 런북을 고치고 느린 단계를 자동화한다.',
+      ],
+      keyIdea: '지난 훈련에서 잰 숫자가 발표 자료의 어떤 숫자보다 낫다. 시험해 보지 않았다면 안 될 거라고 가정한다.',
+      flows: [
+        {from: 'backup', to: 'dbB', label: '복원 테스트', type: 'request'},
+        {from: 'dns', to: 'appB', label: '헬스 체크', type: 'watch'},
+      ],
+      focus: ['backup', 'dbB', 'dns'],
+      status: {appA: 'ok', dbA: 'ok'},
+      badges: {dbA: null, dns: null, dbB: null},
+      values: {rpo: '측정값', rto: '측정값'},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: 'RPO·RTO를 합의하고, 필요한 만큼만 비용을 낸다',
+      text: [
+        '가용 영역은 데이터센터 장애를, 두 번째 리전은 리전 전체 장애를 막는다. 다른 계정에 잠가 둔 백업은 복제가 그대로 옮겨 버릴 실수와 공격을 막는다.',
+        '백업·복원, 파일럿 라이트, 웜 스탠바이, 액티브-액티브는 비용과 복구 시간을 맞바꾼다. 실제로 얻는 숫자는 DNS 장애 조치, 장애 순간의 복제 지연, 숨은 의존성이 정한다.',
+      ],
+      keyIdea: '시스템마다 RPO와 RTO를 적고, 그것을 만족하는 가장 싼 전략을 고르고, 훈련과 복원 테스트로 증명한다.',
+      flows: [
+        {from: 'user', to: 'appA', label: '주문', type: 'request'},
+        {from: 'dbA', to: 'dbB', label: '복제', type: 'request'},
+        {from: 'dbA', to: 'backup', label: '백업', type: 'request'},
+      ],
+      focus: ['dbB', 'backup'],
+      status: {appB: 'ok', dbB: 'ok'},
+      badges: {appB: null},
+      values: {strategy: '시스템별', rpo: '합의됨', rto: '합의됨', cost: '맞춤'},
+    },
+  ]}
+/>
+
+## 네 가지 DR 전략
+
+범위는 AWS 재해 복구 백서를 따른다. 실제 숫자는 훈련에서 나온다.
+
+| 전략 | 리전 B에서 도는 것 | RPO | RTO | 평소 비용 |
+|---|---|---|---|---|
+| 백업과 복원 | 백업 사본만. 인프라는 당일 IaC로 만든다 | 몇 시간 (마지막 백업 이후) | 몇 시간 | $ |
+| 파일럿 라이트 | 살아 있는 데이터(복제본). 앱은 꺼짐 또는 0대 | 몇 초~몇 분 (복제 지연) | 수십 분 | $$ |
+| 웜 스탠바이 | 바로 트래픽을 받을 수 있는 작은 전체 스택 | 몇 초~몇 분 | 몇 분 | $$$ |
+| 멀티 사이트 액티브-액티브 | 전체 용량, 늘 사용자를 받음 | 거의 0 | 거의 0 | $$$$ |
+
+어떤 전략이든 백업은 따로 둔다. 지운 테이블이나 암호화된 데이터를 되돌리는 것은 특정 시점의 사본뿐이다.
+
+## 직접 확인해 보기
+
+AWS 예시다. 다른 클라우드에도 이름만 다른 같은 부품이 있다.
+
+```bash
+# DB 스냅샷을 복구 리전으로 복사 (대상 리전에서 실행, 암호화된 스냅샷은 --kms-key-id 도 필요)
+aws rds copy-db-snapshot --region ap-northeast-1 \
+  --source-db-snapshot-identifier arn:aws:rds:ap-northeast-2:<계정>:snapshot:<스냅샷> \
+  --target-db-snapshot-identifier <스냅샷>-dr
+
+aws ec2 copy-snapshot --region ap-northeast-1 --source-region ap-northeast-2 --source-snapshot-id <snap-id>   # 디스크 스냅샷 복사
+
+aws backup describe-backup-vault --backup-vault-name <볼트>          # Locked: 볼트 잠금이 켜져 있는지
+aws route53 list-health-checks                                        # DNS 장애 조치 뒤의 헬스 체크
+aws route53 get-health-check-status --health-check-id <id>            # 지금 각 확인 지점이 보는 상태
+dig +noall +answer shop.example.com                                   # 클라이언트가 캐시할 TTL
+```
+
+복원 훈련 체크리스트: 백업 하나를 무작위로 고른다 → 빈 환경에 복원한다 → 그 데이터로 앱을 띄운다 → 가장 최근 레코드의 시각을 본다(RPO) → 걸린 전체 시간(RTO)과 모든 수작업을 적는다.
+
+더 읽을거리: [클라우드의 재해 복구 옵션 (AWS 백서)](https://docs.aws.amazon.com/whitepapers/latest/disaster-recovery-workloads-on-aws/disaster-recovery-options-in-the-cloud.html) · [안정성 원칙 (AWS Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/reliability-pillar/welcome.html) · [DNS 장애 조치 (Route 53)](https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/dns-failover.html) · [재해 복구 계획 가이드 (Google Cloud)](https://cloud.google.com/architecture/dr-scenarios-planning-guide) · [가용 영역 하나가 멈추면](../cloud/az-failover.mdx) · [DNS가 주소를 찾아가는 길](../basic/dns-resolution.mdx)

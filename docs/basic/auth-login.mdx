@@ -1,0 +1,219 @@
+---
+id: auth-login
+title: How Logging In Works (Sessions, JWT, OIDC)
+sidebar_label: 02 · How Logging In Works
+description: Animated walkthrough of logging in to a web app, from password hashing and session cookies to stateless JWTs, "Log in with Google" through the OAuth 2.0 authorization code flow with PKCE and OpenID Connect, ID, access and refresh tokens, and 401 versus 403
+summary: 'Password hashes, session cookies versus JWTs, the OIDC authorization code flow with PKCE, three kinds of token, and 401 versus 403.'
+icon: ticket
+hide_table_of_contents: true
+---
+
+# How Logging In Works (Sessions, JWT, OIDC)
+
+You type a password, or click **Log in with Google**, and the site knows who you are on every page after that. Follow how: **password check → session cookie or JWT → OAuth 2.0 and OpenID Connect → tokens → 401 and 403**.
+
+<StepDiagram
+  width={1000}
+  height={460}
+  meta={{duration: '~12 min', level: 'Beginner'}}
+  nodes={[
+    {id: 'user', label: 'Browser', sub: 'You', icon: 'browser', tone: 'ext', x: 110, y: 250, show: true},
+    {id: 'app', label: 'Web app', sub: 'shop.example.com', icon: 'server', tone: 'app', x: 420, y: 110, show: true},
+    {id: 'session', label: 'Session store', sub: 'Session ID → user', icon: 'disk', tone: 'store', x: 420, y: 250},
+    {id: 'userdb', label: 'User DB', sub: 'Password hashes', icon: 'db', tone: 'store', x: 420, y: 390},
+    {id: 'idp', label: 'Identity provider', sub: 'e.g. Google', icon: 'shield', tone: 'cp', x: 740, y: 110, w: 170},
+    {id: 'api', label: 'API', sub: 'Resource server', icon: 'target', tone: 'cp', x: 740, y: 320},
+  ]}
+  metrics={[
+    {id: 'who', label: 'Who'},
+    {id: 'cred', label: 'Credential'},
+    {id: 'resp', label: 'Response'},
+  ]}
+  learn={[
+    {text: 'Authentication (who you are) versus authorization (what you may do)', at: 0},
+    {text: 'Why passwords are stored as slow, salted hashes', at: 1},
+    {text: 'Session cookies versus stateless JWTs, and revoking each', at: 2},
+    {text: 'The OAuth 2.0 authorization code flow with PKCE, and what OIDC adds', at: 4},
+    {text: 'ID, access and refresh tokens, and 401 versus 403', at: 6},
+  ]}
+  steps={[
+    {
+      short: 'Start',
+      kind: '시작',
+      title: 'Two questions on every request',
+      text: [
+        'You open shop.example.com and type your email and password. The app has to answer two different questions.',
+        'Authentication asks "who are you?". Authorization asks "may you do this?". Logging in is authentication. Every later request still needs authorization.',
+      ],
+      flows: [{from: 'user', to: 'app', label: 'POST /login', type: 'request'}],
+      focus: ['user', 'app'],
+      values: {who: 'Unknown', cred: 'Password', resp: '—'},
+    },
+    {
+      short: 'Password hash',
+      kind: '원리',
+      title: 'The app compares hashes, never stored passwords',
+      text: [
+        'The user DB never holds your password. It holds a hash made with a slow password hashing function such as Argon2id or bcrypt, plus a random salt for each user.',
+        'The app hashes the password you typed with the same salt and compares the result. If the DB leaks, attackers get only hashes. The salt and the slowness make guessing them expensive.',
+      ],
+      keyIdea: 'Use a password hashing function (Argon2id, scrypt, bcrypt), not a fast hash like SHA-256, and never store plaintext or reversible encryption.',
+      flows: [{from: 'app', to: 'userdb', label: 'Compare hash', type: 'request'}],
+      focus: ['app', 'userdb'],
+      badges: {userdb: 'argon2id$…'},
+      values: {who: 'alice', cred: 'Password ✓'},
+    },
+    {
+      short: 'Session',
+      kind: '원리',
+      title: 'A session cookie remembers you',
+      text: [
+        'HTTP itself has no memory between requests. The app creates a long random session ID, saves "this ID = alice" in the session store, and sends it back with Set-Cookie.',
+        'The browser sends the cookie with every later request. HttpOnly keeps JavaScript from reading it, Secure sends it only over HTTPS, and SameSite limits when other sites can make the browser send it.',
+      ],
+      keyIdea: 'Logging out deletes the record in the session store, so the cookie stops working at once. The server stays in control.',
+      flows: [
+        {from: 'app', to: 'session', label: 'Save ID', type: 'request'},
+        {from: 'app', to: 'user', label: 'Set-Cookie', type: 'response'},
+      ],
+      focus: ['session', 'user'],
+      badges: {userdb: null, session: 'sid=8f3…'},
+      values: {cred: 'Session cookie', resp: '200 OK'},
+    },
+    {
+      short: 'JWT',
+      kind: '주의',
+      title: 'A JWT carries the claims itself',
+      text: [
+        'Instead of an ID to look up, the app can hand out a JSON Web Token (JWT): header.payload.signature, each part base64url-encoded. The payload holds claims such as sub (who), exp (expiry) and aud (meant for whom).',
+        'Any server with the key can check the signature without a lookup, so JWTs scale well. But the payload is only encoded, not encrypted: anyone can read it, so keep secrets out.',
+      ],
+      keyIdea: 'A signed JWT stays valid until exp. To cut off a stolen one early you need extra work, such as a denylist, so keep lifetimes short.',
+      flows: [{from: 'app', to: 'user', label: 'JWT', type: 'response'}],
+      focus: ['user', 'app'],
+      badges: {session: null, user: 'exp: 15 min'},
+      values: {cred: 'JWT (signed)'},
+    },
+    {
+      short: 'Redirect',
+      kind: '원리',
+      title: '"Log in with Google": the app sends you to the identity provider',
+      text: [
+        'With OAuth 2.0 and OpenID Connect (OIDC), the app never sees your password. It redirects the browser to the identity provider\'s authorize endpoint with client_id, redirect_uri, scope=openid email, a random state and a PKCE code_challenge.',
+        'You log in at the identity provider, on its own domain, and approve what the app asks for. OAuth 2.0 is about granting access. OIDC adds the identity layer: who logged in.',
+      ],
+      flows: [
+        {from: 'app', to: 'user', label: '302 to IdP', type: 'response'},
+        {from: 'user', to: 'idp', label: 'Log in, consent', type: 'request'},
+      ],
+      focus: ['user', 'idp'],
+      badges: {user: null, idp: 'state · PKCE'},
+      values: {who: 'Logging in at IdP', cred: '—', resp: '302 Found'},
+    },
+    {
+      short: 'Code exchange',
+      kind: '원리',
+      title: 'A short-lived code is traded for tokens behind the scenes',
+      text: [
+        'The identity provider redirects back to redirect_uri with a one-time authorization code and the same state. The app checks that state matches, which blocks forged login responses.',
+        'The app then calls the token endpoint directly, server to server, with the code and the PKCE code_verifier. Only the client that made the challenge knows the verifier, so a stolen code alone is useless.',
+      ],
+      keyIdea: 'Use the authorization code flow with PKCE for every kind of client, including single-page and mobile apps. The old implicit flow is no longer recommended.',
+      flows: [
+        {from: 'idp', to: 'user', label: 'code + state', type: 'response'},
+        {from: 'user', to: 'app', label: '/callback?code', type: 'request'},
+        {from: 'app', to: 'idp', label: 'code + verifier', type: 'request'},
+      ],
+      focus: ['app', 'idp'],
+      values: {cred: 'Authorization code'},
+    },
+    {
+      short: 'Three tokens',
+      kind: '원리',
+      title: 'ID token, access token, refresh token',
+      text: [
+        'The ID token is a JWT for the app. It says who logged in (sub, email) and must be checked: signature against the provider\'s published keys (JWKS), iss, aud equal to the client_id, and exp.',
+        'The access token is for the API, sent as Authorization: Bearer. The refresh token lets the app get a new access token without asking you to log in again, so it is stored securely and never sent to APIs.',
+      ],
+      keyIdea: 'Do not use an ID token to call APIs, and do not treat an access token as proof of who the user is. Each token has one audience.',
+      flows: [
+        {from: 'idp', to: 'app', label: 'ID · access · refresh', type: 'response'},
+        {from: 'app', to: 'api', label: 'Bearer access token', type: 'request'},
+      ],
+      focus: ['app', 'api'],
+      status: {api: 'ok'},
+      badges: {idp: null, app: 'ID token ✓'},
+      values: {who: 'alice (from ID token)', cred: 'Access token', resp: '200 OK'},
+    },
+    {
+      short: '401 vs 403',
+      kind: '문제',
+      title: 'Expired is 401, not allowed is 403',
+      text: [
+        'An hour later the access token has expired. The API answers 401 Unauthorized with a WWW-Authenticate header. The app uses the refresh token to get a new access token and retries.',
+        'Then alice tries an admin endpoint. Her token is valid, but its scopes do not allow it. The API answers 403 Forbidden. A new token will not help, because she needs more permission, not a fresh login.',
+      ],
+      keyIdea: '401 means "I do not know who you are" (missing, invalid or expired credentials). 403 means "I know who you are, and the answer is no".',
+      flows: [
+        {from: 'api', to: 'app', label: '401 expired', type: 'response'},
+        {from: 'app', to: 'idp', label: 'Refresh token', type: 'request'},
+        {from: 'app', to: 'api', label: 'DELETE /admin', type: 'request'},
+      ],
+      focus: ['api'],
+      status: {api: 'error'},
+      badges: {app: null, api: '403 Forbidden'},
+      values: {cred: {text: 'Access token (refreshed)', tone: 'good'}, resp: {text: '401 → refresh · 403 admin', tone: 'bad'}},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Prove once, carry proof, check every time',
+      text: [
+        'A login proves who you are once, against a password hash or an identity provider. After that, a session cookie or a token carries that proof on every request.',
+        'Sessions are easy to revoke but need a store. JWTs need no lookup but live until they expire. OIDC lets the app use an identity provider, with the authorization code flow and PKCE, and hands out ID, access and refresh tokens.',
+      ],
+      keyIdea: 'When an API call fails, read the status first: 401 is a credential problem (log in or refresh), 403 is a permission problem (change the grant).',
+      flows: [
+        {from: 'user', to: 'app', label: 'Cookie / token', type: 'request'},
+        {from: 'app', to: 'api', label: 'Bearer', type: 'request'},
+      ],
+      focus: ['user', 'app', 'api', 'idp'],
+      status: {api: null},
+      badges: {api: null},
+    },
+  ]}
+/>
+
+## Session cookie versus JWT
+
+| | Session cookie | JWT (self-contained token) |
+|---|---|---|
+| What the client holds | A random ID with no meaning by itself | Signed claims (sub, exp, aud, …) anyone can read |
+| How the server checks it | Looks the ID up in the session store | Verifies the signature with a key, no lookup |
+| Revoking it | Delete the session record, effective at once | Wait for exp, or keep a denylist |
+| Typical use | Classic server-rendered web apps | APIs, services that share one issuer, OIDC ID tokens |
+| Main risk | Session store becomes a dependency | Long lifetimes, secrets put in the readable payload |
+
+## Three tokens from OIDC
+
+| Token | Meant for | Format | Lifetime | Send it to |
+|---|---|---|---|---|
+| ID token | The app (client) | Always a JWT | Short | Nobody; the app checks it and reads who logged in |
+| Access token | The API (resource server) | JWT or opaque string | Short (minutes to an hour) | The API, as `Authorization: Bearer` |
+| Refresh token | The identity provider | Usually opaque | Long | Only the token endpoint |
+
+## Try it yourself
+
+```bash
+curl -s https://accounts.google.com/.well-known/openid-configuration | jq '{issuer, authorization_endpoint, token_endpoint, jwks_uri}'   # OIDC discovery
+curl -s https://www.googleapis.com/oauth2/v3/certs | jq '.keys[].kid'   # Public keys (JWKS) that sign ID tokens
+
+TOKEN='<paste a JWT>'
+echo "$TOKEN" | cut -d. -f1 | tr '_-' '/+' | base64 -d; echo   # Header: alg, kid (may warn about missing = padding)
+echo "$TOKEN" | cut -d. -f2 | tr '_-' '/+' | base64 -d; echo   # Payload: iss, sub, aud, exp. Readable by anyone, so not secret
+
+curl -i -H "Authorization: Bearer $TOKEN" https://api.example.com/me   # Watch for 200, 401 (+ WWW-Authenticate) or 403
+date -r 1767225600                                                     # Turn an exp value into a time (macOS; GNU: date -d @1767225600)
+```
+
+Further reading: [OAuth 2.0 (RFC 6749)](https://datatracker.ietf.org/doc/html/rfc6749) · [PKCE (RFC 7636)](https://datatracker.ietf.org/doc/html/rfc7636) · [OAuth 2.0 Security Best Current Practice (RFC 9700)](https://datatracker.ietf.org/doc/html/rfc9700) · [JWT (RFC 7519)](https://datatracker.ietf.org/doc/html/rfc7519) · [OpenID Connect Core](https://openid.net/specs/openid-connect-core-1_0.html) · [OWASP Password Storage Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html) · [OWASP Session Management Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html) · [Kubernetes OIDC authentication](https://kubernetes.io/docs/reference/access-authn-authz/authentication/#openid-connect-tokens) · [Permission Checks on One API Request (IAM)](../cloud/iam-request.mdx) · [Who Can Do What (RBAC)](../k8s/rbac.mdx)

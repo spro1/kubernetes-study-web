@@ -1,0 +1,247 @@
+---
+id: caching
+title: How an Application Cache Works
+sidebar_label: 04 · Application Caching
+description: Animated walkthrough of a cache server such as Redis or Valkey in front of a database, covering cache-aside reads, invalidation on writes, TTLs and stale data, eviction when memory is full, cache stampedes on a hot key, and what happens when the cache goes down
+summary: 'Cache-aside reads, invalidation on writes, TTL and eviction, stampedes on a hot key, and the database load when the cache dies.'
+icon: bulb
+hide_table_of_contents: true
+---
+
+# How an Application Cache Works
+
+Follow one product page through an application cache: **app → cache server → database**. Watch a miss fill the cache, a write invalidate it, memory run out, a hot key expire under load, and the cache itself go down.
+
+<StepDiagram
+  width={1000}
+  height={430}
+  meta={{duration: '~12 min', level: 'Beginner'}}
+  groups={[
+    {label: 'Service', x: 250, y: 40, w: 725, h: 370, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'user', label: 'Users', sub: 'GET /product/42', icon: 'user', tone: 'ext', x: 110, y: 220, show: true},
+    {id: 'app', label: 'App server', sub: 'Cache-aside logic', icon: 'server', tone: 'app', x: 400, y: 220, show: true},
+    {id: 'cache', label: 'Cache server', sub: 'Redis / Valkey · RAM', icon: 'bulb', tone: 'store', x: 680, y: 110, w: 170},
+    {id: 'db', label: 'Database', sub: 'Source of truth', icon: 'db', tone: 'store', x: 680, y: 330},
+    {id: 'writer', label: 'Admin', sub: 'Updates price', icon: 'user', tone: 'ext', x: 400, y: 360, size: 'sm'},
+    {id: 'metrics', label: 'Metrics', sub: 'Hit ratio', icon: 'chart', tone: 'cp', x: 880, y: 220, size: 'sm'},
+  ]}
+  metrics={[
+    {id: 'result', label: 'Lookup'},
+    {id: 'latency', label: 'Latency'},
+    {id: 'dbload', label: 'DB load'},
+    {id: 'hit', label: 'Hit ratio'},
+  ]}
+  learn={[
+    {text: 'Cache-aside: check the cache, fall back to the DB, then fill the cache', at: 1},
+    {text: 'Why a write deletes the key, and the stale data window that remains', at: 3},
+    {text: 'What maxmemory and the eviction policy decide when RAM is full', at: 5},
+    {text: 'Cache stampedes on a hot key and three ways to stop them', at: 6},
+    {text: 'Why the database must survive the cache going down', at: 7},
+  ]}
+  steps={[
+    {
+      short: 'Start',
+      kind: '시작',
+      title: 'The same question, thousands of times',
+      text: [
+        'Thousands of users open product 42. Each request makes the app run the same database query and get the same answer.',
+        'A cache keeps a copy of recent answers in memory, closer and faster than the database. There are caches at every layer: the browser, the CDN at the edge, the app\'s cache server, and the database\'s own buffer pool. This lesson is about the app\'s cache server.',
+      ],
+      keyIdea: 'The database stays the source of truth. A cache is a copy that can be lost or out of date, and the design must accept both.',
+      flows: [{from: 'user', to: 'app', label: 'GET /product/42', type: 'request'}],
+      focus: ['user', 'app'],
+      values: {dbload: 'every request'},
+    },
+    {
+      short: 'Miss',
+      kind: '원리',
+      title: 'Cache miss: ask the DB, then fill the cache',
+      text: [
+        'With cache-aside, the app owns the logic. It first asks the cache for key product:42. The key is not there, so the cache answers nil. That is a miss.',
+        'The app queries the database, returns the result to the user, and stores it in the cache with a time to live: SET product:42 <json> EX 300. The key will disappear on its own after 300 seconds.',
+      ],
+      flows: [
+        {from: 'app', to: 'cache', label: 'GET product:42', type: 'request'},
+        {from: 'cache', to: 'app', label: 'nil', type: 'response'},
+        {from: 'app', to: 'db', label: 'SELECT', type: 'request'},
+        {from: 'app', to: 'cache', label: 'SET … EX 300', type: 'request'},
+      ],
+      focus: ['app', 'cache', 'db'],
+      badges: {cache: 'Miss'},
+      values: {result: {text: 'Miss', tone: 'bad'}, latency: '~20 ms (DB)'},
+    },
+    {
+      short: 'Hit',
+      kind: '원리',
+      title: 'Cache hit: the answer comes from memory',
+      text: [
+        'The next request for product 42 finds the key. The cache returns the stored value from RAM, usually in under a millisecond on the same network, and the database is not touched.',
+        'The share of lookups that hit is the hit ratio: hits / (hits + misses). Redis and Valkey count both in INFO stats as keyspace_hits and keyspace_misses.',
+      ],
+      keyIdea: 'A cache only pays off when the same data is read many times before it changes. Data read once, or changed on every request, gains little.',
+      flows: [
+        {from: 'app', to: 'cache', label: 'GET product:42', type: 'request'},
+        {from: 'cache', to: 'app', label: 'Value', type: 'response'},
+        {from: 'cache', to: 'metrics', label: 'keyspace_hits', type: 'watch'},
+      ],
+      focus: ['app', 'cache'],
+      status: {cache: 'ok'},
+      badges: {cache: 'Hit · TTL 300s'},
+      values: {result: {text: 'Hit', tone: 'good'}, latency: {text: '<1 ms', tone: 'good'}, dbload: 'misses only', hit: '95%'},
+    },
+    {
+      short: 'Write',
+      kind: '원리',
+      title: 'A write updates the DB and deletes the key',
+      text: [
+        'The admin changes the price of product 42. The app writes the database first, then deletes the cache key with DEL product:42. The next read misses and loads the new price.',
+        'Deleting is safer than writing the new value into the cache. If two updates race, a delete cannot leave an older value behind the way two out-of-order SETs can.',
+      ],
+      flows: [
+        {from: 'writer', to: 'app', label: 'New price', type: 'request'},
+        {from: 'app', to: 'db', label: 'UPDATE', type: 'request'},
+        {from: 'app', to: 'cache', label: 'DEL product:42', type: 'request'},
+      ],
+      focus: ['writer', 'app', 'db', 'cache'],
+      badges: {cache: 'Key deleted'},
+      values: {result: 'Invalidated'},
+    },
+    {
+      short: 'Stale',
+      kind: '주의',
+      title: 'Stale data: the copy can be wrong for a while',
+      text: [
+        'Another service changes the price directly in the database and never touches the cache. Users keep seeing the old price until the TTL runs out. That gap is the stale data window.',
+        'Even with deletes there are rare races: a slow reader can load the old row just before the update and write it back just after the DEL. The TTL is the upper bound on how long any of these mistakes can last.',
+      ],
+      keyIdea: 'Pick the TTL from how stale the data may be, not from how fast you want it. A price might allow 60 seconds; a stock count for checkout should not come from the cache at all.',
+      flows: [
+        {from: 'db', to: 'app', label: 'New price', type: 'response'},
+        {from: 'cache', to: 'app', label: 'Old price', type: 'response'},
+      ],
+      focus: ['cache', 'db'],
+      status: {cache: 'warn'},
+      badges: {cache: 'Stale · TTL 240s left'},
+      values: {result: {text: 'Hit (stale)', tone: 'bad'}},
+    },
+    {
+      short: 'Eviction',
+      kind: '주의',
+      title: 'Memory is full: the eviction policy decides',
+      text: [
+        'The cache lives in RAM, and maxmemory caps how much it may use. When a new SET would go over the cap, the maxmemory-policy decides what happens.',
+        'allkeys-lru removes the least recently used keys, and allkeys-lfu the least frequently used. volatile-* policies only remove keys that have a TTL. The default is noeviction: writes fail with an OOM error, which is right for a data store but wrong for a pure cache.',
+      ],
+      keyIdea: 'For a cache, set maxmemory and an allkeys-* policy, and watch evicted_keys. Steady evictions with a falling hit ratio mean the cache is too small for the working set.',
+      flows: [
+        {from: 'app', to: 'cache', label: 'SET new key', type: 'request'},
+        {from: 'cache', to: 'metrics', label: 'evicted_keys', type: 'watch'},
+      ],
+      focus: ['cache', 'metrics'],
+      status: {cache: 'warn'},
+      badges: {cache: 'maxmemory · LRU evict'},
+      values: {hit: {text: '95% → 80%', tone: 'bad'}},
+    },
+    {
+      short: 'Stampede',
+      kind: '문제',
+      title: 'A hot key expires and every request hits the DB at once',
+      text: [
+        'Product 42 is on the front page at 5,000 requests per second. Its key expires. For the next tens of milliseconds every request misses, and all of them run the same query on the database together.',
+        'This is a cache stampede (thundering herd). The database slows down, each query takes longer, so even more requests pile up as misses before anyone refills the key.',
+      ],
+      flows: [
+        {from: 'user', to: 'app', label: '5,000 req/s', type: 'request'},
+        {from: 'app', to: 'cache', label: 'Miss × many', type: 'request'},
+        {from: 'app', to: 'db', label: 'Same query × many', type: 'request'},
+      ],
+      focus: ['app', 'db'],
+      status: {cache: null, db: 'error'},
+      badges: {cache: 'Key expired', db: 'Overloaded'},
+      values: {result: {text: 'Miss × 1,000', tone: 'bad'}, latency: {text: '2 s', tone: 'bad'}, dbload: {text: 'Spike', tone: 'bad'}},
+    },
+    {
+      short: 'Fixes',
+      kind: '원리',
+      title: 'Let one request refill, spread out expiry',
+      text: [
+        'Lock: the first request that misses takes a short lock (SET lock:product:42 1 NX EX 5) and loads the DB. The others wait briefly or serve the old value. Only one query reaches the database.',
+        'Jittered TTL: add a random spread, such as 300 s ± 10%, so keys loaded together do not all expire together. Early refresh: refresh a hot key in the background before it expires, so it never goes missing.',
+      ],
+      flows: [
+        {from: 'app', to: 'cache', label: 'SET lock NX', type: 'request'},
+        {from: 'app', to: 'db', label: '1 query', type: 'request'},
+        {from: 'app', to: 'cache', label: 'SET … EX 300±30', type: 'request'},
+      ],
+      focus: ['app', 'cache'],
+      status: {cache: 'ok', db: 'ok'},
+      badges: {cache: 'Refilled once', db: null},
+      values: {result: {text: 'Hit', tone: 'good'}, latency: {text: '<1 ms', tone: 'good'}, dbload: {text: '1 query', tone: 'good'}, hit: '95%'},
+    },
+    {
+      short: 'Cache down',
+      kind: '장애',
+      title: 'The cache server dies and the DB takes everything',
+      text: [
+        'The cache server restarts. Its memory is empty, or it is unreachable for a minute. Every lookup now misses, and the database gets the full traffic the cache used to absorb, about 20 times more if the hit ratio was 95%.',
+        'If the app waits on cache timeouts, every request also gets slower. A cold cache after a restart causes the same flood, even when the server is back.',
+      ],
+      keyIdea: 'Size the database, or put a rate limit in front of it, for traffic with the cache gone. Use short cache timeouts so the app falls back fast. Run the cache with replicas so one failure does not empty it.',
+      flows: [
+        {from: 'app', to: 'cache', label: 'Timeout', type: 'request'},
+        {from: 'app', to: 'db', label: 'All traffic', type: 'request'},
+      ],
+      focus: ['cache', 'db'],
+      status: {cache: 'error', db: 'error'},
+      badges: {cache: 'Down', db: '20× load'},
+      values: {result: {text: 'Error / miss', tone: 'bad'}, dbload: {text: '20×', tone: 'bad'}, hit: {text: '0%', tone: 'bad'}},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'A fast copy with an expiry date',
+      text: [
+        'Cache-aside reads check the cache, fall back to the database on a miss, and fill the key with a TTL. Writes go to the database and delete the key.',
+        'The TTL bounds how stale data can get. maxmemory and the eviction policy decide what goes when RAM is full. Locks, jittered TTLs and early refresh stop stampedes, and the database must still survive without the cache.',
+      ],
+      keyIdea: 'Watch three numbers: hit ratio (keyspace_hits / misses), evicted_keys, and database load when the cache restarts.',
+      flows: [
+        {from: 'app', to: 'cache', label: 'GET', type: 'request'},
+        {from: 'cache', to: 'app', label: 'Hit', type: 'response'},
+        {from: 'app', to: 'db', label: 'Miss only', type: 'request'},
+      ],
+      focus: ['app', 'cache', 'db'],
+      status: {cache: null, db: null},
+      badges: {cache: null, db: null},
+      values: {result: {text: 'Hit', tone: 'good'}, latency: {text: '<1 ms', tone: 'good'}, dbload: 'misses only', hit: '95%'},
+    },
+  ]}
+/>
+
+## Caching patterns
+
+| Pattern | Read | Write | Good for | Watch out |
+|---|---|---|---|---|
+| Cache-aside (lazy loading) | App checks cache, loads DB on miss, fills cache | App writes DB, deletes the key | Most read-heavy apps; the cache can fail without losing data | First read after a miss or a restart is slow; stale window until TTL |
+| Read-through | The cache layer loads the DB on a miss for the app | Usually combined with write-through | Keeping load logic out of app code | Needs a cache library or product that knows how to load from the DB |
+| Write-through | Reads hit a cache that is always filled | Every write goes to cache and DB together | Data read right after it is written | Writes are slower; caches data that may never be read |
+| Write-behind (write-back) | Reads hit the cache | Write to cache now, flush to DB later in batches | Very high write rates, such as counters | Data written to the cache but not yet flushed is lost if the cache dies |
+
+## Try it yourself
+
+```bash
+redis-cli SET product:42 '{"price":100}' EX 300   # Store with a 300 s TTL
+redis-cli GET product:42                           # Hit: returns the value
+redis-cli TTL product:42                           # Seconds left (-1 no TTL, -2 no key)
+redis-cli EXPIRE product:42 60                     # Change the TTL
+redis-cli DEL product:42                           # Invalidate after a write
+redis-cli SET lock:product:42 1 NX EX 5            # Stampede lock: only the first caller gets OK
+redis-cli INFO stats | grep -E 'keyspace_(hits|misses)|evicted_keys'   # Hit ratio and evictions
+redis-cli CONFIG GET maxmemory-policy              # What happens when memory is full
+```
+
+`valkey-cli` takes the same commands.
+
+Further reading: [Redis key eviction](https://redis.io/docs/latest/develop/reference/eviction/) · [Redis EXPIRE](https://redis.io/docs/latest/commands/expire/) · [Redis INFO](https://redis.io/docs/latest/commands/info/) · [Valkey documentation](https://valkey.io/docs/) · [How a CDN Serves a Request](../cloud/cdn.mdx) · [Database Basics](../basic/database-basics.mdx)

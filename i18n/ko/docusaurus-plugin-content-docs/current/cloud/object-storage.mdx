@@ -1,0 +1,229 @@
+---
+id: object-storage
+title: 오브젝트 스토리지는 이렇게 움직인다
+sidebar_label: 06 · 오브젝트 스토리지
+description: Amazon S3를 예로 버킷과 키, 서명된 HTTPS 요청, 버킷 정책과 퍼블릭 액세스 차단, 미리 서명된 URL, 쓰기 직후 읽기 일관성, 버전 관리, 수명 주기 규칙, 멀티파트 업로드를 애니메이션으로 따라간다
+summary: '버킷과 키, 서명된 요청, 403과 실수로 공개된 버킷, 미리 서명된 URL, 버전 관리와 수명 주기 규칙.'
+icon: archive
+hide_table_of_contents: true
+---
+
+# 오브젝트 스토리지는 이렇게 움직인다
+
+쇼핑몰 앱이 상품 사진을 오브젝트 스토리지에 저장하고 사용자에게 보여 준다. 여기서는 Amazon S3를 예로 든다. Google Cloud Storage, Azure Blob Storage, MinIO도 이름만 다를 뿐 같은 방식으로 움직인다. 사진 한 장이 올라가서 보관 등급으로 옮겨질 때까지 따라가며, 단계마다 누가 읽을 수 있는지 본다.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '약 11분', level: '기초'}}
+  groups={[
+    {label: '오브젝트 스토리지 서비스', x: 450, y: 30, w: 535, h: 410, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'app', label: '쇼핑몰 앱', sub: 'IAM 역할', icon: 'server', tone: 'app', x: 110, y: 130, show: true},
+    {id: 'user', label: '브라우저', sub: '쇼핑몰 방문자', icon: 'browser', tone: 'ext', x: 110, y: 330, show: true},
+    {id: 'iam', label: 'IAM / STS', sub: '임시 키', icon: 'ticket', tone: 'cp', x: 300, y: 400},
+    {id: 'api', label: 'S3 API', sub: 'HTTPS 엔드포인트', icon: 'gate', tone: 'cp', x: 570, y: 230, show: true},
+    {id: 'policy', label: '버킷 정책', sub: '퍼블릭 액세스 차단', icon: 'shield', tone: 'store', x: 570, y: 390, w: 170},
+    {id: 'bucket', label: '버킷', sub: 'shop-images', icon: 'archive', tone: 'store', x: 830, y: 110, show: true},
+    {id: 'obj', label: '객체', sub: 'photos/123.jpg', icon: 'box', tone: 'store', size: 'sm', w: 140, x: 830, y: 230},
+    {id: 'ver', label: '이전 버전', sub: 'noncurrent', icon: 'layers', tone: 'store', size: 'sm', w: 140, x: 830, y: 310},
+    {id: 'cold', label: '보관 등급', sub: '싸고 느림', icon: 'disk', tone: 'store', size: 'sm', w: 140, x: 830, y: 390},
+  ]}
+  metrics={[
+    {id: 'req', label: '요청'},
+    {id: 'http', label: '응답'},
+    {id: 'versions', label: '버전'},
+    {id: 'cls', label: '스토리지 클래스'},
+  ]}
+  learn={[
+    {text: '버킷은 평평한 키로 객체를 담고, 폴더는 접두사일 뿐이라는 것', at: 1},
+    {text: '모든 요청은 서명되고 IAM과 버킷 정책으로 검사된다는 것', at: 2},
+    {text: '403이 실수로 공개된 버킷보다 안전한 이유', at: 3},
+    {text: '미리 서명된 URL로 공개하지 않고 잠깐 빌려주는 법', at: 4},
+    {text: '버전 관리, 수명 주기 규칙, 멀티파트 업로드', at: 6},
+  ]}
+  steps={[
+    {
+      short: '시작',
+      kind: '시작',
+      title: '앱이 HTTPS 요청 한 번으로 사진을 저장한다',
+      text: [
+        '판매자가 상품 사진을 올린다. 쇼핑몰 앱은 사진을 버킷 shop-images에 photos/123.jpg라는 이름으로 HTTPS PUT 요청을 보내 저장한다.',
+        '오브젝트 스토리지에는 마운트할 디스크도, 포맷할 파일 시스템도 없다. HTTP API로 객체를 통째로 읽고 쓴다. PUT은 쓰기, GET은 읽기, DELETE는 지우기, LIST는 이름 목록이다.',
+      ],
+      flows: [{from: 'app', to: 'api', label: 'PUT', type: 'request'}],
+      focus: ['app', 'api'],
+      values: {req: 'PUT photos/123.jpg', http: '—', versions: '—', cls: '—'},
+    },
+    {
+      short: '버킷 · 키',
+      kind: '원리',
+      title: '버킷은 평평한 키로 객체를 담는다',
+      text: [
+        '버킷은 이름이 붙은 그릇이다. 그 안의 객체마다 키(전체 이름), 데이터, Content-Type·크기 같은 메타데이터가 있다. 디렉터리 트리는 없다. photos/123.jpg는 키 하나이고, 슬래시는 키 안의 글자일 뿐이다.',
+        '콘솔과 CLI는 photos/처럼 같은 접두사(prefix)를 가진 키를 묶어 "폴더"처럼 보여 준다. 디렉터리가 아니라 접두사를 나열하는 것이다. "폴더" 이름을 바꾸려면 객체를 모두 새 키로 복사하고 옛 키를 지워야 한다.',
+      ],
+      keyIdea: '객체는 통째로 바뀐다. 뒤에 덧붙이거나 중간 바이트만 고칠 수 없다. 1바이트를 바꾸려 해도 객체를 다시 올린다.',
+      flows: [{from: 'api', to: 'obj', label: '저장', type: 'request'}],
+      focus: ['bucket', 'obj'],
+      badges: {obj: 'v1'},
+      values: {http: {text: '200 OK', tone: 'good'}, versions: '1'},
+    },
+    {
+      short: '서명',
+      kind: '원리',
+      title: '모든 요청은 서명되고 정책으로 검사된다',
+      text: [
+        '앱은 비밀번호를 들고 있지 않다. IAM 역할로 실행되며 STS에서 임시 액세스 키를 받는다. SDK가 이 키로 요청마다 서명한다(Signature Version 4). 서명에는 메서드, 키, 헤더, 시각이 들어간다.',
+        'S3 API는 서명을 확인한 뒤 역할의 자격 증명 정책과 버킷 정책을 함께 평가한다. 어느 쪽이든 명시적 Deny가 있으면 거부다. Allow가 없어도 403 Access Denied다.',
+      ],
+      keyIdea: '앱에는 필요한 동작만, 이 버킷에만 준다. 예를 들어 shop-images/photos/*에 s3:PutObject와 s3:GetObject만 허용한다.',
+      flows: [
+        {from: 'iam', to: 'app', label: '임시 키', type: 'response'},
+        {from: 'app', to: 'api', label: '서명된 PUT', type: 'request'},
+        {from: 'policy', to: 'api', label: '허용?', type: 'watch'},
+      ],
+      focus: ['iam', 'app', 'api', 'policy'],
+      badges: {app: 'SigV4'},
+      values: {req: '서명된 PUT', http: {text: '200 OK', tone: 'good'}},
+    },
+    {
+      short: '403',
+      kind: '문제',
+      title: '브라우저는 403을 받는다. 그게 안전한 기본값이다',
+      text: [
+        '상품 페이지가 객체 URL을 img 태그에 그대로 넣었다. 브라우저의 GET에는 서명이 없으니 익명 요청이다. 새 버킷은 퍼블릭 액세스 차단이 켜져 있어서 403 Access Denied가 돌아온다.',
+        '퍼블릭 액세스 차단을 끄고 모두에게 읽기를 허용하고 싶어진다. 데이터가 새는 전형적인 길이다. 정책 하나만 잘못돼도 송장이나 백업까지 포함한 버킷 전체를, 이름을 알거나 짐작한 누구나 읽을 수 있다.',
+      ],
+      keyIdea: '호출자에게 s3:ListBucket 권한이 없으면 없는 키에도 404가 아니라 403이 온다. 403이 객체가 있다는 뜻은 아니다.',
+      flows: [{from: 'user', to: 'api', label: '익명 GET', type: 'request'}],
+      focus: ['user', 'policy'],
+      status: {user: 'error', policy: 'ok'},
+      badges: {app: null, policy: '공개 차단'},
+      values: {req: 'GET (익명)', http: {text: '403 AccessDenied', tone: 'bad'}},
+    },
+    {
+      short: '미리 서명된 URL',
+      kind: '원리',
+      title: '미리 서명된 URL로 잠깐만 빌려준다',
+      text: [
+        '앱이 GET 요청에 직접 서명하고, 그 결과를 URL로 브라우저에 건넨다. 서명, 키 ID, 만료 시각이 쿼리 문자열에 들어 있다. 브라우저는 S3에서 바로 내려받고, 버킷은 비공개로 남는다.',
+        'URL을 가진 사람은 누구나 만료 전까지 쓸 수 있으니 만료를 짧게(분 단위) 잡는다. SigV4의 최대 만료는 7일이고, 임시 자격 증명으로 서명한 URL은 그 자격 증명이 끝나면 함께 끝난다.',
+      ],
+      keyIdea: '공개 자산을 많이 내보낼 때는 버킷을 공개하지 말고, 비공개 버킷 앞에 CDN을 둔다.',
+      flows: [
+        {from: 'app', to: 'user', label: '서명 URL', type: 'response'},
+        {from: 'user', to: 'api', label: 'GET + 서명', type: 'request'},
+        {from: 'api', to: 'obj', label: '읽기', type: 'request'},
+      ],
+      focus: ['app', 'user', 'obj'],
+      status: {user: 'ok'},
+      badges: {user: '10분 뒤 만료'},
+      values: {req: 'GET (미리 서명)', http: {text: '200 OK', tone: 'good'}},
+    },
+    {
+      short: '일관성',
+      kind: '주의',
+      title: '새 버전은 바로 읽히지만, 잠금은 없다',
+      text: [
+        '판매자가 사진을 바꾼다. 앱이 photos/123.jpg에 다시 PUT한다. Amazon S3는 2020년 12월부터 강한 쓰기 직후 읽기 일관성을 준다. PUT이 성공하면 이어지는 GET과 LIST는 새 객체를 돌려준다.',
+        '오브젝트 스토리지는 객체를 대신 잠가 주지 않는다. 두 쓰기가 같은 키에 동시에 PUT하면 마지막 쓰기가 이기고, 다른 쪽은 조용히 사라진다. 키를 겹치지 않게 만들거나, 서비스가 지원하면 조건부 쓰기를 쓴다.',
+      ],
+      flows: [{from: 'app', to: 'api', label: '다시 PUT', type: 'request'}],
+      focus: ['obj'],
+      status: {user: null, policy: null},
+      badges: {user: null, policy: null, obj: '덮어씀'},
+      values: {req: 'PUT photos/123.jpg', http: {text: '200 OK', tone: 'good'}, versions: '1 (옛 것은 사라짐)'},
+    },
+    {
+      short: '버전 관리',
+      kind: '원리',
+      title: '버전 관리는 덮어쓰거나 지워도 옛 객체를 남긴다',
+      text: [
+        '버전 관리가 없으면 방금 덮어쓰기로 원래 사진은 사라졌다. 버킷에 버전 관리를 켜면 PUT마다 새 버전 ID가 생기고, 이전 것은 이전 버전(noncurrent)이 된다.',
+        '버전 ID 없이 DELETE하면 데이터가 지워지지 않는다. 삭제 마커가 붙어 GET은 404를 돌려주지만, 이전 버전은 남아 있어 되살릴 수 있다. 실수나 일부 랜섬웨어를 막아 주지만, 모든 버전의 저장 비용을 낸다.',
+      ],
+      keyIdea: '다시 만들 수 없는 것이 든 버킷은 버전 관리를 켠다. 한 번 켜면 일시 중지만 할 수 있고 끌 수는 없다.',
+      flows: [{from: 'obj', to: 'ver', label: '이전 버전으로', type: 'watch'}],
+      focus: ['obj', 'ver'],
+      badges: {obj: 'v2 현재', ver: 'v1'},
+      values: {versions: '2 (v2가 현재)'},
+    },
+    {
+      short: '수명 주기',
+      kind: '원리',
+      title: '수명 주기 규칙이 객체를 옮기고 지운다',
+      text: [
+        '사진 대부분은 처음 몇 주만 자주 읽히고 그 뒤로는 거의 안 읽힌다. 수명 주기 규칙은 며칠이 지난 객체를 더 싼 스토리지 클래스로 옮긴다. 예를 들어 30일 뒤 Standard-IA로, 180일 뒤 Glacier 같은 보관 등급으로 보낸다.',
+        '싼 클래스는 다른 것을 내준다. 자주 안 읽는 클래스는 읽을 때 GB당 요금과 최소 보관 기간이 있다. Glacier Flexible Retrieval 같은 일부 보관 등급은 되살리는 데 몇 분에서 몇 시간이 걸린다. 같은 규칙으로 이전 버전을 90일 뒤 지우게 하면 버전이 끝없이 쌓이지 않는다.',
+      ],
+      flows: [
+        {from: 'ver', to: 'cold', label: '180일 뒤', type: 'watch'},
+      ],
+      focus: ['ver', 'cold'],
+      badges: {cold: 'v1 보관'},
+      values: {cls: 'Standard → 보관'},
+    },
+    {
+      short: '멀티파트',
+      kind: '주의',
+      title: '큰 파일은 조각으로 나눠 올린다',
+      text: [
+        '판매자가 4GB 상품 영상을 올린다. PUT 한 번에는 최대 5GB까지 실을 수 있고, 긴 업로드 하나는 네트워크가 끊기면 통째로 실패한다. 멀티파트 업로드는 파일을 조각(각 5MiB~5GiB, 최대 10,000개)으로 나눠 병렬로 보내고, 실패한 조각만 다시 보낸다.',
+        'CLI와 SDK는 일정 크기를 넘으면 알아서 멀티파트로 바꾼다. 시작만 하고 완료도 중단도 하지 않은 업로드는 조각이 버킷에 남아 요금이 나오지만, 객체 목록에는 보이지 않는다.',
+      ],
+      keyIdea: '완료되지 않은 멀티파트 업로드를 며칠 뒤 중단시키는 수명 주기 규칙을 넣어 둔다.',
+      flows: [
+        {from: 'app', to: 'api', label: '조각 1..N', type: 'request'},
+        {from: 'api', to: 'bucket', label: '완료', type: 'request'},
+      ],
+      focus: ['app', 'api', 'bucket'],
+      badges: {bucket: 'video.mp4'},
+      values: {req: '멀티파트 업로드', http: {text: '200 OK', tone: 'good'}},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '기본은 비공개, 접근은 서명으로, 안전은 버전으로',
+      text: [
+        '오브젝트 스토리지는 평평한 키 아래 객체를 통째로 보관하고 HTTP API로 내준다. 모든 요청은 서명되어 IAM과 버킷 정책으로 검사되고, 새 버킷은 퍼블릭 액세스를 막는다.',
+        '접근은 공개 버킷이 아니라 미리 서명된 URL이나 CDN으로 내준다. 중요한 데이터는 버전 관리를 켜고, 수명 주기 규칙으로 오래된 데이터는 싼 클래스로 옮기며 이전 버전과 실패한 업로드를 치운다.',
+      ],
+      keyIdea: '한 번 쓰고 여러 번 읽는 파일(이미지, 백업, 로그, 데이터셋, 모델 파일)은 오브젝트 스토리지에 둔다. 소프트웨어가 마운트된 디스크를 원하면 블록이나 파일 스토리지를 쓴다.',
+      flows: [
+        {from: 'app', to: 'api', label: '서명됨', type: 'request'},
+        {from: 'api', to: 'obj', label: '읽기', type: 'request'},
+      ],
+      focus: ['bucket', 'policy', 'obj'],
+      badges: {bucket: null, cold: null},
+    },
+  ]}
+/>
+
+## 블록·파일·오브젝트 스토리지
+
+| | 블록 스토리지 | 파일 스토리지 | 오브젝트 스토리지 |
+|---|---|---|---|
+| 예 | Amazon EBS, Persistent Disk, Azure Disk | Amazon EFS, Filestore, Azure Files, NFS | Amazon S3, Cloud Storage, Azure Blob, MinIO |
+| 쓰는 방법 | 서버 한 대에 디스크로 마운트하고 파일 시스템을 올린다 | 여러 서버가 공유 폴더로 마운트한다 | HTTP API (PUT, GET, DELETE, LIST) |
+| 단위 | 블록 | 디렉터리 안의 파일 | 평평한 키 아래 통째 객체 |
+| 일부만 고치기 | 된다 | 된다 | 안 된다. 객체를 통째로 바꾼다 |
+| 여러 클라이언트 공유 | 보통 한 번에 노드 하나 | 된다 | 된다. 네트워크로 어디서나 |
+| 쿠버네티스에서 | PersistentVolume (ReadWriteOnce) | PersistentVolume (ReadWriteMany) | 앱이 API로 호출하거나, 제약을 감수하고 CSI 드라이버로 마운트 |
+| 어울리는 곳 | 데이터베이스, 부트 디스크 | 오래된 앱의 공유 파일 | 이미지, 백업, 로그, 데이터셋, 모델 파일 |
+
+## 직접 확인해 보기
+
+```bash
+aws s3 ls s3://shop-images/photos/                         # 접두사("폴더") 나열
+aws s3 cp ./123.jpg s3://shop-images/photos/123.jpg        # 업로드 (큰 파일은 자동으로 멀티파트)
+aws s3api head-object --bucket shop-images --key photos/123.jpg   # 크기, ETag, 스토리지 클래스, VersionId
+aws s3 presign s3://shop-images/photos/123.jpg --expires-in 600   # 10분짜리 임시 URL
+aws s3api get-public-access-block --bucket shop-images     # 퍼블릭 액세스가 막혀 있나
+aws s3api get-bucket-versioning --bucket shop-images       # Enabled / Suspended / (비어 있으면 켠 적 없음)
+aws s3api list-object-versions --bucket shop-images --prefix photos/123.jpg   # 버전과 삭제 마커
+aws s3api list-multipart-uploads --bucket shop-images      # 요금만 나가는 미완료 업로드
+```
+
+더 읽을거리: [Amazon S3란 무엇인가 (AWS)](https://docs.aws.amazon.com/AmazonS3/latest/userguide/Welcome.html) · [퍼블릭 액세스 차단 (AWS)](https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html) · [미리 서명된 URL (AWS)](https://docs.aws.amazon.com/AmazonS3/latest/userguide/using-presigned-url.html) · [버전 관리 (AWS)](https://docs.aws.amazon.com/AmazonS3/latest/userguide/Versioning.html) · [수명 주기 (AWS)](https://docs.aws.amazon.com/AmazonS3/latest/userguide/object-lifecycle-mgmt.html) · [멀티파트 업로드 (AWS)](https://docs.aws.amazon.com/AmazonS3/latest/userguide/mpuoverview.html) · [API 요청 하나의 권한 검사 (IAM)](../cloud/iam-request.mdx) · [저장 공간이 붙기까지 (PVC·PV)](../k8s/storage-volume.mdx)

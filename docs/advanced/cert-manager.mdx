@@ -1,0 +1,240 @@
+---
+id: cert-manager
+title: Automatic TLS Certificates with cert-manager
+sidebar_label: 06 · cert-manager and ACME
+description: Animated walkthrough of how cert-manager gets a Let's Encrypt certificate through ACME, from ClusterIssuer and Certificate to CertificateRequest, Order and Challenge, HTTP-01 versus DNS-01, a challenge stuck pending, the tls Secret, renewal and rate limits
+summary: 'From an Ingress annotation to a signed certificate: Issuer, Certificate, Order, Challenge, HTTP-01 and DNS-01, renewal, and where issuance gets stuck.'
+icon: shield
+hide_table_of_contents: true
+---
+
+# Automatic TLS Certificates with cert-manager
+
+Follow one certificate from request to renewal: **ClusterIssuer → Certificate → CertificateRequest → Order → Challenge → Secret**. See how the CA checks that you control the domain, and which resource to read when issuance gets stuck.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~12 min', level: 'Intermediate'}}
+  groups={[
+    {label: 'Kubernetes cluster', x: 30, y: 30, w: 700, h: 410, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'ing', label: 'Ingress', sub: 'shop.example.com', icon: 'gate', tone: 'node', x: 125, y: 100, show: true},
+    {id: 'cert', label: 'Certificate', sub: 'secretName shop-tls', icon: 'ticket', tone: 'store', x: 325, y: 100},
+    {id: 'cr', label: 'CertificateRequest', sub: 'CSR', icon: 'book', tone: 'store', x: 545, y: 100, w: 180},
+    {id: 'issuer', label: 'ClusterIssuer', sub: 'ACME · solvers', icon: 'gear', tone: 'cp', x: 125, y: 240},
+    {id: 'cm', label: 'cert-manager', sub: 'Controller', icon: 'agent', tone: 'cp', x: 325, y: 240},
+    {id: 'order', label: 'Order', sub: 'One per request', icon: 'archive', tone: 'store', x: 545, y: 240, w: 160},
+    {id: 'secret', label: 'Secret', sub: 'tls.crt · tls.key', icon: 'shield', tone: 'store', x: 125, y: 380},
+    {id: 'solver', label: 'Solver Pod', sub: 'HTTP-01 token', icon: 'pod', tone: 'app', x: 325, y: 380},
+    {id: 'chal', label: 'Challenge', sub: 'One per name', icon: 'target', tone: 'store', x: 545, y: 380, w: 160},
+    {id: 'le', label: 'Let\'s Encrypt', sub: 'ACME CA', icon: 'cloud', tone: 'ext', x: 880, y: 100, show: true},
+    {id: 'dns', label: 'DNS provider', sub: 'example.com zone', icon: 'server', tone: 'ext', x: 880, y: 380},
+  ]}
+  metrics={[
+    {id: 'issuer', label: 'Issuer'},
+    {id: 'cert', label: 'Certificate'},
+    {id: 'chal', label: 'Challenge'},
+    {id: 'expiry', label: 'Expires'},
+  ]}
+  learn={[
+    {text: 'An Issuer says which CA to use and how to prove domain control', at: 1},
+    {text: 'The chain Certificate → CertificateRequest → Order → Challenge', at: 3},
+    {text: 'HTTP-01 through a temporary solver, and why it gets stuck pending', at: 4},
+    {text: 'DNS-01 with a TXT record, required for wildcard names', at: 6},
+    {text: 'Renewal timing, rate limits and the staging server', at: 8},
+  ]}
+  steps={[
+    {
+      short: 'Start',
+      kind: '시작',
+      title: 'An Ingress wants HTTPS, but there is no certificate yet',
+      text: [
+        'The Ingress for shop.example.com has a tls section that names Secret shop-tls. That Secret does not exist yet, so the controller serves a default self-signed certificate and browsers warn.',
+        'You could buy a certificate and paste it into the Secret by hand, but then someone has to repeat that before every expiry. cert-manager automates the whole loop: request, prove, store, renew.',
+      ],
+      focus: ['ing'],
+      badges: {ing: 'No cert'},
+      values: {issuer: '—', cert: '—', chal: '—', expiry: '—'},
+    },
+    {
+      short: 'Issuer',
+      kind: '원리',
+      title: 'The ClusterIssuer says which CA to use and how to prove control',
+      text: [
+        'An Issuer works in one namespace, and a ClusterIssuer works in all of them. An ACME issuer holds the CA directory URL, a contact email, the Secret for the ACME account key, and a list of solvers (HTTP-01 or DNS-01).',
+        'cert-manager registers the account with Let\'s Encrypt and sets the issuer to Ready=True. If the URL or account Secret is wrong, nothing below this point can work.',
+      ],
+      keyIdea: 'Start with the production URL only after the setup works. Point a second issuer at the Let\'s Encrypt staging URL for testing.',
+      flows: [{from: 'cm', to: 'le', label: 'Register account', type: 'request'}],
+      focus: ['issuer', 'cm', 'le'],
+      badges: {issuer: 'Ready'},
+      values: {issuer: {text: 'Ready=True', tone: 'good'}},
+    },
+    {
+      short: 'Certificate',
+      kind: '원리',
+      title: 'An annotation turns the Ingress into a Certificate',
+      text: [
+        'You add the annotation cert-manager.io/cluster-issuer: letsencrypt-prod to the Ingress. A part of cert-manager called ingress-shim reads it with the tls hosts and creates a Certificate: dnsNames shop.example.com, secretName shop-tls, issuerRef letsencrypt-prod.',
+        'You can also write the Certificate yourself. A Gateway works the same way when cert-manager runs with Gateway API support turned on.',
+      ],
+      flows: [{from: 'ing', to: 'cert', label: 'ingress-shim', type: 'watch'}],
+      focus: ['ing', 'cert'],
+      badges: {ing: null, cert: 'Issuing'},
+      values: {cert: 'Ready=False · Issuing'},
+    },
+    {
+      short: 'Order',
+      kind: '원리',
+      title: 'A CertificateRequest becomes an ACME Order and Challenges',
+      text: [
+        'cert-manager creates a private key and a CertificateRequest that holds a CSR. The ACME issuer turns it into an Order at the CA.',
+        'For every name in the Order, the CA asks for proof that you control it. cert-manager creates one Challenge per name, using the solver type that the issuer picks for that name.',
+      ],
+      flows: [
+        {from: 'cert', to: 'cr', label: 'CSR', type: 'request'},
+        {from: 'cr', to: 'order', label: 'ACME issuer', type: 'request'},
+        {from: 'order', to: 'le', label: 'New order', type: 'request'},
+        {from: 'order', to: 'chal', label: 'Per name', type: 'request'},
+      ],
+      focus: ['cr', 'order', 'chal'],
+      badges: {cert: null, order: 'pending'},
+      values: {chal: 'pending'},
+    },
+    {
+      short: 'HTTP-01',
+      kind: '원리',
+      title: 'HTTP-01: a temporary solver answers on port 80',
+      text: [
+        'cert-manager starts a solver Pod with a Service and a temporary Ingress rule for http://shop.example.com/.well-known/acme-challenge/ followed by a token. The solver answers with the token and a key fingerprint.',
+        'First cert-manager runs a self-check, fetching that URL itself. When the check passes, it tells the CA to validate. The CA then fetches the URL from the internet on port 80.',
+      ],
+      keyIdea: 'HTTP-01 needs the domain to resolve to your entry point and port 80 to be open from the internet, even if the site itself only serves HTTPS.',
+      flows: [
+        {from: 'chal', to: 'solver', label: 'Create', type: 'request'},
+        {from: 'le', to: 'ing', label: 'GET :80 token', type: 'request'},
+        {from: 'ing', to: 'solver', label: '/.well-known', type: 'request'},
+      ],
+      focus: ['chal', 'solver', 'ing', 'le'],
+      badges: {solver: 'Serving token'},
+    },
+    {
+      short: 'Stuck',
+      kind: '문제',
+      title: 'The challenge stays pending because the CA cannot reach it',
+      text: [
+        'Here the DNS record for shop.example.com still points at an old server, and a firewall drops port 80. The self-check fails, and the Challenge reason reads Waiting for HTTP-01 challenge propagation, followed by the error it got.',
+        'The Certificate stays Ready=False and the Secret is never created. If the CA does try and fails, the Challenge and Order become invalid. cert-manager then retries with a growing back-off, and Let\'s Encrypt also limits failed validations per hostname per hour.',
+      ],
+      keyIdea: 'kubectl describe challenge shows the real reason. Read it before deleting and recreating anything.',
+      flows: [{from: 'le', to: 'ing', label: 'Timed out', type: 'request'}],
+      focus: ['chal', 'ing'],
+      status: {chal: 'error', ing: 'warn'},
+      badges: {chal: 'Self-check failed'},
+      values: {chal: {text: 'pending · propagation', tone: 'bad'}},
+    },
+    {
+      short: 'DNS-01',
+      kind: '원리',
+      title: 'DNS-01: prove control with a TXT record',
+      text: [
+        'For a wildcard name such as *.example.com, Let\'s Encrypt only accepts DNS-01. It also helps when the cluster cannot take inbound traffic on port 80.',
+        'cert-manager uses the DNS provider\'s API (credentials in a Secret) to write a TXT record at _acme-challenge.example.com. It waits until the record is visible, then the CA looks it up. Afterwards cert-manager removes the record.',
+      ],
+      keyIdea: 'DNS-01 trades the open port for an API key that can edit your zone. Give that key access only to the records it needs.',
+      flows: [
+        {from: 'chal', to: 'dns', label: 'Write TXT', type: 'request'},
+        {from: 'le', to: 'dns', label: 'Look up TXT', type: 'request'},
+      ],
+      focus: ['chal', 'dns', 'le'],
+      status: {chal: 'ok', ing: null},
+      badges: {chal: 'valid', solver: null},
+      values: {chal: {text: 'valid', tone: 'good'}},
+    },
+    {
+      short: 'Issued',
+      kind: '원리',
+      title: 'The Order is finalized and the Secret is written',
+      text: [
+        'When every Challenge is valid, cert-manager finalizes the Order with the CSR. The CA signs and returns the certificate chain.',
+        'cert-manager writes Secret shop-tls of type kubernetes.io/tls with tls.crt and tls.key, and the Certificate becomes Ready=True. The Ingress controller picks up the Secret and serves the new certificate. The temporary solver resources are removed.',
+      ],
+      flows: [
+        {from: 'le', to: 'order', label: 'Signed cert', type: 'response'},
+        {from: 'cm', to: 'secret', label: 'Write', type: 'request'},
+        {from: 'secret', to: 'ing', label: 'TLS', type: 'watch'},
+      ],
+      focus: ['order', 'secret', 'ing'],
+      status: {chal: null, secret: 'ok', cert: 'ok'},
+      badges: {order: 'valid', chal: null, cert: 'Ready', secret: 'shop-tls'},
+      values: {cert: {text: 'Ready=True', tone: 'good'}, expiry: '90 days'},
+    },
+    {
+      short: 'Renew',
+      kind: '주의',
+      title: 'Renewal happens early, and rate limits punish loops',
+      text: [
+        'If you do not set renewBefore, cert-manager renews when two thirds of the lifetime has passed, about 30 days before a 90-day certificate expires. status.renewalTime shows the planned time. Let\'s Encrypt has announced it will shorten its certificates from 90 to 45 days in stages, so leave renewal relative to the lifetime instead of fixing a number of days.',
+        'Let\'s Encrypt limits how many certificates you get per registered domain per week, and how many duplicates of the exact same set of names. A setup that keeps deleting the Secret or the Certificate can hit those limits and lock you out for days.',
+      ],
+      keyIdea: 'Test new issuers against the staging server. Alert on certificates that are not Ready, or that expire in under two weeks.',
+      flows: [{from: 'cert', to: 'cr', label: 'Renew', type: 'request'}],
+      focus: ['cert', 'cr'],
+      badges: {order: null, cert: 'Renews at 2/3'},
+      values: {expiry: {text: '90 days · renew ~day 60', tone: 'good'}},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Each resource is one step, and the stuck one tells you why',
+      text: [
+        'The Issuer picks the CA and the proof method. The Certificate says which names and which Secret. Each attempt becomes a CertificateRequest, then an Order with one Challenge per name. A valid Challenge leads to a signed certificate in the Secret.',
+        'HTTP-01 needs DNS and port 80 to reach your entry point. DNS-01 needs API access to your zone and is the only way to get a wildcard.',
+      ],
+      keyIdea: 'When a certificate is not Ready, walk down the chain and read the first resource that is not valid. Most of the time it is a Challenge, and its reason says what the CA or the self-check saw.',
+      flows: [
+        {from: 'issuer', to: 'cm', label: 'How', type: 'watch'},
+        {from: 'cert', to: 'cr', label: 'What', type: 'request'},
+        {from: 'cm', to: 'secret', label: 'Result', type: 'request'},
+      ],
+      focus: ['issuer', 'cert', 'secret'],
+      status: {secret: null, cert: null},
+      badges: {cert: null, secret: null, issuer: null},
+    },
+  ]}
+/>
+
+## Where to look when a certificate is stuck
+
+Read the chain from top to bottom and stop at the first resource that is not ready or valid.
+
+| Resource | Created by | What to check | Typical reason it is stuck |
+|---|---|---|---|
+| ClusterIssuer / Issuer | You | `Ready` condition | Wrong ACME URL, missing account key Secret, bad DNS provider credentials |
+| Certificate | You, or ingress-shim from an annotation | `Ready` and `Issuing` conditions, `status.renewalTime` | Issuer name or kind wrong in `issuerRef`, names not covered by any solver |
+| CertificateRequest | cert-manager, one per attempt | `Ready`, `Approved`, `Denied` | Issuer not ready, request not approved |
+| Order | ACME issuer, one per request | `state`: pending, valid, invalid, errored | A Challenge failed, or a rate limit was hit |
+| Challenge | ACME issuer, one per name | `state` and `reason` | DNS points elsewhere, port 80 blocked, TXT record not visible yet |
+| Secret | cert-manager | `tls.crt` subject and expiry | Not created until the Certificate is Ready |
+
+If a Certificate shows Ready=True but browsers still see the old certificate, check that the Ingress or Gateway really names the same Secret, in the same namespace.
+
+## Try it yourself
+
+```bash
+kubectl get clusterissuer                                   # READY per issuer
+kubectl describe clusterissuer letsencrypt-prod             # ACME URL, account status
+kubectl get certificate,certificaterequest,order,challenge -A   # The whole chain at once
+kubectl describe certificate shop-tls -n shop               # Conditions and events
+kubectl describe challenge -n shop                          # State, reason, self-check errors
+cmctl status certificate shop-tls -n shop                   # Certificate, request, order and challenges in one view
+cmctl renew shop-tls -n shop                                # Force a renewal now
+curl -v http://shop.example.com/.well-known/acme-challenge/test   # Is port 80 reachable from outside?
+dig TXT _acme-challenge.example.com +short                  # Is the DNS-01 record visible?
+kubectl get secret shop-tls -n shop -o jsonpath='{.data.tls\.crt}' \
+  | base64 -d | openssl x509 -noout -subject -enddate      # Names and expiry of the issued cert
+```
+
+Further reading: [cert-manager docs](https://cert-manager.io/docs/) · [ACME issuer](https://cert-manager.io/docs/configuration/acme/) · [Securing Ingress resources](https://cert-manager.io/docs/usage/ingress/) · [Troubleshooting ACME](https://cert-manager.io/docs/troubleshooting/acme/) · [Let's Encrypt challenge types](https://letsencrypt.org/docs/challenge-types/) · [Let's Encrypt rate limits](https://letsencrypt.org/docs/rate-limits/) · [Staging environment](https://letsencrypt.org/docs/staging-environment/) · [HTTPS and Certificates](../basic/https-cert.mdx) · [Ingress Rules and TLS](../feature/ingress.mdx)

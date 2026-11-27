@@ -1,0 +1,258 @@
+---
+id: serverless
+title: How a Serverless Function Runs
+sidebar_label: 08 · How a Serverless Function Runs
+description: Animated walkthrough of a serverless function (AWS Lambda as the example) from an event to an execution environment, cold start versus warm reuse, one request per environment, concurrency limits and 429 throttling, timeouts and statelessness, retries that call for idempotency, and when not to use functions
+summary: 'Events, cold and warm starts, concurrency limits and throttling, retries and idempotency, and what you pay for.'
+icon: spark
+hide_table_of_contents: true
+---
+
+# How a Serverless Function Runs
+
+You upload only code and say which event should run it. The platform finds a place to run it, starts more copies when events pile up, and drops them when nothing happens. Follow one function from **event → execution environment → result**, with AWS Lambda as the example. Google Cloud Run, Azure Functions and Knative on Kubernetes work along the same lines with different limits.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~11 min', level: 'Intermediate'}}
+  groups={[
+    {label: 'Execution environments', x: 650, y: 40, w: 220, h: 400, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'user', label: 'Client', sub: 'HTTPS request', icon: 'browser', tone: 'ext', x: 90, y: 90, show: true},
+    {id: 'apigw', label: 'API gateway', sub: 'HTTP event', icon: 'gate', tone: 'cp', x: 290, y: 90, show: true},
+    {id: 'queue', label: 'Queue', sub: 'Message event', icon: 'layers', tone: 'store', x: 290, y: 230},
+    {id: 'bucket', label: 'Bucket', sub: 'Upload event', icon: 'archive', tone: 'store', x: 290, y: 370},
+    {id: 'svc', label: 'Lambda service', sub: 'Routes · scales', icon: 'gear', tone: 'cp', x: 500, y: 230, show: true},
+    {id: 'env1', label: 'Env 1', sub: 'Runtime + code', icon: 'box', tone: 'app', size: 'sm', x: 760, y: 110},
+    {id: 'env2', label: 'Env 2', sub: 'Runtime + code', icon: 'box', tone: 'app', size: 'sm', x: 760, y: 230},
+    {id: 'env3', label: 'Env 3', sub: 'Runtime + code', icon: 'box', tone: 'app', size: 'sm', x: 760, y: 350},
+    {id: 'code', label: 'Code', sub: 'zip or image', icon: 'archive', tone: 'store', x: 935, y: 110, w: 110},
+    {id: 'db', label: 'DB', sub: 'State lives here', icon: 'db', tone: 'store', x: 935, y: 230, w: 110},
+    {id: 'logs', label: 'Logs', sub: 'REPORT lines', icon: 'chart', tone: 'store', x: 935, y: 350, w: 110},
+  ]}
+  metrics={[
+    {id: 'event', label: 'Event'},
+    {id: 'start', label: 'Start'},
+    {id: 'conc', label: 'Concurrency'},
+    {id: 'result', label: 'Result'},
+  ]}
+  learn={[
+    {text: 'Events from HTTP, queues and uploads all start the same function', at: 1},
+    {text: 'What a cold start does and why warm reuse is faster', at: 2},
+    {text: 'One request per environment, so concurrency means more environments', at: 4},
+    {text: 'Concurrency limits, 429 throttling and the timeout ceiling', at: 5},
+    {text: 'Retries deliver the same event twice, so handlers must be idempotent', at: 7},
+    {text: 'Pay per request and duration, and when a function is the wrong tool', at: 8},
+  ]}
+  steps={[
+    {
+      short: 'Start',
+      kind: '시작',
+      title: 'An event arrives and nothing is running yet',
+      text: [
+        'A client calls POST /orders. The API gateway turns the HTTP request into an event and asks the Lambda service to invoke the function order-handler.',
+        'There is no server for you to keep running. The function is just a code package plus settings: runtime, memory size, timeout and permissions. Right now no copy of it is running anywhere.',
+      ],
+      flows: [
+        {from: 'user', to: 'apigw', label: 'POST /orders', type: 'request'},
+        {from: 'apigw', to: 'svc', label: 'Invoke', type: 'request'},
+      ],
+      focus: ['user', 'apigw', 'svc'],
+      values: {event: 'HTTP · synchronous', start: '—', conc: '0', result: '—'},
+    },
+    {
+      short: 'Events',
+      kind: '원리',
+      title: 'Three kinds of events, three ways to wait',
+      text: [
+        'An HTTP call through the API gateway is synchronous: the caller waits for the answer. A file upload to a bucket is asynchronous: the service queues the event and answers the bucket at once.',
+        'A queue works the other way round. The Lambda service polls the queue and invokes the function with a batch of messages. A message is deleted only when the function returns success.',
+      ],
+      keyIdea: 'Who waits, and who retries on failure, depends on the event source. Know which kind each trigger is before you write error handling.',
+      flows: [
+        {from: 'apigw', to: 'svc', label: 'Sync', type: 'request'},
+        {from: 'bucket', to: 'svc', label: 'Async', type: 'request'},
+        {from: 'svc', to: 'queue', label: 'Poll batch', type: 'watch'},
+      ],
+      focus: ['apigw', 'queue', 'bucket'],
+    },
+    {
+      short: 'Cold start',
+      kind: '원리',
+      title: 'No free environment, so the service builds one (cold start)',
+      text: [
+        'The service creates an execution environment, a small isolated micro VM. It downloads the code package or container image, starts the language runtime, and runs your init code: everything outside the handler, such as imports and creating a DB client.',
+        'Only then does it call the handler with the event. This extra work is the cold start. It ranges from well under a second to several seconds, depending on runtime, package size and init code.',
+      ],
+      keyIdea: 'Keep init code lean and put reusable setup (SDK clients, connection pools) outside the handler, so it runs once per environment instead of once per request.',
+      flows: [
+        {from: 'svc', to: 'env1', label: 'Create', type: 'request'},
+        {from: 'code', to: 'env1', label: 'Download', type: 'request'},
+        {from: 'env1', to: 'db', label: 'Save order', type: 'request'},
+      ],
+      focus: ['env1', 'code'],
+      status: {env1: 'warn'},
+      badges: {env1: 'Init + handler'},
+      values: {start: {text: 'Cold · init + handler', tone: 'bad'}, conc: '1', result: '200 OK'},
+    },
+    {
+      short: 'Warm',
+      kind: '원리',
+      title: 'The next request reuses the warm environment',
+      text: [
+        'After the handler returns, the environment is frozen, not destroyed. When the next request comes, the service thaws it and calls the handler right away. Init code does not run again.',
+        'Global variables and files in /tmp may still be there from the last call. That helps for caching, but it is never guaranteed. The service removes idle environments whenever it likes.',
+      ],
+      flows: [
+        {from: 'apigw', to: 'svc', label: 'Invoke', type: 'request'},
+        {from: 'svc', to: 'env1', label: 'Reuse', type: 'request'},
+        {from: 'env1', to: 'db', label: 'Save order', type: 'request'},
+      ],
+      focus: ['env1'],
+      status: {env1: 'ok'},
+      badges: {env1: 'Warm'},
+      values: {start: {text: 'Warm · handler only', tone: 'good'}, conc: '1'},
+    },
+    {
+      short: 'Concurrency',
+      kind: '원리',
+      title: 'Three requests at once need three environments',
+      text: [
+        'By default, a Lambda environment handles one request at a time (the newer Lambda Managed Instances mode lets one environment take several). When three requests arrive together, Env 1 takes one and the service creates Env 2 and Env 3 for the others. Both of those pay a cold start.',
+        'So concurrency, the number of requests in flight, equals the number of busy environments. Cloud Run and Knative differ here: one container instance can take many requests at once (Cloud Run\'s default is 80, or 80 per vCPU when deployed with gcloud, up to 1,000).',
+      ],
+      keyIdea: 'Concurrency ≈ requests per second × average duration. 100 requests/s that each take 0.5 s keep about 50 environments busy.',
+      flows: [
+        {from: 'svc', to: 'env1', type: 'request'},
+        {from: 'svc', to: 'env2', label: 'Create', type: 'request'},
+        {from: 'svc', to: 'env3', label: 'Create', type: 'request'},
+        {from: 'code', to: 'env3', label: 'Download', type: 'request'},
+      ],
+      focus: ['env1', 'env2', 'env3'],
+      status: {env1: 'ok', env2: 'warn', env3: 'warn'},
+      badges: {env1: 'Busy', env2: 'Cold', env3: 'Cold'},
+      values: {start: 'Warm 1 · cold 2', conc: '3'},
+    },
+    {
+      short: 'Throttled',
+      kind: '문제',
+      title: 'The concurrency limit is reached and calls get 429',
+      text: [
+        'Concurrency has a ceiling. An account starts with a shared limit per Region (1,000 by default), and you can reserve part of it for one function, which also caps that function. Here order-handler is capped at 3.',
+        'A fourth request at the same moment is throttled. A synchronous caller gets HTTP 429 (TooManyRequestsException) and must retry. Asynchronous events and queue messages are not lost: they are retried later.',
+      ],
+      keyIdea: 'A spike can also starve other functions that share the account limit. Reserve concurrency for critical functions, and watch the Throttles metric.',
+      flows: [
+        {from: 'user', to: 'apigw', label: 'Request #4', type: 'request'},
+        {from: 'svc', to: 'apigw', label: '429', type: 'response'},
+      ],
+      focus: ['svc', 'apigw'],
+      status: {env1: 'ok', env2: 'ok', env3: 'ok', svc: 'error'},
+      badges: {env1: 'Busy', env2: 'Busy', env3: 'Busy', svc: 'Limit 3'},
+      values: {conc: {text: '3 / 3 · full', tone: 'bad'}, result: {text: '429 Too Many Requests', tone: 'bad'}},
+    },
+    {
+      short: 'Stateless',
+      kind: '주의',
+      title: 'Short-lived and stateless by design',
+      text: [
+        'Every invocation has a timeout you set, up to 30 minutes on Lambda. When it runs out, the run is stopped mid-way, whatever it was doing.',
+        'An environment can disappear between any two requests, and the next request may land on a different one. /tmp is scratch space that vanishes with the environment. Anything that must survive goes to a database, a cache or object storage.',
+      ],
+      keyIdea: 'Never keep sessions, counters or uploaded files only in memory or /tmp. Treat each call as if it runs on a brand-new machine.',
+      flows: [
+        {from: 'env2', to: 'db', label: 'Write state', type: 'request'},
+      ],
+      focus: ['env2', 'db'],
+      status: {svc: null, env3: 'gone'},
+      badges: {svc: null, env1: null, env2: 'Timeout ≤ 30 min', env3: 'Removed'},
+      values: {conc: '2', result: '—'},
+    },
+    {
+      short: 'Retries',
+      kind: '문제',
+      title: 'A retry processes the same event twice',
+      text: [
+        'An upload event fails halfway: the function saved the order, then crashed before finishing. For asynchronous events Lambda retries a failed run up to two more times. A queue message that was not deleted comes back after its visibility timeout.',
+        'The retry saves the same order again, and the customer is charged twice. Delivery is at least once, so duplicates are normal, not rare.',
+      ],
+      keyIdea: 'Make handlers idempotent: store an idempotency key (the event or order id) with a unique constraint, and skip work already done. Send events that keep failing to a dead-letter queue.',
+      flows: [
+        {from: 'bucket', to: 'svc', label: 'Retry', type: 'request'},
+        {from: 'svc', to: 'env1', label: 'Same event', type: 'request'},
+        {from: 'env1', to: 'db', label: 'Saved twice?', type: 'request'},
+      ],
+      focus: ['bucket', 'env1', 'db'],
+      status: {env1: 'error', env3: null},
+      badges: {env2: null, env3: null, env1: 'Retry', db: 'Duplicate'},
+      values: {event: 'Upload · async retry', result: {text: 'Order saved twice', tone: 'bad'}},
+    },
+    {
+      short: 'Cost',
+      kind: '원리',
+      title: 'Pay per request and duration, and know when not to use it',
+      text: [
+        'You pay per request plus duration multiplied by the memory size. When there is no traffic, environments go away and the bill drops to zero. That suits bursty, event-driven work: webhooks, file processing, scheduled tasks.',
+        'Long jobs hit the timeout, and steady high load costs more than a container or VM that is busy all day. Provisioned concurrency keeps some environments initialized to remove cold starts, but you pay for it while it is on.',
+      ],
+      flows: [
+        {from: 'env1', to: 'logs', label: 'Billed Duration', type: 'response'},
+        {from: 'env2', to: 'logs', label: 'Init Duration', type: 'response'},
+      ],
+      focus: ['logs'],
+      status: {env1: 'ok'},
+      badges: {db: null, env1: null, logs: 'REPORT'},
+      values: {event: 'HTTP · synchronous', result: '200 OK'},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Events in, short stateless runs, state outside',
+      text: [
+        'An event comes in, and the platform runs the handler in a warm environment or builds a new one with a cold start. More concurrent requests mean more environments, up to a concurrency limit beyond which calls are throttled.',
+        'Each run is short and stateless, and failed events are retried. Write handlers that keep state outside and can safely run twice.',
+      ],
+      keyIdea: 'When a function misbehaves, read the REPORT log line (Duration, Billed Duration, Init Duration on cold starts) and the Throttles, Errors and ConcurrentExecutions metrics.',
+      flows: [
+        {from: 'apigw', to: 'svc', label: 'Invoke', type: 'request'},
+        {from: 'svc', to: 'env1', label: 'Warm', type: 'request'},
+        {from: 'env1', to: 'db', label: 'State', type: 'request'},
+      ],
+      focus: ['svc', 'env1', 'db'],
+      status: {env1: null, env2: null, env3: null},
+      badges: {db: null, logs: null},
+    },
+  ]}
+/>
+
+## VM, container on Kubernetes, or function?
+
+| | Virtual machine | Container on Kubernetes | Serverless function |
+|---|---|---|---|
+| You manage | OS, runtime, app, scaling | Image, manifests, cluster (or a managed one) | Code and settings only |
+| Unit of scaling | Whole VM (minutes) | Pod (seconds) | Execution environment per request (milliseconds to seconds) |
+| Idle cost | Paid while running | Nodes paid while running | Near zero (scale to zero) |
+| Run length | Unlimited | Unlimited | Capped (Lambda: 30 min) |
+| State | Local disk persists | Volumes (PV) if needed | None between calls, use external stores |
+| Good fit | Legacy apps, special OS needs | Steady services, many microservices | Bursty events, glue code, webhooks, file processing |
+
+Knative brings the function model (scale to zero, scaling by concurrency) onto a Kubernetes cluster you run yourself.
+
+## Try it yourself
+
+```bash
+aws lambda invoke --function-name demo --cli-binary-format raw-in-base64-out \
+  --payload '{"id": 1}' out.json && cat out.json                  # Synchronous call
+aws lambda get-function-configuration --function-name demo \
+  --query '[Runtime,MemorySize,Timeout]'                          # Settings that drive cost and limits
+aws logs tail /aws/lambda/demo --since 10m                        # REPORT lines: Duration, Billed Duration, Init Duration
+aws lambda get-account-settings --query 'AccountLimit.ConcurrentExecutions'   # Account concurrency limit
+aws lambda put-function-concurrency --function-name demo \
+  --reserved-concurrent-executions 50                             # Reserve and cap concurrency for one function
+aws lambda put-provisioned-concurrency-config --function-name demo \
+  --qualifier live --provisioned-concurrent-executions 5          # Keep 5 environments initialized (billed)
+```
+
+Further reading: [What is AWS Lambda?](https://docs.aws.amazon.com/lambda/latest/dg/welcome.html) · [Lambda execution environment lifecycle](https://docs.aws.amazon.com/lambda/latest/dg/lambda-runtime-environment.html) · [Lambda concurrency](https://docs.aws.amazon.com/lambda/latest/dg/lambda-concurrency.html) · [Asynchronous invocation](https://docs.aws.amazon.com/lambda/latest/dg/invocation-async.html) · [Cloud Run concurrency](https://cloud.google.com/run/docs/about-concurrency) · [Knative Serving](https://knative.dev/docs/serving/) · [Who Owns What (IaaS · PaaS · SaaS)](../cloud/service-models.mdx) · [Until a Model First Starts (Cold Start)](../ai/cold-start.mdx)

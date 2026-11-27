@@ -1,0 +1,239 @@
+---
+id: tcp-ip-layers
+title: 'Under One Request: TCP/IP Layers'
+sidebar_label: 02 · TCP/IP Layers
+description: Go one layer below a web request and follow, step by step, how data becomes a TCP segment, an IP packet and an Ethernet frame, how ARP and the default gateway get it off the LAN, the three-way handshake, retransmission, and why a connection is refused, times out, or hangs on MTU
+summary: 'Segments, packets and frames, ports, IPs and MACs, the handshake, and refused vs timed out.'
+icon: layers
+hide_table_of_contents: true
+---
+
+# Under One Request: TCP/IP Layers
+
+[When You Type an Address](../basic/web-request.mdx) showed a request going from the browser to a server. This lesson opens that arrow. Follow one connection to `203.0.113.10:443` through the **TCP/IP layers**: what each layer adds, which address it uses, and where it breaks.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~12 min', level: 'Beginner'}}
+  groups={[
+    {label: 'Your LAN · 192.168.1.0/24', x: 15, y: 170, w: 465, h: 150, tone: 'plain'},
+    {label: 'Server network', x: 655, y: 170, w: 330, h: 270, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'client', label: 'Client', sub: '192.168.1.20', icon: 'browser', tone: 'ext', x: 95, y: 245, show: true},
+    {id: 'sw', label: 'Switch', sub: 'By MAC', icon: 'split', tone: 'node', size: 'sm', x: 245, y: 245},
+    {id: 'gw', label: 'Router', sub: 'Default gateway', icon: 'route', tone: 'cp', x: 395, y: 245},
+    {id: 'net', label: 'Internet', sub: 'Router hops', icon: 'cloud', tone: 'ext', x: 560, y: 245},
+    {id: 'fw', label: 'Firewall', sub: 'Allow · drop', icon: 'shield', tone: 'cp', size: 'sm', x: 720, y: 245},
+    {id: 'server', label: 'Server', sub: '203.0.113.10', icon: 'server', tone: 'app', x: 885, y: 245},
+    {id: 'proc', label: 'nginx', sub: 'Listens :443', icon: 'box', tone: 'app', size: 'sm', x: 885, y: 385},
+  ]}
+  metrics={[
+    {id: 'layer', label: 'Layer'},
+    {id: 'addr', label: 'Addresses'},
+    {id: 'ttl', label: 'TTL'},
+    {id: 'tcp', label: 'TCP state'},
+  ]}
+  learn={[
+    {text: 'Each layer wraps the data in its own header: segment, packet, frame', at: 1},
+    {text: 'The routing table and the default gateway pick the next hop', at: 2},
+    {text: 'ARP finds the MAC address of that next hop', at: 3},
+    {text: 'The three-way handshake and how lost data is resent', at: 5},
+    {text: 'Refused vs timed out, and the MTU black hole', at: 7},
+  ]}
+  steps={[
+    {
+      short: 'Start',
+      kind: '시작',
+      title: 'The app only hands bytes to a socket',
+      text: [
+        'The browser already knows the server\'s IP from DNS: 203.0.113.10. It asks the operating system for a TCP connection to port 443 and gets back a socket.',
+        'The app never builds packets itself. It writes bytes (an HTTP request) into the socket. The kernel\'s network stack does everything below that, layer by layer.',
+      ],
+      focus: ['client'],
+      values: {layer: 'Application (OSI 7)', addr: '203.0.113.10:443', ttl: '—', tcp: 'CLOSED'},
+    },
+    {
+      short: 'Layers',
+      kind: '원리',
+      title: 'Each layer adds a header: segment → packet → frame',
+      text: [
+        'Transport layer: TCP adds a header with ports. The destination port is 443, and the source port is a random ephemeral port such as 51514 (on Linux, from 32768–60999). Data plus TCP header is a segment.',
+        'Internet layer: IP adds source and destination IP addresses and a TTL (64 by default on Linux). Now it is a packet. Link layer: Ethernet adds source and destination MAC addresses. Now it is a frame, which goes on the wire.',
+      ],
+      keyIdea: 'Ports pick the program, IPs pick the host across networks, MACs pick the next device on this LAN. Each layer reads only its own header.',
+      focus: ['client'],
+      badges: {client: 'TCP · IP · Ethernet'},
+      values: {layer: 'L4 → L3 → L2', addr: ':51514 → :443', ttl: '64'},
+    },
+    {
+      short: 'Route',
+      kind: '원리',
+      title: 'The routing table says: not local, send it to the gateway',
+      text: [
+        'The kernel looks up 203.0.113.10 in its routing table. It is not inside 192.168.1.0/24, so the only match is the default route: via 192.168.1.1, the router.',
+        'The destination IP in the packet stays 203.0.113.10. The gateway is only the next hop. It decides where the packet goes next.',
+      ],
+      keyIdea: 'ip route shows this table. "default via ..." is the line that sends everything outside your subnet to the router.',
+      flows: [{from: 'client', to: 'gw', label: 'Next hop', type: 'watch'}],
+      focus: ['client', 'gw'],
+      badges: {client: null, gw: '192.168.1.1'},
+      values: {addr: 'dst IP 203.0.113.10'},
+    },
+    {
+      short: 'ARP',
+      kind: '원리',
+      title: 'ARP finds the gateway\'s MAC, and the switch delivers the frame',
+      text: [
+        'A frame needs a destination MAC, but the client only knows the gateway\'s IP. It broadcasts an ARP request: "Who has 192.168.1.1?" The router answers with its MAC, and the client caches it in its neighbor table.',
+        'The frame goes out with the router\'s MAC as destination. The switch reads only that MAC and forwards the frame out the port where it learned that address.',
+      ],
+      flows: [
+        {from: 'client', to: 'sw', label: 'Frame', type: 'request'},
+        {from: 'sw', to: 'gw', label: 'dst MAC = router', type: 'request'},
+      ],
+      focus: ['sw', 'gw'],
+      badges: {sw: 'MAC table', gw: null},
+      values: {layer: 'Link (OSI 2)', addr: 'MAC → router'},
+    },
+    {
+      short: 'Hops',
+      kind: '원리',
+      title: 'Every router rewrites the frame and lowers the TTL',
+      text: [
+        'Each router removes the frame, reads the IP header, lowers TTL by 1 and looks up its own routing table. It then wraps the packet in a new frame with new MACs for the next link. MAC addresses change at every hop.',
+        'The IP addresses normally stay the same end to end. One common exception is NAT: a home or office router rewrites the private source IP 192.168.1.20 to its public IP. If TTL reaches 0, the router drops the packet and sends back an ICMP Time Exceeded message. traceroute uses exactly this to list the hops.',
+      ],
+      flows: [
+        {from: 'gw', to: 'net', label: 'Packet', type: 'request'},
+        {from: 'net', to: 'fw', label: 'TTL 64 → 52', type: 'request'},
+        {from: 'fw', to: 'server', label: ':443 allowed', type: 'request'},
+      ],
+      focus: ['gw', 'net', 'fw'],
+      badges: {sw: null},
+      values: {layer: 'Internet (OSI 3)', ttl: '52 after 12 hops', addr: 'MACs change per hop'},
+    },
+    {
+      short: 'Handshake',
+      kind: '원리',
+      title: 'Three-way handshake, then the kernel hands it to the process',
+      text: [
+        'That first packet was actually a TCP SYN with no data. The server\'s kernel strips the frame and IP header and checks the TCP port: a socket is listening on 443, so it answers SYN-ACK. The client replies ACK. The connection is ESTABLISHED.',
+        'One full round trip passes before any HTTP byte is sent. On top of this, TLS adds its own handshake. The kernel queues the new connection, and nginx, the process holding the listening socket, accepts it.',
+      ],
+      flows: [
+        {from: 'client', to: 'server', label: 'SYN', type: 'request'},
+        {from: 'server', to: 'client', label: 'SYN-ACK', type: 'response'},
+        {from: 'server', to: 'proc', label: 'accept()', type: 'request'},
+      ],
+      focus: ['server', 'proc'],
+      status: {proc: 'ok'},
+      badges: {proc: 'LISTEN :443'},
+      values: {layer: 'Transport (OSI 4)', tcp: {text: 'ESTABLISHED', tone: 'good'}},
+    },
+    {
+      short: 'Data',
+      kind: '원리',
+      title: 'Sequence numbers and ACKs make a reliable stream',
+      text: [
+        'Now the HTTP bytes flow. Each segment carries a sequence number, and the receiver acknowledges what it got with an ACK. If a segment is lost, the sender notices (no ACK before the timer, or repeated duplicate ACKs) and sends it again.',
+        'The app sees one ordered byte stream and never sees the loss, only the delay. With Ethernet\'s 1500-byte MTU, minus 20 bytes of IP and 20 of TCP header, one segment carries at most 1460 bytes of data.',
+      ],
+      keyIdea: 'Packet loss rarely shows as an error. It shows as slowness, because TCP keeps resending.',
+      flows: [
+        {from: 'client', to: 'server', label: 'Data · seq', type: 'request'},
+        {from: 'server', to: 'client', label: 'ACK', type: 'response'},
+      ],
+      focus: ['client', 'server'],
+      badges: {proc: null},
+      values: {layer: 'L7 data over L4'},
+    },
+    {
+      short: 'Refused vs timeout',
+      kind: '문제',
+      title: 'Refused comes back at once, timeout never comes back',
+      text: [
+        'Port 8080 on the server: nothing listens there. The server\'s kernel answers the SYN with RST. curl -v shows "Connection refused" immediately. The host is reachable. The app is not running, or listens on another port or address (for example only 127.0.0.1).',
+        'Port 22: the firewall silently drops the SYN. No answer comes, so the client resends the SYN with growing gaps. With Linux defaults it gives up after about two minutes, and you see "timed out". Something on the path is dropping traffic. Some firewalls reject instead of dropping, and then it looks like refused.',
+      ],
+      keyIdea: 'Refused: you reached the host, check the process and its listen address. Timed out: check the path, meaning firewalls, security groups and routes.',
+      flows: [
+        {from: 'server', to: 'client', label: ':8080 → RST', type: 'response'},
+        {from: 'client', to: 'fw', label: ':22 SYN', type: 'request'},
+      ],
+      focus: ['fw', 'server'],
+      status: {fw: 'error', proc: null},
+      badges: {fw: ':22 dropped', server: ':8080 RST'},
+      values: {tcp: {text: 'Refused · Timed out', tone: 'bad'}},
+    },
+    {
+      short: 'MTU',
+      kind: '주의',
+      title: 'Small packets pass, big ones vanish: the MTU black hole',
+      text: [
+        'A VPN, tunnel or overlay network adds its own header, so the path MTU drops below 1500. A full-size packet with "Don\'t Fragment" set cannot pass. The router should send back ICMP "Fragmentation Needed", and the sender then shrinks its packets.',
+        'If a firewall blocks that ICMP, the sender never learns. The handshake and small requests work, but large responses hang. Lowering the interface MTU, or clamping TCP MSS on the tunnel, fixes it.',
+      ],
+      keyIdea: 'Connects fine, small requests fine, large downloads stall? Suspect MTU. Test with ping -M do -s 1472 (Linux).',
+      flows: [{from: 'server', to: 'net', label: '1500 B · DF', type: 'response'}],
+      focus: ['net'],
+      status: {fw: null, net: 'warn'},
+      badges: {fw: null, server: null, net: 'MTU 1400'},
+      values: {tcp: {text: 'ESTABLISHED · stalls', tone: 'bad'}},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Wrap on the way down, unwrap on the way up',
+      text: [
+        'The sender wraps data in TCP (ports), IP (IP addresses, TTL) and Ethernet (MAC addresses). The routing table picks the next hop, ARP finds its MAC, and each router unwraps and rewraps the frame. The receiver unwraps it again and hands the bytes to the process listening on the port.',
+        'TCP adds a handshake, sequence numbers and resending on top, so the app gets a reliable stream. Kubernetes networking builds on these same layers: Pod IPs, Services and NetworkPolicies are rules on packets.',
+      ],
+      keyIdea: 'Debug bottom-up: is there a route (ip route), a neighbor (ip neigh), a path (traceroute), a listener (ss -tlnp), and a response (curl -v)?',
+      flows: [
+        {from: 'client', to: 'sw', type: 'request'},
+        {from: 'sw', to: 'gw', type: 'request'},
+        {from: 'gw', to: 'net', type: 'request'},
+        {from: 'net', to: 'fw', type: 'request'},
+        {from: 'fw', to: 'server', type: 'request'},
+        {from: 'server', to: 'proc', type: 'request'},
+      ],
+      focus: ['client', 'server', 'proc'],
+      status: {net: null},
+      badges: {net: null},
+      values: {layer: 'L7 ↔ L2', tcp: 'ESTABLISHED'},
+    },
+  ]}
+/>
+
+## Layers, units and addresses
+
+| TCP/IP layer | OSI layer | Unit | Address | Example tool |
+|---|---|---|---|---|
+| Application | 7 (5–7) | Message (HTTP request) | URL, host name | `curl -v` |
+| Transport | 4 | Segment (TCP) | Port | `ss -tlnp` |
+| Internet | 3 | Packet | IP address | `ip route`, `traceroute` |
+| Link | 2 (and 1) | Frame | MAC address | `ip neigh`, `tcpdump -e` |
+
+## Refused or timed out?
+
+| Symptom | What happened | Check |
+|---|---|---|
+| `Connection refused`, instantly | Host replied RST: nothing listens on that port and address | `ss -tlnp` on the server. Is the app up, on the right port, bound to `0.0.0.0` and not only `127.0.0.1`? |
+| `Connection timed out`, after a long wait | SYN got no answer: dropped on the path | Firewall rules, security groups, routes (`traceroute`) |
+| `No route to host` | A router or firewall sent back an ICMP error, or ARP for the next hop got no answer | `ip route`, `ip neigh`, the host is up |
+| Connects, then large responses hang | Path MTU smaller than the packets, and the ICMP that would say so is blocked | `ping -M do -s 1472 <host>`, tunnel MTU, MSS clamping |
+
+## Try it yourself
+
+```bash
+ip route                                   # default via <gateway> — where off-subnet traffic goes
+ip neigh                                   # ARP / neighbor cache: IP → MAC on this LAN
+traceroute -n <host>                       # each router hop (uses TTL expiry)
+ss -tlnp                                   # listening TCP sockets and the process holding each (run on the server)
+curl -v http://<host>:8080/                # "Connected to" vs "Connection refused" vs timeout
+sudo tcpdump -ni any 'tcp port 443 and tcp[tcpflags] & (tcp-syn|tcp-rst) != 0'   # watch SYN, SYN-ACK and RST
+```
+
+Further reading: [RFC 9293: TCP](https://www.rfc-editor.org/rfc/rfc9293) · [RFC 791: IP](https://www.rfc-editor.org/rfc/rfc791) · [RFC 826: ARP](https://www.rfc-editor.org/rfc/rfc826) · [RFC 1191: Path MTU Discovery](https://www.rfc-editor.org/rfc/rfc1191) · [ip-route(8)](https://man7.org/linux/man-pages/man8/ip-route.8.html) · [ss(8)](https://man7.org/linux/man-pages/man8/ss.8.html) · [When You Type an Address](../basic/web-request.mdx) · [A Packet from Pod to Pod](../advanced/packet-path.mdx)

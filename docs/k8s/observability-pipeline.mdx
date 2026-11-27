@@ -1,0 +1,243 @@
+---
+id: observability-pipeline
+title: How Logs, Metrics and Traces Leave a Pod
+sidebar_label: 08 · Logs, Metrics and Traces
+description: Animated walkthrough of how a Pod's stdout becomes a log file on the node, how kubectl logs and a log agent DaemonSet read it, how Prometheus discovers and scrapes /metrics, what metrics-server is for, and how traces are pushed over OTLP
+summary: 'Three signals, three paths: log files on the node, Prometheus pulling /metrics, and traces pushed over OTLP.'
+icon: chart
+hide_table_of_contents: true
+---
+
+# How Logs, Metrics and Traces Leave a Pod
+
+Follow the three signals out of one Pod. **Logs** go to stdout and land in a file on the node. **Metrics** wait at `/metrics` until Prometheus pulls them. **Traces** are pushed to a collector over OTLP. Each path breaks in its own way.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~12 min', level: 'Intermediate'}}
+  groups={[
+    {label: 'Worker node', x: 30, y: 30, w: 480, h: 410, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'pod', label: 'App Pod', sub: 'stdout · /metrics · OTLP', icon: 'pod', tone: 'app', x: 150, y: 110, w: 170, show: true},
+    {id: 'files', label: '/var/log/pods', sub: 'Written by runtime', icon: 'disk', tone: 'store', x: 150, y: 260, w: 160},
+    {id: 'agent', label: 'Log agent', sub: 'DaemonSet', icon: 'agent', tone: 'node', x: 380, y: 260},
+    {id: 'kubelet', label: 'kubelet', sub: 'Rotates · serves logs', icon: 'server', tone: 'node', x: 380, y: 400, w: 160},
+    {id: 'prom', label: 'Prometheus', sub: 'Pulls · stores series', icon: 'chart', tone: 'store', x: 650, y: 170},
+    {id: 'otel', label: 'OTel Collector', sub: 'OTLP in', icon: 'layers', tone: 'cp', x: 880, y: 90},
+    {id: 'logstore', label: 'Log store', sub: 'e.g. Loki, OpenSearch', icon: 'archive', tone: 'store', x: 880, y: 240, w: 170},
+    {id: 'kubectl', label: 'kubectl', sub: 'logs · top', icon: 'user', tone: 'ext', x: 650, y: 320},
+    {id: 'msrv', label: 'metrics-server', sub: 'Latest values only', icon: 'scale', tone: 'cp', x: 880, y: 400, w: 160},
+  ]}
+  metrics={[
+    {id: 'signal', label: 'Signal'},
+    {id: 'path', label: 'Path'},
+    {id: 'keep', label: 'Kept for'},
+  ]}
+  learn={[
+    {text: 'Where stdout goes: the runtime writes a file, the kubelet rotates it', at: 1},
+    {text: 'Why logs vanish with the Pod, and what a node log agent fixes', at: 3},
+    {text: 'Prometheus discovers targets and pulls /metrics; a failed scrape sets up to 0', at: 5},
+    {text: 'Why one unbounded label can blow up a metrics store', at: 7},
+    {text: 'metrics-server is for kubectl top and HPA, not for history', at: 8},
+    {text: 'Traces are pushed over OTLP to a collector', at: 9},
+  ]}
+  steps={[
+    {
+      short: 'Start',
+      kind: '시작',
+      title: 'One Pod, three signals, three paths',
+      text: [
+        'The app Pod prints log lines, counts requests and errors, and records how long each request took across services.',
+        'These are the three signals: logs, metrics and traces. Kubernetes moves none of them to long-term storage on its own. Each one takes a different path out of the Pod.',
+      ],
+      focus: ['pod'],
+      values: {signal: 'Logs · metrics · traces'},
+    },
+    {
+      short: 'stdout',
+      kind: '원리',
+      title: 'stdout becomes a file on the node',
+      text: [
+        'The app writes logs to stdout and stderr, not to its own files. The container runtime (for example, containerd or CRI-O) captures the streams and writes them to /var/log/pods/<namespace>_<pod>_<uid>/<container>/ on the node.',
+        'The kubelet rotates these files. By default it keeps up to 5 files of at most 10 MiB per container (containerLogMaxFiles and containerLogMaxSize). Older lines are deleted.',
+      ],
+      keyIdea: 'Log to stdout and stderr. Logs written to a file inside the container are invisible to kubectl logs and to most agents.',
+      flows: [{from: 'pod', to: 'files', label: 'stdout · stderr', type: 'request'}],
+      focus: ['pod', 'files'],
+      values: {signal: 'Logs', path: 'stdout → node file', keep: '≈5 × 10 MiB per container'},
+    },
+    {
+      short: 'kubectl logs',
+      kind: '원리',
+      title: 'kubectl logs reads that file through the kubelet',
+      text: [
+        'kubectl logs asks the API server, which forwards the request to the kubelet on the Pod\'s node. The kubelet reads the log file and streams it back.',
+        'If the container restarted, kubectl logs --previous shows the last terminated instance. That is usually where the crash message is.',
+      ],
+      flows: [
+        {from: 'kubectl', to: 'kubelet', label: 'logs (via API)', type: 'request'},
+        {from: 'files', to: 'kubelet', label: 'Read', type: 'response'},
+        {from: 'kubelet', to: 'kubectl', label: 'Log lines', type: 'response'},
+      ],
+      focus: ['kubectl', 'kubelet', 'files'],
+      values: {path: 'kubectl → kubelet → file'},
+    },
+    {
+      short: 'Logs gone',
+      kind: '문제',
+      title: 'Delete the Pod and its logs go with it',
+      text: [
+        'A Deployment rollout replaces the Pod, or the node is drained or fails. The kubelet cleans up the dead Pod\'s log directory, and a lost node takes its disk with it.',
+        'kubectl logs now has nothing to read. The error that happened at 3 a.m. is gone, and only the new Pod\'s logs remain.',
+      ],
+      keyIdea: 'Node files are a short buffer, not storage. Anything you may need tomorrow must be shipped off the node.',
+      flows: [{from: 'kubectl', to: 'kubelet', label: 'logs', type: 'request'}],
+      focus: ['files', 'kubelet'],
+      status: {files: 'error'},
+      badges: {files: 'Deleted'},
+      values: {keep: {text: 'Until the Pod is removed', tone: 'bad'}},
+    },
+    {
+      short: 'Log agent',
+      kind: '원리',
+      title: 'A node log agent ships every file off the node',
+      text: [
+        'A log agent runs as a DaemonSet, so there is one copy per node (for example, Fluent Bit, Vector or the OpenTelemetry Collector). It mounts /var/log/pods from the host and tails every file.',
+        'It adds Kubernetes metadata such as namespace, Pod name and labels, then sends the lines to a log store. Now logs outlive the Pod and the node.',
+      ],
+      keyIdea: 'The agent tracks its read position per file. If it falls behind and rotation deletes a file first, those lines are lost, so watch the agent\'s own metrics.',
+      flows: [
+        {from: 'pod', to: 'files', label: 'stdout', type: 'request'},
+        {from: 'files', to: 'agent', label: 'Tail', type: 'request'},
+        {from: 'agent', to: 'logstore', label: 'Ship + metadata', type: 'request'},
+      ],
+      focus: ['agent', 'logstore'],
+      status: {files: null, agent: 'ok'},
+      badges: {files: null, agent: '1 per node'},
+      values: {path: 'file → agent → store', keep: {text: 'Store retention (days)', tone: 'good'}},
+    },
+    {
+      short: 'Scrape',
+      kind: '원리',
+      title: 'Prometheus finds the Pod and pulls /metrics',
+      text: [
+        'The app exposes counters and gauges at an HTTP endpoint such as :8080/metrics in a plain text format. It does not send them anywhere.',
+        'Prometheus asks the API server for Pods or endpoints (kubernetes_sd_configs) and builds a target list. With the Prometheus Operator, a ServiceMonitor or PodMonitor describes the same thing. Every scrape interval (often 15–60 s) Prometheus sends GET /metrics and stores each value with a timestamp.',
+      ],
+      keyIdea: 'Metrics are pulled. New Pods are found through service discovery, so you never register them by hand.',
+      flows: [
+        {from: 'prom', to: 'pod', label: 'GET /metrics', type: 'request'},
+        {from: 'pod', to: 'prom', label: 'Samples', type: 'response'},
+      ],
+      focus: ['prom', 'pod'],
+      badges: {agent: null, prom: 'up = 1'},
+      values: {signal: 'Metrics', path: 'Prometheus pulls', keep: 'TSDB retention (15 d default)'},
+    },
+    {
+      short: 'Target down',
+      kind: '문제',
+      title: 'A failed scrape shows up as up = 0',
+      text: [
+        'The app hangs, or a NetworkPolicy blocks Prometheus from port 8080. The scrape times out.',
+        'Prometheus records the synthetic series up = 0 for that target, and the app\'s own series stop getting new samples. The target page shows the error, such as context deadline exceeded.',
+      ],
+      keyIdea: 'Alert on up == 0 for important jobs. Missing data does not trigger an error-rate alert, so a silent target can hide an outage.',
+      flows: [{from: 'prom', to: 'pod', label: 'Timeout', type: 'request'}],
+      focus: ['prom', 'pod'],
+      status: {pod: 'error'},
+      badges: {prom: 'up = 0'},
+    },
+    {
+      short: 'Cardinality',
+      kind: '주의',
+      title: 'Every label value makes a new series',
+      text: [
+        'Each unique set of label values is its own time series. http_requests_total with method and status gives a few dozen series per Pod.',
+        'Add a label such as user_id or the full request path, and one metric can grow to millions of series. Memory use and query time climb until Prometheus slows down or runs out of memory.',
+      ],
+      keyIdea: 'Keep label values bounded (method, status code, route template). Put per-request detail such as user IDs in logs or traces instead.',
+      flows: [{from: 'pod', to: 'prom', label: 'Samples', type: 'response'}],
+      focus: ['prom'],
+      status: {pod: null, prom: 'warn'},
+      badges: {prom: 'Series ↑↑'},
+    },
+    {
+      short: 'metrics-server',
+      kind: '원리',
+      title: 'metrics-server keeps only the latest CPU and memory',
+      text: [
+        'The kubelet also reports CPU and memory per container and Pod. metrics-server collects them from every kubelet (by default every 15 s) and serves them as the Metrics API.',
+        'kubectl top and the HPA read this API. It holds only the most recent values, so it cannot answer "what was the CPU yesterday?". That is Prometheus\'s job.',
+      ],
+      flows: [
+        {from: 'msrv', to: 'kubelet', label: 'Resource metrics', type: 'request'},
+        {from: 'kubectl', to: 'msrv', label: 'top (via API)', type: 'request'},
+      ],
+      focus: ['msrv', 'kubelet'],
+      status: {prom: null},
+      badges: {prom: null, msrv: 'No history'},
+      values: {signal: 'Resource metrics', path: 'kubelet → metrics-server', keep: {text: 'Latest only', tone: 'bad'}},
+    },
+    {
+      short: 'Traces',
+      kind: '원리',
+      title: 'Traces are pushed over OTLP to a collector',
+      text: [
+        'An OpenTelemetry SDK in the app records spans: one per operation, sharing a trace ID that is passed to downstream services in request headers.',
+        'The SDK pushes spans over OTLP (gRPC port 4317 or HTTP port 4318) to an OpenTelemetry Collector. The collector batches and often samples them, then exports them to a trace backend such as Jaeger or Tempo.',
+      ],
+      keyIdea: 'Put the trace ID in your log lines. Then you can jump from a slow trace to the exact logs of that request.',
+      flows: [{from: 'pod', to: 'otel', label: 'OTLP spans', type: 'request'}],
+      focus: ['pod', 'otel'],
+      badges: {msrv: null, otel: 'Batch · sample'},
+      values: {signal: 'Traces', path: 'App pushes OTLP', keep: 'Backend retention'},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Logs are collected, metrics are pulled, traces are pushed',
+      text: [
+        'Logs go to stdout, become node files rotated by the kubelet, and survive only if a DaemonSet agent ships them. Metrics wait at /metrics until Prometheus finds the Pod and scrapes it.',
+        'Traces are pushed over OTLP to a collector. metrics-server is a small live view for kubectl top and autoscaling, not a monitoring system.',
+      ],
+      keyIdea: 'For each signal, know who moves it and how long it is kept. When data is missing, check that mover first: the log agent, the scrape target, or the collector.',
+      flows: [
+        {from: 'files', to: 'agent', label: 'Tail', type: 'request'},
+        {from: 'agent', to: 'logstore', label: 'Ship', type: 'request'},
+        {from: 'prom', to: 'pod', label: 'Scrape', type: 'request'},
+        {from: 'pod', to: 'otel', label: 'OTLP', type: 'request'},
+      ],
+      focus: ['agent', 'prom', 'otel'],
+      badges: {otel: null},
+      values: {signal: 'Logs · metrics · traces', path: 'Collect · pull · push', keep: '—'},
+    },
+  ]}
+/>
+
+## Three signals compared
+
+| Signal | Who moves it | Direction | Where it is kept | Typical failure |
+|---|---|---|---|---|
+| Logs | Container runtime writes the file, a DaemonSet agent ships it | Collected from node files | Log store (e.g. Loki, OpenSearch) | Pod deleted before shipping, agent lag during rotation, app logging to a file |
+| Metrics | Prometheus, via service discovery | Pulled (scrape) | Prometheus TSDB or remote storage | Target down (`up == 0`), wrong port or path, high-cardinality labels |
+| Traces | OpenTelemetry SDK in the app | Pushed (OTLP) | Trace backend (e.g. Jaeger, Tempo) | Collector address wrong, trace context not propagated, sampled away |
+| Resource metrics | metrics-server, from each kubelet | Pulled | Memory only, latest value | metrics-server missing, so `kubectl top` and HPA fail |
+
+## Try it yourself
+
+```bash
+kubectl logs deploy/web --tail=50                    # Read the current container's log via the kubelet
+kubectl logs web-7c9d -c app --previous              # Log of the last crashed instance
+kubectl get daemonset -A                             # Is a log agent running on every node?
+kubectl debug node/worker-1 -it --image=busybox -- ls /host/var/log/pods   # The files on the node
+kubectl port-forward deploy/web 8080 &
+curl -s localhost:8080/metrics | head                # What Prometheus scrapes
+kubectl top pod -A                                   # Metrics API from metrics-server
+kubectl get servicemonitor,podmonitor -A             # If you use the Prometheus Operator
+```
+
+In Prometheus, run `up == 0` to list failing targets, and `topk(10, count by (__name__) ({__name__=~".+"}))` to find metrics with too many series.
+
+Further reading: [Logging architecture](https://kubernetes.io/docs/concepts/cluster-administration/logging/) · [Resource metrics pipeline](https://kubernetes.io/docs/tasks/debug/debug-cluster/resource-metrics-pipeline/) · [Prometheus kubernetes_sd_config](https://prometheus.io/docs/prometheus/latest/configuration/configuration/#kubernetes_sd_config) · [Prometheus naming and labels](https://prometheus.io/docs/practices/naming/) · [OTLP specification](https://opentelemetry.io/docs/specs/otlp/) · [OpenTelemetry Collector](https://opentelemetry.io/docs/collector/) · [SLOs and Alert Design](../advanced/slo-alert.mdx) · [Scaling with Load (HPA)](../k8s/autoscaling.mdx)

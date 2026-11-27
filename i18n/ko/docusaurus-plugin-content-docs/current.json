@@ -7,6 +7,10 @@
     "message": "기초: 웹·서버·컨테이너",
     "description": "The label for category 'Foundations: web, servers, containers' in sidebar 'lessons'"
   },
+  "sidebar.lessons.category.App basics: HTTP, auth, data": {
+    "message": "애플리케이션 기초: HTTP·인증·데이터",
+    "description": "The label for category 'App basics: HTTP, auth, data' in sidebar 'lessons'"
+  },
   "sidebar.lessons.category.Cloud basics": {
     "message": "클라우드 기초",
     "description": "The label for category 'Cloud basics' in sidebar 'lessons'"

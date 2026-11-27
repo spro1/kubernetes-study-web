@@ -1,0 +1,229 @@
+---
+id: message-queue
+title: How a Message Queue Decouples Services
+sidebar_label: 05 · Message Queues and Kafka
+description: Animated walkthrough of asynchronous messaging with Kafka as the example, from topics, partitions and keys to producer acks, replication, consumer groups and offset commits, redelivery after a crash, consumer lag, dead-letter queues, and queue versus pub/sub
+summary: 'Topics, partitions and consumer groups, why at-least-once delivery means consumers must be idempotent, consumer lag, and dead-letter queues.'
+icon: layers
+hide_table_of_contents: true
+---
+
+# How a Message Queue Decouples Services
+
+The order service publishes one **event**. Shipping and email each read it at their own pace. Follow the event through **producer → topic partition → consumer group → offset commit**, then watch what happens when a consumer crashes, falls behind, or hits a message it can never process.
+
+<StepDiagram
+  width={1000}
+  height={480}
+  meta={{duration: '~12 min', level: 'Beginner'}}
+  groups={[
+    {label: 'Kafka cluster · topic orders', x: 300, y: 40, w: 300, h: 380, tone: 'mgmt'},
+    {label: 'Consumer group shipping', x: 700, y: 40, w: 270, h: 230, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'order', label: 'Order service', sub: 'Producer', icon: 'box', tone: 'app', x: 130, y: 230, show: true},
+    {id: 'p0', label: 'Partition 0', sub: 'Leader broker 1', icon: 'layers', tone: 'store', x: 450, y: 110},
+    {id: 'p1', label: 'Partition 1', sub: 'Leader broker 2', icon: 'layers', tone: 'store', x: 450, y: 230},
+    {id: 'p2', label: 'Partition 2', sub: 'Leader broker 3', icon: 'layers', tone: 'store', x: 450, y: 350},
+    {id: 'c1', label: 'Shipping 1', sub: 'Reads p0, p1', icon: 'server', tone: 'node', x: 835, y: 110},
+    {id: 'c2', label: 'Shipping 2', sub: 'Reads p2', icon: 'server', tone: 'node', x: 835, y: 220},
+    {id: 'email', label: 'Email service', sub: 'Group email', icon: 'bell', tone: 'node', x: 835, y: 330},
+    {id: 'dlq', label: 'DLQ topic', sub: 'orders.dlq', icon: 'alert', tone: 'ext', x: 835, y: 430},
+  ]}
+  metrics={[
+    {id: 'msg', label: 'Message'},
+    {id: 'offset', label: 'Committed offset'},
+    {id: 'lag', label: 'Consumer lag'},
+    {id: 'delivery', label: 'Delivery'},
+  ]}
+  learn={[
+    {text: 'Why publishing an event beats calling three services directly', at: 0},
+    {text: 'Topics, partitions, keys, and where ordering holds', at: 1},
+    {text: 'Consumer groups split partitions and commit offsets', at: 3},
+    {text: 'A crash means redelivery, so consumers must be idempotent', at: 5},
+    {text: 'Lag, poison messages and the dead-letter queue', at: 7},
+  ]}
+  steps={[
+    {
+      short: 'Start',
+      kind: '시작',
+      title: 'Publish once instead of calling everyone',
+      text: [
+        'An order is placed. Shipping, email and points all need to know. If the order service calls each one directly, one slow or broken service makes the order fail, and every new service means changing the order code.',
+        'Instead, the order service publishes one event, "order 42 created", to a topic and returns. Each interested service reads the event when it is ready. Kafka is the example here. RabbitMQ and Amazon SQS solve the same problem with different models.',
+      ],
+      flows: [{from: 'order', to: 'p1', label: 'Publish', type: 'request'}],
+      focus: ['order'],
+      values: {msg: 'order 42 created'},
+    },
+    {
+      short: 'Partitions',
+      kind: '원리',
+      title: 'A topic is split into partitions, and the key picks one',
+      text: [
+        'The topic orders has three partitions. Each partition is an append-only log, and every message in it gets the next number, its offset.',
+        'The producer sends the message with key order-42. The default partitioner hashes the key, so every event for order 42 lands in the same partition, partition 1 here. Order is guaranteed only within one partition, not across the whole topic.',
+      ],
+      keyIdea: 'Pick the key by what must stay in order. Same order id → same partition → events for that order are read in the order they were written.',
+      flows: [{from: 'order', to: 'p1', label: 'key order-42', type: 'request'}],
+      focus: ['p0', 'p1', 'p2'],
+      badges: {p1: 'offset 1041'},
+      values: {msg: 'p1 · offset 1041'},
+    },
+    {
+      short: 'Replicas',
+      kind: '원리',
+      title: 'Replication and acks decide when a write is safe',
+      text: [
+        'Each partition has a leader on one broker and followers on other brokers that copy it. With replication factor 3, the message exists on three brokers once the followers catch up.',
+        'With acks=all (the default since Kafka 3.0), the leader answers only after all in-sync replicas have the message. min.insync.replicas=2 means a write fails rather than being kept on just one broker. With acks=1 the leader answers alone, and a leader crash can lose the message.',
+      ],
+      keyIdea: 'Replication factor 3, acks=all and min.insync.replicas=2 is the common setup for data you cannot lose. It survives one broker failure without losing writes.',
+      flows: [{from: 'p1', to: 'order', label: 'ack (all ISR)', type: 'response'}],
+      focus: ['p1', 'order'],
+      badges: {p1: 'ISR 3/3'},
+    },
+    {
+      short: 'Group',
+      kind: '원리',
+      title: 'A consumer group splits the partitions among its members',
+      text: [
+        'Two shipping instances join the consumer group shipping. Kafka gives each partition to exactly one member of the group: Shipping 1 reads partitions 0 and 1, Shipping 2 reads partition 2.',
+        'So the partition count caps parallelism. A third shipping instance could still help, but a fourth would sit idle with no partition to read.',
+      ],
+      flows: [
+        {from: 'p0', to: 'c1', label: 'Poll', type: 'request'},
+        {from: 'p1', to: 'c1', label: 'Poll', type: 'request'},
+        {from: 'p2', to: 'c2', label: 'Poll', type: 'request'},
+      ],
+      focus: ['c1', 'c2'],
+      badges: {p1: null, c1: 'p0, p1', c2: 'p2'},
+    },
+    {
+      short: 'Commit',
+      kind: '원리',
+      title: 'Process, then commit the offset',
+      text: [
+        'Shipping 1 reads offset 1041, books the shipment, then commits "next offset 1042 for partition 1". Kafka stores committed offsets per group in an internal topic. The message itself stays in the log until retention removes it.',
+        'Where you commit decides the guarantee. Commit after processing and a crash can repeat work. Commit before processing and a crash can skip work.',
+      ],
+      flows: [{from: 'c1', to: 'p1', label: 'Commit 1042', type: 'response'}],
+      focus: ['c1'],
+      status: {c1: 'ok'},
+      values: {offset: 'p1 → 1042', delivery: 'Processed once'},
+    },
+    {
+      short: 'Crash',
+      kind: '장애',
+      title: 'A crash before commit means the message comes again',
+      text: [
+        'Shipping 1 reads offset 1043, books the shipment, and crashes before it commits. Its heartbeats stop, the group rebalances, and Shipping 2 now owns partitions 0, 1 and 2.',
+        'Shipping 2 starts partition 1 from the last committed offset, 1043, and books the same shipment a second time. This is at-least-once delivery. Nothing is lost, but duplicates happen.',
+      ],
+      keyIdea: 'Make the consumer idempotent: record processed order ids, or use an upsert or unique key, so a second copy of the same message changes nothing.',
+      flows: [
+        {from: 'p1', to: 'c2', label: 'Redeliver 1043', type: 'request'},
+        {from: 'p0', to: 'c2', label: 'Rebalanced', type: 'request'},
+      ],
+      focus: ['c1', 'c2'],
+      status: {c1: 'gone', c2: 'warn'},
+      badges: {c1: null, c2: 'p0, p1, p2'},
+      values: {offset: 'p1 → 1043', delivery: {text: 'Shipment booked twice', tone: 'bad'}},
+    },
+    {
+      short: 'Pub/sub',
+      kind: '원리',
+      title: 'Another group reads the same events on its own',
+      text: [
+        'The email service is in a different group, email. It reads every partition of the same topic with its own committed offsets. Shipping and email never slow each other down, and a new service can join later and replay from the start of retention.',
+        'That is publish/subscribe. A classic queue such as SQS or a RabbitMQ queue works differently: consumers compete for messages, and an acknowledged message is deleted. Kafka gives you both: members of one group compete, and separate groups each get every message.',
+      ],
+      flows: [
+        {from: 'p0', to: 'email', label: 'Own offsets', type: 'request'},
+        {from: 'p1', to: 'email', label: 'Own offsets', type: 'request'},
+        {from: 'p2', to: 'email', label: 'Own offsets', type: 'request'},
+      ],
+      focus: ['email'],
+      status: {c1: 'ok', c2: 'ok'},
+      badges: {c1: 'p0, p1', c2: 'p2', email: 'All partitions'},
+      values: {delivery: 'Each group gets every message'},
+    },
+    {
+      short: 'Lag',
+      kind: '주의',
+      title: 'Consumer lag grows when producers outrun consumers',
+      text: [
+        'A sale triples the order rate. The shipping consumers cannot keep up. Lag is the gap between the newest offset in a partition and the group\'s committed offset, and it keeps growing.',
+        'Lag means events are late, not lost, until retention deletes messages nobody has read yet. Add consumers up to the partition count, make processing faster, or add partitions (which changes which partition a key maps to).',
+      ],
+      keyIdea: 'Alert on lag, or on how long the oldest unread message has waited, not on CPU. Autoscalers such as KEDA can scale consumers by lag.',
+      flows: [
+        {from: 'order', to: 'p0', label: '3× rate', type: 'request'},
+        {from: 'order', to: 'p2', label: '3× rate', type: 'request'},
+      ],
+      focus: ['p0', 'p1', 'p2'],
+      status: {c1: 'warn', c2: 'warn'},
+      values: {lag: {text: '48,000 and rising', tone: 'bad'}},
+    },
+    {
+      short: 'Poison',
+      kind: '문제',
+      title: 'A poison message blocks a partition until it goes to a DLQ',
+      text: [
+        'One message has a broken payload. Shipping 2 throws an error, does not commit, reads it again, and fails again. Every message behind it in partition 2 waits.',
+        'The fix is a dead-letter queue. After a few retries, the consumer writes the bad message to orders.dlq with the error, commits, and moves on. Someone inspects the DLQ and replays the message once it is fixed. SQS has this built in (a redrive policy with maxReceiveCount), RabbitMQ has dead-letter exchanges, and with Kafka the consumer code or framework does it.',
+      ],
+      flows: [
+        {from: 'p2', to: 'c2', label: 'Retry ×3', type: 'request'},
+        {from: 'c2', to: 'dlq', label: 'Dead-letter', type: 'request'},
+      ],
+      focus: ['c2', 'dlq'],
+      status: {c1: 'ok', c2: 'ok', dlq: 'warn'},
+      badges: {dlq: '1 message'},
+      values: {lag: 'Falling', delivery: 'Bad message parked'},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Durable log, shared work, idempotent consumers',
+      text: [
+        'The producer writes once to a partition chosen by key, and replication with acks=all keeps it safe. Each consumer group gets every message. Inside a group, partitions are split among members, and committed offsets record progress.',
+        'Crashes cause redelivery, so assume at-least-once and make consumers idempotent. Watch lag, and move messages that can never succeed to a dead-letter queue instead of retrying them forever.',
+      ],
+      keyIdea: 'When something looks wrong, check the group first: kafka-consumer-groups.sh --describe shows each partition\'s owner, committed offset and LAG.',
+      flows: [
+        {from: 'order', to: 'p1', label: 'Publish', type: 'request'},
+        {from: 'p1', to: 'c1', label: 'Poll', type: 'request'},
+        {from: 'p1', to: 'email', label: 'Poll', type: 'request'},
+      ],
+      focus: ['order', 'p1', 'c1', 'email'],
+      status: {c1: null, c2: null, dlq: null},
+      badges: {p1: null},
+    },
+  ]}
+/>
+
+## Delivery guarantees
+
+| Guarantee | How you get it | What a crash does | Use it for |
+|---|---|---|---|
+| At-most-once | Commit the offset before processing | The message can be lost | Data where a gap is fine, such as some sampled metrics |
+| At-least-once | Commit the offset after processing | The message can be processed twice | The usual default. Pair it with an idempotent consumer |
+| Exactly-once | Kafka idempotent producer plus transactions, consumers with `isolation.level=read_committed` | Read-process-write inside Kafka happens once | Stream processing from Kafka topic to Kafka topic. Side effects outside Kafka, such as an email or a payment call, still need an idempotency key |
+
+## Try it yourself
+
+```bash
+kafka-topics.sh --bootstrap-server localhost:9092 --create --topic orders \
+  --partitions 3 --replication-factor 3                      # needs 3 brokers
+kafka-topics.sh --bootstrap-server localhost:9092 --describe --topic orders   # Leader, Replicas, Isr per partition
+kafka-console-producer.sh --bootstrap-server localhost:9092 --topic orders \
+  --property parse.key=true --property key.separator=:        # type: order-42:created
+kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic orders \
+  --group shipping --from-beginning --property print.key=true --property print.partition=true
+kafka-consumer-groups.sh --bootstrap-server localhost:9092 --describe --group shipping   # CURRENT-OFFSET, LOG-END-OFFSET, LAG
+```
+
+Run two consumers with the same `--group` and they split the partitions. Run one with a different group and it gets every message again.
+
+Further reading: [Kafka documentation](https://kafka.apache.org/documentation/) · [Kafka design: message delivery semantics](https://kafka.apache.org/documentation/#semantics) · [KEDA Apache Kafka scaler](https://keda.sh/docs/latest/scalers/apache-kafka/) · [Amazon SQS dead-letter queues](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-dead-letter-queues.html) · [RabbitMQ dead letter exchanges](https://www.rabbitmq.com/docs/dlx) · [Autoscaling with HPA](../k8s/autoscaling.mdx) · [Database basics](../basic/database-basics.mdx)

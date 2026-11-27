@@ -1,0 +1,243 @@
+---
+id: observability-pipeline
+title: 로그·메트릭·트레이스가 파드를 떠나는 길
+sidebar_label: 08 · 로그·메트릭·트레이스
+description: 파드의 stdout이 노드의 로그 파일이 되고 kubectl logs와 로그 에이전트 데몬셋이 그것을 읽는 과정, 프로메테우스가 /metrics를 찾아 긁어 가는 과정, metrics-server의 역할, OTLP로 트레이스를 보내는 과정을 애니메이션으로 본다
+summary: '신호 셋, 길 셋: 노드의 로그 파일, 프로메테우스가 당겨 가는 /metrics, OTLP로 밀어 보내는 트레이스.'
+icon: chart
+hide_table_of_contents: true
+---
+
+# 로그·메트릭·트레이스가 파드를 떠나는 길
+
+파드 하나에서 나오는 신호 셋을 따라간다. **로그**는 stdout으로 나가 노드의 파일에 쌓인다. **메트릭**은 `/metrics`에서 프로메테우스가 당겨 가기를 기다린다. **트레이스**는 OTLP로 수집기에 밀어 보낸다. 길마다 끊기는 방식이 다르다.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '약 12분', level: '중급'}}
+  groups={[
+    {label: '워커 노드', x: 30, y: 30, w: 480, h: 410, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'pod', label: '앱 파드', sub: 'stdout · /metrics · OTLP', icon: 'pod', tone: 'app', x: 150, y: 110, w: 170, show: true},
+    {id: 'files', label: '/var/log/pods', sub: '런타임이 기록', icon: 'disk', tone: 'store', x: 150, y: 260, w: 160},
+    {id: 'agent', label: '로그 에이전트', sub: '데몬셋', icon: 'agent', tone: 'node', x: 380, y: 260},
+    {id: 'kubelet', label: 'kubelet', sub: '회전 · 로그 제공', icon: 'server', tone: 'node', x: 380, y: 400, w: 160},
+    {id: 'prom', label: '프로메테우스', sub: '당겨 와 시계열 저장', icon: 'chart', tone: 'store', x: 650, y: 170},
+    {id: 'otel', label: 'OTel 수집기', sub: 'OTLP 수신', icon: 'layers', tone: 'cp', x: 880, y: 90},
+    {id: 'logstore', label: '로그 저장소', sub: '예: Loki, OpenSearch', icon: 'archive', tone: 'store', x: 880, y: 240, w: 170},
+    {id: 'kubectl', label: 'kubectl', sub: 'logs · top', icon: 'user', tone: 'ext', x: 650, y: 320},
+    {id: 'msrv', label: 'metrics-server', sub: '최신 값만', icon: 'scale', tone: 'cp', x: 880, y: 400, w: 160},
+  ]}
+  metrics={[
+    {id: 'signal', label: '신호'},
+    {id: 'path', label: '경로'},
+    {id: 'keep', label: '보관 기간'},
+  ]}
+  learn={[
+    {text: 'stdout이 가는 곳: 런타임이 파일로 쓰고 kubelet이 회전시킨다는 것', at: 1},
+    {text: '로그가 파드와 함께 사라지는 이유와 노드 로그 에이전트가 고치는 것', at: 3},
+    {text: '프로메테우스가 대상을 찾아 /metrics를 당겨 가고, 실패하면 up이 0이 된다는 것', at: 5},
+    {text: '값이 끝없는 레이블 하나가 메트릭 저장소를 터뜨리는 이유', at: 7},
+    {text: 'metrics-server는 kubectl top과 HPA용이지 기록용이 아니라는 것', at: 8},
+    {text: '트레이스는 OTLP로 수집기에 밀어 보낸다는 것', at: 9},
+  ]}
+  steps={[
+    {
+      short: '시작',
+      kind: '시작',
+      title: '파드 하나, 신호 셋, 길 셋',
+      text: [
+        '앱 파드는 로그 줄을 찍고, 요청 수와 오류 수를 세고, 요청 하나가 여러 서비스를 거치며 걸린 시간을 기록한다.',
+        '이것이 세 신호, 로그·메트릭·트레이스다. 쿠버네티스는 어느 것도 스스로 장기 저장소로 옮기지 않는다. 신호마다 파드를 떠나는 길이 다르다.',
+      ],
+      focus: ['pod'],
+      values: {signal: '로그 · 메트릭 · 트레이스'},
+    },
+    {
+      short: 'stdout',
+      kind: '원리',
+      title: 'stdout이 노드의 파일이 된다',
+      text: [
+        '앱은 로그를 자기 파일이 아니라 stdout과 stderr로 쓴다. 컨테이너 런타임(예: containerd, CRI-O)이 이 출력을 받아 노드의 /var/log/pods/<네임스페이스>_<파드>_<uid>/<컨테이너>/ 아래 파일로 쓴다.',
+        'kubelet이 이 파일을 회전시킨다. 기본값은 컨테이너마다 최대 10MiB 파일 5개까지다(containerLogMaxSize, containerLogMaxFiles). 오래된 줄은 지워진다.',
+      ],
+      keyIdea: '로그는 stdout과 stderr로 쓴다. 컨테이너 안의 파일에 쓴 로그는 kubectl logs에도, 대부분의 에이전트에도 보이지 않는다.',
+      flows: [{from: 'pod', to: 'files', label: 'stdout · stderr', type: 'request'}],
+      focus: ['pod', 'files'],
+      values: {signal: '로그', path: 'stdout → 노드 파일', keep: '컨테이너당 약 5 × 10MiB'},
+    },
+    {
+      short: 'kubectl logs',
+      kind: '원리',
+      title: 'kubectl logs는 kubelet을 거쳐 그 파일을 읽는다',
+      text: [
+        'kubectl logs는 API 서버에 묻고, API 서버는 파드가 있는 노드의 kubelet에 요청을 넘긴다. kubelet이 로그 파일을 읽어 흘려 보낸다.',
+        '컨테이너가 재시작했다면 kubectl logs --previous가 직전에 종료된 인스턴스의 로그를 보여 준다. 죽기 직전 메시지는 대개 여기 있다.',
+      ],
+      flows: [
+        {from: 'kubectl', to: 'kubelet', label: 'logs (API 경유)', type: 'request'},
+        {from: 'files', to: 'kubelet', label: '읽기', type: 'response'},
+        {from: 'kubelet', to: 'kubectl', label: '로그 줄', type: 'response'},
+      ],
+      focus: ['kubectl', 'kubelet', 'files'],
+      values: {path: 'kubectl → kubelet → 파일'},
+    },
+    {
+      short: '로그 사라짐',
+      kind: '문제',
+      title: '파드를 지우면 로그도 함께 사라진다',
+      text: [
+        '디플로이먼트 롤아웃이 파드를 바꾸거나, 노드를 비우거나, 노드가 죽는다. kubelet은 없어진 파드의 로그 디렉터리를 정리하고, 죽은 노드는 디스크째 사라진다.',
+        '이제 kubectl logs가 읽을 것이 없다. 새벽 3시에 난 오류는 사라지고 새 파드의 로그만 남는다.',
+      ],
+      keyIdea: '노드의 파일은 잠깐 쓰는 버퍼지 저장소가 아니다. 내일 필요할 수 있는 로그는 노드 밖으로 내보내야 한다.',
+      flows: [{from: 'kubectl', to: 'kubelet', label: 'logs', type: 'request'}],
+      focus: ['files', 'kubelet'],
+      status: {files: 'error'},
+      badges: {files: '삭제됨'},
+      values: {keep: {text: '파드가 지워질 때까지', tone: 'bad'}},
+    },
+    {
+      short: '로그 에이전트',
+      kind: '원리',
+      title: '노드 로그 에이전트가 파일을 모두 노드 밖으로 보낸다',
+      text: [
+        '로그 에이전트는 데몬셋으로 돌아 노드마다 하나씩 뜬다(예: Fluent Bit, Vector, OpenTelemetry Collector). 호스트의 /var/log/pods를 마운트해 모든 파일을 따라 읽는다.',
+        '네임스페이스·파드 이름·레이블 같은 쿠버네티스 메타데이터를 붙여 로그 저장소로 보낸다. 이제 로그는 파드와 노드보다 오래 남는다.',
+      ],
+      keyIdea: '에이전트는 파일마다 읽은 위치를 기억한다. 에이전트가 밀린 사이 회전으로 파일이 먼저 지워지면 그 줄은 잃는다. 에이전트 자신의 메트릭도 지켜본다.',
+      flows: [
+        {from: 'pod', to: 'files', label: 'stdout', type: 'request'},
+        {from: 'files', to: 'agent', label: '따라 읽기', type: 'request'},
+        {from: 'agent', to: 'logstore', label: '전송 + 메타데이터', type: 'request'},
+      ],
+      focus: ['agent', 'logstore'],
+      status: {files: null, agent: 'ok'},
+      badges: {files: null, agent: '노드마다 1개'},
+      values: {path: '파일 → 에이전트 → 저장소', keep: {text: '저장소 보관 기간(며칠)', tone: 'good'}},
+    },
+    {
+      short: '스크레이프',
+      kind: '원리',
+      title: '프로메테우스가 파드를 찾아 /metrics를 당겨 간다',
+      text: [
+        '앱은 :8080/metrics 같은 HTTP 엔드포인트에 카운터와 게이지를 텍스트 형식으로 내놓는다. 어디로 보내지는 않는다.',
+        '프로메테우스는 API 서버에 파드나 엔드포인트를 물어(kubernetes_sd_configs) 대상 목록을 만든다. 프로메테우스 오퍼레이터를 쓰면 ServiceMonitor나 PodMonitor가 같은 일을 적는다. 수집 주기(대개 15~60초)마다 GET /metrics를 보내 값을 타임스탬프와 함께 저장한다.',
+      ],
+      keyIdea: '메트릭은 당겨 간다. 새 파드는 서비스 디스커버리로 찾아지니 손으로 등록할 일이 없다.',
+      flows: [
+        {from: 'prom', to: 'pod', label: 'GET /metrics', type: 'request'},
+        {from: 'pod', to: 'prom', label: '샘플', type: 'response'},
+      ],
+      focus: ['prom', 'pod'],
+      badges: {agent: null, prom: 'up = 1'},
+      values: {signal: '메트릭', path: '프로메테우스가 당김', keep: 'TSDB 보관(기본 15일)'},
+    },
+    {
+      short: '대상 다운',
+      kind: '문제',
+      title: '스크레이프가 실패하면 up = 0이 된다',
+      text: [
+        '앱이 멈추거나, 네트워크 정책이 프로메테우스의 8080 포트 접근을 막는다. 스크레이프가 시간 초과로 끝난다.',
+        '프로메테우스는 그 대상의 합성 시계열 up에 0을 기록하고, 앱의 시계열에는 새 샘플이 들어오지 않는다. 대상 화면에 context deadline exceeded 같은 오류가 뜬다.',
+      ],
+      keyIdea: '중요한 job에는 up == 0 알림을 건다. 데이터가 없으면 오류율 알림도 울리지 않으니, 조용한 대상이 장애를 숨길 수 있다.',
+      flows: [{from: 'prom', to: 'pod', label: '시간 초과', type: 'request'}],
+      focus: ['prom', 'pod'],
+      status: {pod: 'error'},
+      badges: {prom: 'up = 0'},
+    },
+    {
+      short: '카디널리티',
+      kind: '주의',
+      title: '레이블 값 하나하나가 새 시계열이 된다',
+      text: [
+        '레이블 값의 조합 하나가 시계열 하나다. method와 status 레이블을 단 http_requests_total은 파드당 수십 개 시계열이 된다.',
+        '여기에 user_id나 전체 요청 경로 같은 레이블을 더하면 메트릭 하나가 수백만 시계열로 불어난다. 메모리와 쿼리 시간이 늘어 프로메테우스가 느려지거나 메모리가 바닥난다.',
+      ],
+      keyIdea: '레이블 값은 개수가 정해진 것만 쓴다(method, 상태 코드, 경로 템플릿). 사용자 ID 같은 요청별 정보는 로그나 트레이스에 둔다.',
+      flows: [{from: 'pod', to: 'prom', label: '샘플', type: 'response'}],
+      focus: ['prom'],
+      status: {pod: null, prom: 'warn'},
+      badges: {prom: '시계열 ↑↑'},
+    },
+    {
+      short: 'metrics-server',
+      kind: '원리',
+      title: 'metrics-server는 최신 CPU·메모리만 들고 있다',
+      text: [
+        'kubelet은 컨테이너·파드별 CPU와 메모리도 내놓는다. metrics-server가 모든 kubelet에서 이것을 모아(기본 15초마다) Metrics API로 제공한다.',
+        'kubectl top과 HPA가 이 API를 읽는다. 가장 최근 값만 들고 있어서 "어제 CPU가 얼마였나?"에는 답하지 못한다. 그것은 프로메테우스의 일이다.',
+      ],
+      flows: [
+        {from: 'msrv', to: 'kubelet', label: '리소스 메트릭', type: 'request'},
+        {from: 'kubectl', to: 'msrv', label: 'top (API 경유)', type: 'request'},
+      ],
+      focus: ['msrv', 'kubelet'],
+      status: {prom: null},
+      badges: {prom: null, msrv: '기록 없음'},
+      values: {signal: '리소스 메트릭', path: 'kubelet → metrics-server', keep: {text: '최신 값만', tone: 'bad'}},
+    },
+    {
+      short: '트레이스',
+      kind: '원리',
+      title: '트레이스는 OTLP로 수집기에 밀어 보낸다',
+      text: [
+        '앱 안의 OpenTelemetry SDK가 스팬을 기록한다. 작업 하나에 스팬 하나이고, 같은 트레이스 ID를 요청 헤더에 실어 다음 서비스로 넘긴다.',
+        'SDK는 스팬을 OTLP(gRPC 4317 포트, HTTP 4318 포트)로 OpenTelemetry Collector에 밀어 보낸다. 수집기는 묶고 흔히 샘플링한 뒤 Jaeger나 Tempo 같은 트레이스 백엔드로 내보낸다.',
+      ],
+      keyIdea: '로그 줄에 트레이스 ID를 넣는다. 그러면 느린 트레이스에서 그 요청의 로그로 바로 넘어갈 수 있다.',
+      flows: [{from: 'pod', to: 'otel', label: 'OTLP 스팬', type: 'request'}],
+      focus: ['pod', 'otel'],
+      badges: {msrv: null, otel: '묶기 · 샘플링'},
+      values: {signal: '트레이스', path: '앱이 OTLP로 밀어 보냄', keep: '백엔드 보관 기간'},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '로그는 거둬 가고, 메트릭은 당겨 가고, 트레이스는 밀어 보낸다',
+      text: [
+        '로그는 stdout으로 나가 kubelet이 회전시키는 노드 파일이 되고, 데몬셋 에이전트가 보내야만 남는다. 메트릭은 프로메테우스가 파드를 찾아 긁어 갈 때까지 /metrics에서 기다린다.',
+        '트레이스는 OTLP로 수집기에 밀어 보낸다. metrics-server는 kubectl top과 오토스케일링을 위한 작은 실시간 창이지 모니터링 시스템이 아니다.',
+      ],
+      keyIdea: '신호마다 누가 옮기고 얼마나 남는지 안다. 데이터가 비면 그 옮기는 쪽부터 본다: 로그 에이전트, 스크레이프 대상, 수집기.',
+      flows: [
+        {from: 'files', to: 'agent', label: '따라 읽기', type: 'request'},
+        {from: 'agent', to: 'logstore', label: '전송', type: 'request'},
+        {from: 'prom', to: 'pod', label: '스크레이프', type: 'request'},
+        {from: 'pod', to: 'otel', label: 'OTLP', type: 'request'},
+      ],
+      focus: ['agent', 'prom', 'otel'],
+      badges: {otel: null},
+      values: {signal: '로그 · 메트릭 · 트레이스', path: '거둠 · 당김 · 밀어 보냄', keep: '—'},
+    },
+  ]}
+/>
+
+## 세 신호 비교
+
+| 신호 | 누가 옮기나 | 방향 | 어디에 남나 | 흔한 장애 |
+|---|---|---|---|---|
+| 로그 | 컨테이너 런타임이 파일로 쓰고, 데몬셋 에이전트가 보낸다 | 노드 파일에서 거둬 감 | 로그 저장소(예: Loki, OpenSearch) | 보내기 전에 파드 삭제, 회전 중 에이전트 지연, 앱이 파일에 로그 기록 |
+| 메트릭 | 프로메테우스, 서비스 디스커버리로 | 당김(스크레이프) | 프로메테우스 TSDB나 원격 저장소 | 대상 다운(`up == 0`), 포트·경로 틀림, 카디널리티 높은 레이블 |
+| 트레이스 | 앱 안의 OpenTelemetry SDK | 밀어 보냄(OTLP) | 트레이스 백엔드(예: Jaeger, Tempo) | 수집기 주소 틀림, 트레이스 컨텍스트 전파 누락, 샘플링으로 빠짐 |
+| 리소스 메트릭 | metrics-server, 각 kubelet에서 | 당김 | 메모리에 최신 값만 | metrics-server가 없어 `kubectl top`과 HPA 실패 |
+
+## 직접 확인해 보기
+
+```bash
+kubectl logs deploy/web --tail=50                    # kubelet을 거쳐 현재 컨테이너 로그 읽기
+kubectl logs web-7c9d -c app --previous              # 직전에 죽은 인스턴스의 로그
+kubectl get daemonset -A                             # 노드마다 로그 에이전트가 도는가?
+kubectl debug node/worker-1 -it --image=busybox -- ls /host/var/log/pods   # 노드에 있는 파일
+kubectl port-forward deploy/web 8080 &
+curl -s localhost:8080/metrics | head                # 프로메테우스가 긁어 가는 내용
+kubectl top pod -A                                   # metrics-server의 Metrics API
+kubectl get servicemonitor,podmonitor -A             # 프로메테우스 오퍼레이터를 쓴다면
+```
+
+프로메테우스에서 `up == 0`으로 실패한 대상을, `topk(10, count by (__name__) ({__name__=~".+"}))`로 시계열이 많은 메트릭을 찾는다.
+
+더 읽을거리: [로깅 아키텍처](https://kubernetes.io/docs/concepts/cluster-administration/logging/) · [리소스 메트릭 파이프라인](https://kubernetes.io/docs/tasks/debug/debug-cluster/resource-metrics-pipeline/) · [프로메테우스 kubernetes_sd_config](https://prometheus.io/docs/prometheus/latest/configuration/configuration/#kubernetes_sd_config) · [프로메테우스 이름과 레이블](https://prometheus.io/docs/practices/naming/) · [OTLP 명세](https://opentelemetry.io/docs/specs/otlp/) · [OpenTelemetry Collector](https://opentelemetry.io/docs/collector/) · [SLO와 알람 설계](../advanced/slo-alert.mdx) · [부하에 맞춰 늘어나기 (HPA)](../k8s/autoscaling.mdx)

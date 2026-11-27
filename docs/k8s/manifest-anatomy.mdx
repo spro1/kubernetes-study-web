@@ -1,0 +1,219 @@
+---
+id: manifest-anatomy
+title: Reading and Applying a Manifest
+sidebar_label: 02 · Reading and Applying a Manifest
+description: Animated walkthrough of a Kubernetes YAML manifest for beginners, covering YAML basics, apiVersion and kind, metadata, kubectl explain, strict server-side field validation and dry runs, create versus apply, kubectl diff, and field ownership in server-side apply
+summary: 'The four top-level fields of a manifest, how the API server checks them, and how create, apply, diff and server-side apply differ.'
+icon: book
+hide_table_of_contents: true
+---
+
+# Reading and Applying a Manifest
+
+Follow one file, `web.yaml`, from your editor to the cluster. See what each top-level field means, where a typo gets caught, and how `create`, `apply`, `diff` and server-side apply treat the same file differently.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~10 min', level: 'Beginner'}}
+  groups={[
+    {label: 'Kubernetes cluster', x: 290, y: 30, w: 685, h: 410, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'file', label: 'web.yaml', sub: 'Your manifest', icon: 'book', tone: 'ext', x: 120, y: 130, show: true},
+    {id: 'kubectl', label: 'kubectl', sub: 'apply · diff · explain', icon: 'gear', tone: 'ext', x: 120, y: 320, show: true},
+    {id: 'api', label: 'API server', sub: 'Decode · validate', icon: 'gate', tone: 'cp', x: 430, y: 225},
+    {id: 'schema', label: 'OpenAPI schema', sub: 'Field definitions', icon: 'book', tone: 'store', x: 430, y: 385, w: 160},
+    {id: 'etcd', label: 'etcd', sub: 'Stored object', icon: 'db', tone: 'store', x: 700, y: 225},
+    {id: 'hpa', label: 'HPA', sub: 'Changes replicas', icon: 'scale', tone: 'cp', x: 700, y: 85},
+    {id: 'ctrl', label: 'Deployment ctrl', sub: 'Writes status', icon: 'gear', tone: 'cp', x: 700, y: 385, w: 160},
+    {id: 'pods', label: 'Pods', sub: 'web', icon: 'pod', tone: 'app', size: 'sm', x: 895, y: 385},
+  ]}
+  metrics={[
+    {id: 'cmd', label: 'Command'},
+    {id: 'field', label: 'Field'},
+    {id: 'result', label: 'Result'},
+  ]}
+  learn={[
+    {text: 'YAML maps, lists, indentation and multi-document files', at: 0},
+    {text: 'apiVersion and kind, and how to find the right pair', at: 1},
+    {text: 'metadata: name, namespace, labels and annotations', at: 2},
+    {text: 'Strict field validation catches typos on the server', at: 4},
+    {text: 'create versus apply, and previewing with kubectl diff', at: 5},
+    {text: 'Field ownership and conflicts in server-side apply', at: 7},
+  ]}
+  steps={[
+    {
+      short: 'Start',
+      kind: '시작',
+      title: 'A manifest is a YAML map with four top-level fields',
+      text: [
+        'web.yaml describes a Deployment. At the top level it has apiVersion, kind, metadata and spec. You never write the fifth, status.',
+        'YAML basics: key: value makes a map, a line starting with "- " is a list item, and indentation (spaces only, never tabs) shows what belongs to what. A line with only --- starts a new object, so one file can hold a Deployment and its Service.',
+      ],
+      keyIdea: 'Most YAML mistakes are indentation. A field indented one level too far belongs to a different parent, and the server sees it in the wrong place.',
+      flows: [{from: 'file', to: 'kubectl', label: 'Read', type: 'request'}],
+      focus: ['file'],
+      values: {cmd: '—', field: 'apiVersion · kind · metadata · spec'},
+    },
+    {
+      short: 'Kind',
+      kind: '원리',
+      title: 'apiVersion and kind name the resource type',
+      text: [
+        'apiVersion is group/version. Deployments are apps/v1, Jobs are batch/v1, Ingress is networking.k8s.io/v1. The core group has no name, so Pods, Services and ConfigMaps are just v1.',
+        'The API server uses this pair to pick the schema and the storage path. kubectl api-resources lists every kind the cluster serves with its group and version, including CRDs.',
+      ],
+      keyIdea: 'An old version from a blog post (for example extensions/v1beta1) or a CRD that is not installed gives "no matches for kind". Check kubectl api-resources.',
+      flows: [{from: 'kubectl', to: 'api', label: 'apps/v1 Deployment', type: 'request'}],
+      focus: ['kubectl', 'api'],
+      values: {field: 'apps/v1 · Deployment'},
+    },
+    {
+      short: 'Metadata',
+      kind: '원리',
+      title: 'metadata says which object this is and how to find it',
+      text: [
+        'name is unique per kind within a namespace. namespace defaults to the one in your kubectl context (usually default) when the file leaves it out. Cluster-scoped kinds such as Node have no namespace.',
+        'labels are short key/value pairs that selectors match, such as app: web. annotations are also key/value pairs, but nothing selects by them. Tools use them for longer notes such as a checksum or a change reason.',
+      ],
+      keyIdea: 'If something must find this object (a Service, a selector, kubectl -l), use a label. If it is just information, use an annotation.',
+      focus: ['file'],
+      values: {field: 'name: web · labels: app=web'},
+    },
+    {
+      short: 'explain',
+      kind: '원리',
+      title: 'spec is yours, status is the controllers\', and explain shows every field',
+      text: [
+        'You write spec, the desired state. Controllers write status, what they observed. The control loop between them is in the desired-state lesson.',
+        'To look up a field, you do not need a blog post. kubectl explain deployment.spec.strategy reads the cluster\'s own OpenAPI schema and prints the field\'s type, meaning and children. Add --recursive to see the whole tree.',
+      ],
+      flows: [{from: 'schema', to: 'kubectl', label: 'explain', type: 'response', bend: 40}],
+      focus: ['schema', 'kubectl'],
+      values: {cmd: 'kubectl explain', field: 'spec.strategy'},
+    },
+    {
+      short: 'Typo',
+      kind: '문제',
+      title: 'A typo is rejected by strict field validation',
+      text: [
+        'The file says replica: 3 instead of replicas: 3. kubectl sends it, and the API server decodes it against the schema. With strict field validation, the default in current kubectl, the request fails: strict decoding error: unknown field "spec.replica".',
+        'With validation set to Ignore, the unknown field would be dropped quietly and the Deployment would run one replica. kubectl apply --dry-run=server runs the same decoding, validation and admission without saving anything.',
+      ],
+      keyIdea: 'Run kubectl apply --dry-run=server before a real apply, for example in CI. It catches what a YAML linter cannot: unknown fields, wrong types and admission policy.',
+      flows: [
+        {from: 'kubectl', to: 'api', label: 'apply', type: 'request'},
+        {from: 'schema', to: 'api', label: 'Check fields', type: 'watch'},
+        {from: 'api', to: 'kubectl', label: '400 BadRequest', type: 'response', bend: -40},
+      ],
+      focus: ['api', 'schema'],
+      status: {api: 'error'},
+      badges: {api: 'unknown field'},
+      values: {cmd: 'kubectl apply', field: {text: 'spec.replica', tone: 'bad'}, result: {text: 'BadRequest', tone: 'bad'}},
+    },
+    {
+      short: 'create/apply',
+      kind: '원리',
+      title: 'create makes it once, apply keeps it matching the file',
+      text: [
+        'kubectl create works once. Run it again and the server answers AlreadyExists. kubectl apply creates the object if it is missing and updates it if it exists, so you can run it every time the file changes.',
+        'Client-side apply stores your file in the annotation kubectl.kubernetes.io/last-applied-configuration. On the next apply it compares three things (last applied, your new file, the live object). A field you removed from the file is removed from the object, and fields others set are left alone.',
+      ],
+      flows: [
+        {from: 'kubectl', to: 'api', label: 'apply', type: 'request'},
+        {from: 'api', to: 'etcd', label: 'Store', type: 'request'},
+        {from: 'etcd', to: 'ctrl', label: 'Watch', type: 'watch'},
+        {from: 'ctrl', to: 'pods', label: 'Create', type: 'request'},
+      ],
+      focus: ['api', 'etcd', 'ctrl'],
+      status: {api: 'ok'},
+      badges: {api: null, etcd: 'last-applied'},
+      values: {field: {text: 'spec.replicas: 3', tone: 'good'}, result: {text: 'created', tone: 'good'}},
+    },
+    {
+      short: 'diff',
+      kind: '원리',
+      title: 'kubectl diff shows the change before you make it',
+      text: [
+        'You change the image tag and drop a label. kubectl diff -f web.yaml sends the file as a server-side dry run, gets back the object as it would be stored, and prints a diff against the live object.',
+        'Because the server builds the result, the diff includes defaults and mutating admission changes. It shows exactly what apply would do, not just what changed in your file.',
+      ],
+      keyIdea: 'kubectl diff exits with code 1 when there are differences and 0 when there are none, so scripts and CI can use it as a check.',
+      flows: [
+        {from: 'kubectl', to: 'api', label: 'Dry run', type: 'request'},
+        {from: 'api', to: 'kubectl', label: 'Diff', type: 'response', bend: -40},
+      ],
+      focus: ['kubectl', 'api'],
+      badges: {etcd: null},
+      values: {cmd: 'kubectl diff', field: '~ image · - label', result: 'Nothing saved'},
+    },
+    {
+      short: 'Ownership',
+      kind: '주의',
+      title: 'Server-side apply tracks who owns each field',
+      text: [
+        'An HPA now scales the Deployment and changes spec.replicas. With client-side apply, your file still says replicas: 3, so every apply quietly sets it back to 3 until the HPA changes it again.',
+        'With kubectl apply --server-side, the server records in metadata.managedFields which field manager set each field. Applying a value for a field another manager owns fails with "Apply failed with 1 conflict" and names the field and the manager.',
+      ],
+      keyIdea: 'Remove a field from your file when something else should own it, such as replicas under an HPA. Use --force-conflicts only when you really mean to take the field over.',
+      flows: [
+        {from: 'hpa', to: 'etcd', label: 'replicas: 5', type: 'request'},
+        {from: 'kubectl', to: 'api', label: 'apply --server-side', type: 'request'},
+        {from: 'api', to: 'kubectl', label: 'Conflict', type: 'response', bend: -40},
+      ],
+      focus: ['hpa', 'api', 'etcd'],
+      status: {api: 'warn'},
+      badges: {api: 'conflict', hpa: 'owns replicas'},
+      values: {cmd: 'apply --server-side', field: {text: 'spec.replicas', tone: 'bad'}, result: {text: '409 Conflict', tone: 'bad'}},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Know the four fields, check on the server, apply what you own',
+      text: [
+        'apiVersion and kind pick the type, metadata names the object, and spec says what you want. kubectl explain shows every field from the cluster\'s own schema.',
+        'The API server rejects unknown fields and wrong types. A server-side dry run or kubectl diff shows the result without saving. apply keeps the object matching the file, and server-side apply also tracks who owns which field.',
+      ],
+      keyIdea: 'A safe loop: edit the file → kubectl diff → kubectl apply. Leave out fields that a controller such as the HPA manages.',
+      flows: [
+        {from: 'file', to: 'kubectl', label: 'Edit', type: 'request'},
+        {from: 'kubectl', to: 'api', label: 'diff → apply', type: 'request'},
+        {from: 'api', to: 'etcd', label: 'Store', type: 'request'},
+      ],
+      focus: ['file', 'kubectl', 'api'],
+      status: {api: null},
+      badges: {api: null, hpa: null},
+      values: {field: '—', result: '—'},
+    },
+  ]}
+/>
+
+## Common apply errors
+
+| Message (shortened) | Meaning | Fix |
+|---|---|---|
+| `error converting YAML to JSON: yaml: line 7: ...` | The file is not valid YAML: bad indentation, a tab, or a missing colon | Fix the line shown. Indent with spaces only |
+| `no matches for kind "Deployment" in version "extensions/v1beta1"` | That group/version does not serve this kind, or the CRD is not installed | Find the right pair with `kubectl api-resources`. Install the CRD first |
+| `strict decoding error: unknown field "spec.replica"` | A typo, or a field at the wrong indentation level | Check the path with `kubectl explain` |
+| `cannot unmarshal string into Go struct field ... of type int32` | Wrong type, such as `replicas: "3"` | Remove the quotes, or match the type `kubectl explain` shows |
+| `AlreadyExists` | `kubectl create` on an object that exists | Use `kubectl apply` |
+| `field is immutable` | The field cannot change after creation, such as a Deployment's `spec.selector` | Create a new object, or delete and recreate |
+| `namespaces "shop" not found` | The target namespace does not exist yet | Create the namespace first, or put it earlier in the file |
+| `Apply failed with 1 conflict: conflict with "..."` | Server-side apply: another field manager owns that field | Drop the field from your file, or take it over with `--force-conflicts` |
+
+## Try it yourself
+
+```bash
+kubectl api-resources | grep -i deploy               # NAME, APIVERSION, NAMESPACED, KIND
+kubectl explain deployment.spec.strategy             # Field type and meaning from the cluster's schema
+kubectl explain deployment.spec --recursive | head -40
+kubectl apply -f web.yaml --dry-run=server           # Full validation and admission, nothing saved
+kubectl diff -f web.yaml                             # What apply would change (exit code 1 = differences)
+kubectl apply -f web.yaml
+kubectl get deploy web -o yaml | grep -A3 last-applied   # Client-side apply's record of your file
+kubectl apply -f web.yaml --server-side
+kubectl get deploy web -o yaml --show-managed-fields | grep -B2 -A8 managedFields   # Who owns which field
+```
+
+Further reading: [Objects in Kubernetes](https://kubernetes.io/docs/concepts/overview/working-with-objects/) · [Declarative management with kubectl apply](https://kubernetes.io/docs/tasks/manage-kubernetes-objects/declarative-config/) · [Server-Side Apply](https://kubernetes.io/docs/reference/using-api/server-side-apply/) · [Field validation](https://kubernetes.io/docs/reference/using-api/api-concepts/#field-validation) · [Desired State and the Control Loop](../basic/desired-state.mdx) · [Per-environment deploys with Kustomize](../cert/kustomize.mdx)

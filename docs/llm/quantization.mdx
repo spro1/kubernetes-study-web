@@ -1,0 +1,236 @@
+---
+id: quantization
+title: Making a Model Smaller (Quantization)
+sidebar_label: 05 · Quantization
+description: Animated walkthrough of model quantization for serving, from weight memory as parameters times bytes to scale factors and outliers, weight-only INT4 (AWQ, GPTQ) versus FP8 weights and activations, hardware support, KV cache quantization, and checking accuracy on your own task
+summary: 'Fewer bits per weight: how scale factors work, why outliers hurt, what it frees for the KV cache, and why you must re-check accuracy.'
+icon: layers
+hide_table_of_contents: true
+---
+
+# Making a Model Smaller (Quantization)
+
+**Quantization** stores a model's numbers in fewer bits, for example 8 or 4 bits instead of 16. The model then needs fewer accelerators, leaves more memory for the KV cache, and writes tokens faster. In return, it gives up a little accuracy, and you have to measure how much.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~12 min', level: 'Advanced'}}
+  groups={[
+    {label: 'One accelerator · 80 GB', x: 545, y: 30, w: 440, h: 310, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'ckpt', label: 'BF16 checkpoint', sub: '70B · 140 GB', icon: 'archive', tone: 'store', x: 120, y: 110, w: 160, show: true},
+    {id: 'quant', label: 'Quantizer', sub: 'Calibration data', icon: 'gear', tone: 'cp', x: 120, y: 260, w: 160},
+    {id: 'qckpt', label: 'Quantized ckpt', sub: 'AWQ · GPTQ · FP8', icon: 'box', tone: 'store', x: 120, y: 395, w: 160},
+    {id: 'engine', label: 'Inference engine', sub: 'e.g. vLLM', icon: 'spark', tone: 'node', x: 370, y: 260, w: 160, show: true},
+    {id: 'w', label: 'Weights', sub: 'Fixed size', icon: 'disk', tone: 'store', x: 665, y: 110},
+    {id: 'kv', label: 'KV cache', sub: 'What is left', icon: 'db', tone: 'store', x: 665, y: 265},
+    {id: 'core', label: 'Tensor cores', sub: 'FP8 · INT8 · FP4', icon: 'server', tone: 'node', x: 875, y: 110},
+    {id: 'eval', label: 'Your eval set', sub: 'Same prompts', icon: 'target', tone: 'app', x: 790, y: 405, w: 160},
+  ]}
+  metrics={[
+    {id: 'size', label: 'Weight size'},
+    {id: 'gpus', label: 'Accelerators'},
+    {id: 'kvroom', label: 'KV cache room'},
+    {id: 'speed', label: 'Decode speed'},
+    {id: 'acc', label: 'Accuracy'},
+  ]}
+  learn={[
+    {text: 'Weight memory is parameters times bytes per parameter', at: 1},
+    {text: 'How a scale factor maps weights to fewer bits, and why outliers hurt', at: 2},
+    {text: 'Weight-only INT4 versus FP8 weights and activations', at: 4},
+    {text: 'Why freed memory and fewer bytes per token mean more users and faster tokens', at: 6},
+    {text: 'KV cache precision is a separate knob, and accuracy must be measured', at: 8},
+  ]}
+  steps={[
+    {
+      short: 'Start',
+      kind: '시작',
+      title: 'A 70B model in BF16 does not fit on one accelerator',
+      text: [
+        'The team wants to serve a 70-billion-parameter model. Its checkpoint stores each weight in BF16, 2 bytes per weight. That is about 140 GB before any KV cache.',
+        'One accelerator here has 80 GB. The engine has to split the model over at least two of them with tensor parallelism, and in practice more, so there is room left for the KV cache.',
+      ],
+      flows: [{from: 'ckpt', to: 'engine', label: 'Load 140 GB', type: 'request'}],
+      focus: ['ckpt', 'engine'],
+      values: {size: '140 GB', gpus: {text: '2+ (does not fit 1)', tone: 'bad'}, kvroom: '—', speed: 'Baseline', acc: 'Baseline'},
+    },
+    {
+      short: 'Bytes',
+      kind: '원리',
+      title: 'Weight memory = parameters × bytes per parameter',
+      text: [
+        'The arithmetic is simple. 70B × 2 bytes (BF16) ≈ 140 GB. 70B × 1 byte (FP8 or INT8) ≈ 70 GB. 70B × 0.5 bytes (4-bit) ≈ 35 GB, plus a little for scale factors.',
+        'This counts the weights only. The engine also needs memory for activations and, above all, for the KV cache. The KV cache grows with context length and concurrent requests, as the KV cache lesson shows.',
+      ],
+      keyIdea: 'For a quick estimate, multiply the parameter count (in billions) by bytes per parameter to get GB of weights.',
+      focus: ['ckpt'],
+      badges: {ckpt: '2 bytes × 70B'},
+    },
+    {
+      short: 'Scale',
+      kind: '원리',
+      title: 'A scale factor maps each weight onto a few levels',
+      text: [
+        'A quantizer reads the BF16 weights and stores each one as a small integer plus a shared scale factor: q = round(w / scale), and later w ≈ q × scale. INT4 has only 16 levels, INT8 has 256.',
+        'One scale per whole tensor is too coarse, so quantizers use one scale per output channel or per small group of weights (for example, 128). More scales mean better accuracy and a little more memory.',
+      ],
+      flows: [
+        {from: 'ckpt', to: 'quant', label: 'BF16 weights', type: 'request'},
+        {from: 'quant', to: 'qckpt', label: 'Ints + scales', type: 'response'},
+      ],
+      focus: ['quant', 'qckpt'],
+      badges: {ckpt: null, quant: 'Group size 128'},
+    },
+    {
+      short: 'Outliers',
+      kind: '문제',
+      title: 'A few large values stretch the scale and crush the rest',
+      text: [
+        'The scale must cover the largest value in its group. If one weight is 50 times bigger than the others, the scale grows to fit it, and the normal weights collapse onto one or two levels. Their information is lost.',
+        'Activations, the values flowing between layers, have even stronger outlier channels. That is why quantizing activations is harder than quantizing weights. Methods like AWQ and GPTQ use a small calibration dataset to find the important channels and to compensate for rounding error.',
+      ],
+      keyIdea: 'Quantization quality depends on how outliers are handled, not just on the bit count. The calibration data should look like your real traffic.',
+      focus: ['quant'],
+      status: {quant: 'warn'},
+      badges: {quant: 'Outlier stretches scale'},
+    },
+    {
+      short: 'W4A16 vs W8A8',
+      kind: '원리',
+      title: 'Weight-only INT4 saves memory; FP8 also speeds up the math',
+      text: [
+        'Weight-only methods such as AWQ and GPTQ store weights in 4 bits but compute in 16 bits (W4A16). A kernel expands the weights on the fly as it reads them. Memory and bytes read per token shrink, but the arithmetic is still 16-bit.',
+        'FP8 usually quantizes both weights and activations (W8A8). The matrix multiply then runs on FP8 tensor cores, so compute-heavy prefill gets faster too, not just memory use.',
+      ],
+      flows: [
+        {from: 'qckpt', to: 'engine', label: 'Load', type: 'request'},
+        {from: 'engine', to: 'core', label: 'FP8 matmul', type: 'request'},
+      ],
+      focus: ['engine', 'core'],
+      status: {quant: null},
+      badges: {quant: null, qckpt: 'W4A16 or W8A8'},
+    },
+    {
+      short: 'Hardware',
+      kind: '주의',
+      title: 'The speedup needs tensor cores for that number format',
+      text: [
+        'FP8 tensor cores arrived with NVIDIA Hopper (H100, H200) and Ada (L4, L40S). Blackwell adds FP4. INT8 tensor cores go back further, to Ampere (A100) and earlier. Other vendors have their own support lists.',
+        'On a GPU without FP8 tensor cores, an engine may still load FP8 weights and expand them to 16 bits in the kernel. You save memory but get no compute speedup. Check your engine\'s support table for the GPU and format before you choose.',
+      ],
+      keyIdea: 'Pick the format for the hardware the Pod will actually land on. Pin FP8 workloads to matching nodes with a node selector or a DRA device class.',
+      focus: ['core'],
+      status: {core: 'warn'},
+      badges: {core: 'Hopper · Ada · Blackwell'},
+    },
+    {
+      short: 'Fits',
+      kind: '원리',
+      title: 'Smaller weights leave room for a bigger KV cache',
+      text: [
+        'With 4-bit weights, the 70B model is about 35–40 GB and fits on one 80 GB accelerator. Everything the engine does not need for weights and working memory becomes KV cache.',
+        'More KV cache means more concurrent requests or longer contexts on the same hardware, so continuous batching can fill bigger batches. Fewer accelerators per replica also means more replicas from the same pool.',
+      ],
+      flows: [
+        {from: 'engine', to: 'w', label: '~37 GB', type: 'request'},
+        {from: 'engine', to: 'kv', label: 'Rest', type: 'request'},
+      ],
+      focus: ['w', 'kv'],
+      status: {core: null},
+      badges: {core: null, w: 'INT4 · ~37 GB', kv: '~30 GB free'},
+      values: {size: {text: '~37 GB', tone: 'good'}, gpus: {text: '1', tone: 'good'}, kvroom: {text: '~30 GB', tone: 'good'}},
+    },
+    {
+      short: 'Faster decode',
+      kind: '원리',
+      title: 'Decode reads every weight per token, so fewer bytes means faster tokens',
+      text: [
+        'In decode, each new token reads all the weights from accelerator memory once. That makes decode limited by memory bandwidth, as the prefill and decode lesson shows. If the weights are a quarter of the size, there is far less to read for each token.',
+        'The gain is less than the size ratio. Expanding 4-bit weights costs some work, the KV cache still has to be read, and at large batch sizes decode becomes more compute-bound. Measure time per output token (TPOT) before and after.',
+      ],
+      flows: [{from: 'w', to: 'engine', label: 'Read per token', type: 'response'}],
+      focus: ['w', 'engine'],
+      values: {speed: {text: 'Faster (measure TPOT)', tone: 'good'}},
+    },
+    {
+      short: 'KV dtype',
+      kind: '원리',
+      title: 'KV cache precision is a separate knob',
+      text: [
+        'Weight precision and KV cache precision are set separately. A BF16 model can keep its KV cache in FP8 (for example, vLLM --kv-cache-dtype fp8), which roughly halves KV memory per token compared with 16 bits.',
+        'That doubles how many tokens fit, so you get more concurrent requests or longer contexts. Long contexts can be more sensitive to KV precision, so test with your real prompt lengths.',
+      ],
+      flows: [{from: 'engine', to: 'kv', label: 'FP8 KV', type: 'request'}],
+      focus: ['kv'],
+      badges: {kv: 'FP8 · 2× tokens'},
+      values: {kvroom: {text: '~30 GB · 2× tokens', tone: 'good'}},
+    },
+    {
+      short: 'Accuracy',
+      kind: '문제',
+      title: 'Accuracy loss shows up on your task, not on the model card',
+      text: [
+        'A quantized model can look fine on general benchmarks and still get worse at code, math, long documents or your own language. 4-bit loses more than FP8, and smaller models lose more than large ones.',
+        'Run the same evaluation prompts through the BF16 baseline and the quantized model and compare the scores. Also check that the checkpoint format matches the engine: a mismatch fails at load time or quietly falls back to a slow path.',
+      ],
+      keyIdea: 'Treat quantization like a model change. Evaluate it on your own data before it goes to production, and keep the baseline to compare against.',
+      flows: [{from: 'engine', to: 'eval', label: 'Same prompts', type: 'request'}],
+      focus: ['eval', 'engine'],
+      status: {eval: 'warn'},
+      badges: {eval: 'Code −3 pts?'},
+      values: {acc: {text: 'Measure vs BF16', tone: 'bad'}},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Fewer bits: fewer accelerators, more KV cache, faster decode, measured accuracy',
+      text: [
+        'Weight memory is parameters times bytes. A quantizer maps weights onto fewer levels with per-group scale factors, and outliers decide how much is lost. Weight-only INT4 saves the most memory. FP8 also speeds up the math where tensor cores support it.',
+        'The freed memory goes to the KV cache, and smaller weights make decode faster. KV cache precision is a separate setting. Every one of these choices needs an accuracy check on your own task.',
+      ],
+      keyIdea: 'Start with FP8 on hardware that supports it. Move to 4-bit when memory is the limit, and only after your evaluation says the loss is acceptable.',
+      flows: [
+        {from: 'qckpt', to: 'engine', label: 'Load', type: 'request'},
+        {from: 'engine', to: 'w', label: 'Weights', type: 'request'},
+        {from: 'engine', to: 'kv', label: 'KV cache', type: 'request'},
+      ],
+      focus: ['qckpt', 'w', 'kv', 'eval'],
+      status: {eval: null},
+      badges: {eval: null, qckpt: null},
+    },
+  ]}
+/>
+
+## Precision and weight size
+
+Sizes are for the weights of a 70B model only. KV cache and working memory come on top.
+
+| Precision | Bytes per parameter | 70B weights | Notes |
+|---|---|---|---|
+| FP32 | 4 | ~280 GB | Used in training, not for serving |
+| BF16 / FP16 | 2 | ~140 GB | The usual baseline checkpoint |
+| FP8 (W8A8) | 1 | ~70 GB | FP8 tensor cores on Hopper, Ada, Blackwell. Usually close to baseline accuracy |
+| INT8 (W8A8 or W8A16) | 1 | ~70 GB | INT8 tensor cores also on Ampere. W8A8 needs care with activation outliers (e.g. SmoothQuant) |
+| INT4 (W4A16: AWQ, GPTQ) | 0.5 + scales | ~35–40 GB | Biggest memory saving and faster decode. Math stays 16-bit. More accuracy risk |
+| FP4 (e.g. NVFP4, MXFP4) | 0.5 + scales | ~35–40 GB | FP4 tensor cores on Blackwell |
+
+## Running it on Kubernetes
+
+- Quantize once, offline, and store the result as its own checkpoint in your model registry or as an OCI artifact. Loading it is then the same as loading any model, and a smaller checkpoint also downloads faster on cold start.
+- A pre-quantized checkpoint usually describes itself (in vLLM, the `quantization_config` in `config.json`), so the engine picks the right kernels without a flag. Pass `--quantization` only to force a method or to quantize at load time.
+- Put the format in the Deployment's node selection. An FP8 model on a node with no FP8 tensor cores still runs, but without the speedup you planned for.
+- Watch the same engine metrics as before: KV cache usage, waiting requests, TTFT and TPOT. If quantization worked, KV cache usage drops at the same load, or each replica handles more requests.
+
+## Try it yourself
+
+```bash
+vllm serve Qwen/Qwen2.5-7B-Instruct-AWQ                       # Pre-quantized 4-bit checkpoint; method read from config.json
+vllm serve <model> --quantization fp8_per_tensor              # Quantize BF16 weights to FP8 at load time (older vLLM: fp8)
+vllm serve <model> --kv-cache-dtype fp8                       # KV cache in FP8, separate from weight precision
+nvidia-smi --query-gpu=name,memory.used,memory.total --format=csv   # Example: NVIDIA. GPU model and memory
+curl -s http://<engine>:8000/metrics | grep -E 'vllm:(kv_cache_usage_perc|num_requests_running)'   # KV room at the same load
+```
+
+Further reading: [vLLM quantization](https://docs.vllm.ai/en/latest/features/quantization/) · [AWQ paper](https://arxiv.org/abs/2306.00978) · [GPTQ paper](https://arxiv.org/abs/2210.17323) · [SmoothQuant paper](https://arxiv.org/abs/2211.10438) · [FP8 formats for deep learning](https://arxiv.org/abs/2209.05433) · [How the KV Cache Fills Up](../llm/kv-cache.mdx) · [Reading the Question, Writing the Answer (Prefill and Decode)](../llm/prefill-decode.mdx) · [Until a Model First Starts (Cold Start)](../ai/cold-start.mdx)

@@ -1,0 +1,250 @@
+---
+id: managed-kubernetes
+title: Managed Kubernetes — Who Runs What
+sidebar_label: 13 · Managed Kubernetes
+description: Animated walkthrough of a managed Kubernetes cluster (EKS, GKE, AKS) where the provider runs the control plane and you run the nodes, with kubectl login through cloud IAM, cloud load balancers and disks created from Services and PVCs, node autoscaling, workload identity and version upgrades
+summary: 'The provider runs the control plane, you run the nodes. How IAM, load balancers, disks, autoscaling and upgrades connect to the cloud.'
+icon: cloud
+hide_table_of_contents: true
+---
+
+# Managed Kubernetes — Who Runs What
+
+With managed Kubernetes (for example Amazon EKS, Google GKE or Azure AKS), the cloud provider runs the control plane and you run the worker nodes. Follow one team from `kubectl` login to a running, exposed, autoscaled app, and see where Kubernetes hands work to the cloud.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~11 min', level: 'Intermediate'}}
+  groups={[
+    {label: 'Provider account · managed control plane', x: 250, y: 30, w: 250, h: 180, tone: 'mgmt'},
+    {label: 'Your VPC · node group', x: 250, y: 230, w: 500, h: 210, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'dev', label: 'Developer', sub: 'kubectl', icon: 'user', tone: 'ext', x: 110, y: 120, show: true},
+    {id: 'iam', label: 'Cloud IAM', sub: 'Who is this?', icon: 'shield', tone: 'cp', x: 110, y: 300},
+    {id: 'api', label: 'API server', sub: 'Multi-AZ', icon: 'gear', tone: 'cp', x: 375, y: 85, show: true},
+    {id: 'etcd', label: 'etcd', sub: 'Provider backs up', icon: 'db', tone: 'store', x: 375, y: 170, size: 'sm'},
+    {id: 'node1', label: 'Node · AZ a', sub: 'VM you pay for', icon: 'server', tone: 'node', x: 375, y: 300, show: true},
+    {id: 'node2', label: 'New node · AZ a', sub: 'Added by autoscaler', icon: 'server', tone: 'node', x: 620, y: 300},
+    {id: 'pod', label: 'Pod', sub: 'shop', icon: 'pod', tone: 'app', size: 'sm', x: 375, y: 395},
+    {id: 'lb', label: 'Cloud LB', sub: 'From Service', icon: 'split', tone: 'ext', x: 880, y: 120},
+    {id: 'disk', label: 'Cloud disk', sub: 'Zonal · AZ a', icon: 'disk', tone: 'store', x: 880, y: 300},
+    {id: 'bucket', label: 'Object storage', sub: 'Cloud API', icon: 'archive', tone: 'store', x: 880, y: 400},
+  ]}
+  metrics={[
+    {id: 'who', label: 'Who manages'},
+    {id: 'cloud', label: 'Cloud resource'},
+    {id: 'cred', label: 'Credential'},
+  ]}
+  learn={[
+    {text: 'The provider runs the API server and etcd, you run the nodes', at: 1},
+    {text: 'kubectl logs in with cloud IAM, then Kubernetes RBAC decides', at: 2},
+    {text: 'A LoadBalancer Service and a PVC create real cloud resources', at: 3},
+    {text: 'Why a zonal disk can keep a Pod Pending', at: 5},
+    {text: 'Pods get cloud permissions through workload identity, not node keys', at: 7},
+  ]}
+  steps={[
+    {
+      short: 'Start',
+      kind: '시작',
+      title: 'One cluster, two owners',
+      text: [
+        'A team creates a cluster with a few clicks or one command. A minute later kubectl get nodes works, but nobody on the team installed an API server or etcd.',
+        'That is the deal of managed Kubernetes: the provider owns the control plane, you own what runs your workloads. Knowing where that line is tells you what you must watch, patch and pay for.',
+      ],
+      flows: [{from: 'dev', to: 'api', label: 'kubectl', type: 'request'}],
+      focus: ['dev', 'api'],
+      values: {who: 'Provider + you', cloud: '—', cred: '—'},
+    },
+    {
+      short: 'Control plane',
+      kind: '원리',
+      title: 'The provider runs the control plane',
+      text: [
+        'The API server, etcd, scheduler and controller manager run in the provider\'s own account. You never SSH into them. On EKS and on regional GKE or AKS with zones, they are spread across several availability zones.',
+        'The provider patches them, replaces failed instances and backs up etcd. You see only an API endpoint and, in most clouds, control-plane logs you can turn on.',
+      ],
+      keyIdea: 'A zonal GKE cluster has a control plane in one zone only. Check whether "managed" also means "highly available" for your cluster type and tier.',
+      flows: [{from: 'api', to: 'etcd', label: 'Store', type: 'request'}],
+      focus: ['api', 'etcd'],
+      badges: {api: 'Managed'},
+      values: {who: 'Provider'},
+    },
+    {
+      short: 'Login',
+      kind: '원리',
+      title: 'kubectl logs in with cloud IAM, then RBAC decides',
+      text: [
+        'kubeconfig does not hold a static password. It runs a helper (aws eks get-token, gke-gcloud-auth-plugin or kubelogin) that turns your cloud identity into a short-lived token.',
+        'The API server checks the token with the cloud, then maps the cloud identity to a Kubernetes user or group. From there, ordinary Kubernetes RBAC decides what you may do. On EKS that mapping is an access entry.',
+      ],
+      keyIdea: 'Two checks, two systems: cloud IAM says who you are, Kubernetes RBAC says what you may do in the cluster. A Forbidden error is RBAC; an Unauthorized error is usually the IAM side.',
+      flows: [
+        {from: 'dev', to: 'iam', label: 'Get token', type: 'request'},
+        {from: 'dev', to: 'api', label: 'Bearer token', type: 'request'},
+        {from: 'api', to: 'iam', label: 'Verify', type: 'watch'},
+      ],
+      focus: ['dev', 'iam', 'api'],
+      badges: {iam: 'team-dev'},
+      values: {cred: 'Short-lived token'},
+    },
+    {
+      short: 'Nodes',
+      kind: '원리',
+      title: 'Your nodes are VMs in your VPC',
+      text: [
+        'Worker nodes are ordinary VMs from a node group (EKS) or node pool (GKE, AKS), usually backed by the cloud\'s auto scaling group. They live in your VPC subnets and appear on your bill.',
+        'Their kubelet registers with the managed API server. The scheduler places the shop Pod on the node in AZ a, and the Pod gets an IP from your VPC (with the default CNI on EKS) or from a Pod range.',
+      ],
+      keyIdea: 'Node OS images, node versions and node capacity are yours. Fully managed modes such as EKS Auto Mode or GKE Autopilot move part of this to the provider.',
+      flows: [
+        {from: 'node1', to: 'api', label: 'Register', type: 'watch'},
+        {from: 'api', to: 'node1', label: 'Run Pod', type: 'request'},
+      ],
+      focus: ['node1', 'pod'],
+      badges: {api: null, node1: 'Ready'},
+      values: {who: 'You', cloud: 'VM'},
+    },
+    {
+      short: 'Service · LB',
+      kind: '원리',
+      title: 'A LoadBalancer Service creates a real cloud load balancer',
+      text: [
+        'The team applies a Service of type LoadBalancer. A cloud controller (the cloud controller manager, or an add-on such as the AWS Load Balancer Controller) watches it and calls the cloud API.',
+        'A real load balancer appears in your account, pointing at the nodes or straight at Pod IPs. Its address is written back to the Service\'s EXTERNAL-IP. Annotations choose options such as internal-only or the LB type.',
+      ],
+      keyIdea: 'Deleting the Service deletes the load balancer. Deleting the cluster first can leave an orphaned, still-billed LB behind.',
+      flows: [
+        {from: 'api', to: 'lb', label: 'Create LB', type: 'request'},
+        {from: 'lb', to: 'pod', label: 'Traffic', type: 'request', bend: 60},
+      ],
+      focus: ['lb', 'pod'],
+      badges: {lb: 'EXTERNAL-IP'},
+      values: {cloud: 'Load balancer'},
+    },
+    {
+      short: 'Zonal disk',
+      kind: '문제',
+      title: 'A PVC creates a cloud disk, and that disk lives in one zone',
+      text: [
+        'The shop Pod asks for storage with a PVC. The cloud\'s CSI driver creates a block disk in AZ a, where the Pod runs, and attaches it to the node.',
+        'Later the Pod is recreated while the node in AZ a is full. A node in AZ b has room, but the Pod stays Pending with a volume node affinity conflict: a zonal disk cannot attach to a VM in another zone.',
+      ],
+      keyIdea: 'Use volumeBindingMode: WaitForFirstConsumer so the disk is created where the Pod lands, and keep node capacity in every zone that holds disks.',
+      flows: [
+        {from: 'api', to: 'disk', label: 'Create disk', type: 'request'},
+        {from: 'disk', to: 'node1', label: 'Attach', type: 'request'},
+      ],
+      focus: ['disk', 'pod'],
+      status: {pod: 'warn'},
+      badges: {lb: null, disk: 'AZ a only'},
+      values: {cloud: {text: 'Disk in AZ a · Pod Pending', tone: 'bad'}},
+    },
+    {
+      short: 'Autoscale',
+      kind: '원리',
+      title: 'Pending Pods make the autoscaler add VMs',
+      text: [
+        'Traffic grows, HPA adds replicas, and some Pods stay Pending because no node has room. A node autoscaler (Cluster Autoscaler, or Karpenter) sees the unschedulable Pods.',
+        'It asks the cloud for a new VM in a zone that fits, here AZ a, because the Pod\'s disk can only attach there. The VM boots, joins the cluster, and the scheduler places the waiting Pods. Idle nodes are removed later.',
+      ],
+      keyIdea: 'The autoscaler reacts to Pending Pods, not CPU. Pods with no requests never trigger it, and a new node takes minutes, not seconds.',
+      flows: [
+        {from: 'api', to: 'node2', label: 'New VM', type: 'request'},
+        {from: 'node2', to: 'api', label: 'Register', type: 'watch'},
+      ],
+      focus: ['node2'],
+      status: {pod: 'ok'},
+      badges: {disk: null, node2: 'Joining'},
+      values: {cloud: {text: 'VM added', tone: 'good'}},
+    },
+    {
+      short: 'Workload identity',
+      kind: '주의',
+      title: 'Pods get their own cloud permissions',
+      text: [
+        'The shop Pod must write to object storage. Putting an access key in a Secret, or giving the node\'s role broad rights, lets every Pod on that node use the same permission.',
+        'Workload identity ties a Kubernetes ServiceAccount to one cloud role: IRSA or EKS Pod Identity on AWS, Workload Identity Federation for GKE, Microsoft Entra Workload ID on AKS. The Pod gets short-lived credentials for that role only.',
+      ],
+      keyIdea: 'One ServiceAccount, one cloud role, least privilege. Then no long-lived key sits in the cluster to leak.',
+      flows: [
+        {from: 'pod', to: 'iam', label: 'SA token', type: 'request', bend: -40},
+        {from: 'pod', to: 'bucket', label: 'PutObject', type: 'request'},
+      ],
+      focus: ['pod', 'iam', 'bucket'],
+      badges: {node2: null, iam: 'role: shop-writer'},
+      values: {cred: {text: 'Per-Pod temporary role', tone: 'good'}},
+    },
+    {
+      short: 'Upgrades',
+      kind: '주의',
+      title: 'Upgrades are shared work',
+      text: [
+        'Each Kubernetes minor version has a support window. When it ends, the provider upgrades the control plane for you or, on some clouds, starts charging for extended support.',
+        'The control plane goes first, then the nodes. Nodes may lag the control plane by a few minor versions but never be newer. Removed APIs break on the control-plane upgrade, so check deprecated APIs before you start.',
+      ],
+      keyIdea: 'Upgrade on your schedule, not the provider\'s. Read the provider\'s version calendar and test add-ons (CNI, CSI, ingress controllers) on each new version.',
+      flows: [
+        {from: 'api', to: 'node1', label: 'Then nodes', type: 'request'},
+        {from: 'api', to: 'node2', label: 'Then nodes', type: 'request'},
+      ],
+      focus: ['api', 'node1', 'node2'],
+      badges: {iam: null, api: '1.N+1'},
+      values: {who: 'Provider + you'},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Kubernetes asks, the cloud provides',
+      text: [
+        'The provider runs and patches the control plane. You run the nodes, the workloads and their settings. IAM gets you into the cluster, and RBAC decides what you can do there.',
+        'Kubernetes objects turn into cloud resources: a LoadBalancer Service into a load balancer, a PVC into a zonal disk, Pending Pods into new VMs, a ServiceAccount into a cloud role.',
+      ],
+      keyIdea: 'When something breaks, ask which side owns it. The Kubernetes events say what was requested; the cloud console or logs say what the cloud did with it.',
+      flows: [
+        {from: 'dev', to: 'api', label: 'kubectl', type: 'request'},
+        {from: 'lb', to: 'pod', label: 'Traffic', type: 'request', bend: 60},
+        {from: 'pod', to: 'bucket', label: 'Role', type: 'request'},
+      ],
+      focus: ['api', 'node1', 'node2'],
+      badges: {api: null, node1: null},
+    },
+  ]}
+/>
+
+## Who manages what
+
+| Part | Provider | You |
+|---|---|---|
+| API server, etcd, scheduler, controller manager | Runs, patches, backs up, scales | Choose version and tier, enable control-plane logs |
+| Control-plane version | Releases versions, may force upgrades at end of support | Trigger upgrades, check deprecated APIs |
+| Worker nodes | Provides node images and managed node groups or pools | Choose size, count, OS image, upgrade timing (less in Auto Mode or Autopilot) |
+| Networking | Provides the CNI and the cloud LB integration | VPC, subnets, IP ranges, security groups, NetworkPolicy |
+| Access | Verifies cloud identity | Map identities to RBAC, grant least privilege |
+| Workloads, Secrets, data | — | Everything: manifests, backups of volumes, app security |
+
+Names differ by provider:
+
+| Concept | EKS | GKE | AKS |
+|---|---|---|---|
+| Group of worker VMs | Managed node group | Node pool | Node pool |
+| kubectl login helper | `aws eks get-token` | `gke-gcloud-auth-plugin` | `kubelogin` |
+| Cloud identity → RBAC | Access entries | IAM + RBAC | Microsoft Entra ID + RBAC |
+| Pod → cloud role | IRSA, EKS Pod Identity | Workload Identity Federation for GKE | Microsoft Entra Workload ID |
+| Provider runs the nodes too | EKS Auto Mode | Autopilot | AKS Automatic |
+
+## Try it yourself
+
+```bash
+aws eks update-kubeconfig --name demo --region ap-northeast-2   # Writes kubeconfig with the token helper (EKS example)
+kubectl config view --minify                         # See the exec plugin instead of a password
+kubectl auth whoami                                  # The Kubernetes user your cloud identity maps to
+kubectl get nodes -L topology.kubernetes.io/zone,node.kubernetes.io/instance-type   # Nodes are VMs in zones
+kubectl get svc -A --field-selector spec.type=LoadBalancer   # Services that created cloud LBs
+kubectl get pv -o custom-columns=NAME:.metadata.name,ZONE:.spec.nodeAffinity.required.nodeSelectorTerms[0].matchExpressions[0].values   # Which zone each disk is in
+kubectl get events -A --field-selector reason=FailedScheduling   # Pending Pods the autoscaler should see
+kubectl version                                      # Client and control-plane versions
+```
+
+Further reading: [Amazon EKS user guide](https://docs.aws.amazon.com/eks/latest/userguide/what-is-eks.html) · [GKE overview](https://cloud.google.com/kubernetes-engine/docs/concepts/kubernetes-engine-overview) · [AKS core concepts](https://learn.microsoft.com/en-us/azure/aks/core-aks-concepts) · [Cloud controller manager](https://kubernetes.io/docs/concepts/architecture/cloud-controller/) · [Version skew policy](https://kubernetes.io/releases/version-skew-policy/) · [Permission Checks (IAM)](../cloud/iam-request.mdx) · [Service Types](../feature/service-types.mdx) · [Auto Scaling Groups](../cloud/auto-scaling-group.mdx)
