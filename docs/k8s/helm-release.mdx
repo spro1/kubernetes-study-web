@@ -1,0 +1,236 @@
+---
+id: helm-release
+title: How a Helm Release Is Installed, Upgraded and Rolled Back
+sidebar_label: 05 · Helm releases
+description: Animated walkthrough of Helm from chart and values to rendered manifests, release revisions stored as Secrets, an upgrade that fails, rolling back to a new revision, and what happens to manual kubectl edits
+summary: 'Chart plus values becomes manifests, each install or upgrade becomes a revision stored in a Secret, and rollback writes a new revision.'
+icon: wheel
+hide_table_of_contents: true
+---
+
+# How a Helm Release Is Installed, Upgraded and Rolled Back
+
+Follow one release named shop through **chart + values → render → apply → revision**. Watch where Helm keeps its history, why a broken upgrade can still say "deployed", and what rollback really does.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~12 min', level: 'Intermediate'}}
+  groups={[
+    {label: 'Kubernetes cluster · ns shop', x: 470, y: 30, w: 505, h: 410, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'chart', label: 'Chart', sub: 'Repo or OCI registry', icon: 'registry', tone: 'ext', x: 110, y: 100, show: true},
+    {id: 'values', label: 'Your values', sub: '-f prod.yaml · --set', icon: 'book', tone: 'ext', x: 110, y: 380, show: true},
+    {id: 'helm', label: 'helm CLI', sub: 'Renders locally', icon: 'wheel', tone: 'cp', x: 330, y: 245, show: true},
+    {id: 'ops', label: 'Teammate', sub: 'kubectl edit', icon: 'user', tone: 'ext', x: 330, y: 400},
+    {id: 'api', label: 'API server', sub: 'Applies manifests', icon: 'gear', tone: 'cp', x: 590, y: 245},
+    {id: 'secret', label: 'Release Secret', sub: 'sh.helm.release.v1', icon: 'archive', tone: 'store', x: 590, y: 390, w: 170},
+    {id: 'deploy', label: 'Deployment', sub: 'shop', icon: 'layers', tone: 'node', x: 830, y: 150},
+    {id: 'pods', label: 'Pods', sub: 'shop', icon: 'pod', tone: 'app', size: 'sm', x: 830, y: 300},
+  ]}
+  metrics={[
+    {id: 'rev', label: 'Revision'},
+    {id: 'status', label: 'Status'},
+    {id: 'image', label: 'Image'},
+    {id: 'replicas', label: 'Replicas'},
+  ]}
+  learn={[
+    {text: 'A chart is templates plus default values, and your values override them', at: 1},
+    {text: 'Helm renders on the client and sends plain manifests to the API server', at: 2},
+    {text: 'Each install or upgrade is a revision stored as a Secret', at: 3},
+    {text: 'Why "deployed" does not mean "running" without --wait', at: 5},
+    {text: 'Rollback writes a new revision instead of rewinding history', at: 7},
+  ]}
+  steps={[
+    {
+      short: 'Start',
+      kind: '시작',
+      title: 'A chart and your values',
+      text: [
+        'You run helm install shop with a chart from a repository (https://… with an index.yaml) or an OCI registry (oci://…). A chart is a folder: Chart.yaml for name and version, templates/ for manifests with placeholders, and values.yaml for defaults.',
+        'You do not edit the chart. You pass your own values: -f prod.yaml for files and --set image.tag=1.3 for single keys.',
+      ],
+      flows: [
+        {from: 'chart', to: 'helm', label: 'Pull chart', type: 'request'},
+        {from: 'values', to: 'helm', label: 'Values', type: 'request'},
+      ],
+      focus: ['chart', 'values', 'helm'],
+    },
+    {
+      short: 'Render',
+      kind: '원리',
+      title: 'Helm merges values and renders templates on your machine',
+      text: [
+        'Values merge in order: the chart\'s values.yaml first, then each -f file (a later file wins), then --set (wins over all). The result fills the templates and gives plain Kubernetes YAML.',
+        'Rendering happens in the helm CLI. Since Helm 3 there is no in-cluster Tiller server. Helm talks to the API server with your kubeconfig, so your RBAC decides what it may create.',
+      ],
+      keyIdea: 'helm template shop ./chart -f prod.yaml prints the rendered YAML without touching the cluster. Read it once before the first install.',
+      flows: [
+        {from: 'chart', to: 'helm', label: 'Templates', type: 'request'},
+        {from: 'values', to: 'helm', label: 'Overrides', type: 'request'},
+      ],
+      focus: ['helm'],
+      badges: {helm: 'tag=1.3'},
+    },
+    {
+      short: 'Install',
+      kind: '원리',
+      title: 'Manifests go to the API server, and revision 1 is saved',
+      text: [
+        'Helm sends the rendered objects to the API server. The Deployment controller creates Pods with image shop:1.3 as usual. Helm is not running in the cluster after this. It only did the apply.',
+        'Helm also saves the release: a Secret named sh.helm.release.v1.shop.v1 of type helm.sh/release.v1 in the release namespace. It holds the chart, the merged values and the rendered manifest for revision 1, compressed and encoded.',
+      ],
+      keyIdea: 'The release lives in the namespace, not on your laptop. Anyone with access can run helm list -n shop and helm get values shop and see the same thing.',
+      flows: [
+        {from: 'helm', to: 'api', label: 'Apply', type: 'request'},
+        {from: 'api', to: 'deploy', label: 'Create', type: 'request'},
+        {from: 'deploy', to: 'pods', label: 'Pods', type: 'request'},
+        {from: 'helm', to: 'secret', label: 'Revision 1', type: 'request'},
+      ],
+      focus: ['api', 'secret', 'deploy'],
+      status: {pods: 'ok'},
+      badges: {secret: 'v1 deployed'},
+      values: {rev: '1', status: {text: 'deployed', tone: 'good'}, image: 'shop:1.3', replicas: '3'},
+    },
+    {
+      short: 'Upgrade',
+      kind: '원리',
+      title: 'An upgrade is a new revision',
+      text: [
+        'helm upgrade shop ./chart -f prod.yaml --set image.tag=1.4 renders again and applies only what changed. The Deployment rolls out the new image.',
+        'Helm writes Secret …shop.v2 with status deployed and marks v1 superseded. By default an upgrade keeps up to 10 revisions (--history-max).',
+      ],
+      keyIdea: 'Preview an upgrade with helm upgrade --dry-run=server, or with the helm-diff plugin (helm diff upgrade), which shows the change against what is installed.',
+      flows: [
+        {from: 'helm', to: 'api', label: 'Upgrade', type: 'request'},
+        {from: 'api', to: 'deploy', label: 'tag 1.4', type: 'request'},
+        {from: 'helm', to: 'secret', label: 'Revision 2', type: 'request'},
+      ],
+      focus: ['helm', 'secret'],
+      badges: {helm: 'tag=1.4', secret: 'v2 · v1 superseded'},
+      values: {rev: '2', image: 'shop:1.4'},
+    },
+    {
+      short: 'Bad upgrade',
+      kind: '문제',
+      title: 'A broken upgrade can still say "deployed"',
+      text: [
+        'Next, someone upgrades with --set image.tag=1.5-typo. The API server accepts the Deployment, so Helm reports success and writes v3 as deployed.',
+        'But the new Pods sit in ImagePullBackOff. Without --wait, Helm only checks that the API server accepted the objects. It does not wait for Pods to become ready.',
+      ],
+      keyIdea: 'Release status is about the apply, not the app. Check kubectl get pods or kubectl rollout status after every upgrade, or let Helm wait.',
+      flows: [
+        {from: 'helm', to: 'api', label: 'Upgrade', type: 'request'},
+        {from: 'api', to: 'deploy', label: 'tag 1.5-typo', type: 'request'},
+        {from: 'helm', to: 'secret', label: 'Revision 3', type: 'request'},
+      ],
+      focus: ['deploy', 'pods'],
+      status: {pods: 'error'},
+      badges: {helm: 'tag=1.5-typo', pods: 'ImagePullBackOff', secret: 'v3 deployed'},
+      values: {rev: '3', status: {text: 'deployed (Pods broken)', tone: 'bad'}, image: {text: 'shop:1.5-typo', tone: 'bad'}},
+    },
+    {
+      short: 'Wait',
+      kind: '주의',
+      title: 'Let Helm wait, and roll back on failure',
+      text: [
+        'With --wait, Helm waits until the Deployment\'s Pods are ready, up to --timeout (default 5m). If they are not, the revision is marked failed and the command exits non-zero, so CI notices.',
+        '--rollback-on-failure (called --atomic in Helm 3, still accepted with a deprecation warning) goes further. It turns on --wait, and on failure Helm rolls back to the last good revision by itself.',
+      ],
+      keyIdea: 'In a pipeline, use --wait --timeout with a realistic value. A failed status that blocks the pipeline is better than a green build with broken Pods.',
+      flows: [
+        {from: 'api', to: 'helm', label: 'Not ready', type: 'response'},
+        {from: 'helm', to: 'secret', label: 'v3 failed', type: 'request'},
+      ],
+      focus: ['helm', 'pods'],
+      badges: {secret: 'v3 failed'},
+      values: {status: {text: 'failed', tone: 'bad'}},
+    },
+    {
+      short: 'Rollback',
+      kind: '원리',
+      title: 'Rollback writes revision 4, a copy of revision 2',
+      text: [
+        'helm rollback shop 2 takes the manifest saved in revision 2 and applies it again. The Deployment goes back to shop:1.4 and the Pods recover.',
+        'Helm does not delete revision 3. It writes a new revision 4 with the contents of revision 2. helm history shows 1 superseded, 2 superseded, 3 failed, 4 deployed with the description "Rollback to 2".',
+      ],
+      keyIdea: 'Revision numbers only go up. Without a number, helm rollback shop goes to the previous revision.',
+      flows: [
+        {from: 'secret', to: 'helm', label: 'Read v2', type: 'response'},
+        {from: 'helm', to: 'api', label: 'Apply v2', type: 'request'},
+        {from: 'api', to: 'deploy', label: 'tag 1.4', type: 'request'},
+        {from: 'helm', to: 'secret', label: 'Revision 4', type: 'request'},
+      ],
+      focus: ['secret', 'deploy'],
+      status: {pods: 'ok'},
+      badges: {helm: 'rollback 2', pods: null, secret: 'v4 deployed'},
+      values: {rev: '4', status: {text: 'deployed', tone: 'good'}, image: {text: 'shop:1.4', tone: 'good'}},
+    },
+    {
+      short: 'Manual edit',
+      kind: '주의',
+      title: 'A kubectl edit is overwritten on the next upgrade',
+      text: [
+        'A teammate runs kubectl scale deployment shop --replicas=6 during a traffic spike. The chart sets replicas to 3. Helm\'s saved release does not know about the change.',
+        'On the next upgrade or rollback, Helm compares the old manifest, the new manifest and the live object, and puts back fields the chart sets, so replicas returns to 3. Fields the chart never sets, such as an injected sidecar, are left alone. Helm 4 uses server-side apply for new releases. There the upgrade fails with a field conflict instead, unless you add --force-conflicts.',
+      ],
+      keyIdea: 'Change what the chart owns through values, not kubectl. If an HPA owns replicas, leave replicas out of the chart\'s template.',
+      flows: [
+        {from: 'ops', to: 'api', label: 'replicas=6', type: 'request'},
+        {from: 'helm', to: 'api', label: 'Upgrade', type: 'request'},
+      ],
+      focus: ['ops', 'deploy'],
+      status: {deploy: 'warn'},
+      badges: {deploy: '6 → 3', helm: null},
+      values: {replicas: {text: '6 → 3 after upgrade', tone: 'bad'}},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Values in, revisions out',
+      text: [
+        'A chart is templates plus defaults. Your values override them, Helm renders on the client, and the API server applies plain manifests.',
+        'Every install, upgrade and rollback is a numbered revision stored as a Secret in the release namespace. Rollback reapplies an old revision as a new one.',
+      ],
+      keyIdea: 'Keep values files in Git, preview with helm template or helm diff, upgrade with --wait, and read helm history when something breaks.',
+      flows: [
+        {from: 'values', to: 'helm', label: 'Values', type: 'request'},
+        {from: 'helm', to: 'api', label: 'Apply', type: 'request'},
+        {from: 'helm', to: 'secret', label: 'Revision', type: 'request'},
+      ],
+      focus: ['values', 'helm', 'secret'],
+      status: {deploy: null},
+      badges: {deploy: null},
+      values: {replicas: '3'},
+    },
+  ]}
+/>
+
+## Reading release status
+
+`helm status shop` and `helm history shop` show one status per revision.
+
+| Status | Meaning | What to do |
+|---|---|---|
+| deployed | The current revision. Its objects were accepted by the API server | Still check the Pods: without `--wait`, deployed does not mean ready |
+| superseded | An older revision that was replaced | Nothing. It is history you can roll back to |
+| failed | The apply was rejected, a hook failed, or `--wait` timed out | Read `helm history` and the Pods' events, fix the values, upgrade again or roll back |
+| pending-install / pending-upgrade / pending-rollback | An operation started and did not finish (for example, the CLI was killed) | New operations fail with "another operation is in progress". Roll back to the last good revision |
+| uninstalled | Removed with `helm uninstall --keep-history` | `helm rollback` can bring it back |
+
+## Try it yourself
+
+```bash
+helm create demo                                        # Scaffold a chart: Chart.yaml, values.yaml, templates/
+helm show values ./demo | head -20                      # Defaults you can override
+helm template shop ./demo --set replicaCount=3          # Render only, no cluster
+helm install shop ./demo -n shop --create-namespace --set replicaCount=3
+helm upgrade shop ./demo -n shop --set replicaCount=2 --wait --timeout 3m
+helm history shop -n shop                               # REVISION, STATUS, DESCRIPTION
+helm get values shop -n shop                            # Values you supplied
+kubectl get secret -n shop -l owner=helm                # One Secret per revision
+helm rollback shop 1 -n shop                            # Writes a new revision
+```
+
+Further reading: [Helm docs](https://helm.sh/docs/) · [Using Helm](https://helm.sh/docs/intro/using_helm/) · [Values files](https://helm.sh/docs/chart_template_guide/values_files/) · [helm rollback](https://helm.sh/docs/helm/helm_rollback/) · [Helm 4 overview](https://helm.sh/docs/overview/) · [Per-environment deploys with Kustomize](../cert/kustomize.mdx) · [GitOps sync](../intermediate/gitops-sync.mdx)

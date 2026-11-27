@@ -1,0 +1,250 @@
+---
+id: managed-kubernetes
+title: 관리형 쿠버네티스 — 누가 무엇을 운영하나
+sidebar_label: 13 · 관리형 쿠버네티스
+description: 클라우드가 컨트롤 플레인을, 내가 노드를 운영하는 관리형 쿠버네티스(EKS·GKE·AKS)에서 클라우드 IAM으로 kubectl에 로그인하고, Service와 PVC가 클라우드 로드 밸런서와 디스크를 만들고, 노드 오토스케일링·워크로드 아이덴티티·버전 업그레이드가 이어지는 과정을 애니메이션으로 따라간다
+summary: '컨트롤 플레인은 클라우드가, 노드는 내가. IAM·로드 밸런서·디스크·오토스케일링·업그레이드가 클라우드와 이어지는 방식.'
+icon: cloud
+hide_table_of_contents: true
+---
+
+# 관리형 쿠버네티스 — 누가 무엇을 운영하나
+
+관리형 쿠버네티스(예: Amazon EKS, Google GKE, Azure AKS)에서는 클라우드 사업자가 컨트롤 플레인을 운영하고, 워커 노드는 내가 운영한다. 한 팀이 `kubectl`에 로그인해 앱을 띄우고, 외부에 열고, 자동으로 늘리기까지 따라가며 쿠버네티스가 어디서 클라우드에 일을 넘기는지 본다.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '약 11분', level: '중급'}}
+  groups={[
+    {label: '사업자 계정 · 관리형 컨트롤 플레인', x: 250, y: 30, w: 250, h: 180, tone: 'mgmt'},
+    {label: '내 VPC · 노드 그룹', x: 250, y: 230, w: 500, h: 210, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'dev', label: '개발자', sub: 'kubectl', icon: 'user', tone: 'ext', x: 110, y: 120, show: true},
+    {id: 'iam', label: '클라우드 IAM', sub: '누구인가', icon: 'shield', tone: 'cp', x: 110, y: 300},
+    {id: 'api', label: 'API 서버', sub: '여러 AZ', icon: 'gear', tone: 'cp', x: 375, y: 85, show: true},
+    {id: 'etcd', label: 'etcd', sub: '사업자가 백업', icon: 'db', tone: 'store', x: 375, y: 170, size: 'sm'},
+    {id: 'node1', label: '노드 · AZ a', sub: '내가 내는 VM', icon: 'server', tone: 'node', x: 375, y: 300, show: true},
+    {id: 'node2', label: '새 노드 · AZ a', sub: '오토스케일러가 추가', icon: 'server', tone: 'node', x: 620, y: 300},
+    {id: 'pod', label: '파드', sub: 'shop', icon: 'pod', tone: 'app', size: 'sm', x: 375, y: 395},
+    {id: 'lb', label: '클라우드 LB', sub: 'Service가 만듦', icon: 'split', tone: 'ext', x: 880, y: 120},
+    {id: 'disk', label: '클라우드 디스크', sub: '영역 단위 · AZ a', icon: 'disk', tone: 'store', x: 880, y: 300},
+    {id: 'bucket', label: '오브젝트 스토리지', sub: '클라우드 API', icon: 'archive', tone: 'store', x: 880, y: 400},
+  ]}
+  metrics={[
+    {id: 'who', label: '관리 주체'},
+    {id: 'cloud', label: '클라우드 자원'},
+    {id: 'cred', label: '자격 증명'},
+  ]}
+  learn={[
+    {text: 'API 서버와 etcd는 사업자가, 노드는 내가 운영한다는 것', at: 1},
+    {text: 'kubectl은 클라우드 IAM으로 로그인하고, 권한은 쿠버네티스 RBAC가 정한다', at: 2},
+    {text: 'LoadBalancer Service와 PVC가 실제 클라우드 자원을 만든다', at: 3},
+    {text: '영역 단위 디스크 때문에 파드가 Pending에 머무는 이유', at: 5},
+    {text: '파드는 노드 키가 아니라 워크로드 아이덴티티로 클라우드 권한을 받는다', at: 7},
+  ]}
+  steps={[
+    {
+      short: '시작',
+      kind: '시작',
+      title: '클러스터 하나, 주인 둘',
+      text: [
+        '팀이 클릭 몇 번이나 명령 하나로 클러스터를 만든다. 잠시 뒤 kubectl get nodes가 동작하지만, 팀의 누구도 API 서버나 etcd를 설치하지 않았다.',
+        '이것이 관리형 쿠버네티스의 약속이다. 컨트롤 플레인은 사업자가, 워크로드를 돌리는 쪽은 내가 맡는다. 이 경계를 알아야 무엇을 지켜보고, 패치하고, 돈을 내야 하는지 안다.',
+      ],
+      flows: [{from: 'dev', to: 'api', label: 'kubectl', type: 'request'}],
+      focus: ['dev', 'api'],
+      values: {who: '사업자 + 나', cloud: '—', cred: '—'},
+    },
+    {
+      short: '컨트롤 플레인',
+      kind: '원리',
+      title: '컨트롤 플레인은 사업자가 운영한다',
+      text: [
+        'API 서버, etcd, 스케줄러, 컨트롤러 매니저는 사업자 쪽 계정에서 돈다. 여기에 SSH로 들어갈 일은 없다. EKS나 여러 영역을 쓰는 리전 GKE·AKS에서는 이들이 여러 가용 영역에 나뉘어 있다.',
+        '사업자가 패치하고, 고장 난 인스턴스를 바꾸고, etcd를 백업한다. 내게 보이는 것은 API 엔드포인트, 그리고 대부분의 클라우드에서 켤 수 있는 컨트롤 플레인 로그뿐이다.',
+      ],
+      keyIdea: '영역(zonal) GKE 클러스터는 컨트롤 플레인이 한 영역에만 있다. 내 클러스터 종류와 등급에서 "관리형"이 "고가용"까지 뜻하는지 확인한다.',
+      flows: [{from: 'api', to: 'etcd', label: '저장', type: 'request'}],
+      focus: ['api', 'etcd'],
+      badges: {api: '관리형'},
+      values: {who: '사업자'},
+    },
+    {
+      short: '로그인',
+      kind: '원리',
+      title: 'kubectl은 클라우드 IAM으로 로그인하고, RBAC가 판정한다',
+      text: [
+        'kubeconfig에는 고정 비밀번호가 없다. 대신 도우미(aws eks get-token, gke-gcloud-auth-plugin, kubelogin)를 실행해 내 클라우드 신원을 수명이 짧은 토큰으로 바꾼다.',
+        'API 서버는 클라우드에 토큰을 확인하고, 클라우드 신원을 쿠버네티스 사용자나 그룹에 연결한다. 그 다음부터는 평소의 쿠버네티스 RBAC가 할 수 있는 일을 정한다. EKS에서는 이 연결을 액세스 항목(access entry)이 맡는다.',
+      ],
+      keyIdea: '검사 둘, 시스템 둘. 클라우드 IAM은 누구인지, 쿠버네티스 RBAC는 클러스터에서 무엇을 해도 되는지 정한다. Forbidden은 RBAC 쪽, Unauthorized는 대개 IAM 쪽 문제다.',
+      flows: [
+        {from: 'dev', to: 'iam', label: '토큰 발급', type: 'request'},
+        {from: 'dev', to: 'api', label: 'Bearer 토큰', type: 'request'},
+        {from: 'api', to: 'iam', label: '확인', type: 'watch'},
+      ],
+      focus: ['dev', 'iam', 'api'],
+      badges: {iam: 'team-dev'},
+      values: {cred: '짧은 수명 토큰'},
+    },
+    {
+      short: '노드',
+      kind: '원리',
+      title: '노드는 내 VPC 안의 VM이다',
+      text: [
+        '워커 노드는 노드 그룹(EKS)이나 노드 풀(GKE, AKS)에 속한 평범한 VM이고, 대개 클라우드의 오토스케일링 그룹이 뒤를 받친다. 내 VPC 서브넷에 있고 내 청구서에 찍힌다.',
+        '노드의 kubelet이 관리형 API 서버에 등록한다. 스케줄러가 shop 파드를 AZ a 노드에 배치하고, 파드는 내 VPC 주소(EKS 기본 CNI)나 파드 전용 대역에서 IP를 받는다.',
+      ],
+      keyIdea: '노드 OS 이미지, 노드 버전, 노드 용량은 내 몫이다. EKS Auto Mode나 GKE Autopilot 같은 완전 관리 모드는 이 일의 일부를 사업자에게 넘긴다.',
+      flows: [
+        {from: 'node1', to: 'api', label: '등록', type: 'watch'},
+        {from: 'api', to: 'node1', label: '파드 실행', type: 'request'},
+      ],
+      focus: ['node1', 'pod'],
+      badges: {api: null, node1: 'Ready'},
+      values: {who: '나', cloud: 'VM'},
+    },
+    {
+      short: 'Service · LB',
+      kind: '원리',
+      title: 'LoadBalancer Service가 진짜 클라우드 로드 밸런서를 만든다',
+      text: [
+        '팀이 type: LoadBalancer인 Service를 적용한다. 클라우드 컨트롤러(클라우드 컨트롤러 매니저, 또는 AWS Load Balancer Controller 같은 애드온)가 이를 지켜보다가 클라우드 API를 부른다.',
+        '내 계정에 실제 로드 밸런서가 생기고, 노드나 파드 IP를 직접 가리킨다. 그 주소는 Service의 EXTERNAL-IP에 다시 적힌다. 내부 전용 여부나 LB 종류 같은 옵션은 어노테이션으로 고른다.',
+      ],
+      keyIdea: 'Service를 지우면 로드 밸런서도 지워진다. 클러스터부터 지우면 요금이 계속 나가는 LB가 고아로 남을 수 있다.',
+      flows: [
+        {from: 'api', to: 'lb', label: 'LB 생성', type: 'request'},
+        {from: 'lb', to: 'pod', label: '트래픽', type: 'request', bend: 60},
+      ],
+      focus: ['lb', 'pod'],
+      badges: {lb: 'EXTERNAL-IP'},
+      values: {cloud: '로드 밸런서'},
+    },
+    {
+      short: '영역 디스크',
+      kind: '문제',
+      title: 'PVC가 클라우드 디스크를 만들고, 그 디스크는 한 영역에만 있다',
+      text: [
+        'shop 파드가 PVC로 저장 공간을 요청한다. 클라우드의 CSI 드라이버가 파드가 도는 AZ a에 블록 디스크를 만들고 노드에 붙인다.',
+        '나중에 AZ a 노드가 꽉 찬 상태에서 파드가 다시 만들어진다. AZ b 노드에는 자리가 있지만 파드는 volume node affinity conflict로 Pending에 머문다. 영역 단위 디스크는 다른 영역의 VM에 붙지 못한다.',
+      ],
+      keyIdea: 'volumeBindingMode: WaitForFirstConsumer를 써서 파드가 놓이는 곳에 디스크를 만들고, 디스크가 있는 모든 영역에 노드 여유를 둔다.',
+      flows: [
+        {from: 'api', to: 'disk', label: '디스크 생성', type: 'request'},
+        {from: 'disk', to: 'node1', label: '연결', type: 'request'},
+      ],
+      focus: ['disk', 'pod'],
+      status: {pod: 'warn'},
+      badges: {lb: null, disk: 'AZ a 전용'},
+      values: {cloud: {text: 'AZ a 디스크 · 파드 Pending', tone: 'bad'}},
+    },
+    {
+      short: '오토스케일',
+      kind: '원리',
+      title: 'Pending 파드가 오토스케일러에게 VM을 늘리게 한다',
+      text: [
+        '트래픽이 늘어 HPA가 레플리카를 더하고, 자리가 없는 노드 때문에 일부 파드가 Pending에 머문다. 노드 오토스케일러(Cluster Autoscaler, 또는 Karpenter)가 스케줄할 수 없는 파드를 본다.',
+        '오토스케일러는 맞는 영역에 새 VM을 클라우드에 요청한다. 여기서는 파드의 디스크가 거기에만 붙으므로 AZ a다. VM이 부팅해 클러스터에 들어오면 스케줄러가 기다리던 파드를 배치한다. 한가한 노드는 나중에 줄인다.',
+      ],
+      keyIdea: '오토스케일러는 CPU가 아니라 Pending 파드에 반응한다. requests가 없는 파드는 노드를 늘리지 못하고, 새 노드는 몇 초가 아니라 몇 분이 걸린다.',
+      flows: [
+        {from: 'api', to: 'node2', label: '새 VM', type: 'request'},
+        {from: 'node2', to: 'api', label: '등록', type: 'watch'},
+      ],
+      focus: ['node2'],
+      status: {pod: 'ok'},
+      badges: {disk: null, node2: '합류 중'},
+      values: {cloud: {text: 'VM 추가됨', tone: 'good'}},
+    },
+    {
+      short: '워크로드 ID',
+      kind: '주의',
+      title: '파드는 자기만의 클라우드 권한을 받는다',
+      text: [
+        'shop 파드가 오브젝트 스토리지에 파일을 써야 한다. 액세스 키를 Secret에 넣거나 노드 역할에 넓은 권한을 주면, 그 노드의 모든 파드가 같은 권한을 쓰게 된다.',
+        '워크로드 아이덴티티는 쿠버네티스 ServiceAccount 하나를 클라우드 역할 하나에 묶는다. AWS는 IRSA나 EKS Pod Identity, GKE는 Workload Identity Federation for GKE, AKS는 Microsoft Entra Workload ID다. 파드는 그 역할만의 짧은 수명 자격 증명을 받는다.',
+      ],
+      keyIdea: 'ServiceAccount 하나, 클라우드 역할 하나, 최소 권한. 그러면 클러스터 안에 유출될 장기 키가 남지 않는다.',
+      flows: [
+        {from: 'pod', to: 'iam', label: 'SA 토큰', type: 'request', bend: -40},
+        {from: 'pod', to: 'bucket', label: 'PutObject', type: 'request'},
+      ],
+      focus: ['pod', 'iam', 'bucket'],
+      badges: {node2: null, iam: 'role: shop-writer'},
+      values: {cred: {text: '파드별 임시 역할', tone: 'good'}},
+    },
+    {
+      short: '업그레이드',
+      kind: '주의',
+      title: '업그레이드는 함께 하는 일이다',
+      text: [
+        '쿠버네티스 마이너 버전마다 지원 기간이 있다. 기간이 끝나면 사업자가 컨트롤 플레인을 대신 올리거나, 일부 클라우드에서는 연장 지원 요금을 받기 시작한다.',
+        '컨트롤 플레인이 먼저, 노드가 나중이다. 노드는 컨트롤 플레인보다 몇 마이너 버전 뒤처질 수는 있지만 앞설 수는 없다. 제거된 API는 컨트롤 플레인을 올리는 순간 깨지므로, 시작 전에 폐기 예정 API를 확인한다.',
+      ],
+      keyIdea: '사업자 일정이 아니라 내 일정으로 올린다. 사업자의 버전 달력을 읽고, 새 버전마다 애드온(CNI, CSI, 인그레스 컨트롤러)을 시험한다.',
+      flows: [
+        {from: 'api', to: 'node1', label: '다음은 노드', type: 'request'},
+        {from: 'api', to: 'node2', label: '다음은 노드', type: 'request'},
+      ],
+      focus: ['api', 'node1', 'node2'],
+      badges: {iam: null, api: '1.N+1'},
+      values: {who: '사업자 + 나'},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '쿠버네티스가 요청하고, 클라우드가 만들어 준다',
+      text: [
+        '사업자는 컨트롤 플레인을 운영하고 패치한다. 나는 노드, 워크로드, 그 설정을 운영한다. IAM으로 클러스터에 들어가고, 그 안에서 할 수 있는 일은 RBAC가 정한다.',
+        '쿠버네티스 오브젝트가 클라우드 자원이 된다. LoadBalancer Service는 로드 밸런서로, PVC는 영역 단위 디스크로, Pending 파드는 새 VM으로, ServiceAccount는 클라우드 역할로.',
+      ],
+      keyIdea: '무언가 고장 나면 어느 쪽 몫인지 먼저 묻는다. 쿠버네티스 이벤트는 무엇을 요청했는지, 클라우드 콘솔이나 로그는 클라우드가 그 요청으로 무엇을 했는지 알려 준다.',
+      flows: [
+        {from: 'dev', to: 'api', label: 'kubectl', type: 'request'},
+        {from: 'lb', to: 'pod', label: '트래픽', type: 'request', bend: 60},
+        {from: 'pod', to: 'bucket', label: '역할', type: 'request'},
+      ],
+      focus: ['api', 'node1', 'node2'],
+      badges: {api: null, node1: null},
+    },
+  ]}
+/>
+
+## 누가 무엇을 관리하나
+
+| 부분 | 사업자 | 나 |
+|---|---|---|
+| API 서버, etcd, 스케줄러, 컨트롤러 매니저 | 운영, 패치, 백업, 확장 | 버전과 등급 선택, 컨트롤 플레인 로그 켜기 |
+| 컨트롤 플레인 버전 | 버전 출시, 지원 종료 시 강제 업그레이드 가능 | 업그레이드 시작, 폐기 예정 API 확인 |
+| 워커 노드 | 노드 이미지와 관리형 노드 그룹·풀 제공 | 크기, 개수, OS 이미지, 업그레이드 시점 (Auto Mode·Autopilot에서는 줄어듦) |
+| 네트워크 | CNI와 클라우드 LB 연동 제공 | VPC, 서브넷, IP 대역, 보안 그룹, NetworkPolicy |
+| 접근 | 클라우드 신원 확인 | 신원을 RBAC에 연결, 최소 권한 부여 |
+| 워크로드, Secret, 데이터 | — | 전부: 매니페스트, 볼륨 백업, 앱 보안 |
+
+사업자마다 이름이 다르다.
+
+| 개념 | EKS | GKE | AKS |
+|---|---|---|---|
+| 워커 VM 묶음 | 관리형 노드 그룹 | 노드 풀 | 노드 풀 |
+| kubectl 로그인 도우미 | `aws eks get-token` | `gke-gcloud-auth-plugin` | `kubelogin` |
+| 클라우드 신원 → RBAC | 액세스 항목 (access entry) | IAM + RBAC | Microsoft Entra ID + RBAC |
+| 파드 → 클라우드 역할 | IRSA, EKS Pod Identity | Workload Identity Federation for GKE | Microsoft Entra Workload ID |
+| 노드까지 사업자가 운영 | EKS Auto Mode | Autopilot | AKS Automatic |
+
+## 직접 확인해 보기
+
+```bash
+aws eks update-kubeconfig --name demo --region ap-northeast-2   # 토큰 도우미가 든 kubeconfig 작성 (EKS 예시)
+kubectl config view --minify                         # 비밀번호 대신 exec 플러그인이 보인다
+kubectl auth whoami                                  # 내 클라우드 신원이 연결된 쿠버네티스 사용자
+kubectl get nodes -L topology.kubernetes.io/zone,node.kubernetes.io/instance-type   # 노드는 영역에 있는 VM이다
+kubectl get svc -A --field-selector spec.type=LoadBalancer   # 클라우드 LB를 만든 Service
+kubectl get pv -o custom-columns=NAME:.metadata.name,ZONE:.spec.nodeAffinity.required.nodeSelectorTerms[0].matchExpressions[0].values   # 디스크마다 어느 영역인지
+kubectl get events -A --field-selector reason=FailedScheduling   # 오토스케일러가 봐야 할 Pending 파드
+kubectl version                                      # 클라이언트와 컨트롤 플레인 버전
+```
+
+더 읽을거리: [Amazon EKS 사용 설명서](https://docs.aws.amazon.com/eks/latest/userguide/what-is-eks.html) · [GKE 개요](https://cloud.google.com/kubernetes-engine/docs/concepts/kubernetes-engine-overview) · [AKS 핵심 개념](https://learn.microsoft.com/ko-kr/azure/aks/core-aks-concepts) · [클라우드 컨트롤러 매니저](https://kubernetes.io/ko/docs/concepts/architecture/cloud-controller/) · [버전 차이 정책](https://kubernetes.io/releases/version-skew-policy/) · [API 요청 하나의 권한 검사 (IAM)](../cloud/iam-request.mdx) · [Service 종류](../feature/service-types.mdx) · [오토스케일링 그룹](../cloud/auto-scaling-group.mdx)

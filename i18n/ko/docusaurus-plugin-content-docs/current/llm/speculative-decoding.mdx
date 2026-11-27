@@ -1,0 +1,213 @@
+---
+id: speculative-decoding
+title: 미리 추측하고 한 번에 확인하기 (추측 디코딩)
+sidebar_label: 06 · 미리 추측하고 한 번에 확인하기 (추측 디코딩)
+description: 값싼 초안이 토큰 여러 개를 먼저 제안하고 큰 모델이 한 번의 계산으로 모두 확인하는 추측 디코딩이 어떻게 동작하는지, 왜 결과가 그대로인지, 수락률이 속도를 어떻게 정하는지, 배치가 커지면 왜 이득이 줄어드는지 단계별 애니메이션으로 따라간다
+summary: '값싼 초안이 토큰 여러 개를 추측하고 큰 모델이 한 번에 확인한다. 수락률이 디코드 속도를 정한다.'
+icon: spark
+hide_table_of_contents: true
+---
+
+# 미리 추측하고 한 번에 확인하기 (추측 디코딩)
+
+디코드는 한 단계에 토큰 하나를 쓰고, 단계마다 모델 가중치 전체를 메모리에서 읽는다. **추측 디코딩(speculative decoding)** 은 값싼 *초안(draft)* 이 토큰 몇 개를 먼저 추측하게 하고, 큰 *목표(target)* 모델이 그 추측을 **한 번의** 계산으로 모두 확인하게 한다. 추측이 잘 맞으면 비싼 계산 한 번으로 토큰 여러 개를 얻고, 답은 이 기법을 쓰지 않을 때와 같다.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '약 10분', level: '심화'}}
+  groups={[
+    {label: '가속기 한 장', x: 265, y: 30, w: 720, h: 405, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'user', label: '사용자', sub: '스트리밍 답변', icon: 'user', tone: 'ext', x: 110, y: 225, w: 150, show: true},
+    {id: 'draft', label: '초안', sub: '값싼 추측기', icon: 'bulb', tone: 'node', x: 400, y: 110, w: 170},
+    {id: 'target', label: '목표 모델', sub: '실제로 답하는 모델', icon: 'spark', tone: 'node', x: 400, y: 340, w: 170, show: true},
+    {id: 'check', label: '검증기', sub: '수락 또는 거절', icon: 'shield', tone: 'cp', x: 650, y: 225, w: 160},
+    {id: 'w', label: '목표 모델 가중치', sub: '가속기 메모리', icon: 'disk', tone: 'store', x: 880, y: 110, w: 160, show: true},
+    {id: 'kv', label: 'KV 캐시', sub: '질문 + 답변', icon: 'db', tone: 'store', x: 880, y: 340, w: 160, show: true},
+  ]}
+  metrics={[
+    {id: 'pass', label: '목표 모델 1회당 토큰'},
+    {id: 'accept', label: '수락률'},
+    {id: 'tpot', label: '토큰 간격 (TPOT)'},
+    {id: 'neck', label: '주로 막히는 곳'},
+  ]}
+  learn={[
+    {text: '토큰 여러 개를 확인하는 비용이 하나를 만드는 비용과 거의 같은 이유', at: 1},
+    {text: '초안이 제안하고 목표 모델이 한 번에 검증하는 흐름', at: 3},
+    {text: '출력 분포가 목표 모델만 쓸 때와 같게 유지되는 이유', at: 4},
+    {text: '초안의 종류: 작은 모델, n-gram 조회, EAGLE·MTP 헤드', at: 5},
+    {text: '배치가 커지면 이득이 줄어드는 이유', at: 7},
+  ]}
+  steps={[
+    {
+      short: '시작',
+      kind: '시작',
+      title: '보통 디코드는 토큰 하나에 가중치 전체를 한 번 읽는다',
+      text: [
+        '목표 모델은 답을 한 토큰씩 쓴다. 단계마다 가중치 전부와 KV 캐시를 메모리에서 읽고, 계산은 조금만 한다.',
+        '배치가 작으면 연산 장치는 대부분 메모리를 기다린다. 한 단계에 토큰이 정확히 하나 나오므로 TPOT는 가중치를 한 번 다 읽는 시간쯤 된다.',
+      ],
+      flows: [
+        {from: 'w', to: 'target', label: '가중치 전체', type: 'response'},
+        {from: 'target', to: 'user', label: '토큰 1개', type: 'response'},
+      ],
+      focus: ['target'],
+      values: {pass: '1', accept: '—', tpot: '가중치 한 번 읽기', neck: '메모리 읽기'},
+    },
+    {
+      short: '아이디어',
+      kind: '원리',
+      title: '이미 있는 토큰 여러 개를 채점하는 비용은 하나와 거의 같다',
+      text: [
+        '토큰을 만드는 일은 순서대로만 된다. 5번째 토큰을 알아야 6번째를 계산할 수 있다. 확인하는 일은 다르다. 6~9번째 토큰의 추측이 이미 있으면 모델은 작은 프리필처럼 넷을 한 번에 병렬로 채점할 수 있다.',
+        '그 계산도 가중치를 한 번만 읽는다. 디코드는 메모리에 막혀 있었으므로, 자리 4개만큼 늘어난 계산은 대부분 놀던 연산 장치가 맡는다.',
+      ],
+      keyIdea: '추측 디코딩은 남는 연산 능력을 써서 출력 토큰 하나당 가중치 읽기 횟수를 줄인다.',
+      flows: [{from: 'w', to: 'target', label: '한 번 읽기', type: 'response'}],
+      focus: ['target', 'w'],
+    },
+    {
+      short: '초안',
+      kind: '원리',
+      title: '초안이 다음 토큰 k개를 싸게 추측한다',
+      text: [
+        '초안이 다음 토큰 k개를 제안한다. 예를 들어 k = 4이면 "는", "작은", "항구", "도시"를 내놓는다. 초안은 토크나이저가 같은 훨씬 작은 모델일 수 있어서, 추측 하나의 비용이 목표 모델 한 단계의 일부에 그친다.',
+        '초안이 늘 맞을 필요는 없고 자주 맞으면 된다. 틀린 추측은 다음 단계에서 걸러진다.',
+      ],
+      flows: [{from: 'draft', to: 'target', label: '추측 k = 4', type: 'request'}],
+      focus: ['draft'],
+      badges: {draft: '는 작은 항구 도시'},
+    },
+    {
+      short: '검증',
+      kind: '원리',
+      title: '목표 모델이 k개 추측을 한 번의 계산으로 채점한다',
+      text: [
+        '목표 모델은 초안 토큰 4개를 놓고 한 번 계산한다. 자리마다 그 자리에 무엇이 와야 하는지 자기 확률을 구하고, 마지막 추측 다음 자리 하나도 함께 구한다.',
+        '확인한 자리의 KV 캐시 항목이 생긴다. 나중에 거절된 추측의 항목은 버린다.',
+      ],
+      flows: [
+        {from: 'w', to: 'target', label: '한 번 읽기', type: 'response'},
+        {from: 'target', to: 'check', label: '5자리 채점', type: 'request'},
+        {from: 'target', to: 'kv', label: '4자리 KV', type: 'request', bend: 0.15},
+      ],
+      focus: ['target', 'check'],
+      badges: {target: '계산 1회'},
+    },
+    {
+      short: '수락',
+      kind: '원리',
+      title: '맞는 앞부분을 남기고 자기 토큰 하나를 더한다',
+      text: [
+        '검증기는 추측을 순서대로 본다. "는", "작은", "항구"는 통과하고 "도시"에서 걸린다. 수락한 토큰 3개를 남기고, "도시" 대신 목표 모델에서 뽑은 토큰("마을")을 넣는다. 목표 모델 한 번으로 토큰 1개가 아니라 4개가 나왔다.',
+        '수락 판정은 일종의 기각 샘플링이다. 추측은 min(1, p_목표 / p_초안) 확률로 남고, 거절되면 보정된 분포에서 대신 뽑는다. 그래서 결과는 목표 모델의 분포를 정확히 따른다. 그리디 디코딩이면 목표 모델만 돌렸을 때와 같은 글이 나온다.',
+      ],
+      keyIdea: '품질은 그대로고 속도만 바뀐다. 추측이 전부 틀려도 계산 한 번마다 목표 모델의 올바른 토큰 하나는 나온다.',
+      flows: [{from: 'check', to: 'user', label: '3개 수락 + 1', type: 'response'}],
+      focus: ['check'],
+      status: {check: 'ok'},
+      badges: {target: null, draft: null, check: '4개 중 3개 유지'},
+      values: {pass: {text: '4', tone: 'good'}, accept: '75%', tpot: {text: '약 2~3배 빠름', tone: 'good'}},
+    },
+    {
+      short: '초안 종류',
+      kind: '원리',
+      title: '추측은 어디서 오는가',
+      text: [
+        '같은 계열의 작은 모델을 따로 두는 것이 전통적인 초안이다. n-gram(프롬프트 조회) 방식은 모델이 아예 필요 없다. 질문 안에서 같은 짧은 토큰 열 뒤에 왔던 토큰을 그대로 가져온다. 입력을 인용하는 요약, 코드 수정, RAG 답변에서 잘 맞는다.',
+        'EAGLE 계열 헤드와 MTP(다중 토큰 예측) 모듈은 목표 모델에 붙은 작은 층으로, 목표 모델의 은닉 상태를 보고 앞을 예측한다. 별도 작은 모델보다 정확한 경우가 많고 추가 메모리도 적다.',
+      ],
+      flows: [{from: 'draft', to: 'target', label: '추측', type: 'request'}],
+      focus: ['draft'],
+      status: {check: null},
+      badges: {check: null, draft: '모델 · n-gram · 헤드'},
+    },
+    {
+      short: '낮은 수락률',
+      kind: '주의',
+      title: '추측이 틀리면 그 작업은 버려진다',
+      text: [
+        '창작 글이나 temperature가 높은 샘플링에서는 초안이 더 자주 틀린다. 추측 4개 중 첫 번째만 통과하면 계산 한 번에 토큰 2개뿐이고, 초안을 만들고 나머지를 채점한 시간은 낭비된다.',
+        'k를 키우는 것은 수락률이 높을 때만 도움이 된다. 많은 엔진이 k를 2~5 정도로 쓴다. 정하기 전에 실제 트래픽에서 수락률을 재 본다.',
+      ],
+      keyIdea: '속도 향상은 대략 계산 한 번당 평균 수락 토큰 수를 따라가고, 거기서 초안 자체의 비용을 뺀다.',
+      flows: [{from: 'check', to: 'draft', label: '거절', type: 'watch'}],
+      focus: ['check', 'draft'],
+      status: {draft: 'warn'},
+      badges: {draft: null, check: '4개 중 1개 유지'},
+      values: {pass: {text: '2', tone: 'bad'}, accept: {text: '25%', tone: 'bad'}, tpot: '이득 작음'},
+    },
+    {
+      short: '바쁜 GPU',
+      kind: '문제',
+      title: '배치가 크면 남는 연산 능력이 없다',
+      text: [
+        '연속 배칭으로 동시 요청이 많으면 가속기는 가중치를 한 번 읽을 때마다 이미 계산을 많이 한다. 디코드가 메모리 제약에서 연산 제약 쪽으로 옮겨 간다.',
+        '이제 요청마다 자리 4개를 더 채점하는 것은 진짜 추가 작업이다. 처리량이 보통 디코드보다 떨어질 수도 있다. 초안 모델은 자기 가중치와 KV 캐시로 메모리도 차지하므로 배치에 쓸 자리가 줄어든다.',
+      ],
+      keyIdea: '추측 디코딩은 주로 낮거나 중간 부하에서 지연 시간을 줄인다. 부하가 높을 때는 TPOT만이 아니라 전체 처리량을 확인한다.',
+      flows: [
+        {from: 'user', to: 'target', label: '많은 요청', type: 'request'},
+        {from: 'draft', to: 'kv', label: '초안 메모리', type: 'request', bend: -0.2},
+      ],
+      focus: ['target', 'kv'],
+      status: {draft: null, target: 'warn', kv: 'warn'},
+      badges: {check: null, target: '큰 배치'},
+      values: {pass: '—', accept: '—', tpot: {text: '이득 감소·역효과', tone: 'bad'}, neck: {text: '연산', tone: 'bad'}},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '싸게 추측하고, 한 번에 검증하고, 맞는 것만 남긴다',
+      text: [
+        '초안이 토큰 k개를 제안한다. 목표 모델이 한 번의 계산으로 채점한다. 검증기는 맞는 앞부분과 목표 모델 토큰 하나를 남기므로, 출력 분포는 목표 모델만 쓸 때와 같다.',
+        '속도 향상은 메모리에 막힌 디코드에서 남는 연산 능력에서 나오고, 크기는 수락률이 정한다. 배치가 커져 디코드가 연산에 막히면 이득은 사라진다.',
+      ],
+      keyIdea: '모델과 업무별로 켜 보고, 실제 동시 요청 수에서 TPOT·수락률·전체 처리량을 함께 잰다.',
+      focus: ['draft', 'target', 'check'],
+      status: {target: null, kv: null},
+      badges: {target: null},
+      values: {neck: '메모리 읽기'},
+    },
+  ]}
+/>
+
+## 초안 방식 비교
+
+| 방식 | 추측의 출처 | 추가 메모리 | 특히 잘 맞는 경우 |
+|---|---|---|---|
+| 초안 모델 | 토크나이저가 같은 별도의 작은 모델 | 그 모델의 가중치와 KV 캐시 | 좋은 작은 형제 모델이 있을 때, 일반 대화 |
+| n-gram (프롬프트 조회) | 질문 앞부분에서 그대로 가져온 토큰 | 없음 | 출력이 입력을 반복할 때: 요약, 코드 수정, RAG 답변 |
+| EAGLE 계열 헤드 | 목표 모델의 은닉 상태를 읽는 가벼운 층 | 작음 | 일반 업무. 보통 별도 초안보다 수락률이 높다 |
+| MTP 모듈 | 모델과 함께 학습된 다중 토큰 예측 층 (예: DeepSeek-V3) | 작음. 체크포인트에 같이 들어 있는 경우가 많다 | MTP 가중치를 함께 배포하는 모델 |
+
+어느 방식이든 최종 결정은 목표 모델이 내린다. 방식은 속도를 바꿀 뿐 답을 바꾸지 않는다.
+
+## 쿠버네티스에서 운영할 때
+
+- 추측 디코딩은 엔진을 띄울 때 정한다. 그래서 서빙 파드의 실행 인자에 들어간다. 다른 설정 변경처럼 카나리 레플리카로 배포한다.
+- 실제 동시 요청 수에서 켰을 때와 껐을 때를 부하 테스트로 비교한다. TPOT, TTFT, 초당 전체 출력 토큰을 함께 본다. 사용자 1명일 때의 이득이 64명일 때는 손해일 수 있다.
+- 초안 몫의 메모리 여유를 남긴다. 초안 모델은 자기 가중치와 KV 캐시를 더하므로 같은 가속기에 들어가는 요청 수가 줄어든다.
+- 수락률을 계속 지켜본다. 트래픽이 창작이나 높은 temperature 요청 쪽으로 바뀌면 이득이 조용히 사라질 수 있다.
+
+## 직접 해 보기
+
+```bash
+# vLLM: n-gram 초안은 모델이 더 필요 없다 (쓰는 버전의 추측 디코딩 문서를 확인한다)
+vllm serve meta-llama/Llama-3.1-8B-Instruct \
+  --speculative-config '{"method": "ngram", "num_speculative_tokens": 4, "prompt_lookup_max": 4}'
+
+# vLLM: 별도의 작은 초안 모델
+vllm serve meta-llama/Llama-3.1-70B-Instruct \
+  --speculative-config '{"model": "meta-llama/Llama-3.2-1B-Instruct", "num_speculative_tokens": 4}'
+
+# 같은 동시 요청 수에서 추측 디코딩을 켰을 때와 껐을 때의 TPOT 비교
+vllm bench serve --model meta-llama/Llama-3.1-8B-Instruct --max-concurrency 8 --num-prompts 200
+
+# 수락률: 수락된 초안 토큰 / 제안된 초안 토큰
+curl -s http://<engine>:8000/metrics | grep -E 'vllm:spec_decode_num_(accepted|draft)_tokens_total'
+```
+
+더 읽어 보기: [Leviathan 외, 2023: Fast Inference from Transformers via Speculative Decoding](https://arxiv.org/abs/2211.17192) · [Chen 외, 2023: Accelerating LLM Decoding with Speculative Sampling](https://arxiv.org/abs/2302.01318) · [EAGLE](https://arxiv.org/abs/2401.15077) · [vLLM 추측 디코딩](https://docs.vllm.ai/en/latest/features/speculative_decoding/) · [질문 읽기와 답 쓰기 (프리필·디코드)](../llm/prefill-decode.mdx) · [요청을 묶어 처리하기 (연속 배칭)](../llm/continuous-batching.mdx)

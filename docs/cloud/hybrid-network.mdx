@@ -1,0 +1,261 @@
+---
+id: hybrid-network
+title: 'Connecting Networks: Peering, Transit, VPN and Private Endpoints'
+sidebar_label: 09 · Connecting Networks
+description: Animated walkthrough of how private networks get connected, from VPC peering that is not transitive to a transit gateway hub, site-to-site VPN and dedicated links with BGP, hybrid DNS forwarding, private endpoints for one service, the missing return route and overlapping CIDRs
+summary: 'Peering, transit hubs, VPN and dedicated links, hybrid DNS, private endpoints, and why routes must exist both ways.'
+icon: route
+hide_table_of_contents: true
+---
+
+# Connecting Networks: Peering, Transit, VPN and Private Endpoints
+
+A company has an office network and two VPCs, and later buys a partner service and another company. Each network is private and cut off by default. Follow which link joins what, why traffic must have a route both ways, and why IP ranges have to be planned early. What happens inside one VPC comes first in [How a Request Travels Inside a VPC](../cloud/vpc-request.mdx).
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~12 min', level: 'Intermediate'}}
+  groups={[
+    {label: 'Office · 10.50.0.0/16', x: 15, y: 30, w: 175, h: 405, tone: 'plain'},
+    {label: 'VPC A · shop · 10.1.0.0/16', x: 430, y: 30, w: 400, h: 195, tone: 'biz'},
+    {label: 'VPC B · data · 10.2.0.0/16', x: 430, y: 245, w: 400, h: 190, tone: 'biz'},
+    {label: 'Partner', x: 850, y: 30, w: 140, h: 195, tone: 'plain'},
+    {label: 'Acquired co.', x: 850, y: 245, w: 140, h: 190, tone: 'plain'},
+  ]}
+  nodes={[
+    {id: 'office', label: 'Office servers', sub: '10.50.0.0/16', icon: 'server', tone: 'ext', x: 102, y: 130, show: true},
+    {id: 'odns', label: 'Office DNS', sub: 'corp.example', icon: 'book', tone: 'ext', x: 102, y: 330},
+    {id: 'link', label: 'VPN · dedicated', sub: 'IPsec · BGP', icon: 'shield', tone: 'cp', x: 310, y: 130},
+    {id: 'tgw', label: 'Transit gateway', sub: 'Hub · route tables', icon: 'split', tone: 'cp', x: 310, y: 330},
+    {id: 'app', label: 'App server', sub: '10.1.1.10', icon: 'server', tone: 'app', x: 540, y: 85, show: true},
+    {id: 'resolver', label: 'DNS resolver', sub: 'In/outbound endpoints', icon: 'book', tone: 'cp', x: 540, y: 180, w: 170},
+    {id: 'ep', label: 'Private endpoint', sub: '10.1.2.50', icon: 'gate', tone: 'cp', x: 730, y: 85, w: 160},
+    {id: 'db', label: 'Orders DB', sub: '10.2.3.20', icon: 'db', tone: 'store', x: 540, y: 340, show: true},
+    {id: 'partner', label: 'Partner API', sub: 'Endpoint service', icon: 'cloud', tone: 'ext', x: 920, y: 120, w: 120},
+    {id: 'acq', label: 'Their VPC', sub: '10.1.0.0/16 !', icon: 'box', tone: 'ext', x: 920, y: 340, w: 120},
+  ]}
+  metrics={[
+    {id: 'path', label: 'Path'},
+    {id: 'route', label: 'Route used'},
+    {id: 'reach', label: 'Reachable?'},
+  ]}
+  learn={[
+    {text: 'Private networks are cut off until a route and a permission exist', at: 0},
+    {text: 'VPC peering joins two VPCs, but is not transitive', at: 1},
+    {text: 'Site-to-site VPN versus a dedicated link, and how BGP shares routes', at: 2},
+    {text: 'A transit gateway as a hub for many networks', at: 4},
+    {text: 'Why a missing return route looks like a timeout', at: 5},
+    {text: 'Hybrid DNS, private endpoints and the overlapping-CIDR trap', at: 6},
+  ]}
+  steps={[
+    {
+      short: 'Start',
+      kind: '시작',
+      title: 'Three private networks that cannot see each other',
+      text: [
+        'The office uses 10.50.0.0/16. In the cloud, VPC A runs the shop on 10.1.0.0/16 and VPC B holds the orders database on 10.2.0.0/16.',
+        'Each is a separate private network. A packet from 10.1.1.10 to 10.2.3.20 has nowhere to go: no route table has an entry for the other range. To connect two networks you always need two things, a route in each direction and a rule that allows the traffic.',
+      ],
+      focus: ['office', 'app', 'db'],
+      values: {path: 'App → DB', route: 'none', reach: {text: 'No', tone: 'bad'}},
+    },
+    {
+      short: 'Peering',
+      kind: '원리',
+      title: 'VPC peering joins two VPCs directly',
+      text: [
+        'A peering connection links VPC A and VPC B. Each side adds a route: in A, 10.2.0.0/16 goes to the peering connection, and in B, 10.1.0.0/16 goes back the same way. The DB\'s security group allows port 5432 from 10.1.0.0/16.',
+        'Traffic stays on the provider\'s network, with no gateway box in the middle and no single bandwidth bottleneck. Peering only works when the two CIDR ranges do not overlap.',
+      ],
+      keyIdea: 'Peering is one-to-one. Ten VPCs that all need each other need 45 peerings and route entries in every table.',
+      flows: [
+        {from: 'app', to: 'db', label: 'Peering', type: 'request'},
+        {from: 'db', to: 'app', label: 'Reply', type: 'response', bend: 30},
+      ],
+      focus: ['app', 'db'],
+      status: {db: 'ok'},
+      values: {route: '10.2.0.0/16 → pcx', reach: {text: 'Yes', tone: 'good'}},
+    },
+    {
+      short: 'VPN · link',
+      kind: '원리',
+      title: 'The office joins over a VPN or a dedicated link',
+      text: [
+        'A site-to-site VPN builds encrypted IPsec tunnels over the internet between the office router and the cloud. It is quick to set up. AWS, for example, gives two tunnels per connection for redundancy, about 1.25 Gbps each (up to 5 Gbps with large-bandwidth tunnels on a transit gateway), and latency follows the internet.',
+        'A dedicated link (AWS Direct Connect, Azure ExpressRoute, Google Cloud Interconnect) is a private circuit through a colocation site. It gives steady latency and 1 Gbps up to 100 Gbps or more, but takes weeks to order and is not encrypted by default. Either way, BGP advertises routes: the office learns 10.1.0.0/16 and the cloud learns 10.50.0.0/16.',
+      ],
+      keyIdea: 'Many teams run a VPN as backup for the dedicated link. BGP moves traffic to the VPN when the circuit goes down.',
+      flows: [
+        {from: 'office', to: 'link', label: 'IPsec', type: 'request'},
+        {from: 'link', to: 'app', label: 'To VPC A', type: 'request'},
+      ],
+      focus: ['office', 'link', 'app'],
+      status: {db: null},
+      badges: {link: 'BGP up'},
+      values: {path: 'Office → App', route: '10.1.0.0/16 via BGP', reach: {text: 'Yes', tone: 'good'}},
+    },
+    {
+      short: 'Not transitive',
+      kind: '문제',
+      title: 'The office cannot reach VPC B through VPC A',
+      text: [
+        'The office can reach VPC A, and VPC A can reach VPC B, so the team expects office → B to work. It does not. Peering only carries traffic whose source or destination is in one of the two peered VPCs.',
+        'VPC B will not use A\'s VPN, internet gateway or NAT either. The packet from 10.50.x.x is dropped at the peering. The same rule holds for VNet peering on Azure and VPC Network Peering on Google Cloud, unless you add a hub or an appliance.',
+      ],
+      keyIdea: 'Peering is not transitive. A path through a middle VPC does not exist just because two links exist.',
+      flows: [
+        {from: 'office', to: 'link', label: 'To 10.2.3.20', type: 'request'},
+        {from: 'app', to: 'db', label: 'Dropped', type: 'request'},
+      ],
+      focus: ['app', 'db'],
+      status: {db: 'error'},
+      badges: {app: 'Not a router'},
+      values: {path: 'Office → DB', route: 'via A? no', reach: {text: 'No · dropped', tone: 'bad'}},
+    },
+    {
+      short: 'Hub',
+      kind: '원리',
+      title: 'A transit gateway routes between many networks',
+      text: [
+        'A transit gateway is a router in the cloud. The VPN, VPC A and VPC B each become an attachment. Its own route table says 10.1.0.0/16 → VPC A, 10.2.0.0/16 → VPC B, 10.50.0.0/16 → VPN, and BGP fills in the office routes.',
+        'Each VPC subnet now sends other private ranges, say 10.0.0.0/8, to the transit gateway. Adding a new VPC means one attachment, not a peering to every other VPC. Separate route tables can keep, for example, dev and prod apart.',
+      ],
+      keyIdea: 'A hub is transitive by design. You pay per attachment hour and per GB processed, so peering can still be cheaper for one heavy pair.',
+      flows: [
+        {from: 'office', to: 'link', label: 'IPsec', type: 'request'},
+        {from: 'link', to: 'tgw', label: 'Attachment', type: 'request'},
+        {from: 'tgw', to: 'db', label: 'To VPC B', type: 'request'},
+      ],
+      focus: ['tgw', 'db'],
+      status: {db: 'warn'},
+      badges: {app: null, tgw: '3 attachments'},
+      values: {route: '10.2.0.0/16 → TGW', reach: '…waiting for reply'},
+    },
+    {
+      short: 'Return path',
+      kind: '문제',
+      title: 'The request arrives, but the reply has no way back',
+      text: [
+        'The packet reaches the DB, but the client still times out. The DB subnet\'s route table only knows 10.1.0.0/16 (via peering) and has no route for 10.50.0.0/16. The reply goes to the default route or nowhere.',
+        'The security group also allows only 10.1.0.0/16, so the office range must be added. Security groups are stateful, but network ACLs are not, so they also need the return ports (the ephemeral range, 1024–65535). With a firewall appliance in the path, replies that take a different path than the request get dropped too.',
+      ],
+      keyIdea: 'A timeout with no error usually means the packet or its reply was dropped. Check routes and rules on both ends, in both directions.',
+      flows: [
+        {from: 'tgw', to: 'db', label: 'Arrives', type: 'request'},
+        {from: 'db', to: 'tgw', label: 'No route back', type: 'response', bend: 30},
+      ],
+      focus: ['db'],
+      status: {db: 'error'},
+      badges: {db: 'No 10.50 route'},
+      values: {route: 'reply: none', reach: {text: 'Timeout', tone: 'bad'}},
+    },
+    {
+      short: 'Hybrid DNS',
+      kind: '원리',
+      title: 'Names must resolve across the link too',
+      text: [
+        'After the routes are fixed, the office app asks for db.data.internal. That name lives in the cloud\'s private DNS zone, which the office DNS does not know, so the answer is NXDOMAIN.',
+        'The office DNS gets a conditional forwarder: names under data.internal go to the cloud resolver\'s inbound endpoint, a private IP in VPC A. For the other direction, an outbound endpoint and a forwarding rule send corp.example queries to the office DNS.',
+      ],
+      keyIdea: 'Connectivity is two problems: packets and names. A working ping to an IP proves nothing about DNS.',
+      flows: [
+        {from: 'office', to: 'odns', label: 'db.data.internal?', type: 'request'},
+        {from: 'odns', to: 'resolver', label: 'Forward', type: 'request'},
+        {from: 'resolver', to: 'odns', label: '10.2.3.20', type: 'response', bend: -30},
+      ],
+      focus: ['odns', 'resolver'],
+      status: {db: 'ok'},
+      badges: {db: null, resolver: 'data.internal'},
+      values: {path: 'Office → DB', route: '10.50 ↔ 10.2 via TGW', reach: {text: 'Yes', tone: 'good'}},
+    },
+    {
+      short: 'Endpoint',
+      kind: '원리',
+      title: 'A private endpoint reaches one service, not a whole network',
+      text: [
+        'The shop now calls a partner\'s payment API. Peering would join the whole partner VPC with the shop, which neither side wants. Instead the partner publishes an endpoint service, and VPC A creates a private endpoint: a network interface with a private IP, 10.1.2.50.',
+        'The app calls 10.1.2.50, and the traffic goes only to that service, in one direction, over the provider\'s network. The partner cannot open connections into VPC A, and overlapping CIDRs do not matter. The names are AWS PrivateLink, Azure Private Link and Google Private Service Connect.',
+      ],
+      flows: [
+        {from: 'app', to: 'ep', label: 'HTTPS', type: 'request'},
+        {from: 'ep', to: 'partner', label: 'Private link', type: 'request'},
+      ],
+      focus: ['ep', 'partner'],
+      badges: {resolver: null, ep: 'One service'},
+      values: {path: 'App → Partner API', route: 'local ENI', reach: {text: 'Yes · one way', tone: 'good'}},
+    },
+    {
+      short: 'Overlap',
+      kind: '문제',
+      title: 'The acquired company uses the same CIDR',
+      text: [
+        'The company buys another company whose VPC also uses 10.1.0.0/16. A peering request is refused, and a transit gateway cannot route one range to two places. The app cannot tell whether 10.1.1.10 is its own server or theirs.',
+        'The fixes are all costly: renumber one network, put NAT between them (for example a private NAT gateway) so each side sees the other under a different range, or expose only specific services through private endpoints.',
+      ],
+      keyIdea: 'Plan IP ranges for the whole company before the second VPC, with an IP address manager or a simple shared table. Default ranges like 10.0.0.0/16 collide first.',
+      flows: [{from: 'acq', to: 'tgw', label: '10.1.0.0/16 again', type: 'request'}],
+      focus: ['acq', 'app'],
+      status: {acq: 'error'},
+      badges: {ep: null, acq: 'Overlap'},
+      values: {path: 'Their VPC → TGW', route: 'conflict', reach: {text: 'No · ambiguous', tone: 'bad'}},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'A route both ways, a rule, a name and a unique range',
+      text: [
+        'Peering joins two VPCs and is not transitive. A transit gateway is the hub for many VPCs and the office. VPN and dedicated links carry the office traffic, with BGP sharing routes. A private endpoint gives access to one service only.',
+        'Every working path needs a route in both directions, a security rule that allows it, DNS that resolves across, and IP ranges that do not overlap.',
+      ],
+      keyIdea: 'When a cross-network call times out, walk the path hop by hop: source route table, hub route table, destination route table, then security groups and ACLs on both ends.',
+      flows: [
+        {from: 'office', to: 'link', label: 'IPsec', type: 'request'},
+        {from: 'link', to: 'tgw', label: 'Attachment', type: 'request'},
+        {from: 'tgw', to: 'db', label: 'To VPC B', type: 'request'},
+        {from: 'app', to: 'ep', label: 'HTTPS', type: 'request'},
+      ],
+      focus: ['tgw', 'link', 'ep'],
+      status: {acq: null, db: 'ok'},
+      badges: {acq: null, link: null, tgw: null},
+    },
+  ]}
+/>
+
+## Ways to connect networks
+
+| Option | Use it when | Transitive? | Bandwidth | Cost shape |
+|---|---|---|---|---|
+| VPC peering | Two VPCs need to talk directly | No | No gateway in the path, no single bottleneck | No hourly fee; data transfer charges |
+| Transit gateway (hub) | Many VPCs and on-premises sites | Yes, through its route tables | High, with per-attachment limits | Per attachment hour plus per GB processed |
+| Site-to-site VPN | A quick encrypted link over the internet | Through a hub | About 1.25 Gbps per tunnel on AWS (5 Gbps with large-bandwidth tunnels); internet latency | Per connection hour plus data out |
+| Dedicated link | Steady, high-volume office or data-center traffic | Through a gateway or hub | 1 Gbps to 100 Gbps or more, steady latency | Port hours plus data out; weeks to set up |
+| Private endpoint | Reach one service, not a whole network | No, one way to one service | Per endpoint | Per endpoint hour per zone plus per GB |
+
+## Names by provider
+
+| Concept | AWS | Azure | Google Cloud |
+|---|---|---|---|
+| Peering | VPC peering | VNet peering | VPC Network Peering |
+| Hub | Transit Gateway | Virtual WAN or a hub VNet | Network Connectivity Center |
+| VPN | Site-to-Site VPN | VPN Gateway | Cloud VPN (HA VPN) |
+| Dedicated link | Direct Connect | ExpressRoute | Cloud Interconnect |
+| Private endpoint | PrivateLink | Private Link (private endpoint) | Private Service Connect |
+| Hybrid DNS | Route 53 Resolver endpoints | DNS Private Resolver | Cloud DNS forwarding zones and inbound policies |
+
+## Try it yourself
+
+```bash
+aws ec2 describe-route-tables --filters Name=vpc-id,Values=vpc-0abc \
+  --query 'RouteTables[].Routes[].[DestinationCidrBlock,GatewayId,VpcPeeringConnectionId,TransitGatewayId]' --output table
+aws ec2 describe-vpc-peering-connections --query 'VpcPeeringConnections[].[VpcPeeringConnectionId,Status.Code,RequesterVpcInfo.CidrBlock,AccepterVpcInfo.CidrBlock]'
+aws ec2 describe-transit-gateway-attachments --query 'TransitGatewayAttachments[].[ResourceType,ResourceId,State]'
+aws ec2 describe-vpn-connections --query 'VpnConnections[].VgwTelemetry[].[OutsideIpAddress,Status,AcceptedRouteCount]'
+
+# From an office server
+traceroute 10.2.3.20          # Where does the path stop?
+dig db.data.internal          # Does the name resolve across the link?
+nc -vz 10.2.3.20 5432         # Refused (reached, nothing listening) or timeout (dropped)?
+```
+
+Further reading: [VPC peering (AWS)](https://docs.aws.amazon.com/vpc/latest/peering/what-is-vpc-peering.html) · [Transit gateways (AWS)](https://docs.aws.amazon.com/vpc/latest/tgw/what-is-transit-gateway.html) · [Site-to-Site VPN (AWS)](https://docs.aws.amazon.com/vpn/latest/s2svpn/VPC_VPN.html) · [AWS PrivateLink](https://docs.aws.amazon.com/vpc/latest/privatelink/what-is-privatelink.html) · [Route 53 Resolver](https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/resolver.html) · [How a Request Travels Inside a VPC](../cloud/vpc-request.mdx) · [Under One Request: TCP/IP Layers](../basic/tcp-ip-layers.mdx)

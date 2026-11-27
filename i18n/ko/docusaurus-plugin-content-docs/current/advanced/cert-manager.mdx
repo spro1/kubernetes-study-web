@@ -1,0 +1,240 @@
+---
+id: cert-manager
+title: cert-manager로 TLS 인증서 자동 발급하기
+sidebar_label: 06 · cert-manager와 ACME
+description: cert-manager가 ACME로 Let's Encrypt 인증서를 받는 과정을 ClusterIssuer와 Certificate에서 CertificateRequest·Order·Challenge까지 따라가고, HTTP-01과 DNS-01, pending에 멈춘 챌린지, tls 시크릿, 갱신과 발급 한도를 애니메이션으로 본다
+summary: '인그레스 어노테이션에서 서명된 인증서까지: Issuer·Certificate·Order·Challenge, HTTP-01과 DNS-01, 갱신, 발급이 멈추는 곳.'
+icon: shield
+hide_table_of_contents: true
+---
+
+# cert-manager로 TLS 인증서 자동 발급하기
+
+인증서 하나를 요청부터 갱신까지 따라간다. **ClusterIssuer → Certificate → CertificateRequest → Order → Challenge → 시크릿** 순서다. 인증 기관(CA)이 도메인 소유를 어떻게 확인하는지, 발급이 멈췄을 때 어느 자원을 읽어야 하는지 본다.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '약 12분', level: '중급'}}
+  groups={[
+    {label: '쿠버네티스 클러스터', x: 30, y: 30, w: 700, h: 410, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'ing', label: '인그레스', sub: 'shop.example.com', icon: 'gate', tone: 'node', x: 125, y: 100, show: true},
+    {id: 'cert', label: 'Certificate', sub: 'secretName shop-tls', icon: 'ticket', tone: 'store', x: 325, y: 100},
+    {id: 'cr', label: 'CertificateRequest', sub: 'CSR', icon: 'book', tone: 'store', x: 545, y: 100, w: 180},
+    {id: 'issuer', label: 'ClusterIssuer', sub: 'ACME · 솔버', icon: 'gear', tone: 'cp', x: 125, y: 240},
+    {id: 'cm', label: 'cert-manager', sub: '컨트롤러', icon: 'agent', tone: 'cp', x: 325, y: 240},
+    {id: 'order', label: 'Order', sub: '요청마다 하나', icon: 'archive', tone: 'store', x: 545, y: 240, w: 160},
+    {id: 'secret', label: '시크릿', sub: 'tls.crt · tls.key', icon: 'shield', tone: 'store', x: 125, y: 380},
+    {id: 'solver', label: '솔버 파드', sub: 'HTTP-01 토큰', icon: 'pod', tone: 'app', x: 325, y: 380},
+    {id: 'chal', label: 'Challenge', sub: '이름마다 하나', icon: 'target', tone: 'store', x: 545, y: 380, w: 160},
+    {id: 'le', label: 'Let\'s Encrypt', sub: 'ACME CA', icon: 'cloud', tone: 'ext', x: 880, y: 100, show: true},
+    {id: 'dns', label: 'DNS 제공자', sub: 'example.com 영역', icon: 'server', tone: 'ext', x: 880, y: 380},
+  ]}
+  metrics={[
+    {id: 'issuer', label: 'Issuer'},
+    {id: 'cert', label: 'Certificate'},
+    {id: 'chal', label: 'Challenge'},
+    {id: 'expiry', label: '만료'},
+  ]}
+  learn={[
+    {text: 'Issuer가 어느 CA를 쓰고 도메인 소유를 어떻게 증명할지 정한다는 것', at: 1},
+    {text: 'Certificate → CertificateRequest → Order → Challenge 사슬', at: 3},
+    {text: '임시 솔버로 하는 HTTP-01과, 그것이 pending에 멈추는 이유', at: 4},
+    {text: '와일드카드 이름에 필요한 TXT 레코드 기반 DNS-01', at: 6},
+    {text: '갱신 시점, 발급 한도, 스테이징 서버', at: 8},
+  ]}
+  steps={[
+    {
+      short: '시작',
+      kind: '시작',
+      title: '인그레스는 HTTPS를 원하지만 아직 인증서가 없다',
+      text: [
+        'shop.example.com 인그레스의 tls 항목은 시크릿 shop-tls를 가리킨다. 그 시크릿이 아직 없어서 컨트롤러는 기본 자체 서명 인증서를 내주고, 브라우저는 경고를 띄운다.',
+        '인증서를 사서 시크릿에 손으로 넣을 수도 있다. 하지만 그러면 만료 때마다 누군가 같은 일을 다시 해야 한다. cert-manager는 요청·증명·저장·갱신의 고리 전체를 자동으로 돌린다.',
+      ],
+      focus: ['ing'],
+      badges: {ing: '인증서 없음'},
+      values: {issuer: '—', cert: '—', chal: '—', expiry: '—'},
+    },
+    {
+      short: 'Issuer',
+      kind: '원리',
+      title: 'ClusterIssuer가 어느 CA를 쓰고 어떻게 증명할지 정한다',
+      text: [
+        'Issuer는 네임스페이스 하나에서, ClusterIssuer는 모든 네임스페이스에서 쓴다. ACME Issuer에는 CA 디렉터리 URL, 연락용 이메일, ACME 계정 키를 담을 시크릿, 솔버 목록(HTTP-01 또는 DNS-01)이 들어간다.',
+        'cert-manager가 Let\'s Encrypt에 계정을 등록하고 Issuer를 Ready=True로 만든다. URL이나 계정 시크릿이 틀리면 이 아래 단계는 하나도 동작하지 않는다.',
+      ],
+      keyIdea: '설정이 동작하는 것을 확인한 뒤에 운영 URL을 쓴다. 시험용으로는 Let\'s Encrypt 스테이징 URL을 가리키는 Issuer를 따로 둔다.',
+      flows: [{from: 'cm', to: 'le', label: '계정 등록', type: 'request'}],
+      focus: ['issuer', 'cm', 'le'],
+      badges: {issuer: 'Ready'},
+      values: {issuer: {text: 'Ready=True', tone: 'good'}},
+    },
+    {
+      short: 'Certificate',
+      kind: '원리',
+      title: '어노테이션 하나로 인그레스가 Certificate가 된다',
+      text: [
+        '인그레스에 어노테이션 cert-manager.io/cluster-issuer: letsencrypt-prod를 단다. cert-manager의 ingress-shim이 이것을 tls 호스트와 함께 읽고 Certificate를 만든다. dnsNames는 shop.example.com, secretName은 shop-tls, issuerRef는 letsencrypt-prod다.',
+        'Certificate를 직접 써도 된다. cert-manager에서 게이트웨이 API 지원을 켜면 Gateway도 같은 방식으로 동작한다.',
+      ],
+      flows: [{from: 'ing', to: 'cert', label: 'ingress-shim', type: 'watch'}],
+      focus: ['ing', 'cert'],
+      badges: {ing: null, cert: '발급 중'},
+      values: {cert: 'Ready=False · Issuing'},
+    },
+    {
+      short: 'Order',
+      kind: '원리',
+      title: 'CertificateRequest가 ACME Order와 Challenge가 된다',
+      text: [
+        'cert-manager가 개인 키를 만들고, CSR을 담은 CertificateRequest를 만든다. ACME Issuer는 이것을 CA의 Order로 바꾼다.',
+        'CA는 Order에 든 이름마다 소유 증명을 요구한다. cert-manager는 이름마다 Challenge를 하나씩 만들고, Issuer가 그 이름에 고른 솔버 방식을 쓴다.',
+      ],
+      flows: [
+        {from: 'cert', to: 'cr', label: 'CSR', type: 'request'},
+        {from: 'cr', to: 'order', label: 'ACME Issuer', type: 'request'},
+        {from: 'order', to: 'le', label: '새 주문', type: 'request'},
+        {from: 'order', to: 'chal', label: '이름마다', type: 'request'},
+      ],
+      focus: ['cr', 'order', 'chal'],
+      badges: {cert: null, order: 'pending'},
+      values: {chal: 'pending'},
+    },
+    {
+      short: 'HTTP-01',
+      kind: '원리',
+      title: 'HTTP-01: 임시 솔버가 80 포트에서 답한다',
+      text: [
+        'cert-manager가 솔버 파드와 서비스, 그리고 http://shop.example.com/.well-known/acme-challenge/ 뒤에 토큰이 붙은 경로용 임시 인그레스 규칙을 만든다. 솔버는 토큰과 키 지문으로 답한다.',
+        'cert-manager는 먼저 그 URL을 직접 불러 보는 셀프 체크를 한다. 통과하면 CA에 검증을 요청하고, CA가 인터넷에서 80 포트로 그 URL을 가져간다.',
+      ],
+      keyIdea: 'HTTP-01은 도메인이 우리 입구를 가리키고, 사이트가 HTTPS만 쓰더라도 인터넷에서 80 포트가 열려 있어야 한다.',
+      flows: [
+        {from: 'chal', to: 'solver', label: '생성', type: 'request'},
+        {from: 'le', to: 'ing', label: 'GET :80 토큰', type: 'request'},
+        {from: 'ing', to: 'solver', label: '/.well-known', type: 'request'},
+      ],
+      focus: ['chal', 'solver', 'ing', 'le'],
+      badges: {solver: '토큰 응답 중'},
+    },
+    {
+      short: '멈춤',
+      kind: '문제',
+      title: 'CA가 닿지 못해 챌린지가 pending에 멈춘다',
+      text: [
+        '여기서는 shop.example.com의 DNS 레코드가 아직 옛 서버를 가리키고, 방화벽이 80 포트를 버린다. 셀프 체크가 실패하고, Challenge의 reason에 Waiting for HTTP-01 challenge propagation과 받은 오류가 적힌다.',
+        'Certificate는 Ready=False로 남고 시크릿은 만들어지지 않는다. CA가 검증을 시도했다가 실패하면 Challenge와 Order는 invalid가 된다. 그러면 cert-manager는 간격을 늘려 가며 다시 시도하고, Let\'s Encrypt도 호스트 이름별 시간당 검증 실패 횟수를 제한한다.',
+      ],
+      keyIdea: 'kubectl describe challenge 가 진짜 이유를 보여 준다. 무언가를 지우고 다시 만들기 전에 먼저 읽는다.',
+      flows: [{from: 'le', to: 'ing', label: '시간 초과', type: 'request'}],
+      focus: ['chal', 'ing'],
+      status: {chal: 'error', ing: 'warn'},
+      badges: {chal: '셀프 체크 실패'},
+      values: {chal: {text: 'pending · propagation', tone: 'bad'}},
+    },
+    {
+      short: 'DNS-01',
+      kind: '원리',
+      title: 'DNS-01: TXT 레코드로 소유를 증명한다',
+      text: [
+        '*.example.com 같은 와일드카드 이름은 Let\'s Encrypt가 DNS-01로만 받아 준다. 클러스터가 80 포트로 들어오는 요청을 받을 수 없을 때도 쓸 만하다.',
+        'cert-manager는 DNS 제공자의 API(자격 증명은 시크릿에 있다)로 _acme-challenge.example.com에 TXT 레코드를 쓴다. 레코드가 보일 때까지 기다린 뒤 CA가 그것을 조회한다. 끝나면 cert-manager가 레코드를 지운다.',
+      ],
+      keyIdea: 'DNS-01은 열린 포트 대신 영역을 고칠 수 있는 API 키를 쓴다. 그 키에는 필요한 레코드에 대한 권한만 준다.',
+      flows: [
+        {from: 'chal', to: 'dns', label: 'TXT 쓰기', type: 'request'},
+        {from: 'le', to: 'dns', label: 'TXT 조회', type: 'request'},
+      ],
+      focus: ['chal', 'dns', 'le'],
+      status: {chal: 'ok', ing: null},
+      badges: {chal: 'valid', solver: null},
+      values: {chal: {text: 'valid', tone: 'good'}},
+    },
+    {
+      short: '발급',
+      kind: '원리',
+      title: 'Order가 마무리되고 시크릿이 써진다',
+      text: [
+        '모든 Challenge가 valid가 되면 cert-manager가 CSR로 Order를 마무리한다. CA가 서명하고 인증서 체인을 돌려준다.',
+        'cert-manager가 kubernetes.io/tls 타입의 시크릿 shop-tls에 tls.crt와 tls.key를 쓰고, Certificate는 Ready=True가 된다. 인그레스 컨트롤러가 시크릿을 읽어 새 인증서를 내준다. 임시 솔버 자원은 지워진다.',
+      ],
+      flows: [
+        {from: 'le', to: 'order', label: '서명된 인증서', type: 'response'},
+        {from: 'cm', to: 'secret', label: '쓰기', type: 'request'},
+        {from: 'secret', to: 'ing', label: 'TLS', type: 'watch'},
+      ],
+      focus: ['order', 'secret', 'ing'],
+      status: {chal: null, secret: 'ok', cert: 'ok'},
+      badges: {order: 'valid', chal: null, cert: 'Ready', secret: 'shop-tls'},
+      values: {cert: {text: 'Ready=True', tone: 'good'}, expiry: '90일'},
+    },
+    {
+      short: '갱신',
+      kind: '주의',
+      title: '갱신은 일찍 일어나고, 발급 한도는 반복 실수를 벌한다',
+      text: [
+        'renewBefore를 정하지 않으면 cert-manager는 유효 기간의 3분의 2가 지났을 때 갱신한다. 90일 인증서라면 만료 약 30일 전이다. 예정 시각은 status.renewalTime에 보인다. Let\'s Encrypt는 인증서 유효 기간을 90일에서 45일로 단계적으로 줄이겠다고 발표했다. 그러니 갱신 시점을 고정된 일수로 박지 말고 유효 기간에 비례하게 둔다.',
+        'Let\'s Encrypt는 등록 도메인당 주간 발급 수와, 이름 묶음이 똑같은 중복 인증서 수를 제한한다. 시크릿이나 Certificate를 계속 지우는 설정은 이 한도에 걸려 며칠 동안 발급을 못 받을 수 있다.',
+      ],
+      keyIdea: '새 Issuer는 스테이징 서버로 시험한다. Ready가 아닌 인증서와 만료가 2주 안 남은 인증서에 알림을 건다.',
+      flows: [{from: 'cert', to: 'cr', label: '갱신', type: 'request'}],
+      focus: ['cert', 'cr'],
+      badges: {order: null, cert: '3분의 2에 갱신'},
+      values: {expiry: {text: '90일 · 약 60일째 갱신', tone: 'good'}},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '자원 하나가 한 단계이고, 멈춘 자원이 이유를 말한다',
+      text: [
+        'Issuer는 CA와 증명 방식을 고른다. Certificate는 어떤 이름을 어느 시크릿에 담을지 정한다. 시도마다 CertificateRequest가 생기고, 이것이 이름마다 Challenge를 가진 Order가 된다. Challenge가 valid가 되면 서명된 인증서가 시크릿에 들어간다.',
+        'HTTP-01은 DNS와 80 포트가 우리 입구에 닿아야 한다. DNS-01은 영역에 대한 API 권한이 필요하고, 와일드카드를 받는 유일한 방법이다.',
+      ],
+      keyIdea: '인증서가 Ready가 아니면 사슬을 따라 내려가며 처음으로 valid가 아닌 자원을 읽는다. 대개 Challenge이고, 그 reason에 CA나 셀프 체크가 본 것이 적혀 있다.',
+      flows: [
+        {from: 'issuer', to: 'cm', label: '방법', type: 'watch'},
+        {from: 'cert', to: 'cr', label: '대상', type: 'request'},
+        {from: 'cm', to: 'secret', label: '결과', type: 'request'},
+      ],
+      focus: ['issuer', 'cert', 'secret'],
+      status: {secret: null, cert: null},
+      badges: {cert: null, secret: null, issuer: null},
+    },
+  ]}
+/>
+
+## 인증서가 멈췄을 때 볼 곳
+
+사슬을 위에서 아래로 읽고, 처음으로 Ready나 valid가 아닌 자원에서 멈춘다.
+
+| 자원 | 만드는 쪽 | 볼 것 | 흔히 멈추는 이유 |
+|---|---|---|---|
+| ClusterIssuer / Issuer | 사용자 | `Ready` 조건 | ACME URL 오류, 계정 키 시크릿 없음, DNS 제공자 자격 증명 오류 |
+| Certificate | 사용자, 또는 어노테이션을 읽은 ingress-shim | `Ready`·`Issuing` 조건, `status.renewalTime` | `issuerRef`의 이름이나 kind 오류, 어느 솔버도 맡지 않는 이름 |
+| CertificateRequest | cert-manager, 시도마다 하나 | `Ready`·`Approved`·`Denied` | Issuer가 준비되지 않음, 요청이 승인되지 않음 |
+| Order | ACME Issuer, 요청마다 하나 | `state`: pending, valid, invalid, errored | Challenge 실패, 발급 한도 초과 |
+| Challenge | ACME Issuer, 이름마다 하나 | `state`와 `reason` | DNS가 다른 곳을 가리킴, 80 포트 막힘, TXT 레코드가 아직 안 보임 |
+| 시크릿 | cert-manager | `tls.crt`의 주체와 만료일 | Certificate가 Ready가 되기 전에는 만들어지지 않는다 |
+
+Certificate가 Ready=True인데 브라우저에 여전히 옛 인증서가 보이면, 인그레스나 Gateway가 같은 네임스페이스의 같은 시크릿을 가리키는지 확인한다.
+
+## 직접 확인해 보기
+
+```bash
+kubectl get clusterissuer                                   # Issuer별 READY
+kubectl describe clusterissuer letsencrypt-prod             # ACME URL, 계정 상태
+kubectl get certificate,certificaterequest,order,challenge -A   # 사슬 전체를 한 번에
+kubectl describe certificate shop-tls -n shop               # 조건과 이벤트
+kubectl describe challenge -n shop                          # state, reason, 셀프 체크 오류
+cmctl status certificate shop-tls -n shop                   # Certificate·요청·Order·Challenge를 한 화면에
+cmctl renew shop-tls -n shop                                # 지금 바로 갱신
+curl -v http://shop.example.com/.well-known/acme-challenge/test   # 밖에서 80 포트가 닿는가?
+dig TXT _acme-challenge.example.com +short                  # DNS-01 레코드가 보이는가?
+kubectl get secret shop-tls -n shop -o jsonpath='{.data.tls\.crt}' \
+  | base64 -d | openssl x509 -noout -subject -enddate      # 발급된 인증서의 이름과 만료일
+```
+
+더 읽을거리: [cert-manager 문서](https://cert-manager.io/docs/) · [ACME Issuer](https://cert-manager.io/docs/configuration/acme/) · [인그레스 자원 보호하기](https://cert-manager.io/docs/usage/ingress/) · [ACME 문제 해결](https://cert-manager.io/docs/troubleshooting/acme/) · [Let's Encrypt 챌린지 종류](https://letsencrypt.org/docs/challenge-types/) · [Let's Encrypt 발급 한도](https://letsencrypt.org/docs/rate-limits/) · [스테이징 환경](https://letsencrypt.org/docs/staging-environment/) · [HTTPS와 인증서](../basic/https-cert.mdx) · [인그레스 규칙과 TLS](../feature/ingress.mdx)

@@ -1,0 +1,266 @@
+---
+id: llm-autoscaling
+title: Autoscaling LLM Inference
+sidebar_label: 11 · Autoscaling LLM Inference
+description: Animated walkthrough of why CPU and GPU utilization mislead an LLM autoscaler, how waiting requests, KV cache usage and TTFT flow from the engine through Prometheus and KEDA or the Prometheus Adapter to the HPA, and how cold starts, GPU node provisioning, scale-down and scale-to-zero shape the result
+summary: 'Scale LLM replicas on waiting requests and KV cache use, not GPU utilization, and plan around cold starts and GPU node delays.'
+icon: scale
+hide_table_of_contents: true
+---
+
+# Autoscaling LLM Inference
+
+The HPA from [Scaling with Load](../k8s/autoscaling.mdx) works well for web Pods on CPU. An LLM replica is different: its GPU looks busy all the time, a new replica takes minutes to start, and one shut down too early cuts off answers mid-stream. Follow one traffic spike and see which signals to scale on and where the delays come from.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~11 min', level: 'Advanced'}}
+  groups={[
+    {label: 'Kubernetes cluster', x: 185, y: 30, w: 800, h: 405, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'user', label: 'Clients', sub: 'Chat requests', icon: 'user', tone: 'ext', x: 90, y: 230, w: 140, show: true},
+    {id: 'gw', label: 'Gateway · router', sub: 'Sends to Ready replicas', icon: 'gate', tone: 'cp', x: 280, y: 230, w: 160, show: true},
+    {id: 'pod1', label: 'Replica 1', sub: 'vLLM · 1 GPU', icon: 'pod', tone: 'app', x: 480, y: 100, w: 140, show: true},
+    {id: 'pod2', label: 'Replica 2', sub: 'vLLM · 1 GPU', icon: 'pod', tone: 'app', x: 480, y: 230, w: 140, show: true},
+    {id: 'pod3', label: 'Replica 3', sub: 'New · loading', icon: 'pod', tone: 'app', x: 480, y: 360, w: 140},
+    {id: 'prom', label: 'Prometheus', sub: 'Scrapes /metrics', icon: 'chart', tone: 'store', x: 690, y: 100, w: 150},
+    {id: 'keda', label: 'KEDA / Adapter', sub: 'Metric for the HPA', icon: 'gear', tone: 'cp', x: 690, y: 230, w: 160},
+    {id: 'hpa', label: 'HPA', sub: 'Desired replicas', icon: 'scale', tone: 'cp', x: 690, y: 360, w: 150},
+    {id: 'node', label: 'GPU node pool', sub: 'Free GPUs?', icon: 'server', tone: 'node', x: 895, y: 230, w: 150},
+    {id: 'ca', label: 'Node autoscaler', sub: 'e.g. Karpenter', icon: 'cloud', tone: 'cp', x: 895, y: 360, w: 150},
+  ]}
+  metrics={[
+    {id: 'gpu', label: 'GPU util'},
+    {id: 'waiting', label: 'Waiting requests'},
+    {id: 'kv', label: 'KV cache use'},
+    {id: 'ttft', label: 'TTFT p95'},
+    {id: 'replicas', label: 'Replicas'},
+  ]}
+  learn={[
+    {text: 'Why GPU and CPU utilization are poor scaling signals for LLMs', at: 1},
+    {text: 'Waiting requests, KV cache use and TTFT from the engine', at: 2},
+    {text: 'How the metric reaches the HPA through KEDA or an adapter', at: 3},
+    {text: 'GPU node provisioning and cold start delay every scale-out', at: 4},
+    {text: 'Scale-down must let running streams finish', at: 7},
+    {text: 'What scale-to-zero saves and what it costs', at: 8},
+  ]}
+  steps={[
+    {
+      short: 'Start',
+      kind: '시작',
+      title: 'Two replicas, and traffic starts to climb',
+      text: [
+        'A chat model runs as a Deployment with two vLLM replicas, one GPU each. The gateway spreads requests across the Ready replicas.',
+        'It is morning and traffic is rising. Before anything breaks, the question is which number should tell the autoscaler to add a replica.',
+      ],
+      flows: [
+        {from: 'user', to: 'gw', label: 'Requests', type: 'request'},
+        {from: 'gw', to: 'pod1', label: 'Stream', type: 'request'},
+        {from: 'gw', to: 'pod2', label: 'Stream', type: 'request'},
+      ],
+      focus: ['pod1', 'pod2'],
+      values: {gpu: '97%', waiting: '0', kv: '40%', ttft: '0.6 s', replicas: '2'},
+    },
+    {
+      short: 'Bad signal',
+      kind: '문제',
+      title: 'GPU utilization says "busy" whether load is light or heavy',
+      text: [
+        'The usual GPU utilization metric (for example DCGM_FI_DEV_GPU_UTIL) is the share of time any kernel was running. While even one request is decoding, the engine launches a kernel every step, so the number sits near 100% at light and heavy load alike.',
+        'CPU is no better. The engine process mostly waits for the GPU, so its CPU stays low even when users are queuing. An HPA on GPU utilization scales out at once and never scales in. An HPA on CPU never scales out.',
+      ],
+      keyIdea: 'Utilization tells you the GPU is in use, not how much more it can take. For LLMs, scale on the engine\'s own queue and memory numbers.',
+      flows: [{from: 'gw', to: 'pod1', label: 'Stream', type: 'request'}],
+      focus: ['pod1', 'pod2'],
+      status: {pod1: 'warn', pod2: 'warn'},
+      values: {gpu: {text: '98% (looks full either way)', tone: 'bad'}},
+    },
+    {
+      short: 'Good signals',
+      kind: '원리',
+      title: 'The engine reports how far behind it is',
+      text: [
+        'vLLM exposes Prometheus metrics on /metrics. vllm:num_requests_waiting counts requests that arrived but have no room in the batch yet. vllm:kv_cache_usage_perc is how full the KV cache is (older versions call it vllm:gpu_cache_usage_perc). vllm:time_to_first_token_seconds is a histogram of TTFT.',
+        'Now the spike shows clearly. Twelve requests are waiting, the KV cache is 95% full, and the p95 time to first token has jumped from 0.6 s to over 4 s.',
+      ],
+      keyIdea: 'Waiting requests react first and map directly to "not enough replicas". KV cache use warns just before the queue starts. TTFT is what users feel, but it moves only after they already wait.',
+      flows: [
+        {from: 'prom', to: 'pod1', label: 'Scrape', type: 'watch'},
+        {from: 'prom', to: 'pod2', label: 'Scrape', type: 'watch'},
+      ],
+      focus: ['prom', 'pod1', 'pod2'],
+      status: {pod1: 'error', pod2: 'error'},
+      badges: {pod1: '6 waiting', pod2: '6 waiting'},
+      values: {waiting: {text: '12', tone: 'bad'}, kv: {text: '95%', tone: 'bad'}, ttft: {text: '4.2 s', tone: 'bad'}},
+    },
+    {
+      short: 'To the HPA',
+      kind: '원리',
+      title: 'KEDA or an adapter turns the query into an HPA metric',
+      text: [
+        'The HPA cannot read Prometheus by itself. KEDA (a ScaledObject with a prometheus trigger) or the Prometheus Adapter runs a query such as sum(vllm:num_requests_waiting) and serves the result through the external or custom metrics API. KEDA creates and manages the HPA for you.',
+        'With a target of 5 waiting requests per replica, the HPA computes ceil(12 / 5) = 3 replicas and raises the Deployment from 2 to 3.',
+      ],
+      keyIdea: 'kubectl describe hpa shows the current metric value next to the target. If it says unknown, the query or the metrics API is broken, not the scaling rule.',
+      flows: [
+        {from: 'keda', to: 'prom', label: 'Query', type: 'request'},
+        {from: 'hpa', to: 'keda', label: 'External metric', type: 'watch'},
+      ],
+      focus: ['keda', 'hpa'],
+      badges: {pod1: null, pod2: null, hpa: '2 → 3'},
+      values: {replicas: {text: '2 → 3 (desired)', tone: 'bad'}},
+    },
+    {
+      short: 'No GPU',
+      kind: '문제',
+      title: 'No free GPU, so the new Pod waits for a node',
+      text: [
+        'Replica 3 is created but stays Pending: every GPU in the pool is taken. The node autoscaler (Cluster Autoscaler or Karpenter) sees the unschedulable Pod and asks the cloud for a new GPU VM.',
+        'That takes minutes: the VM boots, joins the cluster, and the GPU driver and device plugin must start before the node advertises nvidia.com/gpu. GPU capacity in the region can also simply be unavailable.',
+      ],
+      keyIdea: 'For latency-sensitive models, keep spare GPU capacity ready (a warm node or a low-priority placeholder Pod) so scale-out does not start with a VM boot.',
+      flows: [
+        {from: 'hpa', to: 'pod3', label: 'Create', type: 'request'},
+        {from: 'ca', to: 'node', label: 'Add GPU VM', type: 'request'},
+      ],
+      focus: ['pod3', 'node', 'ca'],
+      status: {pod3: 'warn'},
+      badges: {hpa: null, pod3: 'Pending', ca: '+1 node'},
+      values: {replicas: {text: '2 ready · 1 Pending', tone: 'bad'}},
+    },
+    {
+      short: 'Cold start',
+      kind: '주의',
+      title: 'The new replica is Running but not Ready for minutes',
+      text: [
+        'Once placed, replica 3 still has to load tens of GB of weights into GPU memory and warm up the engine (see the cold start lesson). The readiness probe should pass only after the model is loaded, so the router keeps sending traffic to the two old replicas.',
+        'Meanwhile the queue keeps growing. Node delay plus cold start is why LLM scaling must start early: use a low waiting-request threshold, keep a minimum replica count above zero, and scale on KV cache use as an early warning.',
+      ],
+      keyIdea: 'A replica that reports Ready before the model is loaded gets requests it cannot answer. Point the readiness probe at the engine\'s health endpoint, and give the startup probe enough time for loading.',
+      flows: [{from: 'node', to: 'pod3', label: 'Load weights', type: 'request'}],
+      focus: ['pod3'],
+      badges: {ca: null, pod3: 'Loading weights'},
+      values: {waiting: {text: '18', tone: 'bad'}, ttft: {text: '6.0 s', tone: 'bad'}},
+    },
+    {
+      short: 'Ready',
+      kind: '원리',
+      title: 'Ready: the router adds the replica and the queue drains',
+      text: [
+        'The engine finishes loading and the readiness probe passes. The Pod joins the Service endpoints, and the gateway (or the endpoint picker from inference routing) starts sending it new requests.',
+        'Waiting requests fall to about one, KV cache use drops, and TTFT returns to under a second. The metric is back below target, so the HPA holds at three.',
+      ],
+      flows: [
+        {from: 'gw', to: 'pod1', label: 'Stream', type: 'request'},
+        {from: 'gw', to: 'pod2', label: 'Stream', type: 'request'},
+        {from: 'gw', to: 'pod3', label: 'Stream', type: 'request'},
+      ],
+      focus: ['gw', 'pod3'],
+      status: {pod1: 'ok', pod2: 'ok', pod3: 'ok'},
+      badges: {pod3: 'Ready'},
+      values: {gpu: '98%', waiting: {text: '1', tone: 'good'}, kv: {text: '60%', tone: 'good'}, ttft: {text: '0.8 s', tone: 'good'}, replicas: {text: '3', tone: 'good'}},
+    },
+    {
+      short: 'Scale down',
+      kind: '주의',
+      title: 'Scaling in must not cut answers in half',
+      text: [
+        'In the evening the queue stays at zero, and the HPA wants two replicas again. Its scale-down stabilization window (300 s by default) makes it wait for a steady low value first, so a short lull does not remove a replica that takes minutes to bring back.',
+        'When a replica is removed, it may still be streaming long answers. The router must stop sending it new requests first, and terminationGracePeriodSeconds plus a preStop wait must cover the longest generation, or those users see the answer stop mid-sentence.',
+      ],
+      keyIdea: 'For LLMs, set a longer scale-down window than for web Pods and a grace period that matches your max output length, not the 30 s default.',
+      flows: [
+        {from: 'hpa', to: 'pod3', label: 'Remove', type: 'request'},
+        {from: 'gw', to: 'pod1', label: 'Stream', type: 'request'},
+      ],
+      focus: ['hpa', 'pod3'],
+      status: {pod3: 'warn'},
+      badges: {pod3: 'Draining streams', hpa: '3 → 2'},
+      values: {waiting: '0', kv: '30%', ttft: '0.5 s', replicas: '3 → 2'},
+    },
+    {
+      short: 'Zero',
+      kind: '주의',
+      title: 'Scale to zero saves GPUs but the first user pays',
+      text: [
+        'A plain HPA keeps at least one replica. KEDA can go to zero (minReplicaCount: 0) and wake the Deployment when the query rises above its activation threshold. With zero replicas, an idle model costs no GPU.',
+        'The price is the full delay on the next request: possibly a new GPU node, then the whole cold start. Something must also hold the request while that happens, or it fails. Zero fits dev, batch and rarely used models, not chat users waiting for an answer.',
+      ],
+      flows: [{from: 'keda', to: 'hpa', label: '0 ↔ 1', type: 'watch'}],
+      focus: ['keda'],
+      status: {pod3: 'gone', pod2: 'off', pod1: 'off'},
+      badges: {pod3: null, hpa: null, keda: 'minReplicas 0'},
+      values: {replicas: {text: '0 (idle)', tone: 'bad'}, ttft: {text: 'minutes on wake', tone: 'bad'}},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Scale on the queue, early, and shut down slowly',
+      text: [
+        'GPU and CPU utilization do not show how much an LLM replica can still take. The engine\'s waiting requests and KV cache use do. Prometheus collects them, KEDA or an adapter hands them to the HPA, and the HPA sets the replica count.',
+        'Every scale-out waits for a GPU node and a cold start, so react early and keep headroom. Every scale-in must drain running streams, so scale in slowly with a long grace period.',
+      ],
+      keyIdea: 'When scaling feels late, time each part: Pending (no GPU node), Running but not Ready (cold start), then Ready. The slowest part decides what to fix first.',
+      flows: [
+        {from: 'prom', to: 'pod1', label: 'Scrape', type: 'watch'},
+        {from: 'keda', to: 'prom', label: 'Query', type: 'request'},
+        {from: 'hpa', to: 'keda', label: 'Metric', type: 'watch'},
+      ],
+      focus: ['prom', 'keda', 'hpa'],
+      status: {pod1: 'ok', pod2: 'ok', pod3: null},
+      badges: {keda: null},
+      values: {replicas: '2', waiting: '0', ttft: '0.6 s'},
+    },
+  ]}
+/>
+
+## Which signal to scale on
+
+| Signal | Good for LLMs? | Why |
+|---|---|---|
+| CPU utilization | No | The engine mostly waits on the GPU, so CPU stays low even when users queue |
+| GPU utilization (e.g. `DCGM_FI_DEV_GPU_UTIL`) | No | It measures time a kernel was running, which is near 100% once any request decodes |
+| Waiting requests (`vllm:num_requests_waiting`) | Yes, main signal | Rises as soon as replicas cannot take more requests into the batch |
+| KV cache use (`vllm:kv_cache_usage_perc`) | Yes, early warning | Near 100% means new requests will wait or running ones get preempted |
+| TTFT p95 (`vllm:time_to_first_token_seconds`) | For SLOs and alerts | What users feel, but it moves only after they already wait |
+| Requests per second | Weak | Prompt and answer lengths vary a lot, so the same rate can be light or heavy load |
+
+## Try it yourself
+
+```bash
+kubectl port-forward deploy/llm 8000:8000 &
+curl -s localhost:8000/metrics | grep -E '^vllm:(num_requests_waiting|num_requests_running|kv_cache_usage_perc)'   # The engine's own load
+kubectl get hpa -w                                   # TARGETS (current/target) and REPLICAS as load changes
+kubectl describe hpa keda-hpa-llm                    # Metric value, events, why it did or did not scale
+kubectl get scaledobject                             # KEDA: READY and ACTIVE
+kubectl get pods -l app=llm -w                       # Pending (no GPU node) → Running → Ready (model loaded)
+```
+
+A KEDA `ScaledObject` that scales on waiting requests:
+
+```yaml
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: llm
+spec:
+  scaleTargetRef:
+    name: llm                  # The vLLM Deployment
+  minReplicaCount: 1           # 0 allows scale to zero, with a cold start on wake
+  maxReplicaCount: 8
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleDown:
+          stabilizationWindowSeconds: 600   # Scale in slowly
+  triggers:
+    - type: prometheus
+      metadata:
+        serverAddress: http://prometheus.monitoring:9090
+        query: sum(vllm:num_requests_waiting{model_name="chat"})
+        threshold: "5"         # Target waiting requests per replica
+```
+
+Further reading: [vLLM metrics](https://docs.vllm.ai/en/latest/design/metrics.html) · [KEDA Prometheus scaler](https://keda.sh/docs/latest/scalers/prometheus/) · [Horizontal Pod Autoscaling](https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/) · [Karpenter](https://karpenter.sh/) · [Scaling with Load (HPA)](../k8s/autoscaling.mdx) · [Until a Model First Starts (Cold Start)](../ai/cold-start.mdx) · [Which Replica Gets the Request](../ai/inference-routing.mdx) · [Graceful shutdown](../intermediate/graceful-shutdown.mdx)

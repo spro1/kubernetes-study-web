@@ -1,0 +1,236 @@
+---
+id: cdn
+title: How a CDN Serves a Request
+sidebar_label: 07 · How a CDN Serves a Request
+description: Animated walkthrough of a CDN request from DNS to the nearest edge, cache hit and miss, the origin fetch, Cache-Control and the cache key, revalidation with ETag and 304, purging after a deploy, private responses, origin shield and origin protection
+summary: 'Nearest edge, cache hit and miss, Cache-Control, revalidation with 304, purge vs versioned files, and keeping private pages out of the cache.'
+icon: cloud
+hide_table_of_contents: true
+---
+
+# How a CDN Serves a Request
+
+A CDN (content delivery network) keeps copies of your responses in many edge locations close to users. Follow one file from the first miss to a cache hit, then see what goes wrong after a deploy and with private pages. The basic web request is in [When You Type an Address](../basic/web-request.mdx).
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~10 min', level: 'Beginner'}}
+  groups={[
+    {label: 'Edge location (PoP)', x: 300, y: 40, w: 200, h: 390, tone: 'mgmt'},
+    {label: 'Your origin', x: 770, y: 140, w: 215, h: 200, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'user', label: 'User', sub: 'Browser in Seoul', icon: 'browser', tone: 'ext', x: 120, y: 150, show: true},
+    {id: 'dns', label: 'DNS', sub: 'CDN name servers', icon: 'book', tone: 'ext', x: 120, y: 360},
+    {id: 'edge', label: 'Edge server', sub: 'TLS · cache lookup', icon: 'cloud', tone: 'cp', x: 400, y: 150},
+    {id: 'cache', label: 'Edge cache', sub: 'Key → response', icon: 'disk', tone: 'store', x: 400, y: 340},
+    {id: 'shield', label: 'Origin shield', sub: 'Regional cache', icon: 'layers', tone: 'store', x: 625, y: 240},
+    {id: 'origin', label: 'Origin', sub: 'Bucket or LB', icon: 'server', tone: 'app', x: 877, y: 240},
+  ]}
+  metrics={[
+    {id: 'file', label: 'Request'},
+    {id: 'cache', label: 'Cache'},
+    {id: 'age', label: 'Age'},
+    {id: 'origin', label: 'Origin load'},
+  ]}
+  learn={[
+    {text: 'How DNS or anycast sends users to a nearby edge', at: 1},
+    {text: 'Cache key, hit and miss, and the origin fetch', at: 2},
+    {text: 'Cache-Control max-age and s-maxage decide how long', at: 3},
+    {text: 'Revalidation with ETag and 304 Not Modified', at: 5},
+    {text: 'Versioned file names beat purging after a deploy', at: 6},
+    {text: 'Keeping private responses out of a shared cache', at: 7},
+  ]}
+  steps={[
+    {
+      short: 'Start',
+      kind: '시작',
+      title: 'The site name points at the CDN',
+      text: [
+        'A user in Seoul opens https://www.example.com/app.3f9a.js. The site owner set www.example.com as a CNAME (or alias) to a hostname the CDN gave them, for example on CloudFront, Cloud CDN or Cloudflare.',
+        'So the DNS answer does not come from your servers. It comes from the CDN\'s name servers.',
+      ],
+      flows: [{from: 'user', to: 'dns', label: 'www.example.com?', type: 'request'}],
+      focus: ['user', 'dns'],
+      values: {file: '/app.3f9a.js', cache: '—', age: '—', origin: '—'},
+    },
+    {
+      short: 'Nearest edge',
+      kind: '원리',
+      title: 'The user reaches a nearby edge, and TLS ends there',
+      text: [
+        'Some CDNs answer DNS with the address of an edge near the user (GeoDNS). Others use anycast: the same IP is announced from every location, and internet routing carries the packets to a nearby one.',
+        'The edge holds your certificate and finishes the TLS handshake close to the user. This alone cuts round trips, even before any caching.',
+      ],
+      keyIdea: 'Run dig on your site name. A CNAME to the CDN\'s hostname shows the CDN is in front.',
+      flows: [
+        {from: 'dns', to: 'user', label: 'Edge IP', type: 'response'},
+        {from: 'user', to: 'edge', label: 'HTTPS GET', type: 'request'},
+      ],
+      focus: ['edge'],
+      badges: {edge: 'TLS here'},
+    },
+    {
+      short: 'Miss',
+      kind: '원리',
+      title: 'Cache miss: the edge fetches from the origin',
+      text: [
+        'The edge builds a cache key from the request. By default this is usually the host and path, often with the query string. You can add or drop query strings, headers or cookies in the CDN settings.',
+        'Nothing is stored under that key yet, so it is a MISS. The edge asks the origin shield, which also misses, and the request goes on to the origin: an object storage bucket or a load balancer in front of your servers.',
+      ],
+      flows: [
+        {from: 'edge', to: 'cache', label: 'Lookup key', type: 'watch'},
+        {from: 'edge', to: 'shield', label: 'MISS', type: 'request'},
+        {from: 'shield', to: 'origin', label: 'GET', type: 'request'},
+      ],
+      focus: ['edge', 'cache', 'origin'],
+      badges: {edge: null},
+      values: {cache: {text: 'MISS', tone: 'bad'}, origin: '1 request'},
+    },
+    {
+      short: 'Cache-Control',
+      kind: '원리',
+      title: 'The origin says how long the copy may be kept',
+      text: [
+        'The origin answers 200 with Cache-Control: public, max-age=31536000, immutable. max-age is the freshness time in seconds for any cache, including the browser.',
+        's-maxage applies only to shared caches such as a CDN and overrides max-age there. Many CDNs also let you set a default or override TTL in their own settings. The edge stores the response and passes it on.',
+      ],
+      keyIdea: 'If the origin sends no Cache-Control, the CDN falls back to its own default TTL. Set the header on purpose rather than relying on that default.',
+      flows: [
+        {from: 'origin', to: 'shield', label: '200 + Cache-Control', type: 'response'},
+        {from: 'shield', to: 'edge', label: 'Store', type: 'response'},
+        {from: 'edge', to: 'cache', label: 'Store', type: 'request'},
+        {from: 'edge', to: 'user', label: '200', type: 'response'},
+      ],
+      focus: ['origin', 'cache'],
+      badges: {cache: 'max-age 1y'},
+    },
+    {
+      short: 'Hit',
+      kind: '원리',
+      title: 'Cache hit: the next user never reaches the origin',
+      text: [
+        'A minute later another user nearby asks for the same file. The key matches a fresh entry, so it is a HIT. The edge answers from the cache, and the origin sees nothing.',
+        'The Age header shows how many seconds the copy has been in a cache. Many CDNs add their own header too, such as X-Cache: Hit from cloudfront or cf-cache-status: HIT.',
+      ],
+      flows: [
+        {from: 'user', to: 'edge', label: 'GET', type: 'request'},
+        {from: 'edge', to: 'cache', label: 'Found', type: 'watch'},
+        {from: 'edge', to: 'user', label: '200 · Age: 60', type: 'response'},
+      ],
+      focus: ['edge', 'cache'],
+      status: {cache: 'ok'},
+      values: {cache: {text: 'HIT', tone: 'good'}, age: '60', origin: '0 new requests'},
+    },
+    {
+      short: 'Revalidate',
+      kind: '원리',
+      title: 'An expired copy is checked with ETag, not downloaded again',
+      text: [
+        'The HTML page /index.html has max-age=60. After 60 seconds the stored copy is stale. The edge does not throw it away. It sends a conditional request with If-None-Match and the stored ETag.',
+        'If the file has not changed, the origin answers 304 Not Modified with no body. The edge marks its copy fresh again and serves it. Only headers crossed the network.',
+      ],
+      flows: [
+        {from: 'edge', to: 'shield', label: 'If-None-Match', type: 'request'},
+        {from: 'shield', to: 'origin', label: 'If-None-Match', type: 'request'},
+        {from: 'origin', to: 'edge', label: '304', type: 'response'},
+      ],
+      focus: ['edge', 'origin'],
+      status: {cache: 'warn'},
+      badges: {cache: 'Stale → 304'},
+      values: {file: '/index.html', cache: 'REVALIDATED', age: '0', origin: '1 small request'},
+    },
+    {
+      short: 'After deploy',
+      kind: '문제',
+      title: 'After a deploy, users still get the old file',
+      text: [
+        'You deploy a new app.js under the same name. Edges keep serving the old copy until its TTL runs out, and browsers that cached it keep it too. Some users see the new HTML with the old script, and the page breaks.',
+        'A purge (invalidation) tells the CDN to drop paths. It can take a while to reach every edge, some CDNs charge for many paths, and it does not clear browser caches.',
+      ],
+      keyIdea: 'Put a content hash in static file names (app.3f9a.js) and cache them for a year. Give the HTML a short TTL. A deploy then just points to new names, and nothing needs purging.',
+      flows: [{from: 'edge', to: 'user', label: 'Old app.js', type: 'response'}],
+      focus: ['edge', 'cache'],
+      status: {cache: 'error'},
+      badges: {cache: 'Old copy'},
+      values: {file: '/app.js', cache: {text: 'HIT (stale content)', tone: 'bad'}},
+    },
+    {
+      short: 'Private page',
+      kind: '문제',
+      title: 'A personal page cached at the edge leaks to other users',
+      text: [
+        'The page /account shows the signed-in user\'s name. If it is cached with a key that ignores the session cookie, the next user gets someone else\'s page. This is one of the worst CDN mistakes.',
+        'Send Cache-Control: private (only the browser may store it) or no-store (nobody may). Many CDNs skip responses with Set-Cookie by default, but behavior differs between vendors, so do not rely on it.',
+      ],
+      keyIdea: 'Mark every personalized or authenticated response private or no-store at the origin, and check the CDN does not override it with a "cache everything" rule.',
+      flows: [
+        {from: 'origin', to: 'edge', label: 'Cache-Control: private', type: 'response'},
+        {from: 'edge', to: 'user', label: 'Not stored', type: 'response'},
+      ],
+      focus: ['edge', 'origin'],
+      status: {cache: null},
+      badges: {cache: null, edge: 'Pass through'},
+      values: {file: '/account', cache: 'BYPASS', age: '—', origin: 'Every request'},
+    },
+    {
+      short: 'Shield',
+      kind: '원리',
+      title: 'An origin shield collapses misses, and the origin only trusts the CDN',
+      text: [
+        'With hundreds of edges, each one missing on its own would hit the origin hundreds of times. An origin shield is one regional cache layer between edges and origin. Edge misses go there first, so the origin sees roughly one request per object.',
+        'Lock the origin so users cannot skip the CDN. A bucket can allow reads only from the CDN (for example CloudFront origin access control). A load balancer can accept only the CDN\'s IP ranges or a secret header.',
+      ],
+      flows: [
+        {from: 'edge', to: 'shield', label: 'MISS', type: 'request'},
+        {from: 'shield', to: 'origin', label: 'One fetch', type: 'request'},
+        {from: 'user', to: 'origin', label: 'Direct: denied', type: 'request', bend: -60},
+      ],
+      focus: ['shield', 'origin'],
+      status: {shield: 'ok', origin: 'ok'},
+      badges: {edge: null, shield: 'Collapses misses', origin: 'CDN only'},
+      values: {cache: {text: 'MISS at edge, HIT at shield', tone: 'good'}, origin: 'Shielded'},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Headers decide everything a CDN does',
+      text: [
+        'DNS or anycast sends the user to a nearby edge, which ends TLS. The edge looks up the cache key. On a hit it answers at once. On a miss it goes through the shield to the origin and stores the answer for as long as Cache-Control allows.',
+        'Stale copies are revalidated with ETag and 304. Hashed file names make deploys safe without purging, and private or no-store keeps personal pages out of the shared cache.',
+      ],
+      keyIdea: 'Read the response headers first: Cache-Control, Age, ETag and the CDN\'s hit header tell you what the cache did and why.',
+      flows: [
+        {from: 'user', to: 'edge', label: 'GET', type: 'request'},
+        {from: 'edge', to: 'user', label: 'HIT', type: 'response'},
+      ],
+      focus: ['edge', 'cache', 'shield'],
+      status: {shield: null, origin: null},
+      badges: {shield: null, origin: null},
+    },
+  ]}
+/>
+
+## Response headers to read
+
+| Header | Example | What it tells you |
+|---|---|---|
+| Cache-Control | `public, max-age=31536000, immutable` | Who may store the response and for how long. `s-maxage` is for shared caches only. `private` and `no-store` keep it out of the CDN |
+| Age | `120` | Seconds the response has been in a cache. Missing or 0 usually means it came fresh from the origin |
+| ETag | `"5d8c72a5"` | Version tag of the content. Used in `If-None-Match` to get `304 Not Modified` |
+| Last-Modified | `Tue, 24 Nov 2026 03:10:00 GMT` | Older way to revalidate, with `If-Modified-Since` |
+| Vary | `Accept-Encoding` | Request headers that are part of the cache key. `Vary: *` or many values cut the hit rate |
+| Hit header (vendor-specific) | `X-Cache: Hit from cloudfront`, `cf-cache-status: HIT` | The CDN's own verdict: HIT, MISS, EXPIRED, BYPASS and so on. The name and values differ by vendor |
+
+## Try it yourself
+
+```bash
+dig +short www.example.com                         # A CNAME to the CDN's hostname means the CDN is in front
+curl -sI https://<your-site>/<file> | grep -iE 'cache-control|^age|etag|x-cache|cf-cache-status'   # 1st call: likely MISS
+curl -sI https://<your-site>/<file> | grep -iE 'cache-control|^age|etag|x-cache|cf-cache-status'   # 2nd call: HIT, Age grows
+curl -sI -H 'If-None-Match: "<etag from above>"' https://<your-site>/<file> | head -1     # 304 if unchanged
+curl -sI https://<your-site>/account | grep -i cache-control   # Personal pages should say private or no-store
+```
+
+Further reading: [HTTP caching (MDN)](https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/Caching) · [RFC 9111: HTTP Caching](https://www.rfc-editor.org/rfc/rfc9111) · [Cache-Control (MDN)](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Cache-Control) · [When You Type an Address](../basic/web-request.mdx) · [How Object Storage Works](../cloud/object-storage.mdx)

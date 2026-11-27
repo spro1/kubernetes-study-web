@@ -1,0 +1,236 @@
+---
+id: cdn
+title: CDN이 요청에 답하는 방식
+sidebar_label: 07 · CDN이 요청에 답하는 방식
+description: DNS로 가까운 엣지를 찾는 것부터 캐시 히트·미스, 오리진에서 가져오기, Cache-Control과 캐시 키, ETag와 304 재검증, 배포 후 퍼지, 개인 응답, 오리진 실드와 오리진 보호까지 CDN 요청을 애니메이션으로 따라간다
+summary: '가까운 엣지, 캐시 히트와 미스, Cache-Control, 304 재검증, 퍼지와 버전 붙은 파일 이름, 개인 페이지를 캐시에서 빼는 법.'
+icon: cloud
+hide_table_of_contents: true
+---
+
+# CDN이 요청에 답하는 방식
+
+CDN(Content Delivery Network, 콘텐츠 전송 네트워크)은 사용자 가까운 여러 엣지 위치에 응답 사본을 둔다. 파일 하나가 처음 미스가 났다가 히트가 되기까지를 따라가고, 배포 직후와 개인 페이지에서 무엇이 잘못되는지 본다. 웹 요청의 기본 흐름은 [주소창에 주소를 입력하면](../basic/web-request.mdx)에서 먼저 볼 수 있다.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '약 10분', level: '기초'}}
+  groups={[
+    {label: '엣지 위치(PoP)', x: 300, y: 40, w: 200, h: 390, tone: 'mgmt'},
+    {label: '내 오리진', x: 770, y: 140, w: 215, h: 200, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'user', label: '사용자', sub: '서울의 브라우저', icon: 'browser', tone: 'ext', x: 120, y: 150, show: true},
+    {id: 'dns', label: 'DNS', sub: 'CDN 네임서버', icon: 'book', tone: 'ext', x: 120, y: 360},
+    {id: 'edge', label: '엣지 서버', sub: 'TLS · 캐시 조회', icon: 'cloud', tone: 'cp', x: 400, y: 150},
+    {id: 'cache', label: '엣지 캐시', sub: '키 → 응답', icon: 'disk', tone: 'store', x: 400, y: 340},
+    {id: 'shield', label: '오리진 실드', sub: '지역 캐시', icon: 'layers', tone: 'store', x: 625, y: 240},
+    {id: 'origin', label: '오리진', sub: '버킷 또는 LB', icon: 'server', tone: 'app', x: 877, y: 240},
+  ]}
+  metrics={[
+    {id: 'file', label: '요청'},
+    {id: 'cache', label: '캐시'},
+    {id: 'age', label: 'Age'},
+    {id: 'origin', label: '오리진 부하'},
+  ]}
+  learn={[
+    {text: 'DNS나 애니캐스트가 사용자를 가까운 엣지로 보내는 법', at: 1},
+    {text: '캐시 키, 히트와 미스, 오리진에서 가져오기', at: 2},
+    {text: 'Cache-Control의 max-age와 s-maxage가 보관 시간을 정한다', at: 3},
+    {text: 'ETag와 304 Not Modified로 다시 확인하기', at: 5},
+    {text: '배포 후에는 퍼지보다 버전 붙은 파일 이름이 낫다', at: 6},
+    {text: '개인 응답을 공유 캐시에서 빼는 법', at: 7},
+  ]}
+  steps={[
+    {
+      short: '시작',
+      kind: '시작',
+      title: '사이트 이름이 CDN을 가리킨다',
+      text: [
+        '서울의 사용자가 https://www.example.com/app.3f9a.js 를 연다. 사이트 주인은 www.example.com 을 CDN이 준 호스트 이름으로 CNAME(또는 별칭)을 걸어 두었다. 예를 들면 CloudFront, Cloud CDN, Cloudflare 같은 곳이다.',
+        '그래서 DNS 답은 내 서버가 아니라 CDN의 네임서버가 준다.',
+      ],
+      flows: [{from: 'user', to: 'dns', label: 'www.example.com?', type: 'request'}],
+      focus: ['user', 'dns'],
+      values: {file: '/app.3f9a.js', cache: '—', age: '—', origin: '—'},
+    },
+    {
+      short: '가까운 엣지',
+      kind: '원리',
+      title: '사용자는 가까운 엣지에 닿고, TLS는 거기서 끝난다',
+      text: [
+        '어떤 CDN은 DNS 답으로 사용자 가까운 엣지 주소를 준다(GeoDNS). 다른 CDN은 애니캐스트를 쓴다. 모든 위치에서 같은 IP를 알리고, 인터넷 라우팅이 패킷을 가까운 곳으로 보낸다.',
+        '엣지가 내 인증서를 들고 사용자 가까이에서 TLS 핸드셰이크를 끝낸다. 캐시가 없어도 이것만으로 왕복 횟수가 준다.',
+      ],
+      keyIdea: '내 사이트 이름에 dig 를 해 본다. CDN 호스트 이름으로 가는 CNAME이 보이면 CDN이 앞에 있는 것이다.',
+      flows: [
+        {from: 'dns', to: 'user', label: '엣지 IP', type: 'response'},
+        {from: 'user', to: 'edge', label: 'HTTPS GET', type: 'request'},
+      ],
+      focus: ['edge'],
+      badges: {edge: '여기서 TLS'},
+    },
+    {
+      short: '미스',
+      kind: '원리',
+      title: '캐시 미스: 엣지가 오리진에서 가져온다',
+      text: [
+        '엣지는 요청으로 캐시 키를 만든다. 기본은 보통 호스트와 경로이고, 쿼리 문자열이 들어가는 경우가 많다. CDN 설정에서 쿼리 문자열·헤더·쿠키를 키에 넣거나 뺄 수 있다.',
+        '그 키로 저장된 것이 아직 없으니 MISS다. 엣지는 오리진 실드에 묻고, 실드도 미스라서 요청은 오리진까지 간다. 오리진은 오브젝트 스토리지 버킷이거나 서버 앞의 로드밸런서다.',
+      ],
+      flows: [
+        {from: 'edge', to: 'cache', label: '키 조회', type: 'watch'},
+        {from: 'edge', to: 'shield', label: 'MISS', type: 'request'},
+        {from: 'shield', to: 'origin', label: 'GET', type: 'request'},
+      ],
+      focus: ['edge', 'cache', 'origin'],
+      badges: {edge: null},
+      values: {cache: {text: 'MISS', tone: 'bad'}, origin: '요청 1건'},
+    },
+    {
+      short: 'Cache-Control',
+      kind: '원리',
+      title: '오리진이 사본을 얼마나 둘지 알려 준다',
+      text: [
+        '오리진은 200과 함께 Cache-Control: public, max-age=31536000, immutable 을 보낸다. max-age는 브라우저를 포함한 모든 캐시에 적용되는 신선한 시간(초)이다.',
+        's-maxage는 CDN 같은 공유 캐시에만 적용되고, 거기서는 max-age보다 우선한다. CDN 설정에서 기본 TTL이나 덮어쓰는 TTL을 따로 정할 수 있는 경우도 많다. 엣지는 응답을 저장하고 사용자에게 넘긴다.',
+      ],
+      keyIdea: '오리진이 Cache-Control을 안 보내면 CDN은 자기 기본 TTL을 쓴다. 기본값에 맡기지 말고 헤더를 일부러 정한다.',
+      flows: [
+        {from: 'origin', to: 'shield', label: '200 + Cache-Control', type: 'response'},
+        {from: 'shield', to: 'edge', label: '저장', type: 'response'},
+        {from: 'edge', to: 'cache', label: '저장', type: 'request'},
+        {from: 'edge', to: 'user', label: '200', type: 'response'},
+      ],
+      focus: ['origin', 'cache'],
+      badges: {cache: 'max-age 1년'},
+    },
+    {
+      short: '히트',
+      kind: '원리',
+      title: '캐시 히트: 다음 사용자는 오리진까지 가지 않는다',
+      text: [
+        '1분 뒤 근처의 다른 사용자가 같은 파일을 요청한다. 키가 신선한 항목과 맞으니 HIT다. 엣지가 캐시에서 바로 답하고, 오리진은 아무것도 받지 않는다.',
+        'Age 헤더는 사본이 캐시에 들어간 지 몇 초가 됐는지 보여 준다. 많은 CDN이 X-Cache: Hit from cloudfront, cf-cache-status: HIT 같은 자기 헤더도 붙인다.',
+      ],
+      flows: [
+        {from: 'user', to: 'edge', label: 'GET', type: 'request'},
+        {from: 'edge', to: 'cache', label: '있음', type: 'watch'},
+        {from: 'edge', to: 'user', label: '200 · Age: 60', type: 'response'},
+      ],
+      focus: ['edge', 'cache'],
+      status: {cache: 'ok'},
+      values: {cache: {text: 'HIT', tone: 'good'}, age: '60', origin: '새 요청 0건'},
+    },
+    {
+      short: '재검증',
+      kind: '원리',
+      title: '만료된 사본은 다시 받지 않고 ETag로 확인한다',
+      text: [
+        'HTML 페이지 /index.html 은 max-age=60 이다. 60초가 지나면 저장된 사본은 오래된(stale) 상태가 된다. 엣지는 이걸 버리지 않고, 저장해 둔 ETag를 If-None-Match 에 담아 조건부 요청을 보낸다.',
+        '파일이 바뀌지 않았으면 오리진은 본문 없이 304 Not Modified 로 답한다. 엣지는 사본을 다시 신선하다고 표시하고 그대로 내준다. 네트워크로는 헤더만 오갔다.',
+      ],
+      flows: [
+        {from: 'edge', to: 'shield', label: 'If-None-Match', type: 'request'},
+        {from: 'shield', to: 'origin', label: 'If-None-Match', type: 'request'},
+        {from: 'origin', to: 'edge', label: '304', type: 'response'},
+      ],
+      focus: ['edge', 'origin'],
+      status: {cache: 'warn'},
+      badges: {cache: '만료 → 304'},
+      values: {file: '/index.html', cache: 'REVALIDATED', age: '0', origin: '작은 요청 1건'},
+    },
+    {
+      short: '배포 후',
+      kind: '문제',
+      title: '배포했는데 사용자는 여전히 옛 파일을 받는다',
+      text: [
+        '새 app.js 를 같은 이름으로 배포한다. 엣지는 TTL이 끝날 때까지 옛 사본을 계속 내주고, 그 파일을 캐시한 브라우저도 옛것을 쓴다. 어떤 사용자는 새 HTML과 옛 스크립트를 함께 받아 페이지가 깨진다.',
+        '퍼지(무효화)는 CDN에 경로를 지우라고 알린다. 모든 엣지에 퍼지기까지 시간이 걸릴 수 있고, 경로가 많으면 요금을 받는 CDN도 있다. 브라우저 캐시는 지우지 못한다.',
+      ],
+      keyIdea: '정적 파일 이름에 내용 해시를 넣고(app.3f9a.js) 1년 캐시한다. HTML은 TTL을 짧게 준다. 그러면 배포는 새 이름을 가리키기만 하면 되고 퍼지할 것이 없다.',
+      flows: [{from: 'edge', to: 'user', label: '옛 app.js', type: 'response'}],
+      focus: ['edge', 'cache'],
+      status: {cache: 'error'},
+      badges: {cache: '옛 사본'},
+      values: {file: '/app.js', cache: {text: 'HIT (옛 내용)', tone: 'bad'}},
+    },
+    {
+      short: '개인 페이지',
+      kind: '문제',
+      title: '엣지에 캐시된 개인 페이지가 다른 사용자에게 샌다',
+      text: [
+        '/account 페이지는 로그인한 사용자 이름을 보여 준다. 세션 쿠키를 무시하는 키로 캐시되면 다음 사용자가 남의 페이지를 받는다. CDN에서 가장 나쁜 실수 가운데 하나다.',
+        'Cache-Control: private(브라우저만 저장 가능)이나 no-store(아무도 저장 불가)를 보낸다. 많은 CDN이 Set-Cookie 가 있는 응답을 기본으로 저장하지 않지만 업체마다 다르니 거기에 기대지 않는다.',
+      ],
+      keyIdea: '개인화되거나 인증이 필요한 응답은 오리진에서 모두 private 이나 no-store 로 표시하고, CDN의 "모두 캐시" 규칙이 이를 덮어쓰지 않는지 확인한다.',
+      flows: [
+        {from: 'origin', to: 'edge', label: 'Cache-Control: private', type: 'response'},
+        {from: 'edge', to: 'user', label: '저장 안 함', type: 'response'},
+      ],
+      focus: ['edge', 'origin'],
+      status: {cache: null},
+      badges: {cache: null, edge: '그대로 통과'},
+      values: {file: '/account', cache: 'BYPASS', age: '—', origin: '매 요청'},
+    },
+    {
+      short: '실드',
+      kind: '원리',
+      title: '오리진 실드가 미스를 모으고, 오리진은 CDN만 믿는다',
+      text: [
+        '엣지가 수백 곳이면 각자 미스가 날 때마다 오리진은 수백 번 요청을 받는다. 오리진 실드는 엣지와 오리진 사이의 지역 캐시 한 층이다. 엣지 미스가 먼저 거기로 가니 오리진은 객체당 대략 한 번만 요청을 받는다.',
+        '사용자가 CDN을 건너뛰지 못하게 오리진을 잠근다. 버킷은 CDN의 읽기만 허용할 수 있다(예: CloudFront 오리진 액세스 제어). 로드밸런서는 CDN IP 대역이나 비밀 헤더가 있는 요청만 받게 할 수 있다.',
+      ],
+      flows: [
+        {from: 'edge', to: 'shield', label: 'MISS', type: 'request'},
+        {from: 'shield', to: 'origin', label: '한 번만', type: 'request'},
+        {from: 'user', to: 'origin', label: '직접: 거부', type: 'request', bend: -60},
+      ],
+      focus: ['shield', 'origin'],
+      status: {shield: 'ok', origin: 'ok'},
+      badges: {edge: null, shield: '미스 모으기', origin: 'CDN만 허용'},
+      values: {cache: {text: '엣지 MISS, 실드 HIT', tone: 'good'}, origin: '실드가 막아 줌'},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: 'CDN이 하는 일은 헤더가 정한다',
+      text: [
+        'DNS나 애니캐스트가 사용자를 가까운 엣지로 보내고, 엣지가 TLS를 끝낸다. 엣지는 캐시 키를 조회해 히트면 바로 답한다. 미스면 실드를 거쳐 오리진에 가고, Cache-Control이 허락하는 만큼 답을 저장한다.',
+        '만료된 사본은 ETag와 304로 다시 확인한다. 해시가 붙은 파일 이름이면 퍼지 없이 안전하게 배포할 수 있고, private 이나 no-store 가 개인 페이지를 공유 캐시 밖에 둔다.',
+      ],
+      keyIdea: '응답 헤더부터 읽는다. Cache-Control, Age, ETag, CDN의 히트 헤더가 캐시가 무엇을 왜 했는지 알려 준다.',
+      flows: [
+        {from: 'user', to: 'edge', label: 'GET', type: 'request'},
+        {from: 'edge', to: 'user', label: 'HIT', type: 'response'},
+      ],
+      focus: ['edge', 'cache', 'shield'],
+      status: {shield: null, origin: null},
+      badges: {shield: null, origin: null},
+    },
+  ]}
+/>
+
+## 읽어야 할 응답 헤더
+
+| 헤더 | 예 | 알려 주는 것 |
+|---|---|---|
+| Cache-Control | `public, max-age=31536000, immutable` | 누가 얼마나 저장해도 되는지. `s-maxage` 는 공유 캐시에만 적용된다. `private`, `no-store` 는 CDN에 저장되지 않게 한다 |
+| Age | `120` | 응답이 캐시에 있던 초. 없거나 0이면 보통 오리진에서 막 온 것이다 |
+| ETag | `"5d8c72a5"` | 내용의 버전 표시. `If-None-Match` 에 담아 `304 Not Modified` 를 받는다 |
+| Last-Modified | `Tue, 24 Nov 2026 03:10:00 GMT` | `If-Modified-Since` 로 다시 확인하는 예전 방식 |
+| Vary | `Accept-Encoding` | 캐시 키에 들어가는 요청 헤더. `Vary: *` 나 값이 많으면 히트율이 떨어진다 |
+| 히트 헤더(업체마다 다름) | `X-Cache: Hit from cloudfront`, `cf-cache-status: HIT` | CDN 자체 판정: HIT, MISS, EXPIRED, BYPASS 등. 이름과 값은 업체마다 다르다 |
+
+## 직접 확인해 보기
+
+```bash
+dig +short www.example.com                         # CDN 호스트 이름으로 가는 CNAME이면 CDN이 앞에 있다
+curl -sI https://<내-사이트>/<파일> | grep -iE 'cache-control|^age|etag|x-cache|cf-cache-status'   # 첫 번째: 대개 MISS
+curl -sI https://<내-사이트>/<파일> | grep -iE 'cache-control|^age|etag|x-cache|cf-cache-status'   # 두 번째: HIT, Age 가 커진다
+curl -sI -H 'If-None-Match: "<위에서 본 etag>"' https://<내-사이트>/<파일> | head -1     # 안 바뀌었으면 304
+curl -sI https://<내-사이트>/account | grep -i cache-control   # 개인 페이지는 private 이나 no-store 여야 한다
+```
+
+더 읽을거리: [HTTP 캐싱 (MDN)](https://developer.mozilla.org/ko/docs/Web/HTTP/Guides/Caching) · [RFC 9111: HTTP Caching](https://www.rfc-editor.org/rfc/rfc9111) · [Cache-Control (MDN)](https://developer.mozilla.org/ko/docs/Web/HTTP/Reference/Headers/Cache-Control) · [주소창에 주소를 입력하면](../basic/web-request.mdx) · [오브젝트 스토리지는 이렇게 동작한다](../cloud/object-storage.mdx)

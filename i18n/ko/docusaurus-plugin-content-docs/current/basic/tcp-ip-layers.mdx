@@ -1,0 +1,239 @@
+---
+id: tcp-ip-layers
+title: '요청 한 번의 아래층: TCP/IP 계층'
+sidebar_label: 02 · TCP/IP 계층
+description: 웹 요청 한 층 아래로 내려가, 데이터가 TCP 세그먼트·IP 패킷·이더넷 프레임이 되는 과정, ARP와 기본 게이트웨이로 랜을 벗어나는 길, 3방향 핸드셰이크와 재전송, 연결 거부·시간 초과·MTU 문제를 단계별 애니메이션으로 따라간다
+summary: '세그먼트·패킷·프레임, 포트·IP·MAC, 핸드셰이크, 거부와 시간 초과의 차이.'
+icon: layers
+hide_table_of_contents: true
+---
+
+# 요청 한 번의 아래층: TCP/IP 계층
+
+[주소창에 주소를 입력하면](../basic/web-request.mdx)에서는 요청이 브라우저에서 서버로 가는 화살표 하나로 그려졌다. 이 레슨은 그 화살표를 열어 본다. `203.0.113.10:443`으로 가는 연결 하나를 **TCP/IP 계층**으로 따라가며, 계층마다 무엇을 붙이고 어떤 주소를 쓰며 어디서 막히는지 본다.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '약 12분', level: '기초'}}
+  groups={[
+    {label: '내 랜 · 192.168.1.0/24', x: 15, y: 170, w: 465, h: 150, tone: 'plain'},
+    {label: '서버 네트워크', x: 655, y: 170, w: 330, h: 270, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'client', label: '클라이언트', sub: '192.168.1.20', icon: 'browser', tone: 'ext', x: 95, y: 245, show: true},
+    {id: 'sw', label: '스위치', sub: 'MAC으로 전달', icon: 'split', tone: 'node', size: 'sm', x: 245, y: 245},
+    {id: 'gw', label: '라우터', sub: '기본 게이트웨이', icon: 'route', tone: 'cp', x: 395, y: 245},
+    {id: 'net', label: '인터넷', sub: '라우터 여러 개', icon: 'cloud', tone: 'ext', x: 560, y: 245},
+    {id: 'fw', label: '방화벽', sub: '허용 · 버림', icon: 'shield', tone: 'cp', size: 'sm', x: 720, y: 245},
+    {id: 'server', label: '서버', sub: '203.0.113.10', icon: 'server', tone: 'app', x: 885, y: 245},
+    {id: 'proc', label: 'nginx', sub: ':443 대기', icon: 'box', tone: 'app', size: 'sm', x: 885, y: 385},
+  ]}
+  metrics={[
+    {id: 'layer', label: '계층'},
+    {id: 'addr', label: '주소'},
+    {id: 'ttl', label: 'TTL'},
+    {id: 'tcp', label: 'TCP 상태'},
+  ]}
+  learn={[
+    {text: '계층마다 자기 헤더를 붙인다: 세그먼트, 패킷, 프레임', at: 1},
+    {text: '라우팅 테이블과 기본 게이트웨이가 다음 홉을 고른다', at: 2},
+    {text: 'ARP가 다음 홉의 MAC 주소를 찾는다', at: 3},
+    {text: '3방향 핸드셰이크와 잃어버린 데이터를 다시 보내는 법', at: 5},
+    {text: '연결 거부와 시간 초과의 차이, MTU 블랙홀', at: 7},
+  ]}
+  steps={[
+    {
+      short: '시작',
+      kind: '시작',
+      title: '앱은 소켓에 바이트를 넘길 뿐이다',
+      text: [
+        '브라우저는 DNS로 서버 IP 203.0.113.10을 이미 알고 있다. 운영체제에 443번 포트로 TCP 연결을 요청하고 소켓을 하나 받는다.',
+        '앱은 패킷을 직접 만들지 않는다. 소켓에 바이트(HTTP 요청)를 쓸 뿐이다. 그 아래는 커널의 네트워크 스택이 계층별로 처리한다.',
+      ],
+      focus: ['client'],
+      values: {layer: '응용 (OSI 7)', addr: '203.0.113.10:443', ttl: '—', tcp: 'CLOSED'},
+    },
+    {
+      short: '계층',
+      kind: '원리',
+      title: '계층마다 헤더를 붙인다: 세그먼트 → 패킷 → 프레임',
+      text: [
+        '전송 계층: TCP가 포트가 담긴 헤더를 붙인다. 목적지 포트는 443이고, 출발지 포트는 51514 같은 임시 포트를 무작위로 고른다(리눅스는 32768–60999). 데이터에 TCP 헤더가 붙은 것이 세그먼트다.',
+        '인터넷 계층: IP가 출발지·목적지 IP 주소와 TTL(리눅스 기본 64)을 붙여 패킷이 된다. 링크 계층: 이더넷이 출발지·목적지 MAC 주소를 붙여 프레임이 되고, 이것이 선을 타고 나간다.',
+      ],
+      keyIdea: '포트는 프로그램을, IP는 네트워크 너머의 호스트를, MAC은 이 랜 안의 다음 장비를 고른다. 각 계층은 자기 헤더만 읽는다.',
+      focus: ['client'],
+      badges: {client: 'TCP · IP · 이더넷'},
+      values: {layer: 'L4 → L3 → L2', addr: ':51514 → :443', ttl: '64'},
+    },
+    {
+      short: '라우팅',
+      kind: '원리',
+      title: '라우팅 테이블이 말한다: 같은 망이 아니니 게이트웨이로',
+      text: [
+        '커널이 라우팅 테이블에서 203.0.113.10을 찾는다. 192.168.1.0/24 안에 없으니 맞는 것은 기본 경로(default via 192.168.1.1), 즉 라우터뿐이다.',
+        '패킷의 목적지 IP는 그대로 203.0.113.10이다. 게이트웨이는 다음 홉일 뿐이고, 그다음 길은 게이트웨이가 정한다.',
+      ],
+      keyIdea: 'ip route로 이 테이블을 본다. "default via ..." 줄이 내 서브넷 밖으로 가는 모든 것을 라우터로 보낸다.',
+      flows: [{from: 'client', to: 'gw', label: '다음 홉', type: 'watch'}],
+      focus: ['client', 'gw'],
+      badges: {client: null, gw: '192.168.1.1'},
+      values: {addr: '목적지 IP 203.0.113.10'},
+    },
+    {
+      short: 'ARP',
+      kind: '원리',
+      title: 'ARP로 게이트웨이 MAC을 찾고, 스위치가 프레임을 건넨다',
+      text: [
+        '프레임에는 목적지 MAC이 필요한데 클라이언트는 게이트웨이의 IP만 안다. 그래서 ARP 요청을 브로드캐스트한다. "192.168.1.1은 누구인가?" 라우터가 자기 MAC으로 답하고, 클라이언트는 이를 이웃 테이블에 캐시한다.',
+        '프레임은 라우터의 MAC을 목적지로 달고 나간다. 스위치는 그 MAC만 읽고, 그 주소를 배운 포트로 프레임을 내보낸다.',
+      ],
+      flows: [
+        {from: 'client', to: 'sw', label: '프레임', type: 'request'},
+        {from: 'sw', to: 'gw', label: '목적지 MAC=라우터', type: 'request'},
+      ],
+      focus: ['sw', 'gw'],
+      badges: {sw: 'MAC 테이블', gw: null},
+      values: {layer: '링크 (OSI 2)', addr: 'MAC → 라우터'},
+    },
+    {
+      short: '홉',
+      kind: '원리',
+      title: '라우터마다 프레임을 새로 쓰고 TTL을 줄인다',
+      text: [
+        '라우터는 프레임을 벗기고 IP 헤더를 읽어 TTL을 1 줄인 뒤 자기 라우팅 테이블을 찾는다. 그리고 다음 구간에 맞는 새 MAC으로 새 프레임에 싸서 보낸다. MAC 주소는 홉마다 바뀐다.',
+        'IP 주소는 보통 끝까지 그대로다. 흔한 예외가 NAT다. 집이나 사무실 라우터가 사설 출발지 IP 192.168.1.20을 자기 공인 IP로 바꾼다. TTL이 0이 되면 라우터는 패킷을 버리고 ICMP Time Exceeded를 돌려보낸다. traceroute가 바로 이것으로 홉 목록을 만든다.',
+      ],
+      flows: [
+        {from: 'gw', to: 'net', label: '패킷', type: 'request'},
+        {from: 'net', to: 'fw', label: 'TTL 64 → 52', type: 'request'},
+        {from: 'fw', to: 'server', label: ':443 허용', type: 'request'},
+      ],
+      focus: ['gw', 'net', 'fw'],
+      badges: {sw: null},
+      values: {layer: '인터넷 (OSI 3)', ttl: '12홉 뒤 52', addr: 'MAC은 홉마다 바뀜'},
+    },
+    {
+      short: '핸드셰이크',
+      kind: '원리',
+      title: '3방향 핸드셰이크, 그리고 커널이 프로세스에 넘긴다',
+      text: [
+        '사실 첫 패킷은 데이터 없는 TCP SYN이었다. 서버 커널이 프레임과 IP 헤더를 벗기고 TCP 포트를 본다. 443에서 대기 중인 소켓이 있으니 SYN-ACK로 답하고, 클라이언트가 ACK를 보낸다. 연결은 ESTABLISHED가 된다.',
+        'HTTP 바이트가 하나도 가기 전에 왕복 한 번이 지나간다. TLS는 그 위에 자기 핸드셰이크를 더한다. 커널은 새 연결을 큐에 넣고, 대기 소켓을 가진 프로세스인 nginx가 그것을 받는다(accept).',
+      ],
+      flows: [
+        {from: 'client', to: 'server', label: 'SYN', type: 'request'},
+        {from: 'server', to: 'client', label: 'SYN-ACK', type: 'response'},
+        {from: 'server', to: 'proc', label: 'accept()', type: 'request'},
+      ],
+      focus: ['server', 'proc'],
+      status: {proc: 'ok'},
+      badges: {proc: 'LISTEN :443'},
+      values: {layer: '전송 (OSI 4)', tcp: {text: 'ESTABLISHED', tone: 'good'}},
+    },
+    {
+      short: '데이터',
+      kind: '원리',
+      title: '순서 번호와 ACK가 믿을 수 있는 스트림을 만든다',
+      text: [
+        '이제 HTTP 바이트가 흐른다. 세그먼트마다 순서 번호(sequence number)가 붙고, 받는 쪽은 받은 만큼 ACK로 알린다. 세그먼트 하나가 사라지면 보내는 쪽이 알아채고(타이머 안에 ACK가 없거나 중복 ACK가 거듭 오면) 다시 보낸다.',
+        '앱은 순서가 맞는 바이트 스트림 하나만 본다. 손실은 보이지 않고 지연만 보인다. 이더넷 MTU 1500바이트에서 IP 헤더 20바이트, TCP 헤더 20바이트를 빼면 세그먼트 하나에 데이터는 최대 1460바이트다.',
+      ],
+      keyIdea: '패킷 손실은 오류로 잘 드러나지 않는다. TCP가 계속 다시 보내기 때문에 느려짐으로 드러난다.',
+      flows: [
+        {from: 'client', to: 'server', label: '데이터 · seq', type: 'request'},
+        {from: 'server', to: 'client', label: 'ACK', type: 'response'},
+      ],
+      focus: ['client', 'server'],
+      badges: {proc: null},
+      values: {layer: 'L4 위의 L7 데이터'},
+    },
+    {
+      short: '거부 vs 시간 초과',
+      kind: '문제',
+      title: '거부는 바로 돌아오고, 시간 초과는 끝내 돌아오지 않는다',
+      text: [
+        '서버의 8080번 포트에는 아무도 대기하지 않는다. 서버 커널은 SYN에 RST로 답하고, curl -v는 곧바로 "Connection refused"를 보여 준다. 호스트까지는 닿았다. 앱이 꺼져 있거나 다른 포트·주소(예를 들어 127.0.0.1에만)에서 대기하는 것이다.',
+        '22번 포트는 방화벽이 SYN을 조용히 버린다. 답이 없으니 클라이언트는 간격을 늘려 가며 SYN을 다시 보내고, 리눅스 기본값으로 약 2분 뒤 포기하며 "timed out"이 뜬다. 경로 어딘가가 트래픽을 버리는 것이다. 버리지 않고 거절(reject)하는 방화벽도 있는데, 그러면 거부처럼 보인다.',
+      ],
+      keyIdea: '거부: 호스트에는 닿았다. 프로세스와 대기 주소를 본다. 시간 초과: 경로를 본다. 방화벽, 보안 그룹, 라우팅이다.',
+      flows: [
+        {from: 'server', to: 'client', label: ':8080 → RST', type: 'response'},
+        {from: 'client', to: 'fw', label: ':22 SYN', type: 'request'},
+      ],
+      focus: ['fw', 'server'],
+      status: {fw: 'error', proc: null},
+      badges: {fw: ':22 버림', server: ':8080 RST'},
+      values: {tcp: {text: '거부 · 시간 초과', tone: 'bad'}},
+    },
+    {
+      short: 'MTU',
+      kind: '주의',
+      title: '작은 패킷은 가고 큰 패킷은 사라진다: MTU 블랙홀',
+      text: [
+        'VPN, 터널, 오버레이 네트워크는 자기 헤더를 더 붙이므로 경로 MTU가 1500보다 작아진다. "조각내지 말 것(DF)"이 켜진 꽉 찬 패킷은 지나가지 못한다. 원래는 라우터가 ICMP "Fragmentation Needed"를 돌려보내고, 보내는 쪽이 패킷을 줄인다.',
+        '방화벽이 그 ICMP를 막으면 보내는 쪽은 끝내 모른다. 핸드셰이크와 작은 요청은 되는데 큰 응답만 멈춘다. 인터페이스 MTU를 낮추거나 터널에서 TCP MSS를 줄이면(MSS clamping) 풀린다.',
+      ],
+      keyIdea: '연결도 되고 작은 요청도 되는데 큰 다운로드만 멈춘다면 MTU를 의심한다. ping -M do -s 1472(리눅스)로 시험한다.',
+      flows: [{from: 'server', to: 'net', label: '1500B · DF', type: 'response'}],
+      focus: ['net'],
+      status: {fw: null, net: 'warn'},
+      badges: {fw: null, server: null, net: 'MTU 1400'},
+      values: {tcp: {text: 'ESTABLISHED · 멈춤', tone: 'bad'}},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '내려가며 싸고, 올라가며 푼다',
+      text: [
+        '보내는 쪽은 데이터를 TCP(포트), IP(IP 주소, TTL), 이더넷(MAC 주소)으로 차례로 싼다. 라우팅 테이블이 다음 홉을 고르고, ARP가 그 MAC을 찾고, 라우터마다 프레임을 풀었다 다시 싼다. 받는 쪽은 다시 풀어 그 포트에서 대기하는 프로세스에 바이트를 넘긴다.',
+        'TCP는 그 위에 핸드셰이크, 순서 번호, 재전송을 더해 앱에 믿을 수 있는 스트림을 준다. 쿠버네티스 네트워크도 같은 계층 위에 서 있다. 파드 IP, 서비스, 네트워크 정책은 모두 패킷에 대한 규칙이다.',
+      ],
+      keyIdea: '아래에서 위로 확인한다. 경로(ip route), 이웃(ip neigh), 길(traceroute), 대기 소켓(ss -tlnp), 응답(curl -v)이 있는가?',
+      flows: [
+        {from: 'client', to: 'sw', type: 'request'},
+        {from: 'sw', to: 'gw', type: 'request'},
+        {from: 'gw', to: 'net', type: 'request'},
+        {from: 'net', to: 'fw', type: 'request'},
+        {from: 'fw', to: 'server', type: 'request'},
+        {from: 'server', to: 'proc', type: 'request'},
+      ],
+      focus: ['client', 'server', 'proc'],
+      status: {net: null},
+      badges: {net: null},
+      values: {layer: 'L7 ↔ L2', tcp: 'ESTABLISHED'},
+    },
+  ]}
+/>
+
+## 계층, 단위, 주소
+
+| TCP/IP 계층 | OSI 계층 | 단위 | 주소 | 예시 도구 |
+|---|---|---|---|---|
+| 응용 | 7 (5–7) | 메시지 (HTTP 요청) | URL, 호스트 이름 | `curl -v` |
+| 전송 | 4 | 세그먼트 (TCP) | 포트 | `ss -tlnp` |
+| 인터넷 | 3 | 패킷 | IP 주소 | `ip route`, `traceroute` |
+| 링크 | 2 (와 1) | 프레임 | MAC 주소 | `ip neigh`, `tcpdump -e` |
+
+## 거부인가, 시간 초과인가
+
+| 증상 | 일어난 일 | 확인할 것 |
+|---|---|---|
+| `Connection refused`, 즉시 | 호스트가 RST로 답했다. 그 포트·주소에서 대기하는 것이 없다 | 서버에서 `ss -tlnp`. 앱이 떠 있는지, 포트가 맞는지, `127.0.0.1`이 아니라 `0.0.0.0`에 묶였는지 |
+| `Connection timed out`, 한참 뒤 | SYN에 답이 없다. 경로에서 버려졌다 | 방화벽 규칙, 보안 그룹, 라우팅(`traceroute`) |
+| `No route to host` | 라우터나 방화벽이 ICMP 오류를 돌려보냈거나, 다음 홉의 ARP에 답이 없다 | `ip route`, `ip neigh`, 호스트가 켜져 있는지 |
+| 연결은 되는데 큰 응답만 멈춤 | 경로 MTU가 패킷보다 작은데, 그걸 알려 줄 ICMP가 막혔다 | `ping -M do -s 1472 <호스트>`, 터널 MTU, MSS clamping |
+
+## 직접 확인해 보기
+
+```bash
+ip route                                   # default via <게이트웨이> — 서브넷 밖으로 가는 길
+ip neigh                                   # ARP·이웃 캐시: 이 랜의 IP → MAC
+traceroute -n <호스트>                     # 라우터 홉 하나하나 (TTL 만료를 이용)
+ss -tlnp                                   # 대기 중인 TCP 소켓과 그것을 가진 프로세스 (서버에서 실행)
+curl -v http://<호스트>:8080/              # "Connected to" / "Connection refused" / 시간 초과
+sudo tcpdump -ni any 'tcp port 443 and tcp[tcpflags] & (tcp-syn|tcp-rst) != 0'   # SYN, SYN-ACK, RST 보기
+```
+
+더 읽을거리: [RFC 9293: TCP](https://www.rfc-editor.org/rfc/rfc9293) · [RFC 791: IP](https://www.rfc-editor.org/rfc/rfc791) · [RFC 826: ARP](https://www.rfc-editor.org/rfc/rfc826) · [RFC 1191: 경로 MTU 탐색](https://www.rfc-editor.org/rfc/rfc1191) · [ip-route(8)](https://man7.org/linux/man-pages/man8/ip-route.8.html) · [ss(8)](https://man7.org/linux/man-pages/man8/ss.8.html) · [주소창에 주소를 입력하면](../basic/web-request.mdx) · [파드에서 파드로 가는 패킷](../advanced/packet-path.mdx)

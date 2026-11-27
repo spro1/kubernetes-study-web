@@ -1,0 +1,239 @@
+---
+id: database-basics
+title: What Happens When an App Saves to a Database
+sidebar_label: 03 · Saving to a Database
+description: Animated walkthrough of one order saved to a relational database such as PostgreSQL, from the connection pool and the query planner to indexes, transactions and ACID, the write-ahead log, locks and deadlocks, replication to a read replica and replication lag, with a short comparison to NoSQL
+summary: 'Connection pools, query plans and indexes, transactions and the WAL, locks, read replicas and replication lag.'
+icon: db
+hide_table_of_contents: true
+---
+
+# What Happens When an App Saves to a Database
+
+An order app saves one order to a relational database. PostgreSQL is the example here, but MySQL and other relational databases work in a similar way. Follow the order from the app's **connection pool** to the **query planner**, through a **transaction** and the **write-ahead log (WAL)**, and out to a **read replica**.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~12 min', level: 'Beginner'}}
+  groups={[
+    {label: 'Primary DB server', x: 400, y: 25, w: 330, h: 410, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'app', label: 'Order app', sub: 'INSERT an order', icon: 'server', tone: 'app', x: 100, y: 225, show: true},
+    {id: 'pool', label: 'Connection pool', sub: 'Reused connections', icon: 'layers', tone: 'cp', x: 290, y: 225, w: 160},
+    {id: 'planner', label: 'Query planner', sub: 'Picks a plan', icon: 'gear', tone: 'cp', x: 565, y: 95},
+    {id: 'table', label: 'orders table', sub: 'Rows · indexes', icon: 'db', tone: 'store', x: 565, y: 230},
+    {id: 'wal', label: 'WAL', sub: 'Write-ahead log', icon: 'archive', tone: 'store', x: 565, y: 365},
+    {id: 'replica', label: 'Read replica', sub: 'Read-only copy', icon: 'db', tone: 'store', x: 870, y: 160},
+    {id: 'report', label: 'Report app', sub: 'Reads the replica', icon: 'chart', tone: 'app', x: 870, y: 330},
+  ]}
+  metrics={[
+    {id: 'conns', label: 'Connections'},
+    {id: 'plan', label: 'Plan'},
+    {id: 'txn', label: 'Transaction'},
+    {id: 'lag', label: 'Replica lag'},
+  ]}
+  learn={[
+    {text: 'Why apps use a connection pool and what happens when connections run out', at: 1},
+    {text: 'How the planner picks an index scan or a full table scan', at: 2},
+    {text: 'Transactions, COMMIT and the four ACID properties', at: 4},
+    {text: 'Why the WAL is written before COMMIT returns', at: 5},
+    {text: 'Replication to a read replica and stale reads from replication lag', at: 7},
+  ]}
+  steps={[
+    {
+      short: 'Start',
+      kind: '시작',
+      title: 'One order, one database',
+      text: [
+        'A customer places an order. The order app must save a row in the orders table and lower the item\'s stock, and both changes must survive a crash.',
+        'The app does not write files itself. It sends SQL over a network connection to the database server, and the database decides how to find, change and store the rows.',
+      ],
+      flows: [{from: 'app', to: 'pool', label: 'Save order', type: 'request'}],
+      focus: ['app'],
+    },
+    {
+      short: 'Pool',
+      kind: '원리',
+      title: 'A connection pool reuses a few connections',
+      text: [
+        'Opening a connection costs a TCP handshake, often TLS, and authentication. In PostgreSQL each connection also gets its own server process. So apps keep a small pool of open connections and lend one to each request.',
+        'The server caps the total with max_connections (100 by default in PostgreSQL). If every app replica opens 30 connections and you run 5 replicas, new connections are refused with "sorry, too many clients already".',
+      ],
+      keyIdea: 'Size the pool per replica and multiply by the replica count. When HPA adds Pods, the number of DB connections grows too.',
+      flows: [{from: 'pool', to: 'planner', label: 'SQL', type: 'request'}],
+      focus: ['pool'],
+      values: {conns: '12 / 100'},
+    },
+    {
+      short: 'Plan',
+      kind: '원리',
+      title: 'The planner decides how to run the query',
+      text: [
+        'SQL says what you want, not how to get it. The database parses the query, and the planner compares possible plans using table statistics, such as how many rows a filter will match.',
+        'To find one customer\'s recent orders, an index on customer_id lets it jump to a few rows (Index Scan). Without one, it reads every row in the table (Seq Scan).',
+      ],
+      flows: [{from: 'planner', to: 'table', label: 'Index Scan', type: 'request'}],
+      focus: ['planner', 'table'],
+      values: {plan: {text: 'Index Scan · 0.2 ms', tone: 'good'}},
+    },
+    {
+      short: 'No index',
+      kind: '문제',
+      title: 'A missing index turns a fast query into a full scan',
+      text: [
+        'A new screen filters orders by status. No index covers status, so the planner reads all 10 million rows. The query takes seconds, holds a connection the whole time, and the pool empties under load.',
+        'EXPLAIN ANALYZE shows the plan and the real time. Seq Scan with "Rows Removed by Filter" in the millions is the sign. An index fixes reads but makes every write a little slower, so add the ones your queries need.',
+      ],
+      keyIdea: 'Slow app, pool exhausted, DB CPU high: look for the slowest queries first (pg_stat_statements), then EXPLAIN ANALYZE them.',
+      flows: [{from: 'planner', to: 'table', label: 'Seq Scan', type: 'request'}],
+      focus: ['planner', 'table'],
+      status: {table: 'warn', pool: 'warn'},
+      values: {plan: {text: 'Seq Scan · 4.1 s', tone: 'bad'}, conns: {text: '100 / 100', tone: 'bad'}},
+    },
+    {
+      short: 'Transaction',
+      kind: '원리',
+      title: 'A transaction makes two changes one unit',
+      text: [
+        'The app runs BEGIN, INSERT INTO orders, UPDATE stock, then COMMIT. Until COMMIT, other sessions do not see these changes. If anything fails, ROLLBACK undoes both.',
+        'This is ACID. Atomicity: all or nothing. Consistency: constraints such as NOT NULL or foreign keys still hold. Isolation: concurrent transactions do not see each other\'s half-done work. Durability: once committed, it survives a crash.',
+      ],
+      flows: [{from: 'planner', to: 'table', label: 'INSERT · UPDATE', type: 'request'}],
+      focus: ['table'],
+      status: {table: 'ok', pool: null},
+      values: {plan: 'Index Scan', conns: '12 / 100', txn: 'BEGIN … 2 changes'},
+    },
+    {
+      short: 'WAL',
+      kind: '원리',
+      title: 'COMMIT returns after the WAL is on disk',
+      text: [
+        'Writing changed data pages to their place in the table files is slow and random. Instead, the database first appends a record of the change to the write-ahead log (WAL), a sequential file. COMMIT returns only after that record is flushed to disk.',
+        'The table pages are written later by checkpoints. If the server crashes, it replays the WAL from the last checkpoint on restart and rebuilds every committed change. That is how durability works.',
+      ],
+      keyIdea: 'Fast, reliable disk for the WAL matters more than almost anything else for write speed. Slow fsync means slow COMMIT.',
+      flows: [
+        {from: 'table', to: 'wal', label: 'Append + flush', type: 'request'},
+        {from: 'wal', to: 'app', label: 'COMMIT OK', type: 'response', bend: 60},
+      ],
+      focus: ['wal'],
+      status: {wal: 'ok'},
+      values: {txn: {text: 'COMMIT · durable', tone: 'good'}},
+    },
+    {
+      short: 'Locks',
+      kind: '주의',
+      title: 'Two writers on one row wait, and a deadlock aborts one',
+      text: [
+        'Two orders for the last item both run UPDATE stock on the same row. The first takes a row lock. The second waits until the first commits or rolls back. Readers are not blocked, because PostgreSQL shows them the last committed version.',
+        'If transaction A holds row 1 and waits for row 2 while B holds row 2 and waits for row 1, neither can finish. After deadlock_timeout (1 s by default) the database detects it and aborts one with "deadlock detected". The app must retry.',
+      ],
+      keyIdea: 'Keep transactions short, touch rows in the same order everywhere, and retry on deadlock or serialization errors.',
+      flows: [{from: 'pool', to: 'table', label: 'Wait for lock', type: 'request'}],
+      focus: ['table'],
+      status: {table: 'warn'},
+      badges: {table: 'Row lock'},
+      values: {txn: {text: 'Waiting on a lock', tone: 'bad'}},
+    },
+    {
+      short: 'Replication',
+      kind: '원리',
+      title: 'The WAL streams to a read replica',
+      text: [
+        'The same WAL is sent to a replica server (streaming replication). The replica replays it and keeps a read-only copy of the data. Read-heavy work, such as reports, can go there and leave the primary free for writes.',
+        'By default this replication is asynchronous. The primary confirms COMMIT without waiting for the replica, so writes stay fast, but the replica is always slightly behind.',
+      ],
+      flows: [
+        {from: 'wal', to: 'replica', label: 'Stream WAL', type: 'request'},
+        {from: 'report', to: 'replica', label: 'SELECT', type: 'request'},
+      ],
+      focus: ['wal', 'replica'],
+      status: {table: 'ok', replica: 'ok'},
+      badges: {table: null},
+      values: {txn: 'COMMIT · durable', lag: {text: '40 ms', tone: 'good'}},
+    },
+    {
+      short: 'Lag',
+      kind: '문제',
+      title: 'Replication lag makes a new order invisible',
+      text: [
+        'During a large batch update the replica falls 30 seconds behind. A customer saves an order, then the order history page reads from the replica and the new order is not there. The data is not lost. It has not arrived yet.',
+        'pg_stat_replication on the primary shows write_lag, flush_lag and replay_lag per replica. Reads that must see the user\'s own write should go to the primary, or wait for the replica to catch up.',
+      ],
+      keyIdea: 'A read replica is for reads that can be a little old. "Save, then show" right after a write belongs on the primary.',
+      flows: [
+        {from: 'wal', to: 'replica', label: 'Behind', type: 'request'},
+        {from: 'report', to: 'replica', label: 'Order missing', type: 'request'},
+      ],
+      focus: ['replica', 'report'],
+      status: {replica: 'warn', report: 'error'},
+      values: {lag: {text: '30 s', tone: 'bad'}},
+    },
+    {
+      short: 'NoSQL',
+      kind: '원리',
+      title: 'Relational or NoSQL: a trade-off, not an upgrade',
+      text: [
+        'Relational databases store rows in tables with a fixed schema, join tables in queries and give strong transactions. They usually grow by a bigger primary plus replicas.',
+        'NoSQL stores such as key-value, document or wide-column databases spread data across many nodes by key and scale out more easily. In return, queries across keys, joins or multi-item transactions are limited or cost more, depending on the product.',
+      ],
+      keyIdea: 'Start from how the data is read and how consistent it must be. Orders and payments usually fit a relational database. Sessions and caches often fit a key-value store.',
+      focus: ['table', 'replica'],
+      status: {replica: 'ok', report: null},
+      values: {lag: '40 ms'},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Pool, plan, commit, replicate',
+      text: [
+        'The app borrows a connection from a pool. The planner chooses a plan, and indexes decide whether it is fast. A transaction groups changes, and COMMIT returns once the WAL is on disk.',
+        'The WAL also feeds read replicas, which lag a little behind. Locks keep concurrent writers correct, and deadlocks end with one transaction aborted and retried.',
+      ],
+      keyIdea: 'Slow DB? Check connections first, then the slowest queries and their plans, then locks, then replication lag.',
+      flows: [
+        {from: 'app', to: 'pool', label: 'Save order', type: 'request'},
+        {from: 'pool', to: 'planner', label: 'SQL', type: 'request'},
+        {from: 'table', to: 'wal', label: 'WAL', type: 'request'},
+        {from: 'wal', to: 'replica', label: 'Stream', type: 'request'},
+      ],
+      focus: ['pool', 'planner', 'wal', 'replica'],
+      status: {replica: null, wal: null, table: null},
+    },
+  ]}
+/>
+
+## Common database problems
+
+| Symptom | Likely cause | What to check |
+|---|---|---|
+| `sorry, too many clients already` | Total connections from all app replicas exceed `max_connections` | `SELECT count(*) FROM pg_stat_activity;`, pool size × replica count, or put a pooler such as PgBouncer in front |
+| One screen is slow, DB CPU is high | Seq Scan on a large table, a missing index | `EXPLAIN ANALYZE <query>`, `pg_stat_statements` for the slowest queries |
+| Requests hang, then time out | A long transaction holds a row lock | `pg_stat_activity` where `wait_event_type = 'Lock'`, and `pg_blocking_pids(pid)` |
+| `deadlock detected` | Two transactions lock the same rows in a different order | Server log for the two statements; lock rows in one order and retry in the app |
+| Data saved but not shown | Reading from a lagging replica | `replay_lag` in `pg_stat_replication`; read your own writes from the primary |
+| COMMIT is slow for every write | Slow disk flush for the WAL | Disk latency on the WAL volume, WAL write and fsync time in `pg_stat_io` (PostgreSQL 18+) or `pg_stat_wal` (17 and older) |
+
+## Try it yourself
+
+```bash
+docker run -d --name pg -e POSTGRES_PASSWORD=pw -p 5432:5432 postgres:17   # a local PostgreSQL
+docker exec -it pg psql -U postgres                                          # open psql
+```
+
+```sql
+CREATE TABLE orders (id bigserial PRIMARY KEY, customer_id int, status text, created_at timestamptz DEFAULT now());
+INSERT INTO orders (customer_id, status)
+  SELECT (random()*10000)::int, 'paid' FROM generate_series(1, 1000000);
+ANALYZE orders;
+EXPLAIN ANALYZE SELECT * FROM orders WHERE customer_id = 42;   -- Seq Scan
+CREATE INDEX ON orders (customer_id);
+EXPLAIN ANALYZE SELECT * FROM orders WHERE customer_id = 42;   -- Index or Bitmap scan, much faster
+SHOW max_connections;
+SELECT pid, state, wait_event_type, query FROM pg_stat_activity;          -- who is connected, who waits
+SELECT client_addr, state, replay_lag FROM pg_stat_replication;           -- on a primary with replicas
+```
+
+Further reading: [PostgreSQL: Using EXPLAIN](https://www.postgresql.org/docs/current/using-explain.html) · [Indexes](https://www.postgresql.org/docs/current/indexes.html) · [Transactions](https://www.postgresql.org/docs/current/tutorial-transactions.html) · [Write-Ahead Logging](https://www.postgresql.org/docs/current/wal-intro.html) · [Explicit locking and deadlocks](https://www.postgresql.org/docs/current/explicit-locking.html) · [Streaming replication](https://www.postgresql.org/docs/current/warm-standby.html#STREAMING-REPLICATION) · [When One Availability Zone Goes Down](../cloud/az-failover.mdx) · [StatefulSets and databases](../intermediate/statefulset.mdx)

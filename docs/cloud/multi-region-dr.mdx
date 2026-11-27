@@ -1,0 +1,249 @@
+---
+id: multi-region-dr
+title: When a Whole Region Goes Down
+sidebar_label: 10 · When a Whole Region Goes Down
+description: Animated walkthrough of disaster recovery across regions, why replication is not a backup, the 3-2-1 rule and immutable backups, the four strategies from backup and restore to active-active with their RPO, RTO and cost, DNS failover, and failover drills
+summary: 'Backups versus replication, the four DR strategies and their RPO/RTO/cost, DNS failover and drills.'
+icon: shield
+hide_table_of_contents: true
+---
+
+# When a Whole Region Goes Down
+
+Spreading across availability zones protects you from one data center failing. It does not help when the whole region has an outage, or when someone deletes a table by mistake. Follow a store as it prepares a second region and then has to use it.
+
+<StepDiagram
+  width={1000}
+  height={460}
+  meta={{duration: '~12 min', level: 'Intermediate'}}
+  groups={[
+    {label: 'Region A · primary', x: 225, y: 25, w: 330, h: 290, tone: 'biz'},
+    {label: 'Region B · recovery', x: 610, y: 25, w: 375, h: 290, tone: 'biz'},
+    {label: 'Backup account · separate credentials', x: 225, y: 340, w: 760, h: 110, tone: 'plain'},
+  ]}
+  nodes={[
+    {id: 'user', label: 'User', sub: 'shop.example.com', icon: 'browser', tone: 'ext', x: 100, y: 110, show: true},
+    {id: 'dns', label: 'DNS failover', sub: 'Health check · TTL', icon: 'route', tone: 'cp', x: 100, y: 270},
+    {id: 'appA', label: 'App', sub: 'Region A · active', icon: 'server', tone: 'app', x: 390, y: 110, show: true},
+    {id: 'dbA', label: 'DB primary', sub: 'Region A', icon: 'db', tone: 'store', x: 390, y: 245, show: true},
+    {id: 'appB', label: 'App', sub: 'Region B', icon: 'server', tone: 'app', x: 720, y: 110},
+    {id: 'dbB', label: 'DB in region B', sub: 'Replica or restore', icon: 'db', tone: 'store', x: 720, y: 245},
+    {id: 'iac', label: 'IaC templates', sub: 'Rebuild infra', icon: 'layers', tone: 'cp', x: 895, y: 175, w: 140},
+    {id: 'backup', label: 'Backup copies', sub: 'Immutable · lock', icon: 'archive', tone: 'store', x: 600, y: 395, w: 170},
+  ]}
+  metrics={[
+    {id: 'strategy', label: 'Strategy'},
+    {id: 'rpo', label: 'Data lost (RPO)'},
+    {id: 'rto', label: 'Downtime (RTO)'},
+    {id: 'cost', label: 'Standing cost'},
+  ]}
+  learn={[
+    {text: 'Why replication alone is not a backup', at: 1},
+    {text: 'The 3-2-1 rule, separate accounts and immutable backups', at: 2},
+    {text: 'Backup and restore, pilot light, warm standby and active-active', at: 3},
+    {text: 'How DNS failover and replication lag set real RTO and RPO', at: 6},
+    {text: 'Hidden dependencies, split brain, and why drills matter', at: 7},
+  ]}
+  steps={[
+    {
+      short: 'One region',
+      kind: '시작',
+      title: 'Everything lives in one region',
+      text: [
+        'The store runs its app and its primary DB in region A, spread over several availability zones. A zone failure is handled inside the region.',
+        'Two kinds of disaster are not: a region-wide outage (a bad network change or a failed shared service that hits every zone at once), and damage to the data itself, such as a dropped table, a buggy migration or ransomware.',
+      ],
+      keyIdea: 'Disaster recovery (DR) starts with two numbers the business agrees to: RPO, how much recent data you may lose, and RTO, how long the service may be down.',
+      flows: [
+        {from: 'user', to: 'appA', label: 'Orders', type: 'request'},
+        {from: 'appA', to: 'dbA', label: 'Writes', type: 'request'},
+      ],
+      focus: ['appA', 'dbA'],
+      status: {appA: 'ok', dbA: 'ok'},
+      values: {strategy: 'None yet', rpo: '?', rto: '?', cost: '1 region'},
+    },
+    {
+      short: 'Replication',
+      kind: '주의',
+      title: 'A replica copies your mistakes too',
+      text: [
+        'The team adds a cross-region read replica in region B. The primary streams changes to it asynchronously, so the replica is usually a few seconds behind. That gap is the replication lag.',
+        'Replication protects against losing region A. It does not protect against bad data. A DROP TABLE or ransomware encrypting rows reaches the replica within seconds, just like a good write.',
+      ],
+      keyIdea: 'Replication is for availability, backups are for going back in time. You need both.',
+      flows: [{from: 'dbA', to: 'dbB', label: 'Async replication', type: 'request'}],
+      focus: ['dbA', 'dbB'],
+      status: {dbB: 'ok'},
+      badges: {dbB: 'Lag ~2 s'},
+    },
+    {
+      short: 'Backups',
+      kind: '원리',
+      title: 'Backups: 3-2-1, another account, and locked',
+      text: [
+        'Regular snapshots and continuous log backups let you restore to a point in time before the mistake. The 3-2-1 rule says keep at least 3 copies of the data, on 2 different kinds of storage, with 1 copy off site.',
+        'In the cloud, "off site" means another region and ideally another account with separate credentials, so one stolen admin key cannot delete both the data and its backups. An immutable lock (for example S3 Object Lock or a locked backup vault) stops anyone from deleting copies before they expire.',
+      ],
+      keyIdea: 'A backup you have never restored is a hope, not a backup. Schedule restore tests and time them.',
+      flows: [{from: 'dbA', to: 'backup', label: 'Snapshot copy', type: 'request'}],
+      focus: ['backup'],
+      status: {backup: 'ok'},
+      badges: {dbB: null, backup: 'Locked 30 days'},
+    },
+    {
+      short: 'Backup & restore',
+      kind: '원리',
+      title: 'Strategy 1: backup and restore',
+      text: [
+        'The cheapest strategy keeps nothing running in region B. Only backups are copied there. In a disaster you create the infrastructure from IaC templates, restore the DB from the latest backup, deploy the app and point DNS at it.',
+        'RPO is the time since the last usable backup, and RTO is the time all those steps take, often hours. It suits internal tools or systems that can be down for a while.',
+      ],
+      flows: [
+        {from: 'iac', to: 'appB', label: 'Create', type: 'request'},
+        {from: 'backup', to: 'dbB', label: 'Restore', type: 'request'},
+      ],
+      focus: ['iac', 'backup', 'dbB'],
+      status: {appB: 'off', dbB: 'off'},
+      badges: {dbB: 'Restore', backup: null},
+      values: {strategy: 'Backup & restore', rpo: 'Hours', rto: 'Hours', cost: '$'},
+    },
+    {
+      short: 'Pilot light',
+      kind: '원리',
+      title: 'Strategy 2: pilot light',
+      text: [
+        'The data is kept live in region B with a replica, but the app servers are off or scaled to zero. Like a gas pilot light, the core is lit and the rest can be turned up quickly.',
+        'In a disaster you promote the replica and start or scale out the app. RPO drops to the replication lag (seconds to minutes) and RTO to tens of minutes, while the standing cost is mostly the replica.',
+      ],
+      flows: [{from: 'dbA', to: 'dbB', label: 'Replication', type: 'request'}],
+      focus: ['dbB', 'appB'],
+      status: {dbB: 'ok', appB: 'off'},
+      badges: {dbB: 'Replica', appB: 'Scaled to 0'},
+      values: {strategy: 'Pilot light', rpo: 'Seconds–minutes', rto: 'Tens of minutes', cost: '$$'},
+    },
+    {
+      short: 'Warm / active',
+      kind: '원리',
+      title: 'Strategies 3 and 4: warm standby and active-active',
+      text: [
+        'Warm standby runs a full but smaller copy of the stack in region B. It can take traffic right away and is scaled up during the failover, so RTO is minutes.',
+        'Multi-site active-active serves users from both regions all the time, so losing one costs almost no downtime. The hard part is the data: two regions accepting writes need a database built for it, or a design where each record has one home region. It is also the most expensive.',
+      ],
+      keyIdea: 'Every step up the ladder buys a smaller RPO and RTO with more standing cost and more complexity. Pick per system, not one strategy for the whole company.',
+      flows: [
+        {from: 'user', to: 'appA', label: 'Traffic', type: 'request'},
+        {from: 'user', to: 'appB', label: 'Traffic', type: 'request', bend: -40},
+        {from: 'dbA', to: 'dbB', label: 'Replication', type: 'request'},
+      ],
+      focus: ['appB'],
+      status: {appB: 'ok'},
+      badges: {appB: 'Running'},
+      values: {strategy: 'Warm standby → active-active', rpo: 'Seconds → near 0', rto: 'Minutes → near 0', cost: '$$$ → $$$$'},
+    },
+    {
+      short: 'Region down',
+      kind: '장애',
+      title: 'Region A goes down: DNS fails over, the replica is promoted',
+      text: [
+        'The store runs warm standby. Region A stops answering. A DNS health check (for example every 30 seconds, failing after 3 misses) marks region A unhealthy, and DNS starts answering with region B\'s address.',
+        'Clients and resolvers keep the old answer until its TTL runs out, so a short TTL like 60 seconds matters. The replica in region B is promoted to primary. Whatever had not replicated yet at that moment is lost, so the real RPO equals the lag at failure.',
+      ],
+      keyIdea: 'Watch the replication lag metric every day. It is your actual RPO, not the number written in the plan.',
+      flows: [
+        {from: 'dns', to: 'appA', label: 'Check fails', type: 'watch'},
+        {from: 'user', to: 'dns', label: 'Lookup', type: 'request'},
+        {from: 'user', to: 'appB', label: 'Orders', type: 'request', bend: -40},
+        {from: 'appB', to: 'dbB', label: 'Writes', type: 'request'},
+      ],
+      focus: ['dns', 'appB', 'dbB'],
+      status: {appA: 'error', dbA: 'error'},
+      badges: {dns: '→ region B', dbB: 'Promoted', appB: 'Scaling up'},
+      values: {rpo: {text: '~2 s of orders', tone: 'bad'}, rto: {text: '~5 min', tone: 'good'}},
+    },
+    {
+      short: 'Pitfalls',
+      kind: '주의',
+      title: 'Hidden dependencies, split brain and where data may live',
+      text: [
+        'Failovers often fail on something nobody listed: the container registry, secrets, encryption keys or the CI system were only in region A. Recovery should rely on things already present in region B, not on control planes in the region that is down.',
+        'When region A comes back, its old primary must not take writes again, or two primaries diverge (split brain). Failing back means re-syncing A from B first. Also check data residency: privacy laws may limit which region may hold personal data.',
+      ],
+      flows: [{from: 'dbA', to: 'dbB', label: 'No writes!', type: 'watch'}],
+      focus: ['dbA', 'dbB'],
+      status: {appA: 'warn', dbA: 'warn'},
+      badges: {dbA: 'Fenced', appB: null},
+    },
+    {
+      short: 'Drill',
+      kind: '원리',
+      title: 'Practise it: failover drills and restore tests',
+      text: [
+        'A DR plan is only real after it has run. Teams hold regular drills (game days): fail over to region B on purpose, measure the actual RTO and RPO, and write down every manual step that surprised them.',
+        'Restore tests do the same for backups: pick a backup, restore it into an empty environment, and check that the app can read it. Then fix the runbook and automate the slow steps.',
+      ],
+      keyIdea: 'Measured numbers from the last drill beat any number on a slide. If it has not been tested, assume it will not work.',
+      flows: [
+        {from: 'backup', to: 'dbB', label: 'Test restore', type: 'request'},
+        {from: 'dns', to: 'appB', label: 'Health check', type: 'watch'},
+      ],
+      focus: ['backup', 'dbB', 'dns'],
+      status: {appA: 'ok', dbA: 'ok'},
+      badges: {dbA: null, dns: null, dbB: null},
+      values: {rpo: 'Measured', rto: 'Measured'},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Agree on RPO and RTO, then pay only for what you need',
+      text: [
+        'Zones handle data-center failures. A second region handles region-wide outages. Backups, kept in another account and locked, handle mistakes and attacks that replication would copy.',
+        'Backup and restore, pilot light, warm standby and active-active trade cost for recovery time. DNS failover, the replication lag at the moment of failure and the hidden dependencies decide the numbers you really get.',
+      ],
+      keyIdea: 'Write RPO and RTO per system, pick the cheapest strategy that meets them, and prove it with drills and restore tests.',
+      flows: [
+        {from: 'user', to: 'appA', label: 'Orders', type: 'request'},
+        {from: 'dbA', to: 'dbB', label: 'Replication', type: 'request'},
+        {from: 'dbA', to: 'backup', label: 'Backups', type: 'request'},
+      ],
+      focus: ['dbB', 'backup'],
+      status: {appB: 'ok', dbB: 'ok'},
+      badges: {appB: null},
+      values: {strategy: 'Per system', rpo: 'Agreed', rto: 'Agreed', cost: 'Matched'},
+    },
+  ]}
+/>
+
+## The four DR strategies
+
+These ranges follow the AWS disaster recovery whitepaper. Your real numbers come from drills.
+
+| Strategy | What runs in region B | RPO | RTO | Standing cost |
+|---|---|---|---|---|
+| Backup and restore | Only backup copies; infrastructure is created from IaC on the day | Hours (since the last backup) | Hours | $ |
+| Pilot light | Live data (replica); app off or scaled to zero | Seconds to minutes (replication lag) | Tens of minutes | $$ |
+| Warm standby | A smaller full copy that can serve traffic right away | Seconds to minutes | Minutes | $$$ |
+| Multi-site active-active | Full capacity, serving users all the time | Near zero | Near zero | $$$$ |
+
+Whatever the strategy, keep backups as well: only a point-in-time copy undoes a deleted table or encrypted data.
+
+## Try it yourself
+
+These are AWS examples. Other clouds have the same building blocks under different names.
+
+```bash
+# Copy a DB snapshot to the recovery region (run against the destination region; encrypted snapshots also need --kms-key-id)
+aws rds copy-db-snapshot --region ap-northeast-1 \
+  --source-db-snapshot-identifier arn:aws:rds:ap-northeast-2:<account>:snapshot:<snapshot> \
+  --target-db-snapshot-identifier <snapshot>-dr
+
+aws ec2 copy-snapshot --region ap-northeast-1 --source-region ap-northeast-2 --source-snapshot-id <snap-id>   # Disk snapshot copy
+
+aws backup describe-backup-vault --backup-vault-name <vault>          # Locked: is the vault lock on?
+aws route53 list-health-checks                                         # Health checks behind DNS failover
+aws route53 get-health-check-status --health-check-id <id>             # What each checker sees right now
+dig +noall +answer shop.example.com                                    # The TTL clients will cache
+```
+
+Restore drill checklist: pick a backup at random → restore into an empty environment → start the app against it → check the newest record's time (your RPO) → write down the total time (your RTO) and every manual step.
+
+Further reading: [Disaster recovery options in the cloud (AWS whitepaper)](https://docs.aws.amazon.com/whitepapers/latest/disaster-recovery-workloads-on-aws/disaster-recovery-options-in-the-cloud.html) · [Reliability pillar (AWS Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/reliability-pillar/welcome.html) · [DNS failover (Route 53)](https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/dns-failover.html) · [Disaster recovery planning guide (Google Cloud)](https://cloud.google.com/architecture/dr-scenarios-planning-guide) · [When One Availability Zone Goes Down](../cloud/az-failover.mdx) · [How DNS Finds an Address](../basic/dns-resolution.mdx)

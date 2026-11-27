@@ -1,0 +1,258 @@
+---
+id: serverless
+title: 서버리스 함수는 이렇게 실행된다
+sidebar_label: 08 · 서버리스 함수 실행
+description: AWS Lambda를 예로 서버리스 함수가 이벤트에서 실행 환경까지 가는 과정, 콜드 스타트와 웜 재사용, 환경 하나에 요청 하나, 동시성 한도와 429 스로틀링, 타임아웃과 무상태, 멱등성이 필요한 재시도, 함수를 쓰지 말아야 할 때를 애니메이션으로 따라간다
+summary: '이벤트, 콜드·웜 스타트, 동시성 한도와 스로틀링, 재시도와 멱등성, 무엇에 돈을 내는지.'
+icon: spark
+hide_table_of_contents: true
+---
+
+# 서버리스 함수는 이렇게 실행된다
+
+코드만 올리고 어떤 이벤트가 그 코드를 실행할지만 정한다. 실행할 자리는 플랫폼이 찾고, 이벤트가 몰리면 복사본을 늘리고, 아무 일도 없으면 치운다. AWS Lambda를 예로 함수 하나가 **이벤트 → 실행 환경 → 결과**로 가는 길을 따라간다. Google Cloud Run, Azure Functions, 쿠버네티스 위의 Knative도 한도만 다를 뿐 같은 틀로 움직인다.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '약 11분', level: '중급'}}
+  groups={[
+    {label: '실행 환경', x: 650, y: 40, w: 220, h: 400, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'user', label: '클라이언트', sub: 'HTTPS 요청', icon: 'browser', tone: 'ext', x: 90, y: 90, show: true},
+    {id: 'apigw', label: 'API 게이트웨이', sub: 'HTTP 이벤트', icon: 'gate', tone: 'cp', x: 290, y: 90, show: true},
+    {id: 'queue', label: '큐', sub: '메시지 이벤트', icon: 'layers', tone: 'store', x: 290, y: 230},
+    {id: 'bucket', label: '버킷', sub: '업로드 이벤트', icon: 'archive', tone: 'store', x: 290, y: 370},
+    {id: 'svc', label: 'Lambda 서비스', sub: '전달 · 확장', icon: 'gear', tone: 'cp', x: 500, y: 230, show: true},
+    {id: 'env1', label: '환경 1', sub: '런타임 + 코드', icon: 'box', tone: 'app', size: 'sm', x: 760, y: 110},
+    {id: 'env2', label: '환경 2', sub: '런타임 + 코드', icon: 'box', tone: 'app', size: 'sm', x: 760, y: 230},
+    {id: 'env3', label: '환경 3', sub: '런타임 + 코드', icon: 'box', tone: 'app', size: 'sm', x: 760, y: 350},
+    {id: 'code', label: '코드', sub: 'zip 또는 이미지', icon: 'archive', tone: 'store', x: 935, y: 110, w: 110},
+    {id: 'db', label: 'DB', sub: '상태는 여기에', icon: 'db', tone: 'store', x: 935, y: 230, w: 110},
+    {id: 'logs', label: '로그', sub: 'REPORT 줄', icon: 'chart', tone: 'store', x: 935, y: 350, w: 110},
+  ]}
+  metrics={[
+    {id: 'event', label: '이벤트'},
+    {id: 'start', label: '시작'},
+    {id: 'conc', label: '동시성'},
+    {id: 'result', label: '결과'},
+  ]}
+  learn={[
+    {text: 'HTTP·큐·업로드 이벤트가 모두 같은 함수를 실행한다는 것', at: 1},
+    {text: '콜드 스타트가 하는 일과 웜 재사용이 빠른 이유', at: 2},
+    {text: '환경 하나에 요청 하나, 그래서 동시성이 곧 환경 수라는 것', at: 4},
+    {text: '동시성 한도, 429 스로틀링, 타임아웃 상한', at: 5},
+    {text: '재시도로 같은 이벤트가 두 번 오니 핸들러는 멱등이어야 한다는 것', at: 7},
+    {text: '요청 수와 실행 시간에 돈을 내는 구조, 함수가 맞지 않는 경우', at: 8},
+  ]}
+  steps={[
+    {
+      short: '시작',
+      kind: '시작',
+      title: '이벤트가 왔는데 아직 아무것도 돌고 있지 않다',
+      text: [
+        '클라이언트가 POST /orders를 호출한다. API 게이트웨이는 HTTP 요청을 이벤트로 바꿔 Lambda 서비스에 함수 order-handler 실행을 요청한다.',
+        '켜 둘 서버는 없다. 함수는 코드 묶음과 설정(런타임, 메모리 크기, 타임아웃, 권한)일 뿐이다. 지금은 어디에서도 이 함수의 복사본이 돌고 있지 않다.',
+      ],
+      flows: [
+        {from: 'user', to: 'apigw', label: 'POST /orders', type: 'request'},
+        {from: 'apigw', to: 'svc', label: '실행 요청', type: 'request'},
+      ],
+      focus: ['user', 'apigw', 'svc'],
+      values: {event: 'HTTP · 동기', start: '—', conc: '0', result: '—'},
+    },
+    {
+      short: '이벤트',
+      kind: '원리',
+      title: '이벤트 세 종류, 기다리는 방식도 셋',
+      text: [
+        'API 게이트웨이를 거친 HTTP 호출은 동기다. 호출한 쪽이 답을 기다린다. 버킷에 파일이 올라온 이벤트는 비동기다. 서비스가 이벤트를 큐에 넣고 버킷에는 바로 답한다.',
+        '큐는 방향이 반대다. Lambda 서비스가 큐를 폴링해 메시지 묶음(batch)으로 함수를 실행한다. 메시지는 함수가 성공을 돌려줄 때만 지워진다.',
+      ],
+      keyIdea: '누가 기다리고 실패하면 누가 다시 시도하는지는 이벤트 출처에 달렸다. 오류 처리를 쓰기 전에 트리거마다 어느 종류인지 알아 둔다.',
+      flows: [
+        {from: 'apigw', to: 'svc', label: '동기', type: 'request'},
+        {from: 'bucket', to: 'svc', label: '비동기', type: 'request'},
+        {from: 'svc', to: 'queue', label: '묶음 폴링', type: 'watch'},
+      ],
+      focus: ['apigw', 'queue', 'bucket'],
+    },
+    {
+      short: '콜드 스타트',
+      kind: '원리',
+      title: '빈 환경이 없어 새로 만든다 (콜드 스타트)',
+      text: [
+        '서비스가 격리된 작은 마이크로 VM인 실행 환경을 만든다. 코드 묶음이나 컨테이너 이미지를 내려받고, 언어 런타임을 띄우고, 초기화 코드를 실행한다. 초기화 코드는 핸들러 바깥의 모든 것, 예를 들어 import와 DB 클라이언트 생성이다.',
+        '그다음에야 이벤트로 핸들러를 부른다. 이 추가 작업이 콜드 스타트다. 런타임, 묶음 크기, 초기화 코드에 따라 1초가 한참 안 걸리기도 하고 몇 초가 걸리기도 한다.',
+      ],
+      keyIdea: '초기화 코드는 가볍게 두고, 다시 쓸 준비물(SDK 클라이언트, 연결 풀)은 핸들러 바깥에 둔다. 그러면 요청마다가 아니라 환경마다 한 번만 실행된다.',
+      flows: [
+        {from: 'svc', to: 'env1', label: '생성', type: 'request'},
+        {from: 'code', to: 'env1', label: '내려받기', type: 'request'},
+        {from: 'env1', to: 'db', label: '주문 저장', type: 'request'},
+      ],
+      focus: ['env1', 'code'],
+      status: {env1: 'warn'},
+      badges: {env1: '초기화 + 핸들러'},
+      values: {start: {text: '콜드 · 초기화 + 핸들러', tone: 'bad'}, conc: '1', result: '200 OK'},
+    },
+    {
+      short: '웜',
+      kind: '원리',
+      title: '다음 요청은 데워진 환경을 다시 쓴다',
+      text: [
+        '핸들러가 끝나도 환경은 없어지지 않고 얼려진다(freeze). 다음 요청이 오면 서비스가 환경을 녹여 바로 핸들러를 부른다. 초기화 코드는 다시 돌지 않는다.',
+        '전역 변수와 /tmp의 파일이 지난 호출에서 남아 있을 수 있다. 캐시로 쓰기 좋지만 절대 보장되지 않는다. 쉬고 있는 환경은 서비스가 언제든 치운다.',
+      ],
+      flows: [
+        {from: 'apigw', to: 'svc', label: '실행 요청', type: 'request'},
+        {from: 'svc', to: 'env1', label: '재사용', type: 'request'},
+        {from: 'env1', to: 'db', label: '주문 저장', type: 'request'},
+      ],
+      focus: ['env1'],
+      status: {env1: 'ok'},
+      badges: {env1: '웜'},
+      values: {start: {text: '웜 · 핸들러만', tone: 'good'}, conc: '1'},
+    },
+    {
+      short: '동시성',
+      kind: '원리',
+      title: '요청 셋이 동시에 오면 환경도 셋 필요하다',
+      text: [
+        'Lambda 실행 환경은 기본적으로 한 번에 요청 하나만 처리한다(새로 나온 Lambda Managed Instances 방식은 환경 하나가 여러 요청을 받는다). 요청 셋이 한꺼번에 오면 환경 1이 하나를 맡고, 나머지를 위해 서비스가 환경 2와 3을 만든다. 둘 다 콜드 스타트를 치른다.',
+        '그래서 동시성, 즉 처리 중인 요청 수는 바쁜 환경 수와 같다. Cloud Run과 Knative는 여기가 다르다. 컨테이너 인스턴스 하나가 여러 요청을 동시에 받는다(Cloud Run 기본값은 80개, gcloud로 배포하면 vCPU당 80개이고 최대 1,000개까지 늘릴 수 있다).',
+      ],
+      keyIdea: '동시성 ≈ 초당 요청 수 × 평균 실행 시간. 초당 100개가 각각 0.5초 걸리면 환경 약 50개가 계속 바쁘다.',
+      flows: [
+        {from: 'svc', to: 'env1', type: 'request'},
+        {from: 'svc', to: 'env2', label: '생성', type: 'request'},
+        {from: 'svc', to: 'env3', label: '생성', type: 'request'},
+        {from: 'code', to: 'env3', label: '내려받기', type: 'request'},
+      ],
+      focus: ['env1', 'env2', 'env3'],
+      status: {env1: 'ok', env2: 'warn', env3: 'warn'},
+      badges: {env1: '처리 중', env2: '콜드', env3: '콜드'},
+      values: {start: '웜 1 · 콜드 2', conc: '3'},
+    },
+    {
+      short: '스로틀링',
+      kind: '문제',
+      title: '동시성 한도에 닿아 호출이 429를 받는다',
+      text: [
+        '동시성에는 상한이 있다. 계정은 리전마다 함께 쓰는 한도(기본 1,000)로 시작하고, 그중 일부를 함수 하나에 예약할 수 있다. 예약은 그 함수의 상한도 된다. 여기서 order-handler의 상한은 3이다.',
+        '같은 순간 네 번째 요청은 스로틀링된다. 동기 호출자는 HTTP 429(TooManyRequestsException)를 받고 다시 시도해야 한다. 비동기 이벤트와 큐 메시지는 사라지지 않고 나중에 다시 시도된다.',
+      ],
+      keyIdea: '한 함수의 급증이 계정 한도를 함께 쓰는 다른 함수까지 굶길 수 있다. 중요한 함수에는 동시성을 예약하고 Throttles 지표를 지켜본다.',
+      flows: [
+        {from: 'user', to: 'apigw', label: '요청 #4', type: 'request'},
+        {from: 'svc', to: 'apigw', label: '429', type: 'response'},
+      ],
+      focus: ['svc', 'apigw'],
+      status: {env1: 'ok', env2: 'ok', env3: 'ok', svc: 'error'},
+      badges: {env1: '처리 중', env2: '처리 중', env3: '처리 중', svc: '상한 3'},
+      values: {conc: {text: '3 / 3 · 가득', tone: 'bad'}, result: {text: '429 Too Many Requests', tone: 'bad'}},
+    },
+    {
+      short: '무상태',
+      kind: '주의',
+      title: '처음부터 짧게 살고 상태를 갖지 않게 설계됐다',
+      text: [
+        '모든 실행에는 직접 정하는 타임아웃이 있고, Lambda에서는 최대 30분이다. 시간이 다 되면 무엇을 하던 중이든 실행이 중간에 멈춘다.',
+        '환경은 두 요청 사이 어느 때든 사라질 수 있고, 다음 요청은 다른 환경에 갈 수 있다. /tmp는 환경과 함께 사라지는 임시 공간이다. 남아야 하는 것은 데이터베이스, 캐시, 오브젝트 스토리지에 둔다.',
+      ],
+      keyIdea: '세션, 카운터, 업로드 파일을 메모리나 /tmp에만 두지 않는다. 매 호출이 새 기계에서 돈다고 생각한다.',
+      flows: [
+        {from: 'env2', to: 'db', label: '상태 저장', type: 'request'},
+      ],
+      focus: ['env2', 'db'],
+      status: {svc: null, env3: 'gone'},
+      badges: {svc: null, env1: null, env2: '타임아웃 ≤ 30분', env3: '치워짐'},
+      values: {conc: '2', result: '—'},
+    },
+    {
+      short: '재시도',
+      kind: '문제',
+      title: '재시도 때문에 같은 이벤트가 두 번 처리된다',
+      text: [
+        '업로드 이벤트 처리가 중간에 실패한다. 함수가 주문을 저장한 뒤 마무리 전에 죽었다. 비동기 이벤트라면 Lambda는 실패한 실행을 최대 두 번 더 시도한다. 지워지지 않은 큐 메시지는 가시성 타임아웃(visibility timeout)이 지나면 다시 나타난다.',
+        '재시도가 같은 주문을 또 저장하고 고객은 두 번 결제된다. 전달은 최소 한 번(at least once)이라서 중복은 드문 일이 아니라 보통 일이다.',
+      ],
+      keyIdea: '핸들러를 멱등하게 만든다. 멱등 키(이벤트 id나 주문 id)를 유일 제약과 함께 저장하고 이미 한 일은 건너뛴다. 계속 실패하는 이벤트는 데드 레터 큐로 보낸다.',
+      flows: [
+        {from: 'bucket', to: 'svc', label: '재시도', type: 'request'},
+        {from: 'svc', to: 'env1', label: '같은 이벤트', type: 'request'},
+        {from: 'env1', to: 'db', label: '두 번 저장?', type: 'request'},
+      ],
+      focus: ['bucket', 'env1', 'db'],
+      status: {env1: 'error', env3: null},
+      badges: {env2: null, env3: null, env1: '재시도', db: '중복'},
+      values: {event: '업로드 · 비동기 재시도', result: {text: '주문 두 번 저장', tone: 'bad'}},
+    },
+    {
+      short: '비용',
+      kind: '원리',
+      title: '요청 수와 실행 시간만큼 내고, 맞지 않는 곳을 안다',
+      text: [
+        '요청 수, 그리고 실행 시간에 메모리 크기를 곱한 만큼 돈을 낸다. 트래픽이 없으면 환경이 사라지고 비용도 0에 가까워진다. 웹훅, 파일 처리, 예약 작업처럼 몰렸다 끊기는 이벤트 일에 잘 맞는다.',
+        '긴 작업은 타임아웃에 걸리고, 하루 종일 꾸준히 높은 부하는 계속 바쁜 컨테이너나 VM보다 비싸다. 프로비저닝된 동시성(provisioned concurrency)은 환경 일부를 미리 초기화해 콜드 스타트를 없애지만, 켜 둔 동안 돈이 든다.',
+      ],
+      flows: [
+        {from: 'env1', to: 'logs', label: 'Billed Duration', type: 'response'},
+        {from: 'env2', to: 'logs', label: 'Init Duration', type: 'response'},
+      ],
+      focus: ['logs'],
+      status: {env1: 'ok'},
+      badges: {db: null, env1: null, logs: 'REPORT'},
+      values: {event: 'HTTP · 동기', result: '200 OK'},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '이벤트가 들어오고, 짧은 무상태 실행, 상태는 바깥에',
+      text: [
+        '이벤트가 들어오면 플랫폼은 데워진 환경에서 핸들러를 돌리거나 콜드 스타트로 새 환경을 만든다. 동시 요청이 늘면 환경도 늘고, 동시성 한도를 넘으면 호출이 스로틀링된다.',
+        '실행은 짧고 상태가 없으며, 실패한 이벤트는 다시 시도된다. 상태는 바깥에 두고 두 번 돌아도 안전한 핸들러를 쓴다.',
+      ],
+      keyIdea: '함수가 이상하면 REPORT 로그 줄(Duration, Billed Duration, 콜드 스타트 때의 Init Duration)과 Throttles, Errors, ConcurrentExecutions 지표를 본다.',
+      flows: [
+        {from: 'apigw', to: 'svc', label: '실행 요청', type: 'request'},
+        {from: 'svc', to: 'env1', label: '웜', type: 'request'},
+        {from: 'env1', to: 'db', label: '상태', type: 'request'},
+      ],
+      focus: ['svc', 'env1', 'db'],
+      status: {env1: null, env2: null, env3: null},
+      badges: {db: null, logs: null},
+    },
+  ]}
+/>
+
+## VM, 쿠버네티스 위 컨테이너, 함수 중 무엇을 쓸까
+
+| | 가상 머신 | 쿠버네티스 위 컨테이너 | 서버리스 함수 |
+|---|---|---|---|
+| 내가 관리하는 것 | OS, 런타임, 앱, 확장 | 이미지, 매니페스트, 클러스터(또는 관리형) | 코드와 설정만 |
+| 확장 단위 | VM 전체(분 단위) | 파드(초 단위) | 요청마다 실행 환경(밀리초~초 단위) |
+| 놀 때 비용 | 켜 둔 동안 낸다 | 노드를 켜 둔 동안 낸다 | 거의 0 (0까지 줄어듦) |
+| 실행 길이 | 제한 없음 | 제한 없음 | 상한 있음 (Lambda 30분) |
+| 상태 | 로컬 디스크가 남는다 | 필요하면 볼륨(PV) | 호출 사이에 없음, 외부 저장소 사용 |
+| 잘 맞는 곳 | 기존 앱, 특수한 OS 요구 | 꾸준한 서비스, 많은 마이크로서비스 | 몰렸다 끊기는 이벤트, 연결 코드, 웹훅, 파일 처리 |
+
+Knative는 함수 방식(0까지 줄이기, 동시성 기준 확장)을 직접 운영하는 쿠버네티스 클러스터 위로 가져온다.
+
+## 직접 확인해 보기
+
+```bash
+aws lambda invoke --function-name demo --cli-binary-format raw-in-base64-out \
+  --payload '{"id": 1}' out.json && cat out.json                  # 동기 호출
+aws lambda get-function-configuration --function-name demo \
+  --query '[Runtime,MemorySize,Timeout]'                          # 비용과 한도를 정하는 설정
+aws logs tail /aws/lambda/demo --since 10m                        # REPORT 줄: Duration, Billed Duration, Init Duration
+aws lambda get-account-settings --query 'AccountLimit.ConcurrentExecutions'   # 계정 동시성 한도
+aws lambda put-function-concurrency --function-name demo \
+  --reserved-concurrent-executions 50                             # 함수 하나에 동시성 예약(상한도 됨)
+aws lambda put-provisioned-concurrency-config --function-name demo \
+  --qualifier live --provisioned-concurrent-executions 5          # 환경 5개를 미리 초기화해 둔다(과금)
+```
+
+더 읽을거리: [AWS Lambda란?](https://docs.aws.amazon.com/ko_kr/lambda/latest/dg/welcome.html) · [Lambda 실행 환경 수명 주기](https://docs.aws.amazon.com/lambda/latest/dg/lambda-runtime-environment.html) · [Lambda 동시성](https://docs.aws.amazon.com/lambda/latest/dg/lambda-concurrency.html) · [비동기 호출](https://docs.aws.amazon.com/lambda/latest/dg/invocation-async.html) · [Cloud Run 동시성](https://cloud.google.com/run/docs/about-concurrency) · [Knative Serving](https://knative.dev/docs/serving/) · [누가 어디까지 맡나 (IaaS·PaaS·SaaS)](../cloud/service-models.mdx) · [모델이 처음 뜨기까지 (콜드 스타트)](../ai/cold-start.mdx)

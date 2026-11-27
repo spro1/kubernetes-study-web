@@ -1,0 +1,262 @@
+---
+id: cloud-cost
+title: Where a Cloud Bill Comes From
+sidebar_label: 11 · Where a Cloud Bill Comes From
+description: Animated walkthrough of what drives a cloud bill (compute pricing models, forgotten storage, NAT and cross-AZ data transfer, idle managed services), cost allocation tags, why Kubernetes requests decide the node bill, OpenCost per-namespace cost, budgets and the FinOps loop
+summary: 'Compute, storage, data transfer and idle services on the bill, why Kubernetes requests decide node cost, and the FinOps loop.'
+icon: chart
+hide_table_of_contents: true
+---
+
+# Where a Cloud Bill Comes From
+
+The monthly bill came in 30% over budget, and nobody knows why. Follow the bill line by line: **compute, storage, data transfer, managed services**, then into the Kubernetes cluster, where Pod requests quietly decide how many nodes you pay for. AWS names and prices are used as examples. Other clouds bill the same kinds of things.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~11 min', level: 'Intermediate'}}
+  groups={[
+    {label: 'Cloud account', x: 220, y: 30, w: 755, h: 410, tone: 'plain'},
+    {label: 'Kubernetes cluster', x: 450, y: 50, w: 330, h: 250, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'team', label: 'Team', sub: 'Owns the budget', icon: 'user', tone: 'ext', x: 100, y: 100, show: true},
+    {id: 'bill', label: 'Monthly bill', sub: '+30% over budget', icon: 'chart', tone: 'cp', x: 100, y: 300, show: true},
+    {id: 'compute', label: 'Compute', sub: 'VMs · nodes', icon: 'server', tone: 'node', x: 330, y: 100},
+    {id: 'storage', label: 'Storage', sub: 'Disks · snapshots', icon: 'disk', tone: 'store', x: 330, y: 240},
+    {id: 'nat', label: 'NAT gateway', sub: 'Per hour + per GB', icon: 'gate', tone: 'cp', x: 330, y: 380},
+    {id: 'node1', label: 'Node 1', sub: '4 vCPU', icon: 'server', tone: 'app', size: 'sm', x: 540, y: 130},
+    {id: 'node2', label: 'Node 2', sub: '4 vCPU', icon: 'server', tone: 'app', size: 'sm', x: 690, y: 130},
+    {id: 'shop', label: 'ns shop', sub: 'Production', icon: 'pod', tone: 'app', size: 'sm', x: 540, y: 245},
+    {id: 'dev', label: 'ns dev', sub: 'Test env', icon: 'pod', tone: 'app', size: 'sm', x: 690, y: 245},
+    {id: 'db', label: 'Managed DB', sub: 'Billed hourly', icon: 'db', tone: 'store', x: 610, y: 380},
+    {id: 'opencost', label: 'OpenCost', sub: 'Cost per namespace', icon: 'chart', tone: 'cp', x: 880, y: 130},
+    {id: 'budget', label: 'Budget alert', sub: 'Forecast · anomaly', icon: 'bell', tone: 'cp', x: 880, y: 260},
+    {id: 'internet', label: 'Internet', sub: 'Egress per GB', icon: 'cloud', tone: 'ext', x: 880, y: 385},
+  ]}
+  metrics={[
+    {id: 'bill', label: 'Monthly bill'},
+    {id: 'line', label: 'Line in focus'},
+    {id: 'ratio', label: 'CPU used / requested'},
+  ]}
+  learn={[
+    {text: 'On-demand, commitments and Spot: three ways to pay for the same VM', at: 1},
+    {text: 'Storage and managed services bill while nobody uses them', at: 2},
+    {text: 'Why NAT and cross-AZ data transfer surprise people', at: 3},
+    {text: 'Kubernetes nodes are sized by requests, not by usage', at: 6},
+    {text: 'Splitting cost per team with tags and OpenCost, then the FinOps loop', at: 8},
+  ]}
+  steps={[
+    {
+      short: 'Start',
+      kind: '시작',
+      title: 'The bill is 30% over, and the total says nothing',
+      text: [
+        'The team expected about $10,000 this month and got $13,000. A single total does not tell you who spent it or on what.',
+        'Almost every line on a cloud bill falls into four groups: compute (VMs, nodes), storage (disks, snapshots, buckets), data transfer (bytes that cross a billed boundary) and managed services billed by the hour. Go through them one by one.',
+      ],
+      flows: [{from: 'bill', to: 'team', label: 'Invoice', type: 'response'}],
+      focus: ['bill', 'team'],
+      values: {bill: {text: '$13,000 · +30%', tone: 'bad'}, line: '—', ratio: '—'},
+    },
+    {
+      short: 'Compute',
+      kind: '원리',
+      title: 'The same VM has three prices',
+      text: [
+        'On-demand is billed per second or hour with no commitment. Savings Plans or Reserved Instances give a large discount (AWS says up to 72%) for committing to 1 or 3 years of usage. Spot uses spare capacity at up to 90% off, but the cloud can take it back with a two-minute notice.',
+        'A common mix: commitments for the steady base load you are sure of, Spot for stateless or batch work that tolerates interruption, and on-demand for the rest.',
+      ],
+      keyIdea: 'Commit only to what you will surely use. An unused commitment is still paid for every hour.',
+      flows: [{from: 'compute', to: 'bill', label: 'Largest line', type: 'response'}],
+      focus: ['compute'],
+      badges: {compute: 'All on-demand'},
+      values: {line: 'Compute · 55%'},
+    },
+    {
+      short: 'Storage',
+      kind: '주의',
+      title: 'Disks and snapshots bill after the VM is gone',
+      text: [
+        'A block volume is billed for its provisioned size, whether or not anything reads it. When a VM is deleted, its extra volumes may stay behind as "available" (unattached) and keep billing. Old snapshots pile up the same way.',
+        'Object storage bills per GB stored plus requests. Lifecycle rules that move old objects to cheaper classes, or delete them, keep it from growing forever.',
+      ],
+      flows: [{from: 'storage', to: 'bill', label: 'Unattached disks', type: 'response'}],
+      focus: ['storage'],
+      status: {storage: 'warn'},
+      badges: {compute: null, storage: '12 unattached'},
+      values: {line: 'Storage · 12%'},
+    },
+    {
+      short: 'Data transfer',
+      kind: '문제',
+      title: 'The surprise: NAT and cross-AZ traffic',
+      text: [
+        'Data coming in from the internet is usually free. Data going out to the internet is billed per GB. Traffic between availability zones is billed too, on AWS in each direction.',
+        'A NAT gateway charges per hour and per GB it processes. Nodes in private subnets that pull images or call cloud storage APIs through the NAT gateway pay that per-GB charge on every byte. This line often grows without anyone changing code.',
+      ],
+      keyIdea: 'Use private endpoints for cloud services (AWS gateway endpoints for S3 and DynamoDB have no charge) and keep chatty services in the same zone.',
+      flows: [
+        {from: 'node1', to: 'nat', label: 'Image pulls', type: 'request'},
+        {from: 'nat', to: 'internet', label: 'Per GB', type: 'request'},
+      ],
+      focus: ['nat', 'internet'],
+      status: {storage: null, nat: 'error'},
+      badges: {storage: null, nat: '4 TB processed'},
+      values: {line: {text: 'Data transfer · 18%', tone: 'bad'}},
+    },
+    {
+      short: 'Idle services',
+      kind: '주의',
+      title: 'Managed services bill by the hour, used or not',
+      text: [
+        'A managed database, a load balancer or a NAT gateway bills for every hour it exists. A test database sized like production and running 24 hours a day, 7 days a week costs the same at 3 a.m. as at noon.',
+        'Stop or shrink non-production resources outside working hours, and delete leftovers such as load balancers with no targets.',
+      ],
+      flows: [{from: 'db', to: 'bill', label: '24×7', type: 'response'}],
+      focus: ['db'],
+      status: {nat: null, db: 'warn'},
+      badges: {nat: null, db: 'Dev · idle nights'},
+      values: {line: 'Managed services · 15%'},
+    },
+    {
+      short: 'Tags',
+      kind: '원리',
+      title: 'Tags say who owns each line',
+      text: [
+        'Cost allocation tags such as team=shop and env=dev on every resource let the bill be grouped by owner. On AWS, a tag must be activated as a cost allocation tag in the billing console before it appears in cost reports, and earlier months appear only if you backfill them (up to 12 months).',
+        'Untagged spend has no owner, so nobody acts on it. Many teams enforce tags in their IaC templates or with policies at creation time.',
+      ],
+      flows: [{from: 'bill', to: 'team', label: 'By tag', type: 'response'}],
+      focus: ['bill', 'team'],
+      status: {db: null},
+      badges: {db: null, bill: 'team · env'},
+      values: {line: 'Untagged · 20%'},
+    },
+    {
+      short: 'Requests',
+      kind: '문제',
+      title: 'Inside Kubernetes, requests decide the node bill',
+      text: [
+        'The cluster runs on nodes, and the bill is per node. The scheduler places Pods by their CPU and memory requests, not by what they actually use. A node is "full" when the sum of requests reaches its allocatable capacity.',
+        'Here Pods request 2 CPU each but use about 0.2. The nodes look full, new Pods go Pending, and the cluster autoscaler adds nodes. You pay for 8 vCPU while about 1 vCPU does real work.',
+      ],
+      keyIdea: 'Compare kubectl top with the requests. A large gap is money spent on reserved but idle capacity.',
+      flows: [
+        {from: 'shop', to: 'node1', label: 'Requests 2 CPU', type: 'request'},
+        {from: 'dev', to: 'node2', label: 'Requests 2 CPU', type: 'request'},
+        {from: 'node2', to: 'compute', label: 'More nodes', type: 'response'},
+      ],
+      focus: ['node1', 'node2', 'shop', 'dev'],
+      status: {node1: 'warn', node2: 'warn'},
+      badges: {bill: null, node1: 'Full by requests', node2: 'Full by requests'},
+      values: {ratio: {text: '1 / 8 vCPU · 12%', tone: 'bad'}, line: 'Nodes'},
+    },
+    {
+      short: 'Rightsize',
+      kind: '원리',
+      title: 'Rightsize requests, then pack nodes tighter',
+      text: [
+        'Set requests from measured usage, with headroom for peaks. VPA recommendations or a few weeks of metrics are a good starting point. Lower requests let more Pods fit on each node.',
+        'Then let the autoscaler remove empty or underused nodes (consolidation), and run stateless, interruption-tolerant workloads on Spot nodes. Fewer, fuller nodes cost less.',
+      ],
+      flows: [
+        {from: 'shop', to: 'node1', label: 'Requests 0.4 CPU', type: 'request'},
+        {from: 'dev', to: 'node1', label: 'Requests 0.4 CPU', type: 'request'},
+      ],
+      focus: ['node1', 'node2'],
+      status: {node1: 'ok', node2: 'off'},
+      badges: {node1: 'Packed', node2: 'Removed'},
+      values: {ratio: {text: '1 / 4 vCPU · 25%', tone: 'good'}},
+    },
+    {
+      short: 'Per namespace',
+      kind: '원리',
+      title: 'OpenCost splits node cost by namespace',
+      text: [
+        'A node is shared by many teams, so its price must be split. OpenCost (a CNCF project; Kubecost is built on it) takes node and disk prices and divides them by each namespace\'s requests and usage. Cost that no Pod claims shows up as idle.',
+        'It finds that ns dev keeps running all night and on weekends. Scaling dev Deployments to zero after hours removes most of its cost.',
+      ],
+      flows: [
+        {from: 'node1', to: 'opencost', label: 'Usage · requests', type: 'watch'},
+        {from: 'opencost', to: 'team', label: 'Per namespace', type: 'response', bend: 0.25},
+      ],
+      focus: ['opencost', 'dev'],
+      status: {dev: 'warn'},
+      badges: {dev: 'Idle at night'},
+    },
+    {
+      short: 'Budget',
+      kind: '원리',
+      title: 'Budgets and anomaly alerts catch it next month',
+      text: [
+        'A budget alerts the team when actual or forecast spend passes a threshold, so they hear about it in week one, not when the invoice arrives. Anomaly detection (for example AWS Cost Anomaly Detection) flags a sudden jump in one service, such as NAT data processing.',
+        'This is the FinOps loop: inform (see who spends what), optimize (rightsize, commit, delete), operate (budgets, tagging rules, regular reviews). It runs again every month.',
+      ],
+      flows: [{from: 'budget', to: 'team', label: 'Forecast 90%', type: 'response', bend: -0.2}],
+      focus: ['budget', 'team'],
+      status: {dev: null},
+      badges: {dev: null, budget: 'Threshold 90%'},
+      values: {bill: {text: '$10,400 · on track', tone: 'good'}},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Read the bill by driver, and make every line have an owner',
+      text: [
+        'Compute is cut with commitments for steady load, Spot for tolerant work and rightsizing. Storage and idle services are cut by deleting and scheduling. Data transfer is cut by keeping traffic off the NAT gateway and inside one zone.',
+        'In Kubernetes, requests decide how many nodes you pay for. Tags and OpenCost give every line an owner, and budgets catch the next surprise early.',
+      ],
+      keyIdea: 'Cost is a running loop, not a one-time cleanup: see it, fix the biggest line, and set a guardrail so it does not come back.',
+      flows: [
+        {from: 'compute', to: 'bill', type: 'response'},
+        {from: 'opencost', to: 'team', type: 'response', bend: 0.25},
+        {from: 'budget', to: 'team', type: 'response', bend: -0.2},
+      ],
+      focus: ['bill', 'opencost', 'budget'],
+      status: {node1: null, node2: null},
+      badges: {node1: null, node2: null, budget: null},
+      values: {line: '—'},
+    },
+  ]}
+/>
+
+## Cost drivers and their usual waste
+
+| Cost driver | Typical waste | Fix |
+|---|---|---|
+| Compute (VMs, nodes) | Everything on-demand, oversized instance types | Commit for steady load, Spot for tolerant work, rightsize instance types |
+| Kubernetes requests | Requests far above usage, so nodes are full but idle | Set requests from measured usage, enable node consolidation |
+| Block storage | Unattached volumes, overprovisioned sizes | Find `available` volumes and delete or snapshot them |
+| Snapshots and backups | Years of snapshots with no retention rule | Retention and lifecycle policies |
+| Object storage | Old data kept in the most expensive class | Lifecycle rules to colder classes or deletion |
+| NAT gateway | Image pulls and cloud API traffic processed per GB | Private endpoints for cloud services, a pull-through cache or registry in the VPC |
+| Cross-AZ traffic | Chatty services spread across zones | Topology-aware routing, keep heavy talkers in one zone |
+| Internet egress | Serving large files straight from servers | A CDN in front, compression |
+| Managed services | Non-production databases running 24×7 | Schedule stop or scale down after hours, delete leftovers |
+| Untagged resources | Spend nobody owns | Required tags enforced at creation |
+
+## Try it yourself
+
+```bash
+# Last month's cost per service (AWS Cost Explorer)
+aws ce get-cost-and-usage --time-period Start=2026-10-01,End=2026-11-01 \
+  --granularity MONTHLY --metrics UnblendedCost \
+  --group-by Type=DIMENSION,Key=SERVICE
+
+# The same, grouped by an activated cost allocation tag
+aws ce get-cost-and-usage --time-period Start=2026-10-01,End=2026-11-01 \
+  --granularity MONTHLY --metrics UnblendedCost --group-by Type=TAG,Key=team
+
+# Unattached volumes that still bill
+aws ec2 describe-volumes --filters Name=status,Values=available \
+  --query 'Volumes[].[VolumeId,Size,CreateTime]' --output table
+
+# Kubernetes: actual usage vs requests
+kubectl top pods -A --sort-by=cpu
+kubectl get pods -A -o custom-columns='NS:.metadata.namespace,POD:.metadata.name,CPU_REQ:.spec.containers[*].resources.requests.cpu,MEM_REQ:.spec.containers[*].resources.requests.memory'
+kubectl describe nodes | grep -A 8 'Allocated resources'   # requested share of each node
+```
+
+Further reading: [FinOps Framework](https://www.finops.org/framework/) · [Amazon EC2 pricing](https://aws.amazon.com/ec2/pricing/) · [Savings Plans](https://aws.amazon.com/savingsplans/) · [Spot Instances](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/using-spot-instances.html) · [VPC pricing (NAT gateway)](https://aws.amazon.com/vpc/pricing/) · [Cost allocation tags](https://docs.aws.amazon.com/awsaccountbilling/latest/aboutv2/cost-alloc-tags.html) · [OpenCost](https://www.opencost.io/docs/) · [Requests and limits](../intermediate/requests-limits.mdx) · [Auto-Scaling VMs (Auto Scaling Groups)](../cloud/auto-scaling-group.mdx)

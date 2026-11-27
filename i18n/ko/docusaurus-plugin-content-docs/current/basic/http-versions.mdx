@@ -1,0 +1,236 @@
+---
+id: http-versions
+title: HTTP/1.1, HTTP/2, HTTP/3
+sidebar_label: 01 · HTTP/1.1, HTTP/2, HTTP/3
+description: 같은 HTTP 요청이 HTTP/1.1, HTTP/2, HTTP/3에서 각각 어떻게 오가는지, keep-alive와 HOL 블로킹부터 스트림 다중화, ALPN, UDP 위의 QUIC, Alt-Svc, UDP 차단 시 폴백, gRPC에 요청 단위 부하 분산이 필요한 이유까지 단계별 애니메이션으로 따라간다
+summary: '같은 요청을 나르는 세 가지 방식. keep-alive, TCP 연결 하나 위의 HTTP/2 스트림, QUIC 위의 HTTP/3, 그리고 로드밸런서에 미치는 영향.'
+icon: layers
+hide_table_of_contents: true
+---
+
+# HTTP/1.1, HTTP/2, HTTP/3
+
+웹 페이지 하나는 파일 수십 개를 받아야 뜬다. 요청의 뜻(메서드, 경로, 헤더, 상태 코드)은 모든 HTTP 버전에서 같다. 달라지는 것은 **바이트를 나르는 방식**이다. 한 번에 요청 하나씩, TCP 연결 하나에 스트림 여럿, 또는 UDP 위의 QUIC 스트림. 상태 코드는 [주소창에 주소를 입력하면](../basic/web-request.mdx)에서 다룬다.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '약 10분', level: '기초'}}
+  groups={[
+    {label: '서버 쪽', x: 520, y: 40, w: 460, h: 390, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'client', label: '브라우저', sub: '파일 40개 필요', icon: 'browser', tone: 'ext', x: 110, y: 225, show: true},
+    {id: 'tcp', label: 'TCP + TLS', sub: '순서대로 오는 바이트', icon: 'route', tone: 'node', x: 340, y: 130},
+    {id: 'quic', label: 'QUIC', sub: 'UDP · TLS 1.3 내장', icon: 'spark', tone: 'node', x: 340, y: 330},
+    {id: 'lb', label: '로드밸런서', sub: '443 포트', icon: 'split', tone: 'cp', x: 640, y: 225},
+    {id: 'srv1', label: '서버 1', sub: '웹 · gRPC', icon: 'server', tone: 'app', x: 870, y: 130},
+    {id: 'srv2', label: '서버 2', sub: '웹 · gRPC', icon: 'server', tone: 'app', x: 870, y: 330},
+  ]}
+  metrics={[
+    {id: 'ver', label: '버전'},
+    {id: 'conns', label: '연결 수'},
+    {id: 'rtt', label: '첫 요청 전 왕복 횟수'},
+    {id: 'hol', label: 'HOL 블로킹'},
+  ]}
+  learn={[
+    {text: '요청은 메서드, 경로, 헤더, 본문으로 이루어진다는 것', at: 1},
+    {text: 'keep-alive와 HTTP/1.1이 연결을 여러 개 여는 이유', at: 2},
+    {text: 'ALPN이 TLS 핸드셰이크 안에서 버전을 고른다는 것', at: 3},
+    {text: 'HTTP/2 스트림과, 그래도 남는 TCP 손실 문제', at: 4},
+    {text: 'QUIC 위의 HTTP/3, Alt-Svc, UDP 폴백', at: 6},
+    {text: 'HTTP/2 위의 gRPC에 요청 단위 부하 분산이 필요한 이유', at: 9},
+  ]}
+  steps={[
+    {
+      short: '요청',
+      kind: '시작',
+      title: '요청은 메서드, 경로, 헤더, 본문이다',
+      text: [
+        '브라우저가 Host, Accept, Cookie 같은 헤더를 붙여 GET /app.js를 보낸다. POST라면 본문이 더 붙는다. 서버는 상태 코드, Content-Type·Cache-Control 같은 헤더, 본문으로 답한다.',
+        '이 의미는 한 번만 정의되어(RFC 9110) 모든 버전이 함께 쓴다. HTTP/1.1, HTTP/2, HTTP/3는 이 메시지를 선 위에 어떻게 싣느냐만 다르다.',
+      ],
+      keyIdea: 'HTTP 버전을 바꿔도 API는 바뀌지 않는다. 메서드, 헤더, 상태 코드는 그대로다.',
+      flows: [{from: 'client', to: 'lb', label: 'GET /app.js', type: 'request'}],
+      focus: ['client'],
+      values: {ver: '—', conns: '—', rtt: '—', hol: '—'},
+    },
+    {
+      short: 'HTTP/1.1',
+      kind: '원리',
+      title: 'HTTP/1.1: 사람이 읽는 글자, 연결 하나에 응답 하나씩',
+      text: [
+        'HTTP/1.1은 TCP 위로 읽을 수 있는 글자 줄을 보낸다. keep-alive 덕분에 다음 요청도 같은 연결을 다시 쓰므로, 파일마다 핸드셰이크를 새로 하지 않는다.',
+        '하지만 한 연결에서는 응답이 반드시 순서대로 온다. 느린 응답 하나가 뒤의 모든 요청을 붙잡는다. 브라우저는 이를 피하려고 호스트마다 연결을 6개쯤 열고, 연결마다 핸드셰이크를 따로 한다.',
+      ],
+      keyIdea: '파일을 하나로 묶거나 자원을 여러 도메인에 나눠 두던 옛 기법은 모두 이 한계 때문에 생겼다.',
+      flows: [
+        {from: 'client', to: 'tcp', label: '한 번에 하나씩', type: 'request'},
+        {from: 'tcp', to: 'lb', label: '글자', type: 'request'},
+      ],
+      focus: ['client', 'tcp'],
+      badges: {tcp: '×6'},
+      values: {ver: 'HTTP/1.1', conns: '호스트당 약 6개', rtt: '2 (TCP + TLS 1.3)', hol: {text: '연결마다', tone: 'bad'}},
+    },
+    {
+      short: 'ALPN',
+      kind: '원리',
+      title: 'ALPN이 TLS 핸드셰이크 안에서 버전을 고른다',
+      text: [
+        '브라우저는 TLS ClientHello에 자신이 쓸 수 있는 프로토콜을 적는다. 예를 들면 h2와 http/1.1이다. 서버는 답장에서 하나를 고른다. 이것이 ALPN(Application-Layer Protocol Negotiation)이고, 왕복이 더 들지 않는다.',
+        '브라우저는 HTTP/2를 TLS 위에서만 쓴다. 암호화하지 않는 HTTP/2(h2c)도 있지만 서비스끼리 통신할 때 쓰고 브라우저는 쓰지 않는다.',
+      ],
+      keyIdea: '중간 프록시가 h2를 내놓지 않으면 클라이언트는 조용히 HTTP/1.1로 내려간다. 실제로 어떤 버전이 정해졌는지 확인한다.',
+      flows: [
+        {from: 'client', to: 'tcp', label: 'ALPN: h2, http/1.1', type: 'request'},
+        {from: 'lb', to: 'tcp', label: '선택: h2', type: 'response'},
+      ],
+      focus: ['tcp', 'lb'],
+      badges: {tcp: 'h2'},
+    },
+    {
+      short: 'HTTP/2',
+      kind: '원리',
+      title: 'HTTP/2: 연결 하나를 스트림 여럿이 나눠 쓴다',
+      text: [
+        'HTTP/2는 메시지를 스트림 ID가 붙은 바이너리 프레임으로 쪼갠다. 여러 요청의 프레임이 한 연결 위에서 섞여 오가고, 받는 쪽이 다시 맞춘다. HTTP 수준에서는 느린 응답 하나가 다른 응답을 막지 않는다.',
+        '헤더는 HPACK으로 압축한다. HPACK은 그 연결에서 이미 보낸 헤더를 기억하므로, 매번 반복되는 쿠키와 User-Agent가 몇 바이트로 줄어든다.',
+      ],
+      flows: [
+        {from: 'client', to: 'tcp', label: '스트림 40개', type: 'request'},
+        {from: 'tcp', to: 'lb', label: '프레임', type: 'request'},
+        {from: 'lb', to: 'srv1', label: '요청', type: 'request'},
+      ],
+      focus: ['tcp'],
+      badges: {tcp: '연결 1 · 스트림 40'},
+      values: {ver: 'HTTP/2', conns: '1', hol: {text: 'HTTP 수준에선 없음', tone: 'good'}},
+    },
+    {
+      short: 'TCP 손실',
+      kind: '문제',
+      title: '패킷 하나만 잃어도 모든 스트림이 멈춘다',
+      text: [
+        'TCP는 바이트를 반드시 순서대로 넘긴다. 패킷 하나를 잃으면, 재전송이 올 때까지 그 뒤의 모든 데이터를 붙잡아 둔다. 다른 스트림의 프레임이라도 마찬가지다.',
+        'HTTP/1.1이라면 연결 6개 중 하나만 멈춘다. HTTP/2는 하나뿐인 공유 연결이 멈춘다. 모바일처럼 손실이 잦은 망에서는 HTTP/2가 더 빠르지 않거나 오히려 느릴 수 있다.',
+      ],
+      keyIdea: 'HTTP/2는 HTTP의 HOL 블로킹을 없앴을 뿐, 그 아래 TCP의 HOL 블로킹은 그대로다.',
+      flows: [{from: 'tcp', to: 'lb', label: '패킷 1개 대기', type: 'request'}],
+      focus: ['tcp'],
+      status: {tcp: 'warn'},
+      values: {hol: {text: 'TCP 수준', tone: 'bad'}},
+    },
+    {
+      short: 'Alt-Svc',
+      kind: '원리',
+      title: '서버가 Alt-Svc로 HTTP/3를 알린다',
+      text: [
+        '브라우저는 서버가 UDP로 HTTP/3를 하는지 미리 알 수 없다. 그래서 첫 방문은 보통 TCP 위의 HTTP/2로 하고, 응답에 Alt-Svc: h3=":443"; ma=86400 같은 헤더가 붙어 온다.',
+        '브라우저는 이를 ma초 동안 기억했다가 다음 연결에서 QUIC을 시도한다. DNS의 HTTPS 레코드로도 h3를 알릴 수 있어서, 그러면 첫 연결부터 시도할 수 있다.',
+      ],
+      flows: [
+        {from: 'lb', to: 'tcp', label: 'Alt-Svc: h3', type: 'response'},
+        {from: 'tcp', to: 'client', label: 'h3 기억', type: 'response'},
+      ],
+      focus: ['lb', 'client'],
+      status: {tcp: null},
+      badges: {client: 'h3 알게 됨'},
+    },
+    {
+      short: 'HTTP/3',
+      kind: '원리',
+      title: 'HTTP/3는 UDP 위의 QUIC에서 돈다',
+      text: [
+        'QUIC은 UDP 위에 만든 전송 계층으로, TLS 1.3이 안에 들어 있다. 전송과 암호화 핸드셰이크를 한 번에 하므로 새 연결에 왕복이 2번이 아니라 1번 든다. 전에 접속한 서버라면 첫 패킷부터 데이터를 보낼 수 있다(0-RTT).',
+        '스트림마다 따로 복구하므로 잃은 패킷은 자기 스트림만 늦춘다. 연결을 IP·포트가 아니라 연결 ID로 구분하므로, 휴대폰이 Wi-Fi에서 LTE로 옮겨도 같은 연결을 이어 간다.',
+      ],
+      keyIdea: '0-RTT 데이터는 공격자가 다시 보낼(재전송 공격) 수 있다. 서버는 GET처럼 여러 번 와도 안전한 요청만 0-RTT로 받는다.',
+      flows: [
+        {from: 'client', to: 'quic', label: 'h3 · UDP 443', type: 'request'},
+        {from: 'quic', to: 'lb', label: '스트림', type: 'request'},
+      ],
+      focus: ['quic'],
+      badges: {tcp: null, quic: '스트림별 복구'},
+      values: {ver: 'HTTP/3', conns: '1', rtt: {text: '1 (재접속 시 0)', tone: 'good'}, hol: {text: '손실 난 스트림만', tone: 'good'}},
+    },
+    {
+      short: 'UDP 차단',
+      kind: '문제',
+      title: '방화벽이 UDP 443을 막으면 클라이언트가 되돌아간다',
+      text: [
+        '회사망은 TCP 443은 열어 두고 UDP 443은 버리는 경우가 많다. QUIC 핸드셰이크가 끝나지 않으니, 브라우저는 잠시 기다린 뒤 TCP 위의 HTTP/2로 되돌아간다(폴백).',
+        '페이지는 HTTP/3 없이도 잘 뜬다. 그래서 HTTP/3를 내놓는 서버도 TCP 리스너는 항상 함께 열어 둔다.',
+      ],
+      keyIdea: '개발자 도구에 h3가 끝내 안 보이면 UDP 경로와 Alt-Svc 헤더부터 확인한다.',
+      flows: [{from: 'client', to: 'tcp', label: '폴백: h2', type: 'request'}],
+      focus: ['quic', 'tcp'],
+      status: {quic: 'error'},
+      values: {ver: 'HTTP/2 (폴백)', rtt: '2 (TCP + TLS 1.3)', hol: {text: 'TCP 수준', tone: 'bad'}},
+    },
+    {
+      short: 'gRPC',
+      kind: '주의',
+      title: 'HTTP/2 연결 하나로 오는 gRPC는 서버 하나로만 간다',
+      text: [
+        'gRPC는 HTTP/2 위에서 돌고, 오래가는 연결 하나를 열어 둔다. L4 로드밸런서는 연결마다 한 번 백엔드를 고른다. 그래서 이 클라이언트의 모든 호출이 서버 1로 가고 서버 2는 논다.',
+        '쿠버네티스의 일반 ClusterIP 서비스도 연결 단위로 나눈다. gRPC 호출을 고르게 나누려면 HTTP/2를 이해하고 요청마다 나누는 L7 프록시(예: Envoy, 서비스 메시)를 두거나, 클라이언트 쪽 부하 분산을 쓴다.',
+      ],
+      keyIdea: '로드밸런서가 연결만 본다면 레플리카를 늘려도 gRPC 트래픽은 퍼지지 않는다. 레플리카 수가 아니라 파드별 요청 수를 본다.',
+      flows: [
+        {from: 'client', to: 'tcp', label: 'gRPC 호출', type: 'request'},
+        {from: 'tcp', to: 'lb', label: '연결 1개', type: 'request'},
+        {from: 'lb', to: 'srv1', label: '모든 호출', type: 'request'},
+      ],
+      focus: ['lb', 'srv1', 'srv2'],
+      status: {quic: null, srv1: 'warn', srv2: 'off'},
+      badges: {srv1: '100%', srv2: '0%'},
+      values: {ver: 'HTTP/2 (gRPC)', conns: '오래가는 1개'},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '메시지는 같고, 나르는 방식이 셋이다',
+      text: [
+        'HTTP/1.1은 연결마다 응답을 하나씩 받고 연결을 여러 개 연다. HTTP/2는 TCP 연결 하나에 스트림을 섞어 보내지만 TCP 손실에는 여전히 멈춘다. HTTP/3는 스트림을 UDP 위의 QUIC으로 옮겨 스트림마다 따로 복구하고 연결도 더 빨리 맺는다.',
+        '버전은 협상하거나(ALPN) 알려 주고(Alt-Svc), 길이 막히면 클라이언트가 되돌아간다. 로드밸런서는 프로토콜을 이해해야 연결이 아니라 요청 단위로 나눌 수 있다.',
+      ],
+      keyIdea: '무엇을 튜닝하기 전에 curl -v나 개발자 도구의 Protocol 열로 실제 정해진 버전부터 확인한다.',
+      flows: [
+        {from: 'client', to: 'quic', label: 'h3', type: 'request'},
+        {from: 'quic', to: 'lb', label: '스트림', type: 'request'},
+        {from: 'lb', to: 'srv1', label: '요청마다', type: 'request'},
+        {from: 'lb', to: 'srv2', label: '요청마다', type: 'request'},
+      ],
+      focus: ['tcp', 'quic', 'lb'],
+      status: {srv1: null, srv2: null},
+      badges: {srv1: null, srv2: null, client: null},
+      values: {ver: 'h1.1 · h2 · h3'},
+    },
+  ]}
+/>
+
+## 세 버전 비교
+
+| | HTTP/1.1 | HTTP/2 | HTTP/3 |
+|---|---|---|---|
+| 전송 계층 | TCP (+ TLS) | TCP + TLS (h2), 서비스 간에는 암호화 없는 h2c | UDP 위의 QUIC, TLS 1.3 내장 |
+| 메시지 형식 | 글자 줄 | 스트림 위의 바이너리 프레임 | QUIC 스트림 위의 바이너리 프레임 |
+| 한 연결에서 동시에 오가는 요청 | 응답 하나씩 | 섞여 오가는 스트림 여럿 | 서로 독립인 스트림 여럿 |
+| 헤더 압축 | 없음 | HPACK | QPACK |
+| HOL 블로킹 | 연결마다, HTTP 수준 | 패킷 손실 시 TCP 수준 | 데이터를 잃은 스트림만 |
+| 첫 요청 전 왕복 (새 연결, TLS 1.3) | 2 | 2 | 1 (0-RTT 재접속 시 0) |
+| 버전을 정하는 방법 | 기본값 | ALPN `h2` | `Alt-Svc` 헤더나 DNS HTTPS 레코드, 그다음 ALPN `h3` |
+| 명세 | RFC 9112 | RFC 9113 | RFC 9114 |
+
+## 직접 확인해 보기
+
+```bash
+curl -sv --http1.1 -o /dev/null https://<도메인>/ 2>&1 | grep -E 'ALPN|^> GET|^< HTTP'   # HTTP/1.1로 고정
+curl -sv --http2   -o /dev/null https://<도메인>/ 2>&1 | grep -E 'ALPN|^< HTTP'          # ALPN으로 h2 제안
+curl -sI https://<도메인>/ | grep -i alt-svc                                             # 서버가 h3를 알리는지
+curl -s --http3 -o /dev/null -w '%{http_version}\n' https://<도메인>/                    # HTTP/3 지원으로 빌드된 curl 필요
+openssl s_client -connect <도메인>:443 -alpn h2 </dev/null 2>/dev/null | grep ALPN        # "ALPN protocol: h2"
+```
+
+브라우저 개발자 도구의 Network 표 머리글을 오른쪽 클릭해 **Protocol** 열을 켜면 요청마다 `http/1.1`, `h2`, `h3`가 보인다.
+
+더 읽을거리: [RFC 9110 HTTP 의미론](https://www.rfc-editor.org/rfc/rfc9110) · [RFC 9113 HTTP/2](https://www.rfc-editor.org/rfc/rfc9113) · [RFC 9114 HTTP/3](https://www.rfc-editor.org/rfc/rfc9114) · [RFC 9000 QUIC](https://www.rfc-editor.org/rfc/rfc9000) · [HTTP의 진화 (MDN)](https://developer.mozilla.org/ko/docs/Web/HTTP/Guides/Evolution_of_HTTP) · [gRPC 부하 분산](https://grpc.io/blog/grpc-load-balancing/) · [주소창에 주소를 입력하면](../basic/web-request.mdx) · [HTTPS와 인증서](../basic/https-cert.mdx)

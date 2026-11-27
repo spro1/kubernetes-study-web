@@ -1,0 +1,229 @@
+---
+id: object-storage
+title: How Object Storage Works
+sidebar_label: 06 · Object Storage
+description: Animated walkthrough of object storage, using Amazon S3 as the example. Covers buckets and keys, signed HTTPS requests, bucket policies and Block Public Access, presigned URLs, read-after-write consistency, versioning, lifecycle rules and multipart upload
+summary: 'Buckets and keys, signed requests, a 403 versus an accidentally public bucket, presigned URLs, versioning and lifecycle rules.'
+icon: archive
+hide_table_of_contents: true
+---
+
+# How Object Storage Works
+
+A shop app saves product photos to object storage and shows them to users. This lesson uses Amazon S3 as the example. Google Cloud Storage, Azure Blob Storage and MinIO work the same way under different names. Follow one photo from upload to archive, and see who is allowed to read it at each step.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~11 min', level: 'Beginner'}}
+  groups={[
+    {label: 'Object storage service', x: 450, y: 30, w: 535, h: 410, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'app', label: 'Shop app', sub: 'IAM role', icon: 'server', tone: 'app', x: 110, y: 130, show: true},
+    {id: 'user', label: 'Browser', sub: 'Shop visitor', icon: 'browser', tone: 'ext', x: 110, y: 330, show: true},
+    {id: 'iam', label: 'IAM / STS', sub: 'Temporary keys', icon: 'ticket', tone: 'cp', x: 300, y: 400},
+    {id: 'api', label: 'S3 API', sub: 'HTTPS endpoint', icon: 'gate', tone: 'cp', x: 570, y: 230, show: true},
+    {id: 'policy', label: 'Bucket policy', sub: 'Block Public Access', icon: 'shield', tone: 'store', x: 570, y: 390, w: 170},
+    {id: 'bucket', label: 'Bucket', sub: 'shop-images', icon: 'archive', tone: 'store', x: 830, y: 110, show: true},
+    {id: 'obj', label: 'Object', sub: 'photos/123.jpg', icon: 'box', tone: 'store', size: 'sm', w: 140, x: 830, y: 230},
+    {id: 'ver', label: 'Old version', sub: 'noncurrent', icon: 'layers', tone: 'store', size: 'sm', w: 140, x: 830, y: 310},
+    {id: 'cold', label: 'Archive class', sub: 'Cheaper, slower', icon: 'disk', tone: 'store', size: 'sm', w: 140, x: 830, y: 390},
+  ]}
+  metrics={[
+    {id: 'req', label: 'Request'},
+    {id: 'http', label: 'Response'},
+    {id: 'versions', label: 'Versions'},
+    {id: 'cls', label: 'Storage class'},
+  ]}
+  learn={[
+    {text: 'A bucket holds objects under flat keys, and folders are only prefixes', at: 1},
+    {text: 'Every request is signed and checked against IAM and the bucket policy', at: 2},
+    {text: 'Why a 403 is safer than an accidentally public bucket', at: 3},
+    {text: 'Presigned URLs give temporary access without making anything public', at: 4},
+    {text: 'Versioning, lifecycle rules and multipart upload', at: 6},
+  ]}
+  steps={[
+    {
+      short: 'Start',
+      kind: '시작',
+      title: 'The app saves a photo with one HTTPS request',
+      text: [
+        'A seller uploads a product photo. The shop app sends it to object storage with an HTTPS PUT request to the bucket shop-images under the name photos/123.jpg.',
+        'Object storage has no disk to mount and no file system to format. You read and write whole objects through an HTTP API. PUT writes an object, GET reads it, DELETE removes it, and LIST shows names.',
+      ],
+      flows: [{from: 'app', to: 'api', label: 'PUT', type: 'request'}],
+      focus: ['app', 'api'],
+      values: {req: 'PUT photos/123.jpg', http: '—', versions: '—', cls: '—'},
+    },
+    {
+      short: 'Bucket · key',
+      kind: '원리',
+      title: 'A bucket holds objects under flat keys',
+      text: [
+        'A bucket is a named container. Inside it, each object has a key (its full name), the data, and metadata such as Content-Type and size. There is no directory tree. photos/123.jpg is one key, and the slash is just a character in it.',
+        'Consoles and the CLI show "folders" by grouping keys that share a prefix such as photos/. You list a prefix, not a directory. Renaming a "folder" means copying every object to a new key and deleting the old ones.',
+      ],
+      keyIdea: 'An object is replaced as a whole. You cannot append to it or change bytes in the middle. To change one byte, you upload the object again.',
+      flows: [{from: 'api', to: 'obj', label: 'Store', type: 'request'}],
+      focus: ['bucket', 'obj'],
+      badges: {obj: 'v1'},
+      values: {http: {text: '200 OK', tone: 'good'}, versions: '1'},
+    },
+    {
+      short: 'Signed request',
+      kind: '원리',
+      title: 'Every request is signed, then checked against policies',
+      text: [
+        'The app does not keep a password. It runs with an IAM role and gets temporary access keys from STS. The SDK uses them to sign each request (Signature Version 4). The signature covers the method, the key, the headers and the time.',
+        'The S3 API checks the signature, then evaluates the identity policy of the role together with the bucket policy. An explicit Deny in either one wins. Without an Allow, the answer is 403 Access Denied.',
+      ],
+      keyIdea: 'Give the app only the actions it needs on only this bucket, for example s3:PutObject and s3:GetObject on shop-images/photos/*.',
+      flows: [
+        {from: 'iam', to: 'app', label: 'Temp keys', type: 'response'},
+        {from: 'app', to: 'api', label: 'Signed PUT', type: 'request'},
+        {from: 'policy', to: 'api', label: 'Allow?', type: 'watch'},
+      ],
+      focus: ['iam', 'app', 'api', 'policy'],
+      badges: {app: 'SigV4'},
+      values: {req: 'Signed PUT', http: {text: '200 OK', tone: 'good'}},
+    },
+    {
+      short: '403',
+      kind: '문제',
+      title: 'The browser gets 403, and that is the safe default',
+      text: [
+        'The product page puts the object URL straight into an img tag. The browser\'s GET has no signature, so it is an anonymous request. New buckets have Block Public Access turned on, so the answer is 403 Access Denied.',
+        'The tempting fix is to turn off Block Public Access and allow everyone to read. This is a classic way data leaks: one wrong policy and the whole bucket, including invoices or backups, can be read by anyone who knows or guesses its name.',
+      ],
+      keyIdea: 'If the caller does not have s3:ListBucket, a missing key also returns 403, not 404. A 403 does not always mean the object exists.',
+      flows: [{from: 'user', to: 'api', label: 'Anonymous GET', type: 'request'}],
+      focus: ['user', 'policy'],
+      status: {user: 'error', policy: 'ok'},
+      badges: {app: null, policy: 'Public blocked'},
+      values: {req: 'GET (anonymous)', http: {text: '403 AccessDenied', tone: 'bad'}},
+    },
+    {
+      short: 'Presigned URL',
+      kind: '원리',
+      title: 'A presigned URL lends access for a short time',
+      text: [
+        'The app signs the GET request itself and hands the result to the browser as a URL. The signature, the key ID and an expiry time are in the query string. The browser downloads directly from S3, and the bucket stays private.',
+        'Anyone who has the URL can use it until it expires, so keep the expiry short (minutes). With SigV4 the longest expiry is 7 days, and a URL signed with temporary credentials stops working when those credentials expire.',
+      ],
+      keyIdea: 'For public assets at scale, put a CDN in front of the private bucket instead of making the bucket public.',
+      flows: [
+        {from: 'app', to: 'user', label: 'Presigned URL', type: 'response'},
+        {from: 'user', to: 'api', label: 'GET + signature', type: 'request'},
+        {from: 'api', to: 'obj', label: 'Read', type: 'request'},
+      ],
+      focus: ['app', 'user', 'obj'],
+      status: {user: 'ok'},
+      badges: {user: 'Expires 10 min'},
+      values: {req: 'GET (presigned)', http: {text: '200 OK', tone: 'good'}},
+    },
+    {
+      short: 'Consistency',
+      kind: '주의',
+      title: 'Reads see the new version right away, but there is no lock',
+      text: [
+        'The seller replaces the photo. The app PUTs photos/123.jpg again. Since December 2020, Amazon S3 has strong read-after-write consistency: once the PUT succeeds, a following GET or LIST returns the new object.',
+        'Object storage does not lock objects for you. If two writers PUT the same key at the same time, the last write wins and the other is silently lost. Use unique keys, or conditional writes where the service supports them.',
+      ],
+      flows: [{from: 'app', to: 'api', label: 'PUT again', type: 'request'}],
+      focus: ['obj'],
+      status: {user: null, policy: null},
+      badges: {user: null, policy: null, obj: 'Overwritten'},
+      values: {req: 'PUT photos/123.jpg', http: {text: '200 OK', tone: 'good'}, versions: '1 (old one gone)'},
+    },
+    {
+      short: 'Versioning',
+      kind: '원리',
+      title: 'Versioning keeps the old object when you overwrite or delete',
+      text: [
+        'Without versioning, that overwrite destroyed the original photo. With versioning turned on for the bucket, each PUT creates a new version ID, and the previous one becomes a noncurrent version.',
+        'A DELETE without a version ID does not remove data. It adds a delete marker, so GET returns 404, while older versions stay and can be restored. This protects against mistakes and some ransomware, but you pay to store every version.',
+      ],
+      keyIdea: 'Turn on versioning for buckets that hold anything you cannot rebuild. Once turned on, versioning can only be suspended, not removed.',
+      flows: [{from: 'obj', to: 'ver', label: 'Becomes old', type: 'watch'}],
+      focus: ['obj', 'ver'],
+      badges: {obj: 'v2 current', ver: 'v1'},
+      values: {versions: '2 (v2 current)'},
+    },
+    {
+      short: 'Lifecycle',
+      kind: '원리',
+      title: 'Lifecycle rules move and expire objects for you',
+      text: [
+        'Most photos are read often in the first weeks and rarely after that. A lifecycle rule moves objects to a cheaper storage class after a number of days, such as Standard-IA after 30 days or an archive class like Glacier after 180 days.',
+        'Cheaper classes trade price for something else. Infrequent-access classes charge per GB read and have a minimum storage time. Some archive classes, such as Glacier Flexible Retrieval, take minutes to hours to restore. The same rules can expire noncurrent versions after, say, 90 days so versioning does not grow forever.',
+      ],
+      flows: [
+        {from: 'ver', to: 'cold', label: 'After 180 days', type: 'watch'},
+      ],
+      focus: ['ver', 'cold'],
+      badges: {cold: 'v1 archived'},
+      values: {cls: 'Standard → archive'},
+    },
+    {
+      short: 'Multipart',
+      kind: '주의',
+      title: 'Large files go up in parts',
+      text: [
+        'A seller uploads a 4 GB product video. One PUT can carry at most 5 GB, and a single long upload fails as a whole if the network drops. Multipart upload splits the file into parts (5 MiB to 5 GiB each, up to 10,000 parts) that are sent in parallel and retried one by one.',
+        'The CLI and SDKs switch to multipart automatically above a size threshold. If an upload is started and never completed or aborted, its parts stay in the bucket and are billed, but they do not show up as an object.',
+      ],
+      keyIdea: 'Add a lifecycle rule that aborts incomplete multipart uploads after a few days.',
+      flows: [
+        {from: 'app', to: 'api', label: 'Part 1..N', type: 'request'},
+        {from: 'api', to: 'bucket', label: 'Complete', type: 'request'},
+      ],
+      focus: ['app', 'api', 'bucket'],
+      badges: {bucket: 'video.mp4'},
+      values: {req: 'Multipart upload', http: {text: '200 OK', tone: 'good'}},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Private by default, signed for access, versioned for safety',
+      text: [
+        'Object storage keeps whole objects under flat keys and serves them over an HTTP API. Every request is signed and checked against IAM and the bucket policy, and new buckets block public access.',
+        'Give out access with presigned URLs or a CDN, not a public bucket. Turn on versioning where data matters, and let lifecycle rules move old data to cheaper classes and clean up old versions and failed uploads.',
+      ],
+      keyIdea: 'Use object storage for files that are written once and read many times: images, backups, logs, data sets and model files. Use block or file storage when software needs a mounted disk.',
+      flows: [
+        {from: 'app', to: 'api', label: 'Signed', type: 'request'},
+        {from: 'api', to: 'obj', label: 'Read', type: 'request'},
+      ],
+      focus: ['bucket', 'policy', 'obj'],
+      badges: {bucket: null, cold: null},
+    },
+  ]}
+/>
+
+## Block, file and object storage
+
+| | Block storage | File storage | Object storage |
+|---|---|---|---|
+| Examples | Amazon EBS, Persistent Disk, Azure Disk | Amazon EFS, Filestore, Azure Files, NFS | Amazon S3, Cloud Storage, Azure Blob, MinIO |
+| How you use it | Mounted as a disk on one server, with a file system on top | Mounted as a shared folder by many servers | HTTP API (PUT, GET, DELETE, LIST) |
+| Unit | Blocks | Files in directories | Whole objects under flat keys |
+| Change part of the data | Yes | Yes | No, replace the whole object |
+| Shared by many clients | Usually one node at a time | Yes | Yes, over the network from anywhere |
+| In Kubernetes | PersistentVolume (ReadWriteOnce) | PersistentVolume (ReadWriteMany) | Called from the app, or mounted through a CSI driver with limits |
+| Good for | Databases, boot disks | Shared files for legacy apps | Images, backups, logs, data sets, model files |
+
+## Try it yourself
+
+```bash
+aws s3 ls s3://shop-images/photos/                         # List a prefix (a "folder")
+aws s3 cp ./123.jpg s3://shop-images/photos/123.jpg        # Upload (multipart is used automatically for big files)
+aws s3api head-object --bucket shop-images --key photos/123.jpg   # Size, ETag, storage class, VersionId
+aws s3 presign s3://shop-images/photos/123.jpg --expires-in 600   # Temporary URL, valid 10 minutes
+aws s3api get-public-access-block --bucket shop-images     # Is public access blocked?
+aws s3api get-bucket-versioning --bucket shop-images       # Enabled / Suspended / (empty = never enabled)
+aws s3api list-object-versions --bucket shop-images --prefix photos/123.jpg   # Versions and delete markers
+aws s3api list-multipart-uploads --bucket shop-images      # Unfinished uploads you are still paying for
+```
+
+Further reading: [What is Amazon S3?](https://docs.aws.amazon.com/AmazonS3/latest/userguide/Welcome.html) · [Blocking public access](https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html) · [Presigned URLs](https://docs.aws.amazon.com/AmazonS3/latest/userguide/using-presigned-url.html) · [Versioning](https://docs.aws.amazon.com/AmazonS3/latest/userguide/Versioning.html) · [Lifecycle](https://docs.aws.amazon.com/AmazonS3/latest/userguide/object-lifecycle-mgmt.html) · [Multipart upload](https://docs.aws.amazon.com/AmazonS3/latest/userguide/mpuoverview.html) · [Permission Checks on One API Request (IAM)](../cloud/iam-request.mdx) · [How Storage Gets Attached (PVC·PV)](../k8s/storage-volume.mdx)

@@ -1,0 +1,272 @@
+---
+id: rag-pipeline
+title: How a RAG Pipeline Answers From Your Documents
+sidebar_label: 12 · RAG Pipeline
+description: Animated walkthrough of retrieval-augmented generation, from chunking and embedding documents into a vector database to searching with the same model, hybrid search and reranking, assembling a prompt with citations, and the usual failures such as bad chunks, stale indexes and leaked permissions
+summary: 'Chunk, embed and index documents, then retrieve, rerank and hand the best chunks to the LLM, and where answers go wrong.'
+icon: book
+hide_table_of_contents: true
+---
+
+# How a RAG Pipeline Answers From Your Documents
+
+Follow one question through retrieval-augmented generation (RAG): **documents → chunks → embeddings → vector DB**, then **question → same embedding model → search → rerank → prompt → LLM**. See why the answer is only as good as the chunks that reach the model.
+
+<StepDiagram
+  width={1000}
+  height={470}
+  meta={{duration: '~14 min', level: 'Intermediate'}}
+  groups={[
+    {label: 'Ingestion · runs ahead of time', x: 20, y: 30, w: 960, h: 140, tone: 'mgmt'},
+    {label: 'Query · runs per question', x: 20, y: 310, w: 960, h: 145, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'docs', label: 'Documents', sub: 'Wiki · PDF · tickets', icon: 'book', tone: 'ext', x: 110, y: 100, show: true},
+    {id: 'chunk', label: 'Chunker', sub: 'Size · overlap', icon: 'layers', tone: 'node', x: 310, y: 100},
+    {id: 'embed', label: 'Embedding model', sub: 'Text → vector', icon: 'spark', tone: 'app', x: 500, y: 240, w: 170},
+    {id: 'vdb', label: 'Vector DB', sub: 'HNSW · metadata', icon: 'db', tone: 'store', x: 720, y: 100},
+    {id: 'user', label: 'User', sub: 'Asks a question', icon: 'user', tone: 'ext', x: 110, y: 390, show: true},
+    {id: 'app', label: 'RAG service', sub: 'Orchestrates', icon: 'agent', tone: 'cp', x: 310, y: 390},
+    {id: 'rerank', label: 'Reranker', sub: 'Top 20 → top 5', icon: 'split', tone: 'node', x: 720, y: 390},
+    {id: 'llm', label: 'LLM', sub: 'Model serving', icon: 'server', tone: 'app', x: 900, y: 390, w: 140},
+  ]}
+  metrics={[
+    {id: 'chunks', label: 'Indexed chunks'},
+    {id: 'hits', label: 'Retrieved'},
+    {id: 'ctx', label: 'Prompt tokens'},
+    {id: 'answer', label: 'Answer'},
+  ]}
+  learn={[
+    {text: 'Why a model needs your documents handed to it at question time', at: 0},
+    {text: 'How chunking and embedding turn documents into searchable vectors', at: 1},
+    {text: 'Nearest-neighbor search, hybrid keyword search and reranking', at: 3},
+    {text: 'Bad chunks, stale indexes and mismatched embedding models', at: 6},
+    {text: 'Filtering by permission before retrieval, not after', at: 8},
+  ]}
+  steps={[
+    {
+      short: 'Start',
+      kind: '시작',
+      title: 'The model has never seen your documents',
+      text: [
+        'A user asks the company assistant, "How many days do customers have to return an opened item?" The answer is in an internal policy page written last month.',
+        'An LLM only knows what was in its training data. RAG fixes this without retraining: find the passages that answer the question and put them into the prompt, so the model answers from them.',
+      ],
+      keyIdea: 'RAG has two halves. Ingestion prepares documents ahead of time. The query path finds and uses them for each question.',
+      flows: [{from: 'user', to: 'app', label: 'Question', type: 'request'}],
+      focus: ['user', 'app'],
+      values: {chunks: '0', hits: '—', ctx: '—', answer: '—'},
+    },
+    {
+      short: 'Chunk',
+      kind: '원리',
+      title: 'Documents are cut into chunks',
+      text: [
+        'Ingestion reads documents and splits them into chunks, for example about 500 tokens each with some overlap between neighbors. The overlap keeps a sentence that crosses a boundary from being lost in both chunks.',
+        'Chunks follow structure where possible: headings, paragraphs, table rows. Each chunk keeps metadata such as document id, title, URL, last updated time and which groups may read it.',
+      ],
+      keyIdea: 'Chunk size is a trade-off. Too small and the chunk lacks context. Too large and one chunk mixes topics, so it matches many questions weakly.',
+      flows: [{from: 'docs', to: 'chunk', label: 'Split', type: 'request'}],
+      focus: ['docs', 'chunk'],
+      badges: {chunk: '~500 tok · overlap'},
+    },
+    {
+      short: 'Embed',
+      kind: '원리',
+      title: 'Each chunk becomes a vector in the index',
+      text: [
+        'An embedding model turns each chunk into a vector, a list of numbers (for example 768 or 1024 of them). Texts with similar meaning get vectors that point in similar directions.',
+        'The vectors go into a vector database with their metadata: for example pgvector in PostgreSQL, Qdrant or Milvus. An approximate index such as HNSW lets it find near vectors without comparing against every row.',
+      ],
+      flows: [
+        {from: 'chunk', to: 'embed', label: 'Chunks', type: 'request'},
+        {from: 'embed', to: 'vdb', label: 'Vectors + metadata', type: 'request'},
+      ],
+      focus: ['embed', 'vdb'],
+      badges: {chunk: null, vdb: 'HNSW'},
+      values: {chunks: '48,000'},
+    },
+    {
+      short: 'Search',
+      kind: '원리',
+      title: 'The question is embedded with the same model and searched',
+      text: [
+        'At query time the RAG service embeds the question with the same embedding model used for ingestion. Vectors from different models live in different spaces and cannot be compared.',
+        'The vector DB returns the top k nearest chunks by cosine similarity, here k = 20. Because the index is approximate, it trades a little recall for a lot of speed.',
+      ],
+      flows: [
+        {from: 'app', to: 'embed', label: 'Question', type: 'request'},
+        {from: 'app', to: 'vdb', label: 'Nearest 20', type: 'request'},
+        {from: 'vdb', to: 'app', label: '20 chunks', type: 'response'},
+      ],
+      focus: ['app', 'embed', 'vdb'],
+      values: {hits: '20 by vector'},
+    },
+    {
+      short: 'Rerank',
+      kind: '원리',
+      title: 'Keyword search and a reranker sharpen the results',
+      text: [
+        'Vector search is good at meaning but can miss exact terms such as error codes, product names or "RMA-114". Hybrid search also runs a keyword search (BM25) and merges the two result lists.',
+        'A reranker then reads the question and each candidate chunk together and scores how well that chunk answers it. It is slower than vector search, so it only looks at the 20 candidates and keeps the best 5.',
+      ],
+      keyIdea: 'Retrieve wide and cheap, then rank narrow and precise. The LLM only sees what survives the reranker.',
+      flows: [
+        {from: 'app', to: 'rerank', label: '20 candidates', type: 'request'},
+        {from: 'rerank', to: 'app', label: 'Best 5', type: 'response'},
+      ],
+      focus: ['rerank'],
+      badges: {vdb: null, rerank: 'Top 5'},
+      values: {hits: {text: '5 after rerank', tone: 'good'}},
+    },
+    {
+      short: 'Generate',
+      kind: '원리',
+      title: 'The prompt carries the chunks and asks for citations',
+      text: [
+        'The RAG service builds the prompt: instructions ("answer only from the sources below, say so if they do not contain the answer"), the 5 chunks with their titles and URLs, then the question.',
+        'The LLM answers and cites which source each claim came from. The prompt must fit the model\'s context window along with room for the answer, so the service counts tokens and drops the lowest-ranked chunks first.',
+      ],
+      flows: [
+        {from: 'app', to: 'llm', label: 'Prompt + 5 chunks', type: 'request'},
+        {from: 'llm', to: 'app', label: 'Answer + sources', type: 'response'},
+        {from: 'app', to: 'user', label: '30 days [1]', type: 'response'},
+      ],
+      focus: ['app', 'llm'],
+      status: {llm: 'ok'},
+      values: {ctx: '3,200', answer: {text: 'Cited · correct', tone: 'good'}},
+    },
+    {
+      short: 'Bad chunk',
+      kind: '문제',
+      title: 'The right fact was in a chunk that never came back',
+      text: [
+        'Another question asks about the return window for electronics. That answer sits in a table, and the chunker cut the table so the header "Electronics" landed in one chunk and "15 days" in the next.',
+        'Neither half matches the question well. The retriever returns the general 30-day policy instead, and the LLM confidently answers 30 days, faithfully, from the wrong source.',
+      ],
+      keyIdea: 'Most wrong RAG answers are retrieval failures, not model failures. Look at which chunks were retrieved before blaming the LLM.',
+      flows: [
+        {from: 'app', to: 'vdb', label: 'Search', type: 'request'},
+        {from: 'app', to: 'llm', label: 'Wrong chunks', type: 'request'},
+      ],
+      focus: ['chunk', 'vdb'],
+      status: {llm: null, chunk: 'error'},
+      badges: {chunk: 'Table split'},
+      values: {hits: {text: 'Right chunk missing', tone: 'bad'}, answer: {text: 'Wrong · cited', tone: 'bad'}},
+    },
+    {
+      short: 'Stale index',
+      kind: '문제',
+      title: 'An updated document or a new embedding model breaks search',
+      text: [
+        'The policy page changed from 30 to 14 days, but ingestion only runs weekly. The old chunk is still in the index, so answers stay wrong until the document is re-embedded and the old chunks are deleted.',
+        'A second trap: the team switches to a newer embedding model for queries but does not re-embed the stored chunks. Similarity scores become meaningless. If the dimensions differ, the query fails outright.',
+      ],
+      keyIdea: 'Store the embedding model name and the document version with every chunk. Changing the model means rebuilding the whole index.',
+      flows: [
+        {from: 'docs', to: 'chunk', label: 'Changed · not re-indexed', type: 'watch'},
+        {from: 'app', to: 'embed', label: 'New model', type: 'request'},
+      ],
+      focus: ['docs', 'vdb', 'embed'],
+      status: {chunk: null, vdb: 'warn', embed: 'warn'},
+      badges: {chunk: null, vdb: 'Old chunks', embed: 'Model v2 ≠ v1'},
+      values: {answer: {text: 'Outdated', tone: 'bad'}},
+    },
+    {
+      short: 'Permissions',
+      kind: '주의',
+      title: 'Filter by permission before retrieval, not after',
+      text: [
+        'The index holds HR documents too. If search ignores who is asking, an HR salary table can be retrieved for any employee, and once a chunk is in the prompt the model may repeat it.',
+        'Each chunk carries the groups allowed to read it, and the RAG service adds the user\'s groups as a metadata filter in the vector query. With an approximate index, a strict filter can return fewer than k results, so check how your database handles filtered search.',
+      ],
+      keyIdea: 'The LLM is not a security boundary. A chunk that reaches the prompt can reach the user.',
+      flows: [
+        {from: 'user', to: 'app', label: 'Groups: sales', type: 'request'},
+        {from: 'app', to: 'vdb', label: 'Filter: sales', type: 'request'},
+      ],
+      focus: ['app', 'vdb'],
+      status: {vdb: 'ok', embed: null},
+      badges: {vdb: 'ACL filter', embed: null},
+      values: {hits: {text: 'Only allowed chunks', tone: 'good'}},
+    },
+    {
+      short: 'On K8s',
+      kind: '원리',
+      title: 'On Kubernetes, each part scales on its own, and you measure it',
+      text: [
+        'Typical layout: ingestion runs as a Job or CronJob (or reacts to change events). The embedding model and reranker run as Deployments, often on GPUs. The vector DB runs as a StatefulSet with a PVC per replica. The LLM runs on its own model servers.',
+        'Measure both halves with a fixed set of test questions. Retrieval recall@k asks whether the right chunk was in the top k. Faithfulness asks whether every claim in the answer is supported by the retrieved chunks.',
+      ],
+      keyIdea: 'Re-run the test questions whenever you change chunking, the embedding model, k or the reranker.',
+      flows: [
+        {from: 'docs', to: 'chunk', label: 'CronJob', type: 'request'},
+        {from: 'app', to: 'vdb', label: 'StatefulSet', type: 'request'},
+        {from: 'app', to: 'llm', label: 'Model servers', type: 'request'},
+      ],
+      focus: ['chunk', 'vdb', 'embed', 'llm'],
+      status: {vdb: null},
+      badges: {vdb: 'PVC per replica', rerank: null},
+      values: {answer: 'recall@5 · faithfulness'},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'The answer is only as good as the chunks that reach the model',
+      text: [
+        'Ingestion splits documents into chunks, embeds them and stores vectors with metadata. Each question is embedded with the same model, searched, optionally combined with keyword search, reranked and placed in the prompt with citations.',
+        'Most failures are on the retrieval side: chunks cut in the wrong place, an index that lags the documents, a changed embedding model, or a missing permission filter.',
+      ],
+      keyIdea: 'When an answer is wrong, check in this order: was the right chunk indexed, was it retrieved, did it survive reranking, and did the model use it.',
+      flows: [
+        {from: 'user', to: 'app', label: 'Question', type: 'request'},
+        {from: 'app', to: 'vdb', label: 'Search', type: 'request'},
+        {from: 'app', to: 'llm', label: 'Prompt', type: 'request'},
+        {from: 'app', to: 'user', label: 'Cited answer', type: 'response'},
+      ],
+      focus: ['chunk', 'embed', 'vdb', 'rerank', 'llm'],
+      status: {vdb: null, embed: null},
+      badges: {vdb: null, embed: null},
+      values: {answer: {text: 'Cited · current', tone: 'good'}},
+    },
+  ]}
+/>
+
+## When answers go wrong
+
+| Failure | Symptom | Fix |
+|---|---|---|
+| Bad chunking | The fact exists but is never retrieved, or tables and lists come back cut in half | Split along headings, paragraphs and table rows. Tune size and overlap, and test with real questions |
+| Stale index | Answers quote an old version of a document | Re-index on change (events or a frequent CronJob). Delete old chunks by document id when a document changes |
+| Embedding model mismatch | Similarity scores look random after an upgrade, or the query fails on vector dimensions | Store the model name with each chunk, and rebuild the whole index when the model changes |
+| Exact terms missed | Questions about codes, SKUs or names get unrelated chunks | Add keyword search (BM25) and merge results (hybrid search) |
+| Context overflow | Request rejected for length, or the answer ignores later chunks | Count tokens, keep fewer and better chunks after reranking, leave room for the answer |
+| No permission filter | A user sees content from documents they cannot open | Store allowed groups per chunk and filter in the vector query |
+| Model ignores sources | Answer contradicts the retrieved chunks or cites nothing | Tell the model to answer only from the sources and to say when they are not enough. Measure faithfulness |
+
+## Try it yourself
+
+```bash
+# pgvector in a local PostgreSQL (the pgvector image ships the extension)
+docker run -d --name pg -e POSTGRES_PASSWORD=pw -p 5432:5432 pgvector/pgvector:pg17
+psql postgresql://postgres:pw@localhost:5432/postgres <<'SQL'
+CREATE EXTENSION IF NOT EXISTS vector;
+CREATE TABLE chunks (id bigserial PRIMARY KEY, doc_id text, groups text[], body text, embedding vector(3));
+INSERT INTO chunks (doc_id, groups, body, embedding) VALUES
+  ('refund', '{all}',   'Opened items: 30 days',  '[0.9,0.1,0.0]'),
+  ('salary', '{hr}',    'Salary bands 2026',      '[0.1,0.9,0.2]'),
+  ('ship',   '{all}',   'Shipping takes 3 days',  '[0.2,0.1,0.9]');
+CREATE INDEX ON chunks USING hnsw (embedding vector_cosine_ops);   -- approximate index
+-- <=> is cosine distance (smaller is closer). Filter by the user's groups in the same query.
+SELECT doc_id, body, embedding <=> '[0.8,0.2,0.1]' AS distance
+FROM chunks WHERE groups && '{all,sales}' ORDER BY distance LIMIT 2;
+SQL
+
+# Embeddings from an OpenAI-compatible server (many model servers expose this endpoint)
+curl -s http://<embedding-server>/v1/embeddings -H 'Content-Type: application/json' \
+  -d '{"model":"<embedding-model>","input":"How long is the return window?"}' | jq '.data[0].embedding | length'   # vector dimension
+```
+
+Real embeddings have hundreds or thousands of dimensions. The three-number vectors above only show how the query works.
+
+Further reading: [pgvector](https://github.com/pgvector/pgvector) · [Qdrant docs](https://qdrant.tech/documentation/) · [Milvus docs](https://milvus.io/docs) · [Lewis et al. 2020, Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks](https://arxiv.org/abs/2005.11401) · [How an Answer Is Built One Token at a Time](../llm/token-generation.mdx) · [From API Request to Response](../ai/inference-request.mdx)

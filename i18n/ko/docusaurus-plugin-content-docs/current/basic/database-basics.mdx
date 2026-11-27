@@ -1,0 +1,239 @@
+---
+id: database-basics
+title: 앱이 데이터베이스에 저장할 때
+sidebar_label: 03 · 데이터베이스에 저장할 때
+description: 주문 하나가 PostgreSQL 같은 관계형 데이터베이스에 저장되기까지, 커넥션 풀과 쿼리 플래너, 인덱스, 트랜잭션과 ACID, WAL, 잠금과 교착 상태, 읽기 복제본으로의 복제와 복제 지연, NoSQL과의 차이를 애니메이션으로 따라간다
+summary: '커넥션 풀, 실행 계획과 인덱스, 트랜잭션과 WAL, 잠금, 읽기 복제본과 복제 지연.'
+icon: db
+hide_table_of_contents: true
+---
+
+# 앱이 데이터베이스에 저장할 때
+
+주문 앱이 주문 하나를 관계형 데이터베이스에 저장한다. 예시는 PostgreSQL이지만 MySQL 같은 다른 관계형 DB도 비슷하게 움직인다. 앱의 **커넥션 풀**에서 **쿼리 플래너**를 거쳐 **트랜잭션**과 **WAL(write-ahead log, 선행 기록 로그)**, 그리고 **읽기 복제본**까지 주문을 따라가 본다.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '약 12분', level: '기초'}}
+  groups={[
+    {label: '주 DB 서버', x: 400, y: 25, w: 330, h: 410, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'app', label: '주문 앱', sub: '주문 INSERT', icon: 'server', tone: 'app', x: 100, y: 225, show: true},
+    {id: 'pool', label: '커넥션 풀', sub: '연결을 재사용', icon: 'layers', tone: 'cp', x: 290, y: 225, w: 160},
+    {id: 'planner', label: '쿼리 플래너', sub: '실행 계획 선택', icon: 'gear', tone: 'cp', x: 565, y: 95},
+    {id: 'table', label: 'orders 테이블', sub: '행 · 인덱스', icon: 'db', tone: 'store', x: 565, y: 230},
+    {id: 'wal', label: 'WAL', sub: '선행 기록 로그', icon: 'archive', tone: 'store', x: 565, y: 365},
+    {id: 'replica', label: '읽기 복제본', sub: '읽기 전용 사본', icon: 'db', tone: 'store', x: 870, y: 160},
+    {id: 'report', label: '리포트 앱', sub: '복제본에서 읽음', icon: 'chart', tone: 'app', x: 870, y: 330},
+  ]}
+  metrics={[
+    {id: 'conns', label: '연결 수'},
+    {id: 'plan', label: '실행 계획'},
+    {id: 'txn', label: '트랜잭션'},
+    {id: 'lag', label: '복제 지연'},
+  ]}
+  learn={[
+    {text: '앱이 커넥션 풀을 쓰는 이유와 연결이 바닥나면 생기는 일', at: 1},
+    {text: '플래너가 인덱스 스캔과 전체 스캔 중 하나를 고르는 방식', at: 2},
+    {text: '트랜잭션, COMMIT, ACID의 네 가지 성질', at: 4},
+    {text: 'COMMIT이 돌아오기 전에 WAL부터 쓰는 이유', at: 5},
+    {text: '읽기 복제본으로의 복제와 복제 지연 때문에 옛 데이터를 읽는 문제', at: 7},
+  ]}
+  steps={[
+    {
+      short: '시작',
+      kind: '시작',
+      title: '주문 하나, 데이터베이스 하나',
+      text: [
+        '고객이 주문을 넣는다. 주문 앱은 orders 테이블에 행을 하나 넣고 상품 재고를 하나 줄여야 한다. 두 변경 모두 서버가 죽어도 남아 있어야 한다.',
+        '앱이 직접 파일을 쓰지는 않는다. 네트워크 연결로 SQL을 보내면, 행을 어떻게 찾고 바꾸고 저장할지는 데이터베이스가 정한다.',
+      ],
+      flows: [{from: 'app', to: 'pool', label: '주문 저장', type: 'request'}],
+      focus: ['app'],
+    },
+    {
+      short: '커넥션 풀',
+      kind: '원리',
+      title: '커넥션 풀은 몇 개의 연결을 돌려 쓴다',
+      text: [
+        '연결 하나를 열 때마다 TCP 핸드셰이크, 대개 TLS, 인증을 거친다. PostgreSQL은 연결마다 서버 프로세스도 하나씩 띄운다. 그래서 앱은 열린 연결 몇 개를 풀에 두고 요청마다 하나씩 빌려준다.',
+        '서버는 전체 연결 수를 max_connections로 제한한다(PostgreSQL 기본값 100). 앱 레플리카 하나가 연결 30개를 열고 레플리카를 5개 띄우면, 새 연결은 "sorry, too many clients already"로 거절된다.',
+      ],
+      keyIdea: '풀 크기는 레플리카 하나 기준으로 정하고 레플리카 수를 곱해 본다. HPA가 파드를 늘리면 DB 연결 수도 같이 늘어난다.',
+      flows: [{from: 'pool', to: 'planner', label: 'SQL', type: 'request'}],
+      focus: ['pool'],
+      values: {conns: '12 / 100'},
+    },
+    {
+      short: '실행 계획',
+      kind: '원리',
+      title: '플래너가 쿼리를 어떻게 실행할지 정한다',
+      text: [
+        'SQL은 무엇을 원하는지만 말하고 어떻게 가져올지는 말하지 않는다. DB는 쿼리를 해석하고, 플래너가 테이블 통계(예: 조건에 맞는 행이 몇 개일지)를 써서 가능한 계획들을 비교한다.',
+        '한 고객의 최근 주문을 찾을 때 customer_id에 인덱스가 있으면 몇 개 행으로 바로 간다(Index Scan). 없으면 테이블의 모든 행을 읽는다(Seq Scan).',
+      ],
+      flows: [{from: 'planner', to: 'table', label: 'Index Scan', type: 'request'}],
+      focus: ['planner', 'table'],
+      values: {plan: {text: 'Index Scan · 0.2 ms', tone: 'good'}},
+    },
+    {
+      short: '인덱스 없음',
+      kind: '문제',
+      title: '인덱스가 없으면 빠르던 쿼리가 전체 스캔이 된다',
+      text: [
+        '새 화면이 주문을 status로 거른다. status에 맞는 인덱스가 없어서 플래너는 1000만 행을 모두 읽는다. 쿼리 하나가 몇 초씩 걸리며 그동안 연결을 붙잡고 있어서, 부하가 몰리면 풀이 바닥난다.',
+        'EXPLAIN ANALYZE는 실행 계획과 실제 걸린 시간을 보여 준다. Seq Scan에 "Rows Removed by Filter"가 수백만이면 이 문제다. 인덱스는 읽기를 빠르게 하지만 쓰기마다 조금씩 느려지므로, 쿼리에 필요한 것만 만든다.',
+      ],
+      keyIdea: '앱이 느리고 풀이 바닥나고 DB CPU가 높다면, 가장 느린 쿼리부터 찾고(pg_stat_statements) EXPLAIN ANALYZE로 계획을 본다.',
+      flows: [{from: 'planner', to: 'table', label: 'Seq Scan', type: 'request'}],
+      focus: ['planner', 'table'],
+      status: {table: 'warn', pool: 'warn'},
+      values: {plan: {text: 'Seq Scan · 4.1 s', tone: 'bad'}, conns: {text: '100 / 100', tone: 'bad'}},
+    },
+    {
+      short: '트랜잭션',
+      kind: '원리',
+      title: '트랜잭션은 두 변경을 한 묶음으로 만든다',
+      text: [
+        '앱은 BEGIN, INSERT INTO orders, UPDATE stock, COMMIT 순으로 보낸다. COMMIT 전까지 다른 세션은 이 변경을 보지 못한다. 중간에 하나라도 실패하면 ROLLBACK이 둘 다 되돌린다.',
+        '이것이 ACID다. 원자성(Atomicity): 전부 되거나 전부 안 된다. 일관성(Consistency): NOT NULL·외래 키 같은 제약이 계속 지켜진다. 격리성(Isolation): 동시에 도는 트랜잭션이 서로의 반쯤 된 작업을 보지 않는다. 지속성(Durability): 커밋된 것은 서버가 죽어도 남는다.',
+      ],
+      flows: [{from: 'planner', to: 'table', label: 'INSERT · UPDATE', type: 'request'}],
+      focus: ['table'],
+      status: {table: 'ok', pool: null},
+      values: {plan: 'Index Scan', conns: '12 / 100', txn: 'BEGIN … 변경 2개'},
+    },
+    {
+      short: 'WAL',
+      kind: '원리',
+      title: 'COMMIT은 WAL이 디스크에 쓰인 뒤에 돌아온다',
+      text: [
+        '바뀐 데이터 페이지를 테이블 파일의 제자리에 쓰는 일은 느리고 위치가 흩어져 있다. 그래서 DB는 먼저 변경 기록을 WAL이라는 순차 파일 끝에 덧붙인다. COMMIT은 그 기록이 디스크까지 내려간(flush) 뒤에야 돌아온다.',
+        '테이블 페이지는 나중에 체크포인트가 쓴다. 서버가 죽으면 다시 켤 때 마지막 체크포인트부터 WAL을 재생해 커밋된 변경을 모두 되살린다. 지속성은 이렇게 지켜진다.',
+      ],
+      keyIdea: '쓰기 속도에는 WAL이 놓인 디스크의 속도와 안정성이 거의 무엇보다 중요하다. fsync가 느리면 COMMIT도 느리다.',
+      flows: [
+        {from: 'table', to: 'wal', label: '덧붙이고 flush', type: 'request'},
+        {from: 'wal', to: 'app', label: 'COMMIT 완료', type: 'response', bend: 60},
+      ],
+      focus: ['wal'],
+      status: {wal: 'ok'},
+      values: {txn: {text: 'COMMIT · 지속됨', tone: 'good'}},
+    },
+    {
+      short: '잠금',
+      kind: '주의',
+      title: '한 행에 쓰는 두 트랜잭션은 기다리고, 교착 상태면 하나가 중단된다',
+      text: [
+        '마지막 남은 상품에 주문 두 개가 동시에 들어와 같은 행에 UPDATE stock을 한다. 먼저 온 쪽이 행 잠금을 잡고, 나중 쪽은 먼저 온 쪽이 커밋하거나 롤백할 때까지 기다린다. 읽기는 막히지 않는다. PostgreSQL은 읽는 쪽에 마지막으로 커밋된 버전을 보여 주기 때문이다.',
+        '트랜잭션 A가 1번 행을 잡고 2번 행을 기다리는데, B는 2번 행을 잡고 1번 행을 기다리면 둘 다 끝나지 못한다. deadlock_timeout(기본 1초)이 지나면 DB가 이를 알아채고 하나를 "deadlock detected"로 중단한다. 앱은 다시 시도해야 한다.',
+      ],
+      keyIdea: '트랜잭션은 짧게, 여러 행은 어디서나 같은 순서로 건드리고, 교착 상태나 직렬화 오류가 나면 재시도한다.',
+      flows: [{from: 'pool', to: 'table', label: '잠금 대기', type: 'request'}],
+      focus: ['table'],
+      status: {table: 'warn'},
+      badges: {table: '행 잠금'},
+      values: {txn: {text: '잠금 대기 중', tone: 'bad'}},
+    },
+    {
+      short: '복제',
+      kind: '원리',
+      title: 'WAL이 읽기 복제본으로 흘러간다',
+      text: [
+        '같은 WAL이 복제본 서버로 전송된다(스트리밍 복제). 복제본은 WAL을 재생해 읽기 전용 사본을 유지한다. 리포트처럼 읽기가 많은 작업을 그쪽으로 보내면 주 서버는 쓰기에 집중할 수 있다.',
+        '기본 설정에서 이 복제는 비동기다. 주 서버는 복제본을 기다리지 않고 COMMIT을 돌려주므로 쓰기는 빠르지만, 복제본은 늘 조금 뒤처져 있다.',
+      ],
+      flows: [
+        {from: 'wal', to: 'replica', label: 'WAL 전송', type: 'request'},
+        {from: 'report', to: 'replica', label: 'SELECT', type: 'request'},
+      ],
+      focus: ['wal', 'replica'],
+      status: {table: 'ok', replica: 'ok'},
+      badges: {table: null},
+      values: {txn: 'COMMIT · 지속됨', lag: {text: '40 ms', tone: 'good'}},
+    },
+    {
+      short: '복제 지연',
+      kind: '문제',
+      title: '복제 지연 때문에 방금 넣은 주문이 안 보인다',
+      text: [
+        '대량 일괄 업데이트가 도는 동안 복제본이 30초 뒤처진다. 고객이 주문을 저장한 직후 주문 내역 화면이 복제본에서 읽으면 새 주문이 없다. 데이터가 사라진 것이 아니라 아직 도착하지 않은 것이다.',
+        '주 서버의 pg_stat_replication은 복제본마다 write_lag, flush_lag, replay_lag를 보여 준다. 사용자가 방금 쓴 것을 꼭 봐야 하는 읽기는 주 서버로 보내거나, 복제본이 따라잡을 때까지 기다린다.',
+      ],
+      keyIdea: '읽기 복제본은 조금 옛날 데이터여도 되는 읽기용이다. "저장하고 바로 보여 주기"는 주 서버에서 읽는다.',
+      flows: [
+        {from: 'wal', to: 'replica', label: '뒤처짐', type: 'request'},
+        {from: 'report', to: 'replica', label: '주문 없음', type: 'request'},
+      ],
+      focus: ['replica', 'report'],
+      status: {replica: 'warn', report: 'error'},
+      values: {lag: {text: '30 s', tone: 'bad'}},
+    },
+    {
+      short: 'NoSQL',
+      kind: '원리',
+      title: '관계형이냐 NoSQL이냐는 상위 버전이 아니라 맞바꿈이다',
+      text: [
+        '관계형 DB는 정해진 스키마의 테이블에 행을 저장하고, 쿼리에서 테이블을 조인하며, 강한 트랜잭션을 준다. 보통 더 큰 주 서버와 복제본으로 키운다.',
+        '키-값, 문서, 와이드 컬럼 같은 NoSQL 저장소는 키를 기준으로 데이터를 여러 노드에 나눠 수평 확장이 쉽다. 대신 여러 키에 걸친 쿼리, 조인, 여러 항목에 걸친 트랜잭션은 제품에 따라 제한되거나 비용이 더 든다.',
+      ],
+      keyIdea: '데이터를 어떻게 읽고 얼마나 정확해야 하는지부터 따진다. 주문·결제는 대개 관계형 DB에, 세션·캐시는 키-값 저장소에 잘 맞는다.',
+      focus: ['table', 'replica'],
+      status: {replica: 'ok', report: null},
+      values: {lag: '40 ms'},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '풀, 계획, 커밋, 복제',
+      text: [
+        '앱은 풀에서 연결을 빌린다. 플래너가 실행 계획을 고르고, 인덱스가 빠를지 느릴지를 정한다. 트랜잭션은 변경을 한 묶음으로 만들고, COMMIT은 WAL이 디스크에 쓰인 뒤 돌아온다.',
+        'WAL은 읽기 복제본에도 흘러가며, 복제본은 조금씩 뒤처진다. 잠금은 동시에 쓰는 트랜잭션을 올바르게 지키고, 교착 상태는 하나를 중단시켜 재시도하게 해서 푼다.',
+      ],
+      keyIdea: 'DB가 느리면 연결 수, 가장 느린 쿼리와 그 계획, 잠금, 복제 지연 순으로 본다.',
+      flows: [
+        {from: 'app', to: 'pool', label: '주문 저장', type: 'request'},
+        {from: 'pool', to: 'planner', label: 'SQL', type: 'request'},
+        {from: 'table', to: 'wal', label: 'WAL', type: 'request'},
+        {from: 'wal', to: 'replica', label: '전송', type: 'request'},
+      ],
+      focus: ['pool', 'planner', 'wal', 'replica'],
+      status: {replica: null, wal: null, table: null},
+    },
+  ]}
+/>
+
+## 자주 만나는 DB 문제
+
+| 증상 | 흔한 원인 | 확인할 것 |
+|---|---|---|
+| `sorry, too many clients already` | 모든 앱 레플리카의 연결 합이 `max_connections`를 넘음 | `SELECT count(*) FROM pg_stat_activity;`, 풀 크기 × 레플리카 수, 앞단에 PgBouncer 같은 풀러 두기 |
+| 한 화면만 느리고 DB CPU가 높음 | 큰 테이블의 Seq Scan, 인덱스 없음 | `EXPLAIN ANALYZE <쿼리>`, 가장 느린 쿼리는 `pg_stat_statements` |
+| 요청이 멈췄다가 타임아웃 | 긴 트랜잭션이 행 잠금을 붙잡고 있음 | `pg_stat_activity`에서 `wait_event_type = 'Lock'`, `pg_blocking_pids(pid)` |
+| `deadlock detected` | 두 트랜잭션이 같은 행들을 다른 순서로 잠금 | 서버 로그의 두 문장 확인, 행을 한 순서로 잠그고 앱에서 재시도 |
+| 저장은 됐는데 안 보임 | 뒤처진 복제본에서 읽음 | `pg_stat_replication`의 `replay_lag`, 방금 쓴 것은 주 서버에서 읽기 |
+| 모든 쓰기에서 COMMIT이 느림 | WAL 디스크 flush가 느림 | WAL 볼륨의 디스크 지연, `pg_stat_io`의 WAL 쓰기·fsync 시간(PostgreSQL 18+) 또는 `pg_stat_wal`(17 이하) |
+
+## 직접 해 보기
+
+```bash
+docker run -d --name pg -e POSTGRES_PASSWORD=pw -p 5432:5432 postgres:17   # 로컬 PostgreSQL
+docker exec -it pg psql -U postgres                                          # psql 열기
+```
+
+```sql
+CREATE TABLE orders (id bigserial PRIMARY KEY, customer_id int, status text, created_at timestamptz DEFAULT now());
+INSERT INTO orders (customer_id, status)
+  SELECT (random()*10000)::int, 'paid' FROM generate_series(1, 1000000);
+ANALYZE orders;
+EXPLAIN ANALYZE SELECT * FROM orders WHERE customer_id = 42;   -- Seq Scan
+CREATE INDEX ON orders (customer_id);
+EXPLAIN ANALYZE SELECT * FROM orders WHERE customer_id = 42;   -- Index 또는 Bitmap 스캔, 훨씬 빠름
+SHOW max_connections;
+SELECT pid, state, wait_event_type, query FROM pg_stat_activity;          -- 누가 연결했고 누가 기다리는지
+SELECT client_addr, state, replay_lag FROM pg_stat_replication;           -- 복제본이 있는 주 서버에서
+```
+
+더 읽을거리: [PostgreSQL: EXPLAIN 사용하기](https://www.postgresql.org/docs/current/using-explain.html) · [인덱스](https://www.postgresql.org/docs/current/indexes.html) · [트랜잭션](https://www.postgresql.org/docs/current/tutorial-transactions.html) · [WAL](https://www.postgresql.org/docs/current/wal-intro.html) · [명시적 잠금과 교착 상태](https://www.postgresql.org/docs/current/explicit-locking.html) · [스트리밍 복제](https://www.postgresql.org/docs/current/warm-standby.html#STREAMING-REPLICATION) · [가용 영역 하나가 멈추면](../cloud/az-failover.mdx) · [스테이트풀셋과 데이터베이스](../intermediate/statefulset.mdx)

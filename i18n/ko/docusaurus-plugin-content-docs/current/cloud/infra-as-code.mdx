@@ -1,0 +1,228 @@
+---
+id: infra-as-code
+title: 테라폼으로 하는 코드형 인프라
+sidebar_label: 12 · 코드형 인프라
+description: 테라폼(또는 OpenTofu)이 .tf 코드에서 init·plan·apply를 거쳐 클라우드를 만드는 과정, 원격 백엔드와 잠금으로 지키는 상태 파일, 콘솔 변경으로 생기는 드리프트, 교체와 제자리 변경의 차이, destroy를 애니메이션으로 따라간다
+summary: '코드·init·plan·apply, 잠금이 걸린 공유 상태, 드리프트, 그리고 plan의 -/+를 다시 봐야 하는 이유.'
+icon: layers
+hide_table_of_contents: true
+---
+
+# 테라폼으로 하는 코드형 인프라
+
+클라우드 콘솔에서 버튼을 눌러 만드는 방식은 한 번은 된다. 하지만 검토하기 어렵고, 똑같이 다시 만들기 어렵고, 무엇을 바꿨는지 잊기 쉽다. 코드형 인프라(IaC, Infrastructure as Code)는 원하는 서버와 방화벽을 파일에 적고 도구가 클라우드를 그 모습에 맞추게 한다. 테라폼으로 **코드 → init → plan → apply → 상태**를 따라간다. 오픈소스 포크인 OpenTofu도 같은 파일과 명령을 쓴다(`terraform` 대신 `tofu`). 여기서 만드는 네트워크는 [VPC 안에서 요청이 가는 길](../cloud/vpc-request.mdx)에서 설명한다.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '약 10분', level: '중급'}}
+  groups={[
+    {label: '클라우드 계정', x: 650, y: 30, w: 335, h: 410, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'dev', label: '엔지니어', sub: '노트북 또는 CI', icon: 'user', tone: 'ext', x: 90, y: 230, show: true},
+    {id: 'code', label: '코드 (.tf)', sub: 'Git 저장소', icon: 'git', tone: 'store', x: 290, y: 110, show: true},
+    {id: 'tf', label: 'terraform', sub: 'init · plan · apply', icon: 'hammer', tone: 'cp', x: 290, y: 320},
+    {id: 'state', label: '상태', sub: '원격 백엔드', icon: 'disk', tone: 'store', x: 520, y: 110},
+    {id: 'provider', label: '프로바이더', sub: '예: aws 플러그인', icon: 'gear', tone: 'node', x: 520, y: 320},
+    {id: 'api', label: '클라우드 API', sub: '생성 · 변경', icon: 'cloud', tone: 'cp', x: 750, y: 320, w: 140},
+    {id: 'vm', label: 'VM web', sub: '인스턴스', icon: 'server', tone: 'app', size: 'sm', x: 915, y: 110},
+    {id: 'sg', label: '보안 그룹', sub: '443 포트', icon: 'shield', tone: 'app', size: 'sm', x: 915, y: 220},
+    {id: 'console', label: '동료', sub: '콘솔 클릭', icon: 'user', tone: 'ext', size: 'sm', x: 915, y: 390},
+  ]}
+  metrics={[
+    {id: 'phase', label: '명령'},
+    {id: 'plan', label: '계획'},
+    {id: 'lock', label: '상태 잠금'},
+    {id: 'drift', label: '드리프트'},
+  ]}
+  learn={[
+    {text: '선언형 코드: 누를 버튼이 아니라 결과를 적는다', at: 1},
+    {text: 'init·plan·apply가 각각 하는 일', at: 2},
+    {text: '상태를 잠금이 있는 원격 백엔드에 두는 이유', at: 5},
+    {text: 'plan이 콘솔 변경(드리프트)을 드러내는 방식', at: 6},
+    {text: '-/+(교체)가 ~(제자리 변경)보다 위험한 이유', at: 7},
+  ]}
+  steps={[
+    {
+      short: '코드',
+      kind: '시작',
+      title: '절차가 아니라 원하는 결과를 적는다',
+      text: [
+        '엔지니어가 HCL로 .tf 파일을 쓴다. resource "aws_instance" "web" 하나와 443 포트를 여는 resource "aws_security_group" "web" 하나다. 코드는 무엇이 있어야 하는지를 말할 뿐, 어떤 버튼을 누를지는 말하지 않는다.',
+        '파일은 다른 코드처럼 Git에 들어간다. 클라우드를 건드리기 전에 머지 리퀘스트에서 변경을 검토받는다.',
+      ],
+      flows: [{from: 'dev', to: 'code', label: '커밋', type: 'request'}],
+      focus: ['dev', 'code'],
+      values: {phase: '—', plan: '—', lock: '—', drift: '—'},
+    },
+    {
+      short: 'init',
+      kind: '원리',
+      title: 'terraform init이 프로바이더를 받고 백엔드를 연결한다',
+      text: [
+        '테라폼 자체는 어떤 클라우드도 모른다. required_providers 블록이 hashicorp/aws 같은 플러그인(프로바이더)을 지정한다. init은 이것을 .terraform/ 에 내려받고, 정확한 버전과 체크섬을 .terraform.lock.hcl 에 적는다.',
+        'init은 상태를 보관할 곳인 backend 블록도 설정한다. 작업 디렉터리마다 한 번, 그리고 프로바이더나 백엔드를 바꾼 뒤 다시 실행한다.',
+      ],
+      keyIdea: '.terraform.lock.hcl 은 커밋해서 모두와 CI가 같은 프로바이더 버전을 쓰게 한다. .terraform/ 디렉터리는 커밋하지 않는다.',
+      flows: [
+        {from: 'tf', to: 'provider', label: '설치', type: 'request'},
+        {from: 'tf', to: 'state', label: '백엔드', type: 'watch'},
+      ],
+      focus: ['tf', 'provider'],
+      values: {phase: 'init'},
+    },
+    {
+      short: 'plan',
+      kind: '원리',
+      title: 'terraform plan이 코드·상태·실제 클라우드를 비교한다',
+      text: [
+        'plan은 상태를 읽고, 거기 적힌 자원마다 프로바이더를 통해 지금 값을 물어본다(refresh). 그 결과를 코드와 비교하고, 차이를 할 일 목록으로 만든다.',
+        '아직 아무것도 없으니 두 자원 모두 + create로 나오고, 끝에 "Plan: 2 to add, 0 to change, 0 to destroy."가 찍힌다. plan은 클라우드를 전혀 바꾸지 않는다.',
+      ],
+      keyIdea: 'terraform plan -out=tfplan 으로 계획을 저장하고 그 파일을 apply한다. 그래야 검토한 그대로가 적용된다.',
+      flows: [
+        {from: 'code', to: 'tf', label: '원하는 상태', type: 'request'},
+        {from: 'state', to: 'tf', label: '기록된 상태', type: 'response'},
+        {from: 'provider', to: 'api', label: '조회', type: 'request'},
+      ],
+      focus: ['tf'],
+      values: {phase: 'plan', plan: '+2 ~0 -0'},
+    },
+    {
+      short: 'apply',
+      kind: '원리',
+      title: 'terraform apply가 API를 호출하고 결과를 기록한다',
+      text: [
+        'apply는 상태 잠금을 잡고, 프로바이더가 의존 순서대로 클라우드 API를 부른다. 인스턴스가 보안 그룹을 참조하므로 보안 그룹이 먼저 만들어진다.',
+        '만들어진 자원은 인스턴스 ID 같은 실제 ID와 함께 상태에 적힌다. 코드 주소(aws_instance.web)와 실제 객체를 잇는 이 짝이 상태가 있는 이유다.',
+      ],
+      flows: [
+        {from: 'tf', to: 'provider', label: '적용', type: 'request'},
+        {from: 'provider', to: 'api', label: '생성', type: 'request'},
+        {from: 'api', to: 'sg', label: '생성', type: 'request'},
+        {from: 'api', to: 'vm', label: '생성', type: 'request'},
+        {from: 'tf', to: 'state', label: 'ID 기록', type: 'response'},
+      ],
+      focus: ['vm', 'sg', 'state'],
+      status: {vm: 'ok', sg: 'ok'},
+      values: {phase: 'apply', lock: {text: 'apply 동안 잠금', tone: 'good'}},
+    },
+    {
+      short: '공유 상태',
+      kind: '주의',
+      title: '상태는 잠금이 있는 원격 백엔드에 둔다',
+      text: [
+        '기본값으로 상태는 로컬 terraform.tfstate 파일이다. 노트북 한 대에만 있으면 동료와 CI가 볼 수 없고, DB 비밀번호 같은 비밀이 평문으로 들어 있을 수 있다.',
+        '원격 백엔드(예: S3, GCS, azurerm, HCP Terraform)는 공유 사본 하나를 둔다. 잠금은 apply 두 개가 동시에 도는 것을 막는다. 두 번째는 상태를 망가뜨리는 대신 "Error acquiring the state lock"으로 실패한다.',
+      ],
+      keyIdea: '상태 버킷은 접근을 좁히고 암호화한다. terraform force-unlock 은 잠금을 잡은 쪽이 확실히 죽었을 때만 쓴다.',
+      flows: [{from: 'tf', to: 'state', label: '잠금', type: 'watch'}],
+      focus: ['state'],
+      badges: {state: '잠김'},
+      values: {lock: {text: '두 번째 apply 거부', tone: 'good'}},
+    },
+    {
+      short: '드리프트',
+      kind: '문제',
+      title: '콘솔 클릭 한 번에 클라우드가 코드와 어긋난다',
+      text: [
+        '동료가 디버깅하려고 콘솔에서 보안 그룹의 22 포트를 연다. 코드와 상태에는 여전히 443만 있다. 클라우드가 코드에서 떠내려갔다(드리프트).',
+        '다음 plan은 refresh하면서 "Objects have changed outside of Terraform"을 찍고, 22 포트를 지우는 ~ update in place를 제안한다. 그대로 apply하면 동료의 변경이 소리 없이 되돌아간다.',
+      ],
+      keyIdea: 'terraform plan -refresh-only 는 고칠 계획 없이 드리프트만 보여 준다. 그다음 변경을 코드에 넣든, apply로 되돌리든 의도를 갖고 고른다.',
+      flows: [
+        {from: 'console', to: 'sg', label: ':22 열기', type: 'request'},
+        {from: 'provider', to: 'api', label: 'refresh', type: 'request'},
+      ],
+      focus: ['console', 'sg'],
+      status: {sg: 'warn'},
+      badges: {state: null, sg: '22 열림'},
+      values: {phase: 'plan', plan: '+0 ~1 -0', lock: '—', drift: {text: '코드에 없는 22 포트', tone: 'bad'}},
+    },
+    {
+      short: '교체',
+      kind: '주의',
+      title: '~는 제자리 변경, -/+는 지우고 다시 만든다',
+      text: [
+        '살아 있는 객체에서 바꿀 수 없는 속성이 있다. 인스턴스 이미지(ami)를 바꾸면 -/+와 "# forces replacement"가 나온다. 옛 인스턴스를 지우고 새 ID, 새 사설 IP로 새로 만든다는 뜻이다.',
+        'VM이라면 괜찮을 수 있다. DB라면 데이터가 사라진다. lifecycle { create_before_destroy = true } 는 공백을 줄이고, prevent_destroy = true 는 그런 계획 자체를 실패시킨다.',
+      ],
+      keyIdea: 'plan 요약을 반드시 읽는다. 작은 변경이라 생각했는데 "1 to destroy"가 보이면 그때 멈춘다.',
+      flows: [
+        {from: 'provider', to: 'api', label: '삭제 후 생성', type: 'request'},
+        {from: 'api', to: 'vm', label: '교체', type: 'request'},
+      ],
+      focus: ['vm'],
+      status: {sg: 'ok', vm: 'warn'},
+      badges: {sg: null, vm: '새 ID'},
+      values: {plan: {text: '+1 ~0 -1 (교체)', tone: 'bad'}, drift: '—'},
+    },
+    {
+      short: 'destroy',
+      kind: '원리',
+      title: 'terraform destroy는 상태가 아는 것을 지운다',
+      text: [
+        'destroy는 상태에 있는 모든 자원에 -를 계획하고, 의존 순서의 반대로 지운다. 인스턴스가 먼저, 보안 그룹이 나중이다.',
+        '콘솔에서 손으로 만든 객체는 상태에 없으므로 테라폼은 보지도 지우지도 않는다. 이미 있는 객체를 테라폼 관리로 가져오려면 import 블록이나 terraform import 를 쓴다.',
+      ],
+      flows: [
+        {from: 'provider', to: 'api', label: '삭제', type: 'request'},
+        {from: 'api', to: 'vm', label: '삭제', type: 'request'},
+        {from: 'api', to: 'sg', label: '삭제', type: 'request'},
+      ],
+      focus: ['vm', 'sg'],
+      status: {vm: 'gone', sg: 'gone'},
+      badges: {vm: null},
+      values: {phase: 'destroy', plan: '+0 ~0 -2'},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '코드는 무엇을, plan은 어떻게, 상태는 어느 것인지를 기억한다',
+      text: [
+        '코드는 Git에서 검토하는 원하는 상태다. init은 프로바이더를 받고 백엔드를 잇는다. plan은 코드를 상태·실제 클라우드와 비교한다. apply는 계획을 실행하고 실제 ID를 상태에 적는다.',
+        '상태는 원격에 두고 잠근다. 클라우드는 코드로만 바꾼다. apply 전에는 반드시 plan을 읽는다.',
+      ],
+      keyIdea: '머지 리퀘스트마다 CI에서 plan을 돌리고, 검토가 끝난 저장된 계획만 apply한다. 쿠버네티스 한 층 아래에서 도는 GitOps와 같은 원하는 상태 루프다.',
+      flows: [
+        {from: 'code', to: 'tf', label: '원하는 상태', type: 'request'},
+        {from: 'tf', to: 'provider', label: '적용', type: 'request'},
+        {from: 'tf', to: 'state', label: '기록', type: 'response'},
+      ],
+      focus: ['code', 'tf', 'state'],
+      status: {vm: null, sg: null},
+      values: {phase: 'plan → apply', plan: '—'},
+    },
+  ]}
+/>
+
+## plan 기호 읽기
+
+| 기호 | 동작 | 뜻 |
+|---|---|---|
+| `+` | create | 코드에는 있고 상태에는 없다. 새로 만든다 |
+| `-` | destroy | 상태에는 있고 코드에서는 빠졌다. 지운다 |
+| `~` | update in place | 있는 객체의 속성 일부만 바꾼다. ID는 그대로다 |
+| `-/+` | replace | 먼저 지우고 새 객체를 만든다. `# forces replacement` 를 찾아본다 |
+| `+/-` | replace (먼저 생성) | `create_before_destroy` 가 켜져 있어 새 객체를 먼저 만들고 옛 객체를 지운다 |
+| `<=` | read | 아직 모르는 값에 기대는 데이터 소스를 apply 중에 읽는다 |
+
+모든 plan의 마지막 줄이 요약이다: `Plan: X to add, Y to change, Z to destroy.` 무엇보다 Z부터 본다.
+
+## 직접 확인해 보기
+
+```bash
+terraform init                      # 프로바이더 내려받기, 백엔드 설정
+terraform fmt -check && terraform validate   # 형식과 문법 검사
+terraform plan -out=tfplan          # 코드·상태·클라우드 비교, 계획 저장
+terraform show tfplan               # 저장한 계획 검토
+terraform apply tfplan              # 바로 그 계획만 적용
+terraform plan -refresh-only        # 테라폼 밖에서 바뀐 것(드리프트)만 보기
+terraform state list                # 테라폼이 관리하는 자원 목록
+terraform state show aws_instance.web   # 기록된 속성과 실제 ID
+terraform destroy                   # 상태에 있는 것 전부 삭제 (먼저 묻는다)
+# OpenTofu: terraform 대신 tofu 로 같은 명령
+```
+
+더 읽을거리: [What is Terraform? (HashiCorp)](https://developer.hashicorp.com/terraform/intro) · [terraform plan](https://developer.hashicorp.com/terraform/cli/commands/plan) · [State](https://developer.hashicorp.com/terraform/language/state) · [State locking](https://developer.hashicorp.com/terraform/language/state/locking) · [lifecycle 메타 인수](https://developer.hashicorp.com/terraform/language/meta-arguments/lifecycle) · [OpenTofu 문서](https://opentofu.org/docs/) · [VPC 안에서 요청이 가는 길](../cloud/vpc-request.mdx) · [API 요청 하나의 권한 검사 (IAM)](../cloud/iam-request.mdx) · [Helm과 GitOps](../intermediate/gitops-sync.mdx)

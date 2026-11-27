@@ -1,0 +1,250 @@
+---
+id: admission-policy
+title: CEL과 웹훅으로 거는 어드미션 정책
+sidebar_label: 07 · 어드미션 정책
+description: ValidatingAdmissionPolicy(CEL)와 바인딩으로 조직 규칙을 어드미션에서 거는 방법, Deny·Warn·Audit 동작, 파라미터, Kyverno·Gatekeeper 같은 웹훅 엔진, 웹훅이 죽었을 때 failurePolicy가 하는 일, 이미 있는 객체는 다시 검사하지 않는 이유를 애니메이션으로 따라간다
+summary: 'API 서버 입구에 거는 우리 규칙: CEL 정책과 바인딩, 거절 전에 경고, 웹훅 엔진, 웹훅이 죽으면 무엇이 깨지는지.'
+icon: shield
+hide_table_of_contents: true
+---
+
+# CEL과 웹훅으로 거는 어드미션 정책
+
+파드 보안 기준은 보안 항목만 본다. 하지만 팀마다 자기 규칙이 있다. "모든 Deployment에는 team 레이블", "`:latest` 이미지 금지", "모든 컨테이너에 메모리 limit" 같은 것이다. 이런 규칙을 어드미션에서 거는 과정을 따라간다. 먼저 API 서버 안에서 CEL로, 다음은 웹훅 엔진으로 걸어 보고, 각 방식이 고장 날 때 무엇을 치르는지 본다.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '약 12분', level: '고급'}}
+  groups={[
+    {label: 'API 서버 안', x: 215, y: 45, w: 500, h: 140, tone: 'mgmt'},
+  ]}
+  nodes={[
+    {id: 'user', label: '개발자', sub: 'kubectl apply', icon: 'user', tone: 'ext', x: 85, y: 115, show: true},
+    {id: 'api', label: 'API 서버', sub: '인증·인가', icon: 'gate', tone: 'cp', x: 330, y: 115, show: true},
+    {id: 'vap', label: '어드미션 정책', sub: 'CEL 규칙', icon: 'shield', tone: 'cp', x: 590, y: 115, w: 170},
+    {id: 'binding', label: '정책 바인딩', sub: '범위·동작', icon: 'ticket', tone: 'store', x: 590, y: 265, w: 160},
+    {id: 'params', label: '파라미터', sub: 'paramKind', icon: 'book', tone: 'store', x: 850, y: 265},
+    {id: 'webhook', label: '정책 웹훅', sub: 'Kyverno·Gatekeeper', icon: 'gear', tone: 'node', x: 850, y: 115, w: 170},
+    {id: 'etcd', label: 'etcd', sub: '저장된 객체', icon: 'db', tone: 'store', x: 330, y: 300},
+    {id: 'old', label: '예전 Deployment', sub: '정책 전에 생성', icon: 'box', tone: 'app', x: 330, y: 405, w: 160},
+    {id: 'report', label: '정책 리포트', sub: '백그라운드 검사', icon: 'chart', tone: 'store', x: 850, y: 405, w: 160},
+  ]}
+  metrics={[
+    {id: 'request', label: '요청'},
+    {id: 'action', label: 'validationActions'},
+    {id: 'result', label: '결과'},
+    {id: 'old', label: '기존 객체'},
+  ]}
+  learn={[
+    {text: 'ValidatingAdmissionPolicy는 API 서버 안에서 CEL을 돌린다', at: 1},
+    {text: '바인딩이 범위와 동작을 줘야 정책이 움직인다', at: 2},
+    {text: 'Deny 전에 Warn·Audit로 먼저 풀어 보기', at: 4},
+    {text: '웹훅 엔진, 웹훅이 죽었을 때 failurePolicy Fail과 Ignore의 차이', at: 7},
+    {text: '어드미션은 쓰기만 보니 기존 객체는 따로 검사해야 한다', at: 8},
+  ]}
+  steps={[
+    {
+      short: '시작',
+      kind: '시작',
+      title: '우리 규칙을 입구에서 검사한다',
+      text: [
+        '개발자가 Deployment를 적용한다. 요청은 인증과 인가를 지나 어드미션에 닿는다. etcd에 저장되기 전 마지막 관문이다.',
+        '파드 보안 기준은 보안 항목만 본다. "team 레이블이 있다", ":latest 이미지가 아니다", "메모리 limit이 있다" 같은 규칙은 조직마다 다르다. 직접 쓴 정책이 있어야 한다.',
+      ],
+      flows: [{from: 'user', to: 'api', label: 'Deployment 생성', type: 'request'}],
+      focus: ['user', 'api'],
+      values: {request: 'Deployment web', action: '—', result: '—', old: '—'},
+    },
+    {
+      short: '정책',
+      kind: '원리',
+      title: 'ValidatingAdmissionPolicy는 API 서버 안의 CEL 규칙이다',
+      text: [
+        'ValidatingAdmissionPolicy(쿠버네티스 1.30부터 GA)에는 matchConstraints와 validations 목록이 들어 있다. matchConstraints는 "apps/v1 deployments의 CREATE·UPDATE"처럼 검사할 요청을 고르고, validations의 각 항목은 CEL 식과 메시지 한 쌍이다.',
+        '예를 들면 object.spec.template.spec.containers.all(c, has(c.resources.limits) && has(c.resources.limits.memory)) 이다. CEL(Common Expression Language)은 API 서버가 직접 계산한다. 따로 띄울 서버도, 네트워크 호출도, 죽을 웹훅도 없다.',
+      ],
+      keyIdea: 'CEL 식은 정책을 만들 때 비용 검사를 받는다. 너무 오래 돌 수 있는 규칙은 처음부터 거절되므로, 정책이 API 서버를 멈추게 할 수 없다.',
+      flows: [{from: 'api', to: 'vap', label: 'CEL 계산', type: 'request'}],
+      focus: ['vap'],
+      badges: {vap: 'limits.memory'},
+    },
+    {
+      short: '바인딩',
+      kind: '원리',
+      title: '바인딩이 범위와 동작을 줘야 움직인다',
+      text: [
+        '정책만으로는 정의일 뿐이다. ValidatingAdmissionPolicyBinding이 정책 이름(policyName)을 가리키고, 적용 범위(matchResources, 예: env=prod 네임스페이스 셀렉터)를 좁히고, 실패할 때 할 일(validationActions)을 정한다.',
+        '이렇게 나눠 두면 플랫폼 팀이 정책 하나를 쓰고 여러 번 묶을 수 있다. 운영에는 Deny, 개발에는 Warn으로.',
+      ],
+      keyIdea: '정책이 아무 일도 안 하는 것 같으면 바인딩부터 확인한다. kubectl get validatingadmissionpolicybindings 로 바인딩마다 어떤 정책을 쓰는지 본다.',
+      flows: [{from: 'binding', to: 'vap', label: 'policyName', type: 'watch'}],
+      focus: ['binding', 'vap'],
+      badges: {binding: 'env=prod · Deny'},
+      values: {action: 'Deny'},
+    },
+    {
+      short: '거절',
+      kind: '문제',
+      title: '메모리 limit 없는 컨테이너가 거절된다',
+      text: [
+        'Deployment의 컨테이너에 resources.limits.memory가 없다. 식은 false를 내고 바인딩 동작이 Deny라서 API 서버가 요청을 거절한다. kubectl에는 정책 이름, 바인딩 이름, 직접 쓴 메시지가 찍힌다.',
+        '객체는 저장되지 않는다. 기본 거절 사유는 Invalid라서 응답은 HTTP 422다. validation에 reason을 주면 Forbidden으로 바꿀 수 있다.',
+      ],
+      keyIdea: '메시지는 거절당한 사람이 읽는다. 어떤 필드가 없고 어떻게 고치는지 쓴다. messageExpression을 쓰면 컨테이너 이름처럼 객체 안의 값을 넣을 수 있다.',
+      flows: [
+        {from: 'api', to: 'vap', label: '계산', type: 'request'},
+        {from: 'api', to: 'user', label: '422 거절', type: 'response'},
+      ],
+      focus: ['vap', 'user'],
+      status: {vap: 'error'},
+      badges: {vap: 'false'},
+      values: {result: {text: '거절 · 메모리 limit 없음', tone: 'bad'}},
+    },
+    {
+      short: '경고 먼저',
+      kind: '주의',
+      title: 'Deny 전에 Warn과 Audit로 먼저 푼다',
+      text: [
+        '새 규칙을 바로 Deny로 걸면 어제까지 되던 배포 파이프라인이 깨질 수 있다. 바인딩을 먼저 validationActions: [Warn, Audit] 로 둔다. 요청은 통과하고, kubectl에 Warning: 줄이 찍히고, 감사 로그의 애노테이션에 위반이 남는다.',
+        '경고가 더 안 나오면 바인딩을 Deny로 바꾼다. Deny와 Warn은 같이 쓸 수 없다. 거절된 요청은 이미 메시지를 돌려주기 때문이다.',
+      ],
+      keyIdea: 'Audit는 API 서버에 이 이벤트를 남기는 감사 정책이 있어야 동작한다. 위반자를 찾는 데 쓰기 전에 그것부터 확인한다.',
+      flows: [
+        {from: 'api', to: 'vap', label: '계산', type: 'request'},
+        {from: 'api', to: 'etcd', label: '저장', type: 'request'},
+        {from: 'api', to: 'user', label: 'Warning', type: 'response'},
+      ],
+      focus: ['binding', 'user'],
+      status: {vap: 'warn'},
+      badges: {binding: 'Warn · Audit', vap: null},
+      values: {action: 'Warn · Audit', result: {text: '경고와 함께 통과', tone: 'good'}},
+    },
+    {
+      short: '파라미터',
+      kind: '원리',
+      title: '파라미터로 정책은 하나, 값은 팀마다',
+      text: [
+        '"허용된 레지스트리의 이미지만" 같은 규칙에는 팀마다 다른 목록이 필요하다. 정책에 paramKind(예: ConfigMap이나 커스텀 리소스)를 선언하면 CEL에서 params로 읽는다.',
+        '바인딩마다 paramRef로 자기 파라미터 객체를 가리킨다. 객체가 없으면 parameterNotFoundAction이 거절할지 통과시킬지 정한다.',
+      ],
+      flows: [
+        {from: 'binding', to: 'params', label: 'paramRef', type: 'watch'},
+        {from: 'params', to: 'vap', label: 'params', type: 'watch'},
+      ],
+      focus: ['params', 'binding'],
+      status: {vap: null},
+      badges: {binding: 'env=prod · Deny', params: '레지스트리 목록'},
+      values: {action: 'Deny', result: '—'},
+    },
+    {
+      short: '웹훅',
+      kind: '원리',
+      title: '웹훅 엔진은 더 많이 하지만 파드로 돈다',
+      text: [
+        'Kyverno나 OPA Gatekeeper 같은 엔진은 ValidatingWebhookConfiguration(흔히 mutating도)을 등록한다. API 서버는 이들의 파드에 HTTPS로 AdmissionReview를 보내고 allowed: true 또는 false를 기다린다.',
+        'CEL만으로는 못 하는 일을 한다. 리소스를 고치거나 만들고, 이미지 서명을 검증하고, 외부 데이터를 부르고, 기존 객체를 검사한다. 쿠버네티스에도 웹훅 없이 CEL로 고치는 MutatingAdmissionPolicy가 들어오고 있다. 1.32에서 알파, 1.34에서 베타, 1.36에서 GA가 됐으니, 쓰기 전에 클러스터 버전에 있는지 확인한다.',
+      ],
+      flows: [
+        {from: 'api', to: 'webhook', label: 'AdmissionReview', type: 'request'},
+        {from: 'webhook', to: 'api', label: 'allowed: false', type: 'response'},
+      ],
+      focus: ['webhook'],
+      status: {webhook: 'ok'},
+      badges: {webhook: ':latest 금지'},
+    },
+    {
+      short: '웹훅 장애',
+      kind: '장애',
+      title: '웹훅이 죽으면 failurePolicy가 누가 손해 볼지 정한다',
+      text: [
+        '웹훅 파드가 죽거나 서비스에 엔드포인트가 없으면, 걸리는 요청은 모두 타임아웃(timeoutSeconds, 기본 10초, 최대 30초)까지 기다린 뒤 failurePolicy를 따른다. Fail(기본값)은 요청을 거절하고, Ignore는 검사 없이 통과시킨다.',
+        'Fail에 모든 파드를 거는 규칙이면 새 파드가 하나도 못 뜬다. 웹훅 자신의 새 파드도 마찬가지다. Ignore면 장애 동안 규칙이 조용히 꺼진다.',
+      ],
+      keyIdea: 'namespaceSelector로 kube-system과 엔진 자신의 네임스페이스를 빼고, 레플리카 여러 개와 PodDisruptionBudget을 두고, 웹훅 지연·오류에 알림을 건다.',
+      flows: [
+        {from: 'api', to: 'webhook', label: '10초 타임아웃', type: 'request'},
+        {from: 'api', to: 'user', label: '내부 오류', type: 'response'},
+      ],
+      focus: ['webhook', 'api'],
+      status: {webhook: 'error'},
+      badges: {webhook: '엔드포인트 없음'},
+      values: {result: {text: '거절 · failurePolicy Fail', tone: 'bad'}},
+    },
+    {
+      short: '기존 객체',
+      kind: '주의',
+      title: '어드미션은 쓰기를 볼 뿐, 이미 저장된 것은 안 본다',
+      text: [
+        '지난달 :latest 이미지로 만든 Deployment는 계속 돈다. 어드미션은 생성·수정·삭제 요청만 보므로 새 정책이 그것을 건드리지 않는다. 그 Deployment를 다음에 고칠 때는 레이블 하나만 바꿔도 거절된다.',
+        '기존 위반을 찾으려면 엔진의 백그라운드 검사(Kyverno 정책 리포트, Gatekeeper audit)를 쓰거나, 저장해 둔 매니페스트를 kubectl apply --dry-run=server 로 돌려 본다.',
+      ],
+      keyIdea: '규칙을 Deny로 바꾸기 전에 그 규칙을 어기는 기존 객체 목록부터 뽑는다. 아니면 오래된 Deployment에 올리는 첫 긴급 수정이 막힌다.',
+      flows: [
+        {from: 'etcd', to: 'old', label: '그대로', type: 'watch'},
+        {from: 'webhook', to: 'report', label: '백그라운드 검사', type: 'watch'},
+      ],
+      focus: ['old', 'report'],
+      status: {webhook: 'ok', old: 'warn'},
+      badges: {webhook: null, report: '위반 3건'},
+      values: {old: {text: '3개 미준수', tone: 'bad'}, result: '—'},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '규칙을 쓰고, 묶고, 먼저 경고하고, 그다음 거절한다',
+      text: [
+        'ValidatingAdmissionPolicy는 API 서버 안에서 CEL을 돌린다. 바인딩이 범위와 동작을 준다. 파라미터를 쓰면 정책 하나로 값이 다른 여러 팀을 맡을 수 있다.',
+        '웹훅 엔진은 변경, 이미지 검증, 백그라운드 검사를 더해 주지만 요청 경로의 일부가 된다. failurePolicy와 네임스페이스 제외 설정이, 웹훅 장애 때 클러스터가 막힐지 규칙이 조용히 빠질지를 정한다.',
+      ],
+      keyIdea: '단순한 필드 검사는 CEL 정책을 쓰고, CEL로 못 하는 것만 웹훅 엔진에 맡긴다. 늘 Warn·Audit로 먼저 풀고, Deny 전에 기존 객체를 검사한다.',
+      flows: [
+        {from: 'user', to: 'api', label: '적용', type: 'request'},
+        {from: 'api', to: 'vap', label: 'CEL', type: 'request'},
+        {from: 'api', to: 'webhook', label: '웹훅', type: 'request'},
+      ],
+      focus: ['vap', 'binding', 'webhook'],
+      status: {vap: null, old: null},
+      badges: {params: null, report: null, vap: null},
+    },
+  ]}
+/>
+
+## CEL 정책인가, 웹훅인가
+
+| | ValidatingAdmissionPolicy (CEL) | 웹훅 엔진 (Kyverno, Gatekeeper) |
+|---|---|---|
+| 도는 곳 | API 서버 안 | 별도 파드, HTTPS로 호출 |
+| 고장 나면 | 죽을 서버가 없다. 식 오류는 정책의 `failurePolicy`를 따른다 | 타임아웃 뒤 `failurePolicy` Fail(거절) 또는 Ignore(건너뜀) |
+| 지연 | 프로세스 안, 네트워크 왕복 없음 | 걸리는 요청마다 네트워크 호출 한 번, 최대 `timeoutSeconds` |
+| 변경(mutate) | 못 한다 (MutatingAdmissionPolicy는 따로 있는 새 종류) | 한다 |
+| 기존 객체 | 검사 안 함 | 백그라운드 검사·audit 리포트 |
+| 그 밖에 | `paramKind`로 파라미터 | 이미지 서명 검증, 리소스 생성, 외부 데이터 |
+| 잘 맞는 곳 | 레이블·이미지 태그·limit 같은 단순 필드 규칙 | CEL로 못 쓰는 규칙, 리포트가 필요할 때 |
+
+Deployment에 쓰는 CEL 식 예시(`object`는 들어온 객체):
+
+```yaml
+validations:
+  - expression: "has(object.metadata.labels) && 'team' in object.metadata.labels"
+    message: "metadata.labels.team 이 필요하다"
+  - expression: "object.spec.template.spec.containers.all(c, !c.image.endsWith(':latest'))"
+    message: ":latest 태그 대신 버전이나 다이제스트를 고정한다"
+  - expression: "object.spec.template.spec.containers.all(c, has(c.resources.limits) && has(c.resources.limits.memory))"
+    message: "모든 컨테이너에 resources.limits.memory 가 필요하다"
+```
+
+`:latest` 검사는 단순화한 것이다. 태그가 아예 없는 이미지도 `latest`이고, 레지스트리 포트(`registry:5000/app`)에도 콜론이 들어간다. 실제 규칙은 둘 다 다뤄야 한다.
+
+## 직접 확인해 보기
+
+```bash
+kubectl get validatingadmissionpolicies                    # 정책과 검사 대상
+kubectl get validatingadmissionpolicybindings              # 어떤 정책을, 어떤 동작으로, 어디에
+kubectl apply -f policy.yaml -f binding.yaml               # 처음엔 validationActions: [Warn, Audit]
+kubectl create deployment web --image=nginx:latest --dry-run=server   # 저장하지 않고 경고·거절만 본다
+kubectl get validatingwebhookconfigurations                # 클러스터에 등록된 웹훅 엔진
+kubectl get validatingwebhookconfigurations -o custom-columns=NAME:.metadata.name,POLICY:.webhooks[*].failurePolicy,TIMEOUT:.webhooks[*].timeoutSeconds
+```
+
+더 읽을거리: [Validating Admission Policy](https://kubernetes.io/docs/reference/access-authn-authz/validating-admission-policy/) · [Mutating Admission Policy](https://kubernetes.io/docs/reference/access-authn-authz/mutating-admission-policy/) · [동적 어드미션 컨트롤(웹훅)](https://kubernetes.io/docs/reference/access-authn-authz/extensible-admission-controllers/) · [쿠버네티스의 CEL](https://kubernetes.io/docs/reference/using-api/cel/) · [Kyverno](https://kyverno.io/docs/) · [OPA Gatekeeper](https://open-policy-agent.github.io/gatekeeper/website/docs/) · [API 요청이 저장되기까지](../advanced/api-request-path.mdx) · [파드 보안 기준과 securityContext](../advanced/pod-security.mdx)

@@ -1,0 +1,261 @@
+---
+id: hybrid-network
+title: '네트워크 잇기: 피어링·트랜짓·VPN·프라이빗 엔드포인트'
+sidebar_label: 09 · 네트워크 잇기
+description: 전이되지 않는 VPC 피어링, 허브 역할의 트랜짓 게이트웨이, BGP로 경로를 나누는 사이트 간 VPN과 전용선, 하이브리드 DNS 전달, 서비스 하나만 여는 프라이빗 엔드포인트, 빠진 복귀 경로와 겹치는 CIDR까지 애니메이션으로 따라간다
+summary: '피어링, 트랜짓 허브, VPN과 전용선, 하이브리드 DNS, 프라이빗 엔드포인트, 그리고 경로가 양방향으로 있어야 하는 이유.'
+icon: route
+hide_table_of_contents: true
+---
+
+# 네트워크 잇기: 피어링·트랜짓·VPN·프라이빗 엔드포인트
+
+한 회사에 사무실 네트워크와 VPC 두 개가 있다. 나중에 파트너 서비스를 쓰고, 다른 회사도 인수한다. 각 네트워크는 사설망이라 기본으로 서로 끊겨 있다. 어떤 연결이 무엇을 잇는지, 왜 트래픽에는 양방향 경로가 있어야 하는지, 왜 IP 대역을 일찍 계획해야 하는지 따라가 본다. VPC 하나 안에서 일어나는 일은 [VPC 안에서 요청이 가는 길](../cloud/vpc-request.mdx)에서 먼저 볼 수 있다.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '약 12분', level: '중급'}}
+  groups={[
+    {label: '사무실 · 10.50.0.0/16', x: 15, y: 30, w: 175, h: 405, tone: 'plain'},
+    {label: 'VPC A · 쇼핑몰 · 10.1.0.0/16', x: 430, y: 30, w: 400, h: 195, tone: 'biz'},
+    {label: 'VPC B · 데이터 · 10.2.0.0/16', x: 430, y: 245, w: 400, h: 190, tone: 'biz'},
+    {label: '파트너', x: 850, y: 30, w: 140, h: 195, tone: 'plain'},
+    {label: '인수한 회사', x: 850, y: 245, w: 140, h: 190, tone: 'plain'},
+  ]}
+  nodes={[
+    {id: 'office', label: '사무실 서버', sub: '10.50.0.0/16', icon: 'server', tone: 'ext', x: 102, y: 130, show: true},
+    {id: 'odns', label: '사무실 DNS', sub: 'corp.example', icon: 'book', tone: 'ext', x: 102, y: 330},
+    {id: 'link', label: 'VPN · 전용선', sub: 'IPsec · BGP', icon: 'shield', tone: 'cp', x: 310, y: 130},
+    {id: 'tgw', label: '트랜짓 게이트웨이', sub: '허브 · 라우팅 테이블', icon: 'split', tone: 'cp', x: 310, y: 330, w: 170},
+    {id: 'app', label: '앱 서버', sub: '10.1.1.10', icon: 'server', tone: 'app', x: 540, y: 85, show: true},
+    {id: 'resolver', label: 'DNS 리졸버', sub: '인바운드·아웃바운드', icon: 'book', tone: 'cp', x: 540, y: 180, w: 170},
+    {id: 'ep', label: '프라이빗 엔드포인트', sub: '10.1.2.50', icon: 'gate', tone: 'cp', x: 730, y: 85, w: 170},
+    {id: 'db', label: '주문 DB', sub: '10.2.3.20', icon: 'db', tone: 'store', x: 540, y: 340, show: true},
+    {id: 'partner', label: '파트너 API', sub: '엔드포인트 서비스', icon: 'cloud', tone: 'ext', x: 920, y: 120, w: 120},
+    {id: 'acq', label: '그쪽 VPC', sub: '10.1.0.0/16 !', icon: 'box', tone: 'ext', x: 920, y: 340, w: 120},
+  ]}
+  metrics={[
+    {id: 'path', label: '경로'},
+    {id: 'route', label: '쓰는 라우트'},
+    {id: 'reach', label: '닿는가'},
+  ]}
+  learn={[
+    {text: '사설망은 경로와 허용 규칙이 생기기 전까지 끊겨 있다', at: 0},
+    {text: 'VPC 피어링은 두 VPC를 잇지만 전이되지 않는다', at: 1},
+    {text: '사이트 간 VPN과 전용선의 차이, BGP가 경로를 나누는 방식', at: 2},
+    {text: '여러 네트워크의 허브가 되는 트랜짓 게이트웨이', at: 4},
+    {text: '복귀 경로가 없으면 왜 타임아웃으로 보이는지', at: 5},
+    {text: '하이브리드 DNS, 프라이빗 엔드포인트, 겹치는 CIDR의 함정', at: 6},
+  ]}
+  steps={[
+    {
+      short: '시작',
+      kind: '시작',
+      title: '서로를 볼 수 없는 사설망 셋',
+      text: [
+        '사무실은 10.50.0.0/16을 쓴다. 클라우드에서는 VPC A가 10.1.0.0/16에서 쇼핑몰을 돌리고, VPC B가 10.2.0.0/16에 주문 DB를 둔다.',
+        '셋은 따로 떨어진 사설망이다. 10.1.1.10에서 10.2.3.20으로 가는 패킷은 갈 곳이 없다. 어느 라우팅 테이블에도 상대 대역이 없기 때문이다. 두 네트워크를 이으려면 늘 두 가지가 필요하다. 방향마다 하나씩 있는 경로, 그리고 그 트래픽을 허용하는 규칙이다.',
+      ],
+      focus: ['office', 'app', 'db'],
+      values: {path: '앱 → DB', route: '없음', reach: {text: '아니오', tone: 'bad'}},
+    },
+    {
+      short: '피어링',
+      kind: '원리',
+      title: 'VPC 피어링은 두 VPC를 직접 잇는다',
+      text: [
+        '피어링 연결 하나가 VPC A와 VPC B를 잇는다. 양쪽에 경로를 넣는다. A에서는 10.2.0.0/16을 피어링 연결로, B에서는 10.1.0.0/16을 같은 연결로 돌려보낸다. DB의 보안 그룹은 10.1.0.0/16에서 오는 5432 포트를 허용한다.',
+        '트래픽은 클라우드 사업자의 네트워크 안에 머문다. 가운데 게이트웨이 장비도 없고 대역폭이 한 곳에 몰리지도 않는다. 피어링은 두 CIDR 대역이 겹치지 않을 때만 된다.',
+      ],
+      keyIdea: '피어링은 일대일이다. 서로 다 통해야 하는 VPC가 10개면 피어링 45개와 테이블마다 경로가 필요하다.',
+      flows: [
+        {from: 'app', to: 'db', label: '피어링', type: 'request'},
+        {from: 'db', to: 'app', label: '응답', type: 'response', bend: 30},
+      ],
+      focus: ['app', 'db'],
+      status: {db: 'ok'},
+      values: {route: '10.2.0.0/16 → pcx', reach: {text: '예', tone: 'good'}},
+    },
+    {
+      short: 'VPN·전용선',
+      kind: '원리',
+      title: '사무실은 VPN이나 전용선으로 붙는다',
+      text: [
+        '사이트 간 VPN은 사무실 라우터와 클라우드 사이에 인터넷을 지나는 암호화된 IPsec 터널을 만든다. 빨리 만들 수 있다. 예를 들어 AWS는 연결 하나에 이중화용 터널 두 개를 주고, 터널마다 약 1.25Gbps다(트랜짓 게이트웨이에 붙이는 대역폭 큰 터널은 최대 5Gbps). 지연은 인터넷 상태를 따른다.',
+        '전용선(AWS Direct Connect, Azure ExpressRoute, Google Cloud Interconnect)은 코로케이션 시설을 거치는 사설 회선이다. 지연이 일정하고 1Gbps부터 100Gbps 이상까지 쓸 수 있지만, 신청에 몇 주가 걸리고 기본으로는 암호화되지 않는다. 어느 쪽이든 BGP가 경로를 알린다. 사무실은 10.1.0.0/16을, 클라우드는 10.50.0.0/16을 배운다.',
+      ],
+      keyIdea: '전용선의 백업으로 VPN을 두는 팀이 많다. 회선이 끊기면 BGP가 트래픽을 VPN으로 옮긴다.',
+      flows: [
+        {from: 'office', to: 'link', label: 'IPsec', type: 'request'},
+        {from: 'link', to: 'app', label: 'VPC A로', type: 'request'},
+      ],
+      focus: ['office', 'link', 'app'],
+      status: {db: null},
+      badges: {link: 'BGP 연결'},
+      values: {path: '사무실 → 앱', route: 'BGP로 받은 10.1.0.0/16', reach: {text: '예', tone: 'good'}},
+    },
+    {
+      short: '전이 안 됨',
+      kind: '문제',
+      title: '사무실은 VPC A를 거쳐 VPC B로 갈 수 없다',
+      text: [
+        '사무실은 VPC A에 닿고 VPC A는 VPC B에 닿으니, 팀은 사무실 → B도 될 거라고 생각한다. 안 된다. 피어링은 출발지나 목적지가 피어링된 두 VPC 중 하나인 트래픽만 나른다.',
+        'VPC B는 A의 VPN, 인터넷 게이트웨이, NAT도 쓰지 못한다. 10.50.x.x에서 온 패킷은 피어링에서 버려진다. 허브나 별도 장비를 두지 않는 한 Azure VNet 피어링과 Google Cloud VPC 네트워크 피어링도 같다.',
+      ],
+      keyIdea: '피어링은 전이되지 않는다. 연결이 두 개 있다고 가운데 VPC를 지나는 길이 생기지는 않는다.',
+      flows: [
+        {from: 'office', to: 'link', label: '10.2.3.20으로', type: 'request'},
+        {from: 'app', to: 'db', label: '버려짐', type: 'request'},
+      ],
+      focus: ['app', 'db'],
+      status: {db: 'error'},
+      badges: {app: '라우터 아님'},
+      values: {path: '사무실 → DB', route: 'A 경유? 불가', reach: {text: '아니오 · 버려짐', tone: 'bad'}},
+    },
+    {
+      short: '허브',
+      kind: '원리',
+      title: '트랜짓 게이트웨이가 여러 네트워크 사이를 라우팅한다',
+      text: [
+        '트랜짓 게이트웨이는 클라우드 안의 라우터다. VPN, VPC A, VPC B가 각각 연결(attachment)이 된다. 자체 라우팅 테이블에 10.1.0.0/16 → VPC A, 10.2.0.0/16 → VPC B, 10.50.0.0/16 → VPN이 들어가고, 사무실 경로는 BGP가 채운다.',
+        '이제 각 VPC 서브넷은 다른 사설 대역(예: 10.0.0.0/8)을 트랜짓 게이트웨이로 보낸다. 새 VPC를 붙일 때는 다른 VPC마다 피어링하는 대신 연결 하나만 만든다. 라우팅 테이블을 나누면 예를 들어 개발과 운영을 떼어 둘 수 있다.',
+      ],
+      keyIdea: '허브는 원래 전이되도록 만든 것이다. 연결 시간과 처리한 GB만큼 비용이 붙으니, 트래픽이 많은 한 쌍은 피어링이 더 쌀 수 있다.',
+      flows: [
+        {from: 'office', to: 'link', label: 'IPsec', type: 'request'},
+        {from: 'link', to: 'tgw', label: '연결', type: 'request'},
+        {from: 'tgw', to: 'db', label: 'VPC B로', type: 'request'},
+      ],
+      focus: ['tgw', 'db'],
+      status: {db: 'warn'},
+      badges: {app: null, tgw: '연결 3개'},
+      values: {route: '10.2.0.0/16 → TGW', reach: '…응답 기다리는 중'},
+    },
+    {
+      short: '복귀 경로',
+      kind: '문제',
+      title: '요청은 닿았는데 응답이 돌아갈 길이 없다',
+      text: [
+        '패킷은 DB에 닿지만 클라이언트는 여전히 타임아웃이다. DB 서브넷의 라우팅 테이블은 10.1.0.0/16(피어링)만 알고 10.50.0.0/16 경로가 없다. 응답은 기본 경로로 가거나 갈 곳이 없다.',
+        '보안 그룹도 10.1.0.0/16만 허용하므로 사무실 대역을 더해야 한다. 보안 그룹은 상태를 기억(stateful)하지만 네트워크 ACL은 그렇지 않아서 돌아가는 포트(임시 포트 대역, 1024–65535)도 열어야 한다. 경로 중간에 방화벽 장비가 있으면, 요청과 다른 길로 돌아가는 응답도 버려진다.',
+      ],
+      keyIdea: '오류 없이 타임아웃만 나면 대개 패킷이나 응답이 버려진 것이다. 양쪽 끝의 경로와 규칙을 두 방향 모두 확인한다.',
+      flows: [
+        {from: 'tgw', to: 'db', label: '도착', type: 'request'},
+        {from: 'db', to: 'tgw', label: '돌아갈 경로 없음', type: 'response', bend: 30},
+      ],
+      focus: ['db'],
+      status: {db: 'error'},
+      badges: {db: '10.50 경로 없음'},
+      values: {route: '응답: 없음', reach: {text: '타임아웃', tone: 'bad'}},
+    },
+    {
+      short: '하이브리드 DNS',
+      kind: '원리',
+      title: '이름도 연결 너머로 풀려야 한다',
+      text: [
+        '경로를 고치고 나서 사무실 앱이 db.data.internal을 묻는다. 이 이름은 클라우드의 프라이빗 DNS 영역에 있고 사무실 DNS는 모르니, 답은 NXDOMAIN이다.',
+        '사무실 DNS에 조건부 전달자를 둔다. data.internal 아래 이름은 클라우드 리졸버의 인바운드 엔드포인트, 곧 VPC A 안의 사설 IP로 보낸다. 반대 방향은 아웃바운드 엔드포인트와 전달 규칙이 corp.example 질의를 사무실 DNS로 보낸다.',
+      ],
+      keyIdea: '연결은 패킷과 이름, 두 가지 문제다. IP로 ping이 된다고 DNS까지 되는 것은 아니다.',
+      flows: [
+        {from: 'office', to: 'odns', label: 'db.data.internal?', type: 'request'},
+        {from: 'odns', to: 'resolver', label: '전달', type: 'request'},
+        {from: 'resolver', to: 'odns', label: '10.2.3.20', type: 'response', bend: -30},
+      ],
+      focus: ['odns', 'resolver'],
+      status: {db: 'ok'},
+      badges: {db: null, resolver: 'data.internal'},
+      values: {path: '사무실 → DB', route: 'TGW로 10.50 ↔ 10.2', reach: {text: '예', tone: 'good'}},
+    },
+    {
+      short: '엔드포인트',
+      kind: '원리',
+      title: '프라이빗 엔드포인트는 네트워크 전체가 아니라 서비스 하나에 닿는다',
+      text: [
+        '쇼핑몰이 이제 파트너의 결제 API를 부른다. 피어링을 하면 파트너 VPC 전체가 쇼핑몰과 이어지는데, 양쪽 다 그걸 원하지 않는다. 대신 파트너가 엔드포인트 서비스를 공개하고, VPC A가 프라이빗 엔드포인트를 만든다. 사설 IP 10.1.2.50을 가진 네트워크 인터페이스다.',
+        '앱이 10.1.2.50을 부르면 트래픽은 사업자 네트워크를 지나 그 서비스로만, 한 방향으로 간다. 파트너는 VPC A 안으로 연결을 열 수 없고, CIDR이 겹쳐도 상관없다. 이름은 AWS PrivateLink, Azure Private Link, Google Private Service Connect다.',
+      ],
+      flows: [
+        {from: 'app', to: 'ep', label: 'HTTPS', type: 'request'},
+        {from: 'ep', to: 'partner', label: '프라이빗 링크', type: 'request'},
+      ],
+      focus: ['ep', 'partner'],
+      badges: {resolver: null, ep: '서비스 하나'},
+      values: {path: '앱 → 파트너 API', route: '로컬 ENI', reach: {text: '예 · 한 방향', tone: 'good'}},
+    },
+    {
+      short: '대역 겹침',
+      kind: '문제',
+      title: '인수한 회사가 같은 CIDR을 쓴다',
+      text: [
+        '회사가 다른 회사를 인수했는데, 그쪽 VPC도 10.1.0.0/16을 쓴다. 피어링 요청은 거절되고, 트랜짓 게이트웨이는 한 대역을 두 곳으로 라우팅할 수 없다. 앱은 10.1.1.10이 자기 서버인지 그쪽 서버인지 알 수 없다.',
+        '해결책은 모두 비싸다. 한쪽 네트워크의 주소를 다시 매기거나, 둘 사이에 NAT(예: 프라이빗 NAT 게이트웨이)를 두어 서로를 다른 대역으로 보게 하거나, 필요한 서비스만 프라이빗 엔드포인트로 연다.',
+      ],
+      keyIdea: '두 번째 VPC를 만들기 전에 회사 전체의 IP 대역을 계획한다. IP 주소 관리 도구든 간단한 공용 표든 좋다. 10.0.0.0/16 같은 기본 대역이 가장 먼저 부딪힌다.',
+      flows: [{from: 'acq', to: 'tgw', label: '또 10.1.0.0/16', type: 'request'}],
+      focus: ['acq', 'app'],
+      status: {acq: 'error'},
+      badges: {ep: null, acq: '대역 겹침'},
+      values: {path: '그쪽 VPC → TGW', route: '충돌', reach: {text: '아니오 · 모호함', tone: 'bad'}},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '양방향 경로, 허용 규칙, 이름, 겹치지 않는 대역',
+      text: [
+        '피어링은 두 VPC를 잇고 전이되지 않는다. 트랜짓 게이트웨이는 여러 VPC와 사무실의 허브다. VPN과 전용선이 사무실 트래픽을 나르고, BGP가 경로를 나눈다. 프라이빗 엔드포인트는 서비스 하나에만 닿게 한다.',
+        '제대로 동작하는 길에는 늘 두 방향의 경로, 그것을 허용하는 보안 규칙, 연결 너머로 풀리는 DNS, 겹치지 않는 IP 대역이 있다.',
+      ],
+      keyIdea: '네트워크를 건너는 호출이 타임아웃이면 한 칸씩 짚어 간다. 출발지 라우팅 테이블, 허브 라우팅 테이블, 목적지 라우팅 테이블, 그다음 양쪽 끝의 보안 그룹과 ACL 순서다.',
+      flows: [
+        {from: 'office', to: 'link', label: 'IPsec', type: 'request'},
+        {from: 'link', to: 'tgw', label: '연결', type: 'request'},
+        {from: 'tgw', to: 'db', label: 'VPC B로', type: 'request'},
+        {from: 'app', to: 'ep', label: 'HTTPS', type: 'request'},
+      ],
+      focus: ['tgw', 'link', 'ep'],
+      status: {acq: null, db: 'ok'},
+      badges: {acq: null, link: null, tgw: null},
+    },
+  ]}
+/>
+
+## 네트워크를 잇는 방법
+
+| 방법 | 쓰는 때 | 전이되는가 | 대역폭 | 비용 구조 |
+|---|---|---|---|---|
+| VPC 피어링 | VPC 두 개가 직접 통해야 할 때 | 아니오 | 가운데 게이트웨이가 없어 한 곳에 몰리지 않음 | 시간당 요금 없음, 데이터 전송 요금 |
+| 트랜짓 게이트웨이(허브) | VPC와 온프레미스 거점이 많을 때 | 예, 라우팅 테이블을 따라 | 높음, 연결마다 한도 있음 | 연결 시간당 + 처리한 GB당 |
+| 사이트 간 VPN | 인터넷을 지나는 암호화 연결이 빨리 필요할 때 | 허브를 거치면 | AWS 기준 터널당 약 1.25Gbps(대역폭 큰 터널은 5Gbps), 지연은 인터넷 따라 | 연결 시간당 + 나가는 데이터 |
+| 전용선 | 사무실·데이터센터 트래픽이 많고 일정할 때 | 게이트웨이나 허브를 거치면 | 1Gbps~100Gbps 이상, 지연 일정 | 포트 시간당 + 나가는 데이터, 개통에 몇 주 |
+| 프라이빗 엔드포인트 | 네트워크 전체가 아니라 서비스 하나만 쓸 때 | 아니오, 서비스 하나로 한 방향 | 엔드포인트마다 | 영역별 엔드포인트 시간당 + GB당 |
+
+## 사업자별 이름
+
+| 개념 | AWS | Azure | Google Cloud |
+|---|---|---|---|
+| 피어링 | VPC peering | VNet peering | VPC Network Peering |
+| 허브 | Transit Gateway | Virtual WAN 또는 허브 VNet | Network Connectivity Center |
+| VPN | Site-to-Site VPN | VPN Gateway | Cloud VPN (HA VPN) |
+| 전용선 | Direct Connect | ExpressRoute | Cloud Interconnect |
+| 프라이빗 엔드포인트 | PrivateLink | Private Link (프라이빗 엔드포인트) | Private Service Connect |
+| 하이브리드 DNS | Route 53 Resolver 엔드포인트 | DNS Private Resolver | Cloud DNS 전달 영역·인바운드 정책 |
+
+## 직접 확인해 보기
+
+```bash
+aws ec2 describe-route-tables --filters Name=vpc-id,Values=vpc-0abc \
+  --query 'RouteTables[].Routes[].[DestinationCidrBlock,GatewayId,VpcPeeringConnectionId,TransitGatewayId]' --output table
+aws ec2 describe-vpc-peering-connections --query 'VpcPeeringConnections[].[VpcPeeringConnectionId,Status.Code,RequesterVpcInfo.CidrBlock,AccepterVpcInfo.CidrBlock]'
+aws ec2 describe-transit-gateway-attachments --query 'TransitGatewayAttachments[].[ResourceType,ResourceId,State]'
+aws ec2 describe-vpn-connections --query 'VpnConnections[].VgwTelemetry[].[OutsideIpAddress,Status,AcceptedRouteCount]'
+
+# 사무실 서버에서
+traceroute 10.2.3.20          # 길이 어디서 끊기는가
+dig db.data.internal          # 이름이 연결 너머로 풀리는가
+nc -vz 10.2.3.20 5432         # 거부(닿았지만 듣는 프로세스 없음)인가, 타임아웃(버려짐)인가
+```
+
+더 읽을거리: [VPC 피어링 (AWS)](https://docs.aws.amazon.com/vpc/latest/peering/what-is-vpc-peering.html) · [트랜짓 게이트웨이 (AWS)](https://docs.aws.amazon.com/vpc/latest/tgw/what-is-transit-gateway.html) · [Site-to-Site VPN (AWS)](https://docs.aws.amazon.com/vpn/latest/s2svpn/VPC_VPN.html) · [AWS PrivateLink](https://docs.aws.amazon.com/vpc/latest/privatelink/what-is-privatelink.html) · [Route 53 Resolver](https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/resolver.html) · [VPC 안에서 요청이 가는 길](../cloud/vpc-request.mdx) · [요청 한 번의 아래층: TCP/IP 계층](../basic/tcp-ip-layers.mdx)

@@ -1,0 +1,249 @@
+---
+id: dns-resolution
+title: How DNS Finds an Address
+sidebar_label: 03 · How DNS Finds an Address
+description: Animated walkthrough of a DNS lookup from the stub resolver and /etc/resolv.conf to a recursive resolver, the root, TLD and authoritative servers, TTL caching, and what NXDOMAIN, SERVFAIL and a timeout each mean
+summary: 'Stub resolver, recursive resolver, root, TLD and authoritative servers, TTL caching, and NXDOMAIN vs SERVFAIL vs timeout.'
+icon: book
+hide_table_of_contents: true
+---
+
+# How DNS Finds an Address
+
+[When You Type an Address](../basic/web-request.mdx) showed DNS as one box that turns a name into an IP. Here we open that box: who asks whom, why answers are cached, and why a DNS change takes time to show up. Name lookups inside a cluster continue in [Finding Services by Name](../k8s/service-dns.mdx).
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~10 min', level: 'Beginner'}}
+  groups={[
+    {label: 'Your computer', x: 15, y: 150, w: 365, h: 165, tone: 'plain'},
+    {label: 'DNS hierarchy on the internet', x: 690, y: 25, w: 290, h: 415, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'app', label: 'Browser', sub: 'Needs an IP', icon: 'browser', tone: 'ext', x: 100, y: 235, show: true},
+    {id: 'stub', label: 'Stub resolver', sub: 'OS · /etc/hosts', icon: 'gear', tone: 'node', x: 285, y: 235, w: 160},
+    {id: 'rec', label: 'Recursive resolver', sub: 'ISP · 8.8.8.8 · cache', icon: 'archive', tone: 'cp', x: 525, y: 235, w: 180},
+    {id: 'root', label: 'Root server', sub: 'Zone "."', icon: 'book', tone: 'store', x: 835, y: 95},
+    {id: 'tld', label: 'TLD server', sub: 'Zone .com', icon: 'book', tone: 'store', x: 835, y: 235},
+    {id: 'auth', label: 'Authoritative', sub: 'Zone example.com', icon: 'book', tone: 'store', x: 835, y: 375, w: 170},
+  ]}
+  metrics={[
+    {id: 'query', label: 'Question'},
+    {id: 'answer', label: 'Answer'},
+    {id: 'ttl', label: 'TTL'},
+    {id: 'rcode', label: 'Response code'},
+  ]}
+  learn={[
+    {text: 'Where the OS looks first: /etc/hosts and /etc/resolv.conf', at: 0},
+    {text: 'Recursive resolver vs root, TLD and authoritative servers', at: 2},
+    {text: 'Why every answer is cached for its TTL', at: 5},
+    {text: 'Why a record change takes time to reach everyone', at: 6},
+    {text: 'NXDOMAIN, SERVFAIL and a timeout point to different problems', at: 7},
+  ]}
+  steps={[
+    {
+      short: 'Start',
+      kind: '시작',
+      title: 'The app asks its own OS first',
+      text: [
+        'The browser needs the IP of www.example.com. It does not talk to the internet DNS itself. It calls the OS resolver library, the stub resolver.',
+        'The stub resolver checks /etc/hosts first (on most Linux systems, the order comes from /etc/nsswitch.conf). There is no entry, so it reads the nameserver line in /etc/resolv.conf to find which server to ask.',
+      ],
+      flows: [{from: 'app', to: 'stub', label: 'www.example.com?', type: 'request'}],
+      focus: ['app', 'stub'],
+      values: {query: 'www.example.com A', answer: '—', ttl: '—', rcode: '—'},
+    },
+    {
+      short: 'Recursive',
+      kind: '원리',
+      title: 'The stub hands the whole job to a recursive resolver',
+      text: [
+        'The stub sends one recursive query, usually over UDP port 53, to the resolver from resolv.conf. That is often the home router, the ISP, a company DNS server, or a public one like 8.8.8.8 or 1.1.1.1.',
+        'A recursive query means "give me the final answer". The recursive resolver does the legwork. Its cache is empty for this name, so it starts at the top of the tree.',
+      ],
+      flows: [{from: 'stub', to: 'rec', label: 'Recursive query', type: 'request'}],
+      focus: ['stub', 'rec'],
+      badges: {rec: 'Cache: empty'},
+    },
+    {
+      short: 'Root',
+      kind: '원리',
+      title: 'The root does not know the answer, only who to ask next',
+      text: [
+        'The resolver ships with the root servers\' addresses (root hints). There are 13 root server names, a to m, answered by many anycast instances around the world.',
+        'The root does not know www.example.com. It returns a referral: the NS records of the .com servers, plus their IPs (glue records) so the resolver can reach them.',
+      ],
+      flows: [
+        {from: 'rec', to: 'root', label: 'www.example.com?', type: 'request'},
+        {from: 'root', to: 'rec', label: 'Ask .com (NS)', type: 'response'},
+      ],
+      focus: ['root'],
+      values: {answer: 'Referral → .com'},
+    },
+    {
+      short: 'TLD',
+      kind: '원리',
+      title: 'The TLD server refers to the domain\'s own name servers',
+      text: [
+        'The resolver asks a .com server the same question. It still does not have the A record. It answers with the NS records of example.com, the servers the domain owner chose at the registrar.',
+        'Each level only knows the next level down. This delegation is why no single server has to know every name.',
+      ],
+      flows: [
+        {from: 'rec', to: 'tld', label: 'www.example.com?', type: 'request'},
+        {from: 'tld', to: 'rec', label: 'Ask ns1.example (NS)', type: 'response'},
+      ],
+      focus: ['tld'],
+      values: {answer: 'Referral → example.com NS'},
+    },
+    {
+      short: 'Authoritative',
+      kind: '원리',
+      title: 'The authoritative server gives the real answer',
+      text: [
+        'The example.com authoritative server holds the zone. It answers www.example.com A 203.0.113.10 with TTL 300, and sets the AA (authoritative answer) flag.',
+        'If www were a CNAME (an alias to another name), the resolver would follow that name too and return the whole chain. The resolver passes the result back to the stub, and the browser connects to the IP.',
+      ],
+      flows: [
+        {from: 'rec', to: 'auth', label: 'www.example.com?', type: 'request'},
+        {from: 'auth', to: 'rec', label: 'A 203.0.113.10', type: 'response'},
+        {from: 'rec', to: 'stub', label: '203.0.113.10', type: 'response'},
+        {from: 'stub', to: 'app', label: '203.0.113.10', type: 'response'},
+      ],
+      focus: ['auth', 'app'],
+      status: {auth: 'ok'},
+      values: {answer: {text: '203.0.113.10', tone: 'good'}, ttl: '300 s', rcode: {text: 'NOERROR', tone: 'good'}},
+    },
+    {
+      short: 'Cache',
+      kind: '원리',
+      title: 'Every answer is cached for its TTL',
+      text: [
+        'The resolver keeps each record for its TTL: the .com and example.com NS records (often a day or more) and the A record (300 seconds). The OS and the browser may keep their own short caches too.',
+        'A minute later another user of the same resolver asks for www.example.com. The resolver answers from cache with the remaining TTL, about 240 seconds, without contacting any other server.',
+      ],
+      keyIdea: 'Caching is why DNS is fast and scales. Most queries never reach the root or the authoritative server.',
+      flows: [
+        {from: 'stub', to: 'rec', label: 'www.example.com?', type: 'request'},
+        {from: 'rec', to: 'stub', label: 'From cache', type: 'response'},
+      ],
+      focus: ['rec'],
+      status: {auth: null},
+      badges: {rec: 'Cached · 240 s left'},
+      values: {ttl: '240 s (counting down)'},
+    },
+    {
+      short: 'Change',
+      kind: '주의',
+      title: 'A changed record is not seen until caches expire',
+      text: [
+        'The team moves the site and changes the A record to 203.0.113.20. The authoritative server answers the new IP at once, but resolvers that cached the old answer keep returning 203.0.113.10 until their TTL runs out.',
+        'So for a while, some users reach the new server and some still reach the old one. The worst case is the old TTL, not the new one.',
+      ],
+      keyIdea: 'Before a migration, lower the TTL (for example to 60 s) at least one old-TTL period in advance. Keep the old server running until the old TTL has passed.',
+      flows: [
+        {from: 'rec', to: 'stub', label: 'Old 203.0.113.10', type: 'response'},
+      ],
+      focus: ['rec', 'auth'],
+      status: {rec: 'warn'},
+      badges: {auth: 'New .20', rec: 'Still old .10'},
+      values: {answer: {text: '.10 (stale until TTL ends)', tone: 'bad'}},
+    },
+    {
+      short: 'NXDOMAIN',
+      kind: '문제',
+      title: 'NXDOMAIN: the name does not exist, and that is cached too',
+      text: [
+        'Someone looks up wwww.example.com, a typo. The authoritative server says the name does not exist: response code NXDOMAIN (3). It includes the zone\'s SOA record.',
+        'The resolver caches this negative answer too (RFC 2308), for the smaller of the SOA record\'s TTL and its MINIMUM field. If you create the record right after, users who just got NXDOMAIN keep getting it until that negative TTL expires.',
+      ],
+      flows: [
+        {from: 'rec', to: 'auth', label: 'wwww.example.com?', type: 'request'},
+        {from: 'auth', to: 'rec', label: 'NXDOMAIN + SOA', type: 'response'},
+      ],
+      focus: ['auth', 'rec'],
+      status: {rec: null},
+      badges: {auth: null, rec: 'Negative cache'},
+      values: {query: 'wwww.example.com A', answer: 'None', ttl: 'SOA negative TTL', rcode: {text: 'NXDOMAIN', tone: 'bad'}},
+    },
+    {
+      short: 'SERVFAIL',
+      kind: '장애',
+      title: 'SERVFAIL and timeouts mean the lookup broke, not that the name is missing',
+      text: [
+        'Now the example.com name servers are down (or their DNSSEC signatures are broken). The resolver cannot get an answer and returns SERVFAIL (2). The name may well exist. The resolver just could not find out.',
+        'If no reply reaches the stub at all, for example because a firewall drops UDP 53, the stub waits and retries. With glibc defaults in resolv.conf that is a 5 second timeout and 2 attempts per server, so a page can hang for seconds before an error.',
+      ],
+      keyIdea: 'NXDOMAIN: an authoritative server said the name does not exist. SERVFAIL: the resolver failed to get an answer. Timeout: no answer reached you. Check the name, the name servers, and the network path, in that order.',
+      flows: [
+        {from: 'rec', to: 'auth', label: 'No reply', type: 'request'},
+        {from: 'rec', to: 'stub', label: 'SERVFAIL', type: 'response'},
+      ],
+      focus: ['auth', 'rec', 'stub'],
+      status: {auth: 'error', rec: 'warn'},
+      badges: {rec: null, auth: 'Down'},
+      values: {query: 'www.example.com A', answer: 'None', ttl: '—', rcode: {text: 'SERVFAIL', tone: 'bad'}},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Ask locally, delegate down the tree, cache by TTL',
+      text: [
+        'The stub resolver checks /etc/hosts and asks the server in /etc/resolv.conf. The recursive resolver walks root → TLD → authoritative, following referrals, and caches every answer for its TTL.',
+        'TTL decides how fast changes spread, for both positive and negative answers. The response code tells you where to look: NXDOMAIN at the name, SERVFAIL at the name servers, a timeout at the network.',
+      ],
+      keyIdea: 'Use dig +trace to repeat the walk yourself, and dig @server to compare what different resolvers have cached.',
+      flows: [
+        {from: 'stub', to: 'rec', label: 'Query', type: 'request'},
+        {from: 'rec', to: 'root', label: '.', type: 'request'},
+        {from: 'rec', to: 'tld', label: '.com', type: 'request'},
+        {from: 'rec', to: 'auth', label: 'example.com', type: 'request'},
+      ],
+      focus: ['stub', 'rec', 'root', 'tld', 'auth'],
+      status: {auth: null, rec: null},
+      badges: {auth: null},
+    },
+  ]}
+/>
+
+## Records you will see
+
+| Type | Holds | Example |
+|---|---|---|
+| A | An IPv4 address | `www.example.com. 300 IN A 203.0.113.10` |
+| AAAA | An IPv6 address | `www.example.com. 300 IN AAAA 2001:db8::10` |
+| CNAME | An alias to another name. A name with a CNAME cannot hold other records, so it cannot sit at the zone apex | `shop.example.com. CNAME lb-123.example.net.` |
+| MX | Mail servers for the domain, with a preference number | `example.com. MX 10 mail.example.com.` |
+| TXT | Free text, used for SPF, domain ownership checks and more | `example.com. TXT "v=spf1 -all"` |
+| NS | The authoritative name servers for a zone | `example.com. NS ns1.example.net.` |
+| SOA | Zone metadata, including the negative-caching TTL | `example.com. SOA ns1... hostmaster... ` |
+
+## Response codes
+
+| Code | Meaning | Look at |
+|---|---|---|
+| NOERROR with answers | Success | — |
+| NOERROR, no answers (NODATA) | The name exists but has no record of this type (for example AAAA only) | The record type you asked for |
+| NXDOMAIN | The name does not exist in the zone | Spelling, the zone file, recent creation (negative cache) |
+| SERVFAIL | The resolver could not get a valid answer | Authoritative servers up, delegation (NS) correct, DNSSEC valid |
+| REFUSED | The server will not answer you (policy) | Whether you are allowed to use that resolver |
+| Timeout (no reply) | Nothing came back | Firewall on UDP/TCP 53, the nameserver in resolv.conf |
+
+## Try it yourself
+
+```bash
+cat /etc/resolv.conf                      # Which resolver the stub asks, plus search/options
+getent hosts www.example.com              # Resolve the way apps do (includes /etc/hosts)
+dig www.example.com                       # status:, flags, ANSWER section and TTL
+dig +trace www.example.com                # Walk root → TLD → authoritative yourself
+dig @8.8.8.8 www.example.com +short       # Ask a specific resolver
+dig @1.1.1.1 www.example.com +short       # Compare caches between resolvers
+dig example.com NS +short                 # Who is authoritative
+dig example.com SOA                       # Last field is the negative-caching MINIMUM
+dig wwww.example.com | grep status        # NXDOMAIN
+nslookup www.example.com                  # Available almost everywhere, including Windows
+```
+
+Run `dig www.example.com` twice against the same resolver and watch the TTL go down. That is the cache.
+
+Further reading: [RFC 1034: Domain Concepts](https://www.rfc-editor.org/rfc/rfc1034) · [RFC 2308: Negative Caching](https://www.rfc-editor.org/rfc/rfc2308) · [Root servers (IANA)](https://www.iana.org/domains/root/servers) · [resolv.conf(5)](https://man7.org/linux/man-pages/man5/resolv.conf.5.html) · [DNS (MDN glossary)](https://developer.mozilla.org/en-US/docs/Glossary/DNS) · [When You Type an Address](../basic/web-request.mdx) · [Finding Services by Name](../k8s/service-dns.mdx)

@@ -1,0 +1,213 @@
+---
+id: speculative-decoding
+title: Guess Ahead, Check Once (Speculative Decoding)
+sidebar_label: 06 · Speculative Decoding
+description: Animated walkthrough of speculative decoding, where a cheap draft proposes several tokens and the target model checks them all in one forward pass, why the output stays the same, how acceptance rate sets the speedup, and why the gain fades under heavy batching
+summary: 'A cheap draft guesses several tokens, the big model checks them in one pass, and acceptance rate decides how much faster decode gets.'
+icon: spark
+hide_table_of_contents: true
+---
+
+# Guess Ahead, Check Once (Speculative Decoding)
+
+Decode writes one token per step, and each step reads all model weights from memory. **Speculative decoding** lets a cheap *draft* guess several tokens ahead, then has the big *target* model check all of them in **one** forward pass. When the guesses are good, one expensive pass yields several tokens, and the answer is the same as without the trick.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~10 min', level: 'Advanced'}}
+  groups={[
+    {label: 'One accelerator', x: 265, y: 30, w: 720, h: 405, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'user', label: 'User', sub: 'streamed answer', icon: 'user', tone: 'ext', x: 110, y: 225, w: 150, show: true},
+    {id: 'draft', label: 'Draft', sub: 'cheap guesser', icon: 'bulb', tone: 'node', x: 400, y: 110, w: 170},
+    {id: 'target', label: 'Target model', sub: 'the real model', icon: 'spark', tone: 'node', x: 400, y: 340, w: 170, show: true},
+    {id: 'check', label: 'Verifier', sub: 'accept or reject', icon: 'shield', tone: 'cp', x: 650, y: 225, w: 160},
+    {id: 'w', label: 'Target weights', sub: 'accelerator memory', icon: 'disk', tone: 'store', x: 880, y: 110, w: 160, show: true},
+    {id: 'kv', label: 'KV cache', sub: 'prompt + answer', icon: 'db', tone: 'store', x: 880, y: 340, w: 160, show: true},
+  ]}
+  metrics={[
+    {id: 'pass', label: 'Tokens per target pass'},
+    {id: 'accept', label: 'Acceptance rate'},
+    {id: 'tpot', label: 'Time per token (TPOT)'},
+    {id: 'neck', label: 'Main bottleneck'},
+  ]}
+  learn={[
+    {text: 'Why checking several tokens costs about as much as making one', at: 1},
+    {text: 'How the draft proposes and the target verifies in one pass', at: 3},
+    {text: 'Why the output distribution stays the same as the target alone', at: 4},
+    {text: 'Draft sources: small model, n-gram lookup, EAGLE and MTP heads', at: 5},
+    {text: 'Why the gain shrinks under heavy batching', at: 7},
+  ]}
+  steps={[
+    {
+      short: 'Start',
+      kind: '시작',
+      title: 'Normal decode: one full weight read per token',
+      text: [
+        'The target model writes the answer one token at a time. Each step reads every weight and the KV cache from memory, then does a small amount of math.',
+        'At small batch sizes the compute units mostly wait on memory. One step makes exactly one token, so TPOT is about one full weight read.',
+      ],
+      flows: [
+        {from: 'w', to: 'target', label: 'all weights', type: 'response'},
+        {from: 'target', to: 'user', label: '1 token', type: 'response'},
+      ],
+      focus: ['target'],
+      values: {pass: '1', accept: '—', tpot: 'one weight read', neck: 'Memory reads'},
+    },
+    {
+      short: 'Idea',
+      kind: '원리',
+      title: 'Scoring several known tokens costs almost the same as one',
+      text: [
+        'Making a token is sequential: you need token 5 before you can compute token 6. Checking tokens is not. If you already have a guess for tokens 6 to 9, the model can score all of them in one parallel pass, like a small prefill.',
+        'That pass reads the weights once. Because decode was memory-bound, the extra math for 4 more positions mostly fills compute that was idle anyway.',
+      ],
+      keyIdea: 'Speculative decoding turns spare compute into fewer weight reads per output token.',
+      flows: [{from: 'w', to: 'target', label: 'read once', type: 'response'}],
+      focus: ['target', 'w'],
+    },
+    {
+      short: 'Draft',
+      kind: '원리',
+      title: 'The draft guesses k tokens ahead, cheaply',
+      text: [
+        'A draft proposes the next k tokens, for example k = 4: "is", "a", "small", "city". It can be a much smaller model with the same tokenizer, so each guess costs a fraction of a target step.',
+        'The draft only has to be right often, not always. Wrong guesses are caught in the next step.',
+      ],
+      flows: [{from: 'draft', to: 'target', label: 'k = 4 guesses', type: 'request'}],
+      focus: ['draft'],
+      badges: {draft: 'is a small city'},
+    },
+    {
+      short: 'Verify',
+      kind: '원리',
+      title: 'The target scores all k guesses in one forward pass',
+      text: [
+        'The target runs once over the 4 draft tokens. For every position it computes its own probability for what should come there, plus one more position after the last guess.',
+        'The KV cache gets entries for the checked positions. Entries for guesses that are later rejected are thrown away.',
+      ],
+      flows: [
+        {from: 'w', to: 'target', label: 'one read', type: 'response'},
+        {from: 'target', to: 'check', label: '5 positions scored', type: 'request'},
+        {from: 'target', to: 'kv', label: 'KV for 4', type: 'request', bend: 0.15},
+      ],
+      focus: ['target', 'check'],
+      badges: {target: '1 pass'},
+    },
+    {
+      short: 'Accept',
+      kind: '원리',
+      title: 'Keep the matching prefix, then add one token of its own',
+      text: [
+        'The verifier walks the guesses in order. "is", "a" and "small" pass, "city" fails. It keeps the 3 accepted tokens and replaces "city" with a token sampled from the target ("town"). One target pass produced 4 tokens instead of 1.',
+        'The accept test is a form of rejection sampling: each guess is kept with probability min(1, p_target / p_draft), and on rejection the replacement comes from a corrected distribution. The result follows exactly the target model\'s distribution. With greedy decoding, the text is the same as running the target alone.',
+      ],
+      keyIdea: 'Quality does not change. Only speed does. Even if every guess is wrong, each pass still yields one correct target token.',
+      flows: [{from: 'check', to: 'user', label: '3 accepted + 1', type: 'response'}],
+      focus: ['check'],
+      status: {check: 'ok'},
+      badges: {target: null, draft: null, check: '3 of 4 kept'},
+      values: {pass: {text: '4', tone: 'good'}, accept: '75%', tpot: {text: 'about 2-3× faster', tone: 'good'}},
+    },
+    {
+      short: 'Draft kinds',
+      kind: '원리',
+      title: 'Where the guesses come from',
+      text: [
+        'A separate small model from the same family is the classic draft. N-gram (prompt lookup) drafting needs no model at all: it copies the tokens that followed the same short sequence earlier in the prompt, which works well for summaries, code edits and RAG answers that quote their input.',
+        'EAGLE-style heads and MTP (multi-token prediction) modules are small layers attached to the target that predict ahead from its hidden states. They are often more accurate than a separate small model and cost little extra memory.',
+      ],
+      flows: [{from: 'draft', to: 'target', label: 'guesses', type: 'request'}],
+      focus: ['draft'],
+      status: {check: null},
+      badges: {check: null, draft: 'model · n-gram · head'},
+    },
+    {
+      short: 'Low accept',
+      kind: '주의',
+      title: 'Bad guesses waste the work',
+      text: [
+        'On creative writing or high-temperature sampling, the draft guesses wrong more often. If only the first of 4 guesses passes, a pass gives 2 tokens, and the time spent drafting and scoring the rest is wasted.',
+        'Larger k helps only when acceptance is high. Many engines use k between 2 and 5. Measure acceptance rate on your real traffic before choosing.',
+      ],
+      keyIdea: 'Speedup roughly tracks the average number of accepted tokens per pass, minus the draft\'s own cost.',
+      flows: [{from: 'check', to: 'draft', label: 'rejected', type: 'watch'}],
+      focus: ['check', 'draft'],
+      status: {draft: 'warn'},
+      badges: {draft: null, check: '1 of 4 kept'},
+      values: {pass: {text: '2', tone: 'bad'}, accept: {text: '25%', tone: 'bad'}, tpot: 'small gain'},
+    },
+    {
+      short: 'Busy GPU',
+      kind: '문제',
+      title: 'Under heavy batching the spare compute is gone',
+      text: [
+        'With continuous batching and many concurrent requests, the accelerator is already doing a lot of math per weight read. Decode moves from memory-bound toward compute-bound.',
+        'Now scoring 4 extra positions per request is real extra work. Throughput can drop below normal decode. The draft also takes memory for its own weights and KV cache, which leaves less room for the batch.',
+      ],
+      keyIdea: 'Speculative decoding mostly helps latency at low to moderate load. At high load, check total throughput, not just TPOT.',
+      flows: [
+        {from: 'user', to: 'target', label: 'many requests', type: 'request'},
+        {from: 'draft', to: 'kv', label: 'draft memory', type: 'request', bend: -0.2},
+      ],
+      focus: ['target', 'kv'],
+      status: {draft: null, target: 'warn', kv: 'warn'},
+      badges: {check: null, target: 'big batch'},
+      values: {pass: '—', accept: '—', tpot: {text: 'gain shrinks or negative', tone: 'bad'}, neck: {text: 'Compute', tone: 'bad'}},
+    },
+    {
+      short: 'Recap',
+      kind: '정리',
+      title: 'Guess cheaply, verify in one pass, keep what matches',
+      text: [
+        'The draft proposes k tokens. The target scores them in one forward pass. The verifier keeps the matching prefix plus one target token, so the output distribution is the same as the target alone.',
+        'The speedup comes from spare compute during memory-bound decode, and its size depends on acceptance rate. It fades when the batch is large enough to make decode compute-bound.',
+      ],
+      keyIdea: 'Turn it on per model and per workload, and measure TPOT, acceptance rate and total throughput at your real concurrency.',
+      focus: ['draft', 'target', 'check'],
+      status: {target: null, kv: null},
+      badges: {target: null},
+      values: {neck: 'Memory reads'},
+    },
+  ]}
+/>
+
+## Draft methods compared
+
+| Method | Where guesses come from | Extra memory | Helps most when |
+|---|---|---|---|
+| Draft model | A separate small model with the same tokenizer | Its weights and its own KV cache | A good small sibling model exists; general chat |
+| N-gram (prompt lookup) | Tokens copied from earlier in the prompt | None | Output repeats the input: summaries, code edits, RAG answers |
+| EAGLE-style heads | Light layers reading the target's hidden states | Small | General workloads; usually higher acceptance than a separate draft |
+| MTP modules | Multi-token prediction layers trained with the model (e.g. DeepSeek-V3) | Small, often shipped in the checkpoint | Models that come with MTP weights |
+
+In all cases the target model makes the final decision, so the method changes speed, not the answer.
+
+## Running it on Kubernetes
+
+- Speculative decoding is set when the engine starts, so it belongs in the serving Pod's args. Roll it out like any other config change, with a canary replica.
+- Run load tests at your real concurrency with and without it. Compare TPOT, TTFT and total output tokens per second. A win at 1 user can be a loss at 64.
+- Leave memory headroom for the draft. A draft model adds its own weights and KV cache, so fewer requests fit in the same accelerator.
+- Watch the acceptance rate over time. If traffic shifts to more creative or high-temperature requests, the gain can quietly disappear.
+
+## Try it yourself
+
+```bash
+# vLLM: n-gram drafting needs no extra model (check the speculative decoding docs for your version)
+vllm serve meta-llama/Llama-3.1-8B-Instruct \
+  --speculative-config '{"method": "ngram", "num_speculative_tokens": 4, "prompt_lookup_max": 4}'
+
+# vLLM: a separate small draft model
+vllm serve meta-llama/Llama-3.1-70B-Instruct \
+  --speculative-config '{"model": "meta-llama/Llama-3.2-1B-Instruct", "num_speculative_tokens": 4}'
+
+# Compare TPOT with and without speculation at the same concurrency
+vllm bench serve --model meta-llama/Llama-3.1-8B-Instruct --max-concurrency 8 --num-prompts 200
+
+# Acceptance: accepted draft tokens / proposed draft tokens
+curl -s http://<engine>:8000/metrics | grep -E 'vllm:spec_decode_num_(accepted|draft)_tokens_total'
+```
+
+Further reading: [Leviathan et al., 2023: Fast Inference from Transformers via Speculative Decoding](https://arxiv.org/abs/2211.17192) · [Chen et al., 2023: Accelerating LLM Decoding with Speculative Sampling](https://arxiv.org/abs/2302.01318) · [EAGLE](https://arxiv.org/abs/2401.15077) · [vLLM speculative decoding](https://docs.vllm.ai/en/latest/features/speculative_decoding/) · [Reading the Question, Writing the Answer (Prefill and Decode)](../llm/prefill-decode.mdx) · [Batching Requests (Continuous Batching)](../llm/continuous-batching.mdx)

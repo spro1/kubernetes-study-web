@@ -1,0 +1,250 @@
+---
+id: admission-policy
+title: Admission Policies with CEL and Webhooks
+sidebar_label: 07 · Admission Policies
+description: Animated walkthrough of enforcing your own rules at admission with ValidatingAdmissionPolicy (CEL) and its binding, the Deny, Warn and Audit actions, parameters, webhook engines such as Kyverno and Gatekeeper, what failurePolicy does when a webhook is down, and why existing objects are not re-checked
+summary: 'Your own rules at the API server door: CEL policies and bindings, warn before deny, webhook engines, and what breaks when a webhook is down.'
+icon: shield
+hide_table_of_contents: true
+---
+
+# Admission Policies with CEL and Webhooks
+
+Pod Security Standards check only security fields. Most teams also have their own rules, such as "every Deployment has a team label", "no `:latest` images" and "every container has a memory limit". Follow how these rules are enforced at admission, first inside the API server with CEL, then with a webhook engine, and see what each one costs when it fails.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~12 min', level: 'Advanced'}}
+  groups={[
+    {label: 'Inside the API server', x: 215, y: 45, w: 500, h: 140, tone: 'mgmt'},
+  ]}
+  nodes={[
+    {id: 'user', label: 'Developer', sub: 'kubectl apply', icon: 'user', tone: 'ext', x: 85, y: 115, show: true},
+    {id: 'api', label: 'API server', sub: 'AuthN · AuthZ', icon: 'gate', tone: 'cp', x: 330, y: 115, show: true},
+    {id: 'vap', label: 'Admission policy', sub: 'CEL rules', icon: 'shield', tone: 'cp', x: 590, y: 115, w: 170},
+    {id: 'binding', label: 'Policy binding', sub: 'Scope · actions', icon: 'ticket', tone: 'store', x: 590, y: 265, w: 160},
+    {id: 'params', label: 'Params', sub: 'paramKind', icon: 'book', tone: 'store', x: 850, y: 265},
+    {id: 'webhook', label: 'Policy webhook', sub: 'Kyverno · Gatekeeper', icon: 'gear', tone: 'node', x: 850, y: 115, w: 170},
+    {id: 'etcd', label: 'etcd', sub: 'Stored objects', icon: 'db', tone: 'store', x: 330, y: 300},
+    {id: 'old', label: 'Old Deployment', sub: 'Created earlier', icon: 'box', tone: 'app', x: 330, y: 405, w: 160},
+    {id: 'report', label: 'Policy report', sub: 'Background scan', icon: 'chart', tone: 'store', x: 850, y: 405, w: 160},
+  ]}
+  metrics={[
+    {id: 'request', label: 'Request'},
+    {id: 'action', label: 'validationActions'},
+    {id: 'result', label: 'Result'},
+    {id: 'old', label: 'Existing objects'},
+  ]}
+  learn={[
+    {text: 'A ValidatingAdmissionPolicy runs CEL inside the API server', at: 1},
+    {text: 'A policy does nothing until a binding gives it a scope and an action', at: 2},
+    {text: 'Roll out with Warn and Audit before Deny', at: 4},
+    {text: 'Webhook engines and what failurePolicy Fail or Ignore means when they are down', at: 7},
+    {text: 'Admission checks writes only, so old objects need a scan', at: 8},
+  ]}
+  steps={[
+    {
+      short: 'Start',
+      kind: '시작',
+      title: 'Your own rules, checked at the door',
+      text: [
+        'A developer applies a Deployment. After authentication and authorization, the request passes admission: the last gate before the object is stored in etcd.',
+        'Pod Security Standards cover only security fields. Rules like "has a team label", "no :latest image" or "memory limit set" are your organization\'s own. They need a policy you write.',
+      ],
+      flows: [{from: 'user', to: 'api', label: 'Create Deployment', type: 'request'}],
+      focus: ['user', 'api'],
+      values: {request: 'Deployment web', action: '—', result: '—', old: '—'},
+    },
+    {
+      short: 'Policy',
+      kind: '원리',
+      title: 'A ValidatingAdmissionPolicy is a CEL rule inside the API server',
+      text: [
+        'A ValidatingAdmissionPolicy (GA since Kubernetes 1.30) holds matchConstraints, such as apps/v1 deployments on CREATE and UPDATE, and a list of validations. Each validation is a CEL expression plus a message.',
+        'For example: object.spec.template.spec.containers.all(c, has(c.resources.limits) && has(c.resources.limits.memory)). CEL (Common Expression Language) is evaluated by the API server itself, so there is no extra server to run, no network call and no webhook to go down.',
+      ],
+      keyIdea: 'CEL expressions are checked for cost when the policy is created. A rule that could loop for too long is refused up front, so a policy cannot hang the API server.',
+      flows: [{from: 'api', to: 'vap', label: 'Evaluate CEL', type: 'request'}],
+      focus: ['vap'],
+      badges: {vap: 'limits.memory'},
+    },
+    {
+      short: 'Binding',
+      kind: '원리',
+      title: 'Nothing happens until a binding gives it scope and an action',
+      text: [
+        'A policy alone is just a definition. A ValidatingAdmissionPolicyBinding names the policy (policyName), narrows where it applies (matchResources, for example a namespaceSelector for env=prod) and says what to do on failure (validationActions).',
+        'This split lets a platform team write one policy and bind it several times: Deny in production, Warn in development.',
+      ],
+      keyIdea: 'If a policy seems to do nothing, check for a binding first. kubectl get validatingadmissionpolicybindings shows which policy each binding uses.',
+      flows: [{from: 'binding', to: 'vap', label: 'policyName', type: 'watch'}],
+      focus: ['binding', 'vap'],
+      badges: {binding: 'env=prod · Deny'},
+      values: {action: 'Deny'},
+    },
+    {
+      short: 'Denied',
+      kind: '문제',
+      title: 'A container without a memory limit is refused',
+      text: [
+        'The Deployment\'s container has no resources.limits.memory. The expression returns false and the binding\'s action is Deny, so the API server refuses the request. kubectl prints the policy name, the binding name and the message you wrote.',
+        'The object is never stored. By default the refusal reason is Invalid, so the response is HTTP 422. A validation can set reason to Forbidden instead.',
+      ],
+      keyIdea: 'Write the message for the person who gets refused: say which field is missing and how to fix it. messageExpression can include values from the object, such as the container name.',
+      flows: [
+        {from: 'api', to: 'vap', label: 'Evaluate', type: 'request'},
+        {from: 'api', to: 'user', label: '422 denied', type: 'response'},
+      ],
+      focus: ['vap', 'user'],
+      status: {vap: 'error'},
+      badges: {vap: 'false'},
+      values: {result: {text: 'Denied · no memory limit', tone: 'bad'}},
+    },
+    {
+      short: 'Warn first',
+      kind: '주의',
+      title: 'Roll out with Warn and Audit before Deny',
+      text: [
+        'Switching a new rule straight to Deny can break deploy pipelines that worked yesterday. Set the binding to validationActions: [Warn, Audit] first. The request is allowed, kubectl prints a Warning: line, and the audit log records the failure in an annotation.',
+        'Once the warnings stop, change the binding to Deny. Deny and Warn cannot be set together, because a denied request already returns the message.',
+      ],
+      keyIdea: 'Audit only works if the API server has an audit policy that records these events. Check that before you rely on it to find violators.',
+      flows: [
+        {from: 'api', to: 'vap', label: 'Evaluate', type: 'request'},
+        {from: 'api', to: 'etcd', label: 'Stored', type: 'request'},
+        {from: 'api', to: 'user', label: 'Warning', type: 'response'},
+      ],
+      focus: ['binding', 'user'],
+      status: {vap: 'warn'},
+      badges: {binding: 'Warn · Audit', vap: null},
+      values: {action: 'Warn · Audit', result: {text: 'Allowed with warning', tone: 'good'}},
+    },
+    {
+      short: 'Params',
+      kind: '원리',
+      title: 'Parameters keep one policy, with values per team',
+      text: [
+        'A rule like "images only from allowed registries" needs a list that differs per team. The policy declares paramKind, for example a ConfigMap or a custom resource, and the CEL reads it as params.',
+        'Each binding points to its own parameter object with paramRef. If the object is missing, parameterNotFoundAction decides whether the request is denied or allowed.',
+      ],
+      flows: [
+        {from: 'binding', to: 'params', label: 'paramRef', type: 'watch'},
+        {from: 'params', to: 'vap', label: 'params', type: 'watch'},
+      ],
+      focus: ['params', 'binding'],
+      status: {vap: null},
+      badges: {binding: 'env=prod · Deny', params: 'registry list'},
+      values: {action: 'Deny', result: '—'},
+    },
+    {
+      short: 'Webhook',
+      kind: '원리',
+      title: 'Webhook engines do more, but run as Pods',
+      text: [
+        'Engines such as Kyverno and OPA Gatekeeper register a ValidatingWebhookConfiguration (and often a mutating one). The API server sends an AdmissionReview over HTTPS to their Pods and waits for allowed: true or false.',
+        'They can do what CEL alone cannot: mutate or generate resources, verify image signatures, call external data, and scan existing objects. Kubernetes is also adding MutatingAdmissionPolicy, a CEL way to mutate without a webhook. It was alpha in 1.32, beta in 1.34 and GA in 1.36, so check that your cluster version has it before relying on it.',
+      ],
+      flows: [
+        {from: 'api', to: 'webhook', label: 'AdmissionReview', type: 'request'},
+        {from: 'webhook', to: 'api', label: 'allowed: false', type: 'response'},
+      ],
+      focus: ['webhook'],
+      status: {webhook: 'ok'},
+      badges: {webhook: 'no :latest'},
+    },
+    {
+      short: 'Webhook down',
+      kind: '장애',
+      title: 'When the webhook is down, failurePolicy decides who loses',
+      text: [
+        'If the webhook Pods crash or their Service has no endpoints, every matching request waits for the timeout (timeoutSeconds, default 10, at most 30) and then hits failurePolicy. Fail (the default) rejects the request. Ignore lets it through without the check.',
+        'With Fail and a rule that matches all Pods, nothing new can start, including the webhook\'s own replacement Pods. With Ignore, the rule silently stops working during the outage.',
+      ],
+      keyIdea: 'Exclude kube-system and the engine\'s own namespace with a namespaceSelector, run several replicas with a PodDisruptionBudget, and alert on webhook latency and errors.',
+      flows: [
+        {from: 'api', to: 'webhook', label: 'Timeout 10s', type: 'request'},
+        {from: 'api', to: 'user', label: 'Internal error', type: 'response'},
+      ],
+      focus: ['webhook', 'api'],
+      status: {webhook: 'error'},
+      badges: {webhook: 'No endpoints'},
+      values: {result: {text: 'Rejected · failurePolicy Fail', tone: 'bad'}},
+    },
+    {
+      short: 'Old objects',
+      kind: '주의',
+      title: 'Admission checks writes, not what is already stored',
+      text: [
+        'A Deployment created last month with a :latest image keeps running. Admission sees only create, update and delete requests, so a new policy does not touch it. The next update to that Deployment, even a label change, is refused.',
+        'To find existing violators, use the engine\'s background scan (Kyverno policy reports, Gatekeeper audit) or run your stored manifests through kubectl apply --dry-run=server.',
+      ],
+      keyIdea: 'Before switching a rule to Deny, list the existing objects that break it. Otherwise the first emergency hotfix to an old Deployment is the one that gets blocked.',
+      flows: [
+        {from: 'etcd', to: 'old', label: 'Unchanged', type: 'watch'},
+        {from: 'webhook', to: 'report', label: 'Background scan', type: 'watch'},
+      ],
+      focus: ['old', 'report'],
+      status: {webhook: 'ok', old: 'warn'},
+      badges: {webhook: null, report: '3 violations'},
+      values: {old: {text: '3 not compliant', tone: 'bad'}, result: '—'},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Write the rule, bind it, warn first, then deny',
+      text: [
+        'A ValidatingAdmissionPolicy runs CEL inside the API server. A binding gives it a scope and an action. Parameters let one policy serve many teams with different values.',
+        'Webhook engines add mutation, image verification and background scans, but they become part of the request path. Their failurePolicy and namespace exclusions decide whether a webhook outage blocks the cluster or quietly skips the rules.',
+      ],
+      keyIdea: 'Prefer CEL policies for simple field checks, and use a webhook engine only for what CEL cannot do. Always roll out with Warn and Audit, and scan existing objects before you Deny.',
+      flows: [
+        {from: 'user', to: 'api', label: 'Apply', type: 'request'},
+        {from: 'api', to: 'vap', label: 'CEL', type: 'request'},
+        {from: 'api', to: 'webhook', label: 'Webhook', type: 'request'},
+      ],
+      focus: ['vap', 'binding', 'webhook'],
+      status: {vap: null, old: null},
+      badges: {params: null, report: null, vap: null},
+    },
+  ]}
+/>
+
+## CEL policy or webhook?
+
+| | ValidatingAdmissionPolicy (CEL) | Webhook engine (Kyverno, Gatekeeper) |
+|---|---|---|
+| Where it runs | Inside the API server | Separate Pods, called over HTTPS |
+| If it fails | No extra server to fail; an expression error follows the policy's `failurePolicy` | Timeout, then `failurePolicy` Fail (reject) or Ignore (skip) |
+| Latency | In process, no network hop | One network call per matching request, up to `timeoutSeconds` |
+| Can mutate | No (MutatingAdmissionPolicy is a separate, newer kind) | Yes |
+| Existing objects | Not checked | Background scan or audit reports |
+| Extras | Parameters via `paramKind` | Image signature checks, generating resources, external data |
+| Best for | Simple field rules: labels, image tags, limits | Rules CEL cannot express, or when you need reports |
+
+Example CEL expressions for a Deployment (`object` is the incoming object):
+
+```yaml
+validations:
+  - expression: "has(object.metadata.labels) && 'team' in object.metadata.labels"
+    message: "metadata.labels.team is required"
+  - expression: "object.spec.template.spec.containers.all(c, !c.image.endsWith(':latest'))"
+    message: "Do not use the :latest tag; pin a version or a digest"
+  - expression: "object.spec.template.spec.containers.all(c, has(c.resources.limits) && has(c.resources.limits.memory))"
+    message: "Every container needs resources.limits.memory"
+```
+
+The `:latest` check is simplified: an image with no tag at all also means `latest`, and a registry port (`registry:5000/app`) contains a colon. A real rule should handle both.
+
+## Try it yourself
+
+```bash
+kubectl get validatingadmissionpolicies                    # Policies and their match rules
+kubectl get validatingadmissionpolicybindings              # Which policy, which action, which scope
+kubectl apply -f policy.yaml -f binding.yaml               # Policy with validationActions: [Warn, Audit] first
+kubectl create deployment web --image=nginx:latest --dry-run=server   # See the warning or denial without storing anything
+kubectl get validatingwebhookconfigurations                # Webhook engines registered on this cluster
+kubectl get validatingwebhookconfigurations -o custom-columns=NAME:.metadata.name,POLICY:.webhooks[*].failurePolicy,TIMEOUT:.webhooks[*].timeoutSeconds
+```
+
+Further reading: [Validating Admission Policy](https://kubernetes.io/docs/reference/access-authn-authz/validating-admission-policy/) · [Mutating Admission Policy](https://kubernetes.io/docs/reference/access-authn-authz/mutating-admission-policy/) · [Dynamic Admission Control (webhooks)](https://kubernetes.io/docs/reference/access-authn-authz/extensible-admission-controllers/) · [CEL in Kubernetes](https://kubernetes.io/docs/reference/using-api/cel/) · [Kyverno](https://kyverno.io/docs/) · [OPA Gatekeeper](https://open-policy-agent.github.io/gatekeeper/website/docs/) · [How an API Request Gets Stored](../advanced/api-request-path.mdx) · [Pod Security Standards and securityContext](../advanced/pod-security.mdx)

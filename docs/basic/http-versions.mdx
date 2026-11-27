@@ -1,0 +1,236 @@
+---
+id: http-versions
+title: HTTP/1.1, HTTP/2 and HTTP/3
+sidebar_label: 01 · HTTP/1.1, HTTP/2 and HTTP/3
+description: Animated walkthrough of how the same HTTP request travels in HTTP/1.1, HTTP/2 and HTTP/3, from keep-alive and head-of-line blocking to multiplexed streams, ALPN, QUIC over UDP, Alt-Svc discovery, UDP fallback and why gRPC needs per-request load balancing
+summary: 'Same request, three ways to carry it: keep-alive, HTTP/2 streams over one TCP connection, HTTP/3 over QUIC, and what that means for load balancers.'
+icon: layers
+hide_table_of_contents: true
+---
+
+# HTTP/1.1, HTTP/2 and HTTP/3
+
+A page needs dozens of files. The meaning of each request (method, path, headers, status) is the same in every HTTP version. What changes is **how the bytes travel**: one request at a time, many streams on one TCP connection, or streams over QUIC on UDP. Status codes are covered in [When You Type an Address](../basic/web-request.mdx).
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~10 min', level: 'Beginner'}}
+  groups={[
+    {label: 'Server side', x: 520, y: 40, w: 460, h: 390, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'client', label: 'Browser', sub: 'Needs 40 files', icon: 'browser', tone: 'ext', x: 110, y: 225, show: true},
+    {id: 'tcp', label: 'TCP + TLS', sub: 'Ordered byte stream', icon: 'route', tone: 'node', x: 340, y: 130},
+    {id: 'quic', label: 'QUIC', sub: 'UDP · TLS 1.3 inside', icon: 'spark', tone: 'node', x: 340, y: 330},
+    {id: 'lb', label: 'Load balancer', sub: 'Port 443', icon: 'split', tone: 'cp', x: 640, y: 225},
+    {id: 'srv1', label: 'Server 1', sub: 'Web · gRPC', icon: 'server', tone: 'app', x: 870, y: 130},
+    {id: 'srv2', label: 'Server 2', sub: 'Web · gRPC', icon: 'server', tone: 'app', x: 870, y: 330},
+  ]}
+  metrics={[
+    {id: 'ver', label: 'Version'},
+    {id: 'conns', label: 'Connections'},
+    {id: 'rtt', label: 'Round trips before 1st request'},
+    {id: 'hol', label: 'Head-of-line blocking'},
+  ]}
+  learn={[
+    {text: 'A request is a method, a path, headers and an optional body', at: 1},
+    {text: 'Keep-alive and why HTTP/1.1 opens several connections', at: 2},
+    {text: 'ALPN picks the version inside the TLS handshake', at: 3},
+    {text: 'HTTP/2 streams, and the TCP loss problem they still have', at: 4},
+    {text: 'HTTP/3 over QUIC, Alt-Svc and the UDP fallback', at: 6},
+    {text: 'Why gRPC over HTTP/2 needs per-request load balancing', at: 9},
+  ]}
+  steps={[
+    {
+      short: 'Request',
+      kind: '시작',
+      title: 'A request is a method, a path, headers and a body',
+      text: [
+        'The browser asks for GET /app.js with headers such as Host, Accept and Cookie. A POST adds a body. The server answers with a status, headers such as Content-Type and Cache-Control, and a body.',
+        'These semantics are defined once (RFC 9110) and shared by every version. HTTP/1.1, HTTP/2 and HTTP/3 only differ in how they put these messages on the wire.',
+      ],
+      keyIdea: 'Changing the HTTP version does not change your API. Methods, headers and status codes stay the same.',
+      flows: [{from: 'client', to: 'lb', label: 'GET /app.js', type: 'request'}],
+      focus: ['client'],
+      values: {ver: '—', conns: '—', rtt: '—', hol: '—'},
+    },
+    {
+      short: 'HTTP/1.1',
+      kind: '원리',
+      title: 'HTTP/1.1: plain text, one response at a time per connection',
+      text: [
+        'HTTP/1.1 sends readable text lines over TCP. Keep-alive reuses the connection for the next request, so the browser does not pay a new handshake for each file.',
+        'But on one connection, responses come back strictly in order. A slow response holds up everything behind it. Browsers work around this by opening about six connections per host, each with its own handshake.',
+      ],
+      keyIdea: 'Old tricks such as bundling files and spreading assets over several domains exist only because of this limit.',
+      flows: [
+        {from: 'client', to: 'tcp', label: '1 request at a time', type: 'request'},
+        {from: 'tcp', to: 'lb', label: 'Text', type: 'request'},
+      ],
+      focus: ['client', 'tcp'],
+      badges: {tcp: '×6'},
+      values: {ver: 'HTTP/1.1', conns: 'About 6 per host', rtt: '2 (TCP + TLS 1.3)', hol: {text: 'Per connection', tone: 'bad'}},
+    },
+    {
+      short: 'ALPN',
+      kind: '원리',
+      title: 'ALPN picks the version inside the TLS handshake',
+      text: [
+        'In its TLS ClientHello, the browser lists the protocols it speaks, for example h2 and http/1.1. The server picks one in its reply. This is ALPN (Application-Layer Protocol Negotiation), and it costs no extra round trip.',
+        'Browsers only use HTTP/2 over TLS. Cleartext HTTP/2 (h2c) exists, but it is used between services, not by browsers.',
+      ],
+      keyIdea: 'If a proxy in the middle does not offer h2, the client silently falls back to HTTP/1.1. Check which version was actually negotiated.',
+      flows: [
+        {from: 'client', to: 'tcp', label: 'ALPN: h2, http/1.1', type: 'request'},
+        {from: 'lb', to: 'tcp', label: 'Chosen: h2', type: 'response'},
+      ],
+      focus: ['tcp', 'lb'],
+      badges: {tcp: 'h2'},
+    },
+    {
+      short: 'HTTP/2',
+      kind: '원리',
+      title: 'HTTP/2: many streams share one connection',
+      text: [
+        'HTTP/2 splits each message into binary frames tagged with a stream ID. Frames from many requests are interleaved on one connection, and the other side reassembles them. A slow response no longer blocks the others at the HTTP level.',
+        'Headers are compressed with HPACK, which remembers headers already sent on the connection. Repeated cookies and user agents shrink to a few bytes.',
+      ],
+      flows: [
+        {from: 'client', to: 'tcp', label: '40 streams', type: 'request'},
+        {from: 'tcp', to: 'lb', label: 'Frames', type: 'request'},
+        {from: 'lb', to: 'srv1', label: 'Requests', type: 'request'},
+      ],
+      focus: ['tcp'],
+      badges: {tcp: '1 conn · 40 streams'},
+      values: {ver: 'HTTP/2', conns: '1', hol: {text: 'Gone at HTTP level', tone: 'good'}},
+    },
+    {
+      short: 'TCP loss',
+      kind: '문제',
+      title: 'One lost packet still stalls every stream',
+      text: [
+        'TCP delivers bytes strictly in order. If one packet is lost, TCP holds back everything after it until the retransmission arrives, even frames that belong to other streams.',
+        'With HTTP/1.1, only one of six connections stalls. With HTTP/2, the one shared connection stalls. On lossy networks, such as mobile, this can make HTTP/2 no faster or even slower.',
+      ],
+      keyIdea: 'HTTP/2 removed head-of-line blocking from HTTP, not from TCP underneath it.',
+      flows: [{from: 'tcp', to: 'lb', label: 'Waiting for 1 packet', type: 'request'}],
+      focus: ['tcp'],
+      status: {tcp: 'warn'},
+      values: {hol: {text: 'At TCP level', tone: 'bad'}},
+    },
+    {
+      short: 'Alt-Svc',
+      kind: '원리',
+      title: 'The server advertises HTTP/3 with Alt-Svc',
+      text: [
+        'A browser cannot know in advance that a server speaks HTTP/3 on UDP. So the first visit usually uses HTTP/2 over TCP, and the response carries a header such as Alt-Svc: h3=":443"; ma=86400.',
+        'The browser remembers this for ma seconds and tries QUIC on the next connection. A DNS HTTPS record can advertise h3 too, so even the first connection can try it.',
+      ],
+      flows: [
+        {from: 'lb', to: 'tcp', label: 'Alt-Svc: h3', type: 'response'},
+        {from: 'tcp', to: 'client', label: 'Remember h3', type: 'response'},
+      ],
+      focus: ['lb', 'client'],
+      status: {tcp: null},
+      badges: {client: 'h3 known'},
+    },
+    {
+      short: 'HTTP/3',
+      kind: '원리',
+      title: 'HTTP/3 runs on QUIC over UDP',
+      text: [
+        'QUIC is a transport built on UDP with TLS 1.3 inside. The transport and crypto handshakes are combined, so a new connection needs 1 round trip instead of 2. Resuming a known server can send data in the first flight (0-RTT).',
+        'Each stream is recovered separately, so a lost packet only delays its own stream. Connections are identified by connection IDs, not by IP and port, so a phone moving from Wi-Fi to LTE can keep the same connection.',
+      ],
+      keyIdea: '0-RTT data can be replayed by an attacker. Servers should accept it only for safe, idempotent requests such as GET.',
+      flows: [
+        {from: 'client', to: 'quic', label: 'h3 · UDP 443', type: 'request'},
+        {from: 'quic', to: 'lb', label: 'Streams', type: 'request'},
+      ],
+      focus: ['quic'],
+      badges: {tcp: null, quic: 'Per-stream recovery'},
+      values: {ver: 'HTTP/3', conns: '1', rtt: {text: '1 (0 on resume)', tone: 'good'}, hol: {text: 'Only the lossy stream', tone: 'good'}},
+    },
+    {
+      short: 'UDP blocked',
+      kind: '문제',
+      title: 'A firewall blocks UDP 443 and the client falls back',
+      text: [
+        'Many corporate networks allow TCP 443 but drop UDP 443. The QUIC handshake never completes, and after a short wait the browser falls back to HTTP/2 over TCP.',
+        'The page still works, just without HTTP/3. This is why servers that offer HTTP/3 always keep the TCP listener as well.',
+      ],
+      keyIdea: 'If HTTP/3 never shows up in DevTools, check the UDP path and the Alt-Svc header first.',
+      flows: [{from: 'client', to: 'tcp', label: 'Fallback: h2', type: 'request'}],
+      focus: ['quic', 'tcp'],
+      status: {quic: 'error'},
+      values: {ver: 'HTTP/2 (fallback)', rtt: '2 (TCP + TLS 1.3)', hol: {text: 'At TCP level', tone: 'bad'}},
+    },
+    {
+      short: 'gRPC',
+      kind: '주의',
+      title: 'gRPC on one HTTP/2 connection lands on one server',
+      text: [
+        'gRPC runs on HTTP/2 and keeps one long-lived connection open. A layer 4 load balancer picks a backend once per connection. So every call from this client goes to Server 1, and Server 2 sits idle.',
+        'In Kubernetes, a plain ClusterIP Service balances per connection too. Spread gRPC calls with a layer 7 proxy that understands HTTP/2 and balances per request (for example Envoy or a service mesh), or with client-side load balancing.',
+      ],
+      keyIdea: 'Adding replicas does not help gRPC traffic if the balancer only sees connections. Watch per-Pod request rates, not just replica count.',
+      flows: [
+        {from: 'client', to: 'tcp', label: 'gRPC calls', type: 'request'},
+        {from: 'tcp', to: 'lb', label: '1 connection', type: 'request'},
+        {from: 'lb', to: 'srv1', label: 'All calls', type: 'request'},
+      ],
+      focus: ['lb', 'srv1', 'srv2'],
+      status: {quic: null, srv1: 'warn', srv2: 'off'},
+      badges: {srv1: '100%', srv2: '0%'},
+      values: {ver: 'HTTP/2 (gRPC)', conns: '1 long-lived'},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Same messages, three transports',
+      text: [
+        'HTTP/1.1 sends one response at a time per connection and opens several connections. HTTP/2 multiplexes streams on one TCP connection but still stalls on TCP loss. HTTP/3 moves streams onto QUIC over UDP, recovers each stream separately and sets up faster.',
+        'The version is negotiated (ALPN) or advertised (Alt-Svc), and clients fall back when a path is blocked. Load balancers must understand the protocol to balance requests rather than connections.',
+      ],
+      keyIdea: 'Check the negotiated version with curl -v or the browser DevTools Protocol column before tuning anything.',
+      flows: [
+        {from: 'client', to: 'quic', label: 'h3', type: 'request'},
+        {from: 'quic', to: 'lb', label: 'Streams', type: 'request'},
+        {from: 'lb', to: 'srv1', label: 'Per request', type: 'request'},
+        {from: 'lb', to: 'srv2', label: 'Per request', type: 'request'},
+      ],
+      focus: ['tcp', 'quic', 'lb'],
+      status: {srv1: null, srv2: null},
+      badges: {srv1: null, srv2: null, client: null},
+      values: {ver: 'h1.1 · h2 · h3'},
+    },
+  ]}
+/>
+
+## The three versions compared
+
+| | HTTP/1.1 | HTTP/2 | HTTP/3 |
+|---|---|---|---|
+| Transport | TCP (+ TLS) | TCP + TLS (h2), cleartext h2c between services | QUIC over UDP, TLS 1.3 built in |
+| Message format | Text lines | Binary frames on streams | Binary frames on QUIC streams |
+| Requests per connection at once | One response at a time | Many interleaved streams | Many independent streams |
+| Header compression | None | HPACK | QPACK |
+| Head-of-line blocking | Per connection, at HTTP level | At TCP level, when a packet is lost | Only the stream that lost data |
+| Round trips before the first request (new connection, TLS 1.3) | 2 | 2 | 1 (0 with 0-RTT resumption) |
+| How the version is chosen | Default | ALPN `h2` | `Alt-Svc` header or DNS HTTPS record, then ALPN `h3` |
+| Spec | RFC 9112 | RFC 9113 | RFC 9114 |
+
+## Try it yourself
+
+```bash
+curl -sv --http1.1 -o /dev/null https://<domain>/ 2>&1 | grep -E 'ALPN|^> GET|^< HTTP'   # Forces HTTP/1.1
+curl -sv --http2   -o /dev/null https://<domain>/ 2>&1 | grep -E 'ALPN|^< HTTP'          # Offers h2 via ALPN
+curl -sI https://<domain>/ | grep -i alt-svc                                             # Does the server advertise h3?
+curl -s --http3 -o /dev/null -w '%{http_version}\n' https://<domain>/                    # Needs a curl built with HTTP/3
+openssl s_client -connect <domain>:443 -alpn h2 </dev/null 2>/dev/null | grep ALPN        # "ALPN protocol: h2"
+```
+
+In browser DevTools, right-click the Network table header and turn on the **Protocol** column to see `http/1.1`, `h2` or `h3` per request.
+
+Further reading: [RFC 9110 HTTP Semantics](https://www.rfc-editor.org/rfc/rfc9110) · [RFC 9113 HTTP/2](https://www.rfc-editor.org/rfc/rfc9113) · [RFC 9114 HTTP/3](https://www.rfc-editor.org/rfc/rfc9114) · [RFC 9000 QUIC](https://www.rfc-editor.org/rfc/rfc9000) · [Evolution of HTTP (MDN)](https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/Evolution_of_HTTP) · [gRPC load balancing](https://grpc.io/blog/grpc-load-balancing/) · [When You Type an Address](../basic/web-request.mdx) · [HTTPS and Certificates](../basic/https-cert.mdx)

@@ -1,0 +1,211 @@
+---
+id: linux-isolation
+title: 리눅스는 컨테이너를 어떻게 격리하나
+sidebar_label: 06 · 리눅스의 컨테이너 격리
+description: 컨테이너의 정체를 단계별 애니메이션으로 따라간다. 네임스페이스(pid, net, mnt, uts, ipc, user)에 들어간 평범한 호스트 프로세스가 cpu.max·memory.max 같은 cgroup v2 파일로 제한되고, CPU 스로틀링과 OOM 강제 종료, 종료 코드 137이 생기는 과정
+summary: '컨테이너는 호스트 프로세스다. 네임스페이스는 보이는 것을, cgroup은 쓸 수 있는 양을 바꾼다.'
+icon: layers
+hide_table_of_contents: true
+---
+
+# 리눅스는 컨테이너를 어떻게 격리하나
+
+컨테이너는 작은 가상 머신이 아니다. 커널이 좁은 세상을 보여 주고(**네임스페이스**) 예산을 정해 둔(**cgroup**) 호스트의 평범한 프로세스다. 컨테이너 하나가 시작돼서 OOM으로 종료되기까지 따라간다.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '약 10분', level: '기초'}}
+  groups={[
+    {label: '리눅스 호스트 · 커널 하나를 함께 씀', x: 30, y: 30, w: 940, h: 410, tone: 'plain'},
+  ]}
+  nodes={[
+    {id: 'runtime', label: '컨테이너 런타임', sub: 'containerd · runc', icon: 'gear', tone: 'cp', x: 140, y: 120, show: true, w: 170},
+    {id: 'kernel', label: '리눅스 커널', sub: '모두가 함께 씀', icon: 'server', tone: 'node', x: 140, y: 330, show: true},
+    {id: 'proc', label: '프로세스', sub: '호스트 PID 4321', icon: 'box', tone: 'app', x: 420, y: 225},
+    {id: 'ns', label: '네임스페이스', sub: '무엇이 보이나', icon: 'layers', tone: 'store', x: 680, y: 120},
+    {id: 'cg', label: 'cgroup', sub: '얼마나 쓰나', icon: 'gate', tone: 'store', x: 680, y: 330},
+    {id: 'net', label: '자기 네트워크', sub: 'eth0 · 자기 IP', icon: 'route', tone: 'ext', size: 'sm', x: 890, y: 70},
+    {id: 'fs', label: '자기 파일시스템', sub: '이미지 레이어', icon: 'disk', tone: 'ext', size: 'sm', x: 890, y: 175},
+    {id: 'oom', label: 'OOM 킬러', sub: 'SIGKILL', icon: 'alert', tone: 'ext', size: 'sm', x: 890, y: 390},
+  ]}
+  metrics={[
+    {id: 'pid', label: 'PID (안 / 호스트)'},
+    {id: 'cpu', label: 'CPU'},
+    {id: 'mem', label: '메모리'},
+    {id: 'exit', label: '종료'},
+  ]}
+  learn={[
+    {text: '컨테이너는 호스트의 ps에도 보이는 평범한 프로세스라는 것', at: 1},
+    {text: '네임스페이스마다 PID, 네트워크, 마운트, 호스트명, IPC, 사용자 중 하나를 가린다는 것', at: 2},
+    {text: '컨테이너 안의 PID 1이 특별한 이유', at: 3},
+    {text: 'cgroup v2 파일: cpu.max는 늦추고 memory.max는 죽인다', at: 5},
+    {text: 'OOM으로 죽은 컨테이너의 종료 코드가 137인 이유', at: 7},
+  ]}
+  steps={[
+    {
+      short: '시작',
+      kind: '시작',
+      title: '런타임이 커널에 격리된 프로세스를 요청한다',
+      text: [
+        'kubelet이 containerd에 컨테이너 시작을 요청하고, containerd는 runc 같은 저수준 런타임에 일을 넘긴다. runc는 무언가를 부팅하지 않는다. 커널을 호출해(clone, unshare, setns) 새 네임스페이스와 새 cgroup 안에 프로세스를 만들고, 이미지의 엔트리포인트를 실행한다.',
+        '커널은 여전히 하나다. 호스트의 모든 컨테이너가 같은 커널에 시스템 콜을 보낸다.',
+      ],
+      flows: [
+        {from: 'runtime', to: 'kernel', label: 'clone · unshare', type: 'request'},
+        {from: 'kernel', to: 'proc', label: '새 프로세스', type: 'request'},
+      ],
+      focus: ['runtime', 'kernel', 'proc'],
+      values: {pid: '1 / 4321'},
+    },
+    {
+      short: '호스트 프로세스',
+      kind: '원리',
+      title: '호스트에서 보면 그냥 프로세스 하나다',
+      text: [
+        '호스트에서 ps를 실행하면 컨테이너의 프로세스가 4321 같은 평범한 호스트 PID로 보인다. 커널은 다른 프로세스와 똑같이 스케줄링한다.',
+        '그래서 컨테이너는 밀리초에서 수 초 안에 시작된다. 부팅할 게스트 운영체제가 없기 때문이다. 같은 이유로 커널 버그나 특권(privileged) 컨테이너는 호스트 전체에 영향을 줄 수 있다.',
+      ],
+      keyIdea: '격리는 하드웨어 벽이 아니라 커널이 프로세스마다 유지하는 시야다. 호스트 커널은 그 위 모든 컨테이너가 함께 쓴다고 생각한다.',
+      flows: [{from: 'kernel', to: 'proc', label: '스케줄링', type: 'watch'}],
+      focus: ['proc'],
+      badges: {proc: 'ps에 보임'},
+    },
+    {
+      short: '네임스페이스',
+      kind: '원리',
+      title: '네임스페이스는 프로세스가 보는 것을 바꾼다',
+      text: [
+        '네임스페이스 종류마다 전역 자원 하나를 감싼다. pid는 자기 프로세스 번호를, net은 자기 인터페이스·IP·포트를, mnt는 자기 마운트 테이블(이미지가 /가 된다)을, uts는 자기 호스트명을, ipc는 자기 공유 메모리와 메시지 큐를, user는 자기 UID 매핑을 준다. 리눅스에는 cgroup, time 네임스페이스도 있다.',
+        '프로세스는 자기 네임스페이스 안에 있는 것만 본다. 컨테이너 두 개가 모두 8080 포트를 열 수 있는 것은 네트워크 네임스페이스가 따로이기 때문이다.',
+      ],
+      flows: [
+        {from: 'proc', to: 'ns', label: '들어감', type: 'request'},
+        {from: 'ns', to: 'net', label: 'net', type: 'watch'},
+        {from: 'ns', to: 'fs', label: 'mnt', type: 'watch'},
+      ],
+      focus: ['ns', 'net', 'fs'],
+      badges: {proc: null, ns: 'pid net mnt uts ipc'},
+    },
+    {
+      short: 'PID 1',
+      kind: '주의',
+      title: '안에서 앱은 PID 1이고, PID 1은 특별하다',
+      text: [
+        'PID 네임스페이스 안에서 엔트리포인트는 PID 1이고, 호스트에서는 여전히 4321이다. 커널은 PID 1을 특별하게 다룬다. 핸들러를 달지 않은 시그널, 예를 들어 그냥 보낸 SIGTERM은 무시된다. 부모를 잃은 자식 프로세스도 PID 1 밑으로 옮겨지므로, PID 1이 좀비 프로세스를 거둬야 한다.',
+        'SIGTERM 핸들러가 없는 앱이 PID 1이면 SIGTERM에 멈추지 않는다. 쿠버네티스는 유예 시간을 다 기다린 뒤 SIGKILL을 보낸다.',
+      ],
+      keyIdea: '앱에서 SIGTERM을 처리하거나, PID 1로 작은 init(예: tini, 또는 파드의 shareProcessNamespace)을 둔다.',
+      flows: [{from: 'ns', to: 'proc', label: 'pid ns', type: 'watch'}],
+      focus: ['proc', 'ns'],
+      status: {proc: 'warn'},
+      badges: {proc: '안에서는 PID 1'},
+      values: {pid: {text: '1 / 4321', tone: 'bad'}},
+    },
+    {
+      short: 'user ns',
+      kind: '원리',
+      title: '사용자 네임스페이스는 안의 root를 밖의 일반 사용자로 바꾼다',
+      text: [
+        '사용자 네임스페이스가 없으면 컨테이너의 UID 0은 호스트의 UID 0이다. 프로세스가 다른 네임스페이스를 빠져나오면 노드의 root가 된다.',
+        '사용자 네임스페이스를 쓰면 안의 UID 0이 호스트의 권한 없는 UID 범위(예: 100000번대)로 매핑된다. 쿠버네티스에서는 노드와 런타임이 지원하면 파드 스펙에 hostUsers: false를 줘서 쓴다.',
+      ],
+      flows: [{from: 'ns', to: 'kernel', label: 'UID 0 → 100000', type: 'watch'}],
+      focus: ['ns', 'kernel'],
+      status: {proc: null},
+      badges: {proc: null, ns: '+ user'},
+      values: {pid: '1 / 4321'},
+    },
+    {
+      short: 'cgroup',
+      kind: '원리',
+      title: 'cgroup은 프로세스가 쓸 수 있는 양을 제한한다',
+      text: [
+        '네임스페이스는 CPU나 메모리를 제한하지 않는다. 그건 cgroup의 일이다. cgroup v2에서는 컨테이너마다 /sys/fs/cgroup 아래 디렉터리가 하나 생기고, 한도는 그 안의 평범한 파일이다.',
+        '쿠버네티스는 컨테이너의 CPU 상한값을 cpu.max(할당량과 주기, "50000 100000"이면 0.5 CPU)에, CPU 요청값을 cpu.weight에, 메모리 상한값을 memory.max에 쓴다.',
+      ],
+      flows: [{from: 'proc', to: 'cg', label: '소속', type: 'request'}],
+      focus: ['cg'],
+      badges: {cg: 'cpu.max · memory.max'},
+      values: {cpu: '상한 0.5', mem: '상한 256Mi'},
+    },
+    {
+      short: '스로틀링',
+      kind: '문제',
+      title: 'CPU 상한을 넘으면 프로세스가 멈춰 기다린다',
+      text: [
+        '앱이 100ms 주기의 앞부분에서 CPU 할당량 50ms를 다 써 버린다. 커널은 다음 주기가 시작될 때까지 이 프로세스를 스케줄링하지 않는다. 죽지는 않지만 응답 지연이 튄다.',
+        'cgroup의 cpu.stat이 이를 센다. nr_throttled는 한도에 걸린 주기 수, throttled_usec는 붙잡혀 있던 총시간이다.',
+      ],
+      keyIdea: 'CPU 상한 초과는 죽음이 아니라 느려짐이다. 상한을 올리기 전에 스로틀링 지표(예: container_cpu_cfs_throttled_periods_total)부터 본다.',
+      flows: [{from: 'cg', to: 'proc', label: '대기', type: 'watch'}],
+      focus: ['cg', 'proc'],
+      status: {proc: 'warn'},
+      badges: {proc: '스로틀링'},
+      values: {cpu: {text: '스로틀링', tone: 'bad'}},
+    },
+    {
+      short: 'OOM 종료',
+      kind: '장애',
+      title: 'memory.max를 넘으면 OOM 킬러가 SIGKILL로 끝낸다',
+      text: [
+        '메모리는 CPU처럼 늦출 수 없다. cgroup이 회수할 메모리를 찾지 못해 memory.max 아래로 버틸 수 없으면, 커널의 OOM 킬러가 그 cgroup 안의 프로세스를 골라 SIGKILL을 보낸다.',
+        '시그널로 죽은 프로세스는 128에 시그널 번호를 더한 값을 보고하고, SIGKILL은 9번이라 종료 코드는 137이다. memory.events의 oom_kill이 하나 늘고, 쿠버네티스는 이유를 OOMKilled로 보여 준다.',
+      ],
+      flows: [
+        {from: 'cg', to: 'oom', label: 'memory.max 도달', type: 'request'},
+        {from: 'oom', to: 'proc', label: 'SIGKILL', type: 'request'},
+      ],
+      focus: ['oom', 'proc'],
+      status: {proc: 'error'},
+      badges: {proc: 'OOMKilled'},
+      values: {mem: {text: '256Mi / 256Mi', tone: 'bad'}, exit: {text: '137 (128 + 9)', tone: 'bad'}},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '네임스페이스는 시야, cgroup은 예산',
+      text: [
+        '컨테이너는 호스트 프로세스다. 네임스페이스가 자기 PID, 네트워크, 파일시스템, 호스트명, IPC, 사용자를 주고, cgroup이 CPU와 메모리 예산을 정한다.',
+        '호스트의 모든 컨테이너는 커널 하나를 함께 쓴다. 그래서 가볍고 빠르며, 같은 이유로 호스트 보안 강화, 사용자 네임스페이스, 파드 보안 설정이 중요하다.',
+      ],
+      keyIdea: '부하에 느려지면 CPU 스로틀링을, 종료 코드 137이면 메모리 상한을, 포트 충돌이나 파일이 안 보이면 어느 네임스페이스에서 보고 있는지를 확인한다.',
+      flows: [
+        {from: 'proc', to: 'ns', label: '시야', type: 'watch'},
+        {from: 'proc', to: 'cg', label: '예산', type: 'watch'},
+      ],
+      focus: ['proc', 'ns', 'cg'],
+      status: {proc: null},
+      badges: {proc: null, oom: null},
+    },
+  ]}
+/>
+
+## 네임스페이스와 cgroup 파일 한눈에 보기
+
+| 무엇 | 격리하거나 제한하는 것 | 확인할 곳 |
+|---|---|---|
+| pid 네임스페이스 | 프로세스 번호. 안에서 엔트리포인트는 PID 1 | `ls -l /proc/<pid>/ns/pid` |
+| net 네임스페이스 | 인터페이스, IP 주소, 라우팅, 포트 | `ip netns`, `nsenter -t <pid> -n ip addr` |
+| mnt 네임스페이스 | 마운트 테이블. 이미지가 `/`로 마운트된다 | `cat /proc/<pid>/mountinfo` |
+| uts 네임스페이스 | 호스트명 | `nsenter -t <pid> -u hostname` |
+| ipc 네임스페이스 | System V IPC, POSIX 메시지 큐 | `lsns -t ipc` |
+| user 네임스페이스 | UID/GID 매핑(안에서는 root, 밖에서는 일반 사용자) | `cat /proc/<pid>/uid_map` |
+| `cpu.max` | 할당량과 주기로 정한 CPU 상한. 넘으면 스로틀링 | `cat cpu.max`, `cat cpu.stat` |
+| `cpu.weight` | 경쟁할 때 CPU를 나눠 받는 비율(요청값에서 옴) | `cat cpu.weight` |
+| `memory.max` | 메모리 상한. 넘으면 OOM 킬러가 돈다 | `cat memory.max`, `cat memory.events` |
+
+## 직접 확인해 보기
+
+```bash
+sudo unshare --pid --fork --mount-proc --uts bash    # 새 pid·uts 네임스페이스 안의 셸
+ps -ef; hostname demo; hostname                      # 안에서: bash가 PID 1, 호스트명 변경은 안에만 적용
+lsns                                                 # 호스트에서: 네임스페이스 목록과 첫 프로세스
+PID=$(pgrep -f <컨테이너-명령> | head -1)             # 컨테이너 프로세스의 호스트 PID
+ls -l /proc/$PID/ns                                  # 이 프로세스의 네임스페이스 ID
+cat /proc/$PID/cgroup                                # /sys/fs/cgroup 아래 cgroup 경로
+cat /sys/fs/cgroup/<그 경로>/{cpu.max,memory.max,cpu.stat,memory.events}   # 한도, 스로틀링, oom_kill
+kubectl get pod <파드> -o jsonpath='{.status.containerStatuses[*].lastState.terminated.exitCode}'   # OOM 뒤에는 137
+```
+
+더 읽을거리: [namespaces(7)](https://man7.org/linux/man-pages/man7/namespaces.7.html) · [pid_namespaces(7)](https://man7.org/linux/man-pages/man7/pid_namespaces.7.html) · [user_namespaces(7)](https://man7.org/linux/man-pages/man7/user_namespaces.7.html) · [Control Group v2 (커널 문서)](https://docs.kernel.org/admin-guide/cgroup-v2.html) · [cgroup v2 (쿠버네티스 문서)](https://kubernetes.io/docs/concepts/architecture/cgroups/) · [사용자 네임스페이스 (쿠버네티스 문서)](https://kubernetes.io/docs/concepts/workloads/pods/user-namespaces/) · [서버 한 대에서 컨테이너까지](../basic/server-to-container.mdx) · [요청값과 상한값](../intermediate/requests-limits.mdx)
