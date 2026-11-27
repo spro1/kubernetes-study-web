@@ -1,7 +1,7 @@
 ---
 id: serverless
 title: How a Serverless Function Runs
-sidebar_label: 08 · How a Serverless Function Runs
+sidebar_label: 12 · How a Serverless Function Runs
 description: Animated walkthrough of a serverless function (AWS Lambda as the example) from an event to an execution environment, cold start versus warm reuse, one request per environment, concurrency limits and 429 throttling, timeouts and statelessness, retries that call for idempotency, and when not to use functions
 summary: 'Events, cold and warm starts, concurrency limits and throttling, retries and idempotency, and what you pay for.'
 icon: spark
@@ -254,5 +254,11 @@ aws lambda put-function-concurrency --function-name demo \
 aws lambda put-provisioned-concurrency-config --function-name demo \
   --qualifier live --provisioned-concurrent-executions 5          # Keep 5 environments initialized (billed)
 ```
+
+<Quiz questions={[
+  {q: 'Three requests reach a Lambda function at the same moment, and only one warm environment exists. What happens by default?', options: ['The warm environment handles all three at once with no cold start', 'The warm environment takes one, and the service creates two more environments that each pay a cold start', 'The other two requests are dropped with an error'], answer: 1, why: 'By default a Lambda environment handles one request at a time, so concurrency equals the number of busy environments. New environments pay a cold start.'},
+  {q: 'An upload handler saved an order and then crashed. Lambda retried the event and the customer was charged twice. What is the right fix?', options: ['Raise the timeout so the run never fails', 'Remember processed event ids in /tmp', 'Make the handler idempotent with an idempotency key under a unique constraint, and send repeated failures to a dead-letter queue', 'Switch the trigger to a synchronous call'], answer: 2, why: 'Delivery is at least once, so duplicates are normal. /tmp can vanish with the environment, so the key must live in an external store.'},
+  {q: 'A function keeps login sessions in a global variable, and users get logged out at random. Why?', options: ['Environments can be removed at any time, and the next request may land on a different one', 'Lambda wipes global variables after every call', 'The concurrency limit deletes sessions when it is reached'], answer: 0, why: 'Globals may survive between calls on a warm environment, but that is never guaranteed. Anything that must survive belongs in a database, a cache or object storage.'},
+]} />
 
 Further reading: [What is AWS Lambda?](https://docs.aws.amazon.com/lambda/latest/dg/welcome.html) · [Lambda execution environment lifecycle](https://docs.aws.amazon.com/lambda/latest/dg/lambda-runtime-environment.html) · [Lambda concurrency](https://docs.aws.amazon.com/lambda/latest/dg/lambda-concurrency.html) · [Asynchronous invocation](https://docs.aws.amazon.com/lambda/latest/dg/invocation-async.html) · [Cloud Run concurrency](https://cloud.google.com/run/docs/about-concurrency) · [Knative Serving](https://knative.dev/docs/serving/) · [Who Owns What (IaaS · PaaS · SaaS)](../cloud/service-models.mdx) · [Until a Model First Starts (Cold Start)](../ai/cold-start.mdx)

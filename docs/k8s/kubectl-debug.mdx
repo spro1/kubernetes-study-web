@@ -1,0 +1,272 @@
+---
+id: kubectl-debug
+title: Debugging a Running Pod with kubectl debug
+sidebar_label: 14 · kubectl debug
+description: Animated walkthrough of kubectl debug, from a failed kubectl exec on a distroless image to ephemeral containers with --target, Pod copies with --copy-to, node debugging Pods, port-forward, RBAC for pods/ephemeralcontainers and cleanup
+summary: 'When kubectl exec has no shell to run: ephemeral containers, Pod copies with a changed command, node debugging Pods, and what you must clean up.'
+icon: hammer
+hide_table_of_contents: true
+---
+
+# Debugging a Running Pod with kubectl debug
+
+A Pod misbehaves, and its image has no shell. Follow **kubectl exec → ephemeral container → Pod copy → node debugging Pod** and see what each one can reach, what it needs, and what it leaves behind.
+
+<StepDiagram
+  width={1000}
+  height={460}
+  meta={{duration: '~12 min', level: 'Intermediate'}}
+  groups={[
+    {label: 'Pod checkout · ns shop', x: 250, y: 30, w: 400, h: 230, tone: 'biz'},
+    {label: 'Node worker-1', x: 680, y: 30, w: 295, h: 415, tone: 'mgmt'},
+  ]}
+  nodes={[
+    {id: 'user', label: 'You', sub: 'kubectl', icon: 'user', tone: 'ext', x: 110, y: 110, show: true},
+    {id: 'api', label: 'API server', sub: 'pods/ephemeralcontainers', icon: 'server', tone: 'cp', x: 110, y: 300, w: 170, show: true},
+    {id: 'app', label: 'app', sub: 'distroless · no shell', icon: 'box', tone: 'app', x: 355, y: 110, show: true},
+    {id: 'dbg', label: 'debugger', sub: 'ephemeral · busybox', icon: 'hammer', tone: 'app', x: 545, y: 110},
+    {id: 'copy', label: 'checkout-debug', sub: 'copy · command sh', icon: 'pod', tone: 'app', x: 450, y: 370, w: 170},
+    {id: 'kubelet', label: 'kubelet', sub: 'starts containers', icon: 'gear', tone: 'node', x: 830, y: 100, show: true},
+    {id: 'nodedbg', label: 'node-debugger', sub: 'host PID · net · IPC', icon: 'pod', tone: 'node', x: 830, y: 240, w: 170},
+    {id: 'hostfs', label: 'Host filesystem', sub: 'mounted at /host', icon: 'disk', tone: 'store', x: 830, y: 375, w: 170},
+  ]}
+  metrics={[
+    {id: 'cmd', label: 'Command'},
+    {id: 'result', label: 'Result'},
+    {id: 'where', label: 'Runs in'},
+  ]}
+  learn={[
+    {text: 'Why kubectl exec fails on distroless images', at: 0},
+    {text: 'Ephemeral containers and --target for the process namespace', at: 1},
+    {text: 'Copying a crashing Pod with --copy-to and a new command', at: 5},
+    {text: 'Node debugging Pods with the host filesystem at /host', at: 7},
+    {text: 'RBAC for pods/ephemeralcontainers and what to clean up', at: 8},
+  ]}
+  steps={[
+    {
+      short: 'Start',
+      kind: '시작',
+      title: 'kubectl exec finds no shell',
+      text: [
+        'The checkout Pod returns errors, and you want to look inside. You run kubectl exec -it checkout -- sh, and the runtime answers: executable file not found in $PATH.',
+        'The image is distroless. It holds the app binary and its libraries, but no shell, no ps and no curl. That keeps it small and gives an attacker less to work with, but exec can only run programs that exist in the image.',
+      ],
+      keyIdea: 'kubectl exec runs a program inside an existing container. If the image has no such program, exec cannot help.',
+      flows: [
+        {from: 'user', to: 'api', label: 'exec sh', type: 'request'},
+        {from: 'api', to: 'kubelet', label: 'exec', type: 'request'},
+        {from: 'kubelet', to: 'app', label: 'sh?', type: 'request'},
+      ],
+      focus: ['user', 'app'],
+      status: {app: 'warn'},
+      values: {cmd: 'kubectl exec -it checkout -- sh', result: {text: 'sh: not found in $PATH', tone: 'bad'}, where: 'app container'},
+    },
+    {
+      short: 'Ephemeral',
+      kind: '원리',
+      title: 'kubectl debug adds an ephemeral container to the Pod',
+      text: [
+        'kubectl debug -it checkout --image=busybox:1.36 --target=app adds a new container to the running Pod. It does not write pod.spec. It updates the Pod\'s ephemeralcontainers subresource, and the kubelet starts the extra container next to app.',
+        'An ephemeral container shares the Pod\'s network namespace, so it sees the same IP and can reach the app on localhost. It brings its own tools from its own image. Ephemeral containers are stable since Kubernetes v1.25.',
+      ],
+      keyIdea: 'kubectl describe pod lists it under Ephemeral Containers. Pick a small image with the tools you need, such as busybox or a network toolbox.',
+      flows: [
+        {from: 'user', to: 'api', label: 'debug', type: 'request'},
+        {from: 'api', to: 'kubelet', label: 'Pod updated', type: 'watch'},
+        {from: 'kubelet', to: 'dbg', label: 'Start', type: 'request'},
+      ],
+      focus: ['dbg', 'api'],
+      status: {dbg: 'ok'},
+      badges: {dbg: 'Running'},
+      values: {cmd: 'kubectl debug -it checkout --image=busybox:1.36 --target=app', result: {text: 'Shell in debugger', tone: 'good'}, where: 'Same Pod'},
+    },
+    {
+      short: '--target',
+      kind: '원리',
+      title: '--target lets you see the app\'s processes',
+      text: [
+        'By default, each container in a Pod has its own process namespace, so ps in the debugger shows only its own processes. --target=app joins the process namespace of the app container.',
+        'Now ps shows the app process. You can read /proc/<pid>/environ, list open files in /proc/<pid>/fd, or look at the app\'s filesystem through /proc/<pid>/root. The runtime must support --target; if it does not, the debugger may start with its own process namespace.',
+      ],
+      keyIdea: 'Without --target you debug the network. With --target you also see the process and its files.',
+      flows: [
+        {from: 'dbg', to: 'app', label: 'ps · /proc', type: 'request'},
+      ],
+      focus: ['dbg', 'app'],
+      badges: {dbg: 'target=app'},
+      values: {result: {text: 'PID 1 /app/checkout visible', tone: 'good'}},
+    },
+    {
+      short: 'Stays',
+      kind: '주의',
+      title: 'An ephemeral container cannot be removed',
+      text: [
+        'When you exit the shell, the debugger stops and stays in the Pod as Terminated. It is never restarted, and you cannot change or remove it. Each kubectl debug run adds another entry to the Pod.',
+        'Ephemeral containers also cannot set ports, probes or resources. Pod Security admission checks them like normal containers, so in a namespace with the baseline or restricted level, pick a matching --profile.',
+      ],
+      keyIdea: 'The only way to get rid of an ephemeral container is to replace the Pod, for example with kubectl rollout restart on its Deployment.',
+      flows: [],
+      focus: ['dbg'],
+      status: {dbg: 'off'},
+      badges: {dbg: 'Terminated'},
+      values: {result: 'Exited · stays in spec'},
+    },
+    {
+      short: 'Crash',
+      kind: '문제',
+      title: 'A crashing container gives you nothing to attach to',
+      text: [
+        'A new release makes app exit at startup. The Pod is in CrashLoopBackOff, so the container is down most of the time. exec fails, and an ephemeral container with --target has no live process to look at.',
+        'Read the last crash first: kubectl logs checkout --previous prints the logs of the container that just died. If the message says a config file is missing or a path is wrong, you need to look at the files the app sees.',
+      ],
+      keyIdea: 'logs --previous is the first stop for a crash loop. Plain kubectl logs shows the new container, which may not have logged anything yet.',
+      flows: [
+        {from: 'user', to: 'api', label: 'logs --previous', type: 'request'},
+        {from: 'api', to: 'kubelet', label: 'Last logs', type: 'request'},
+      ],
+      focus: ['app'],
+      status: {app: 'error', dbg: null},
+      badges: {dbg: null, app: 'CrashLoopBackOff'},
+      values: {cmd: 'kubectl logs checkout --previous', result: {text: 'open /etc/app/config.yaml: no such file', tone: 'bad'}, where: 'app container'},
+    },
+    {
+      short: 'Copy',
+      kind: '원리',
+      title: '--copy-to starts a copy with a different command',
+      text: [
+        'kubectl debug checkout -it --copy-to=checkout-debug --container=app -- sh creates a new Pod from the original spec, with the app container\'s command replaced by sh. The image has no sh, so add --set-image=app=busybox:1.36, or add a debug container with --image and keep --share-processes on.',
+        'The copy starts, stays up, and you can check mounts, environment and paths the way the crashing app would see them. By default the copy drops the original labels and probes, so Services do not send it traffic and probes do not kill it.',
+      ],
+      keyIdea: 'Use --copy-to when the original keeps crashing or you must change the command or image. The original Pod is left as it is.',
+      flows: [
+        {from: 'user', to: 'api', label: 'debug --copy-to', type: 'request'},
+        {from: 'api', to: 'copy', label: 'New Pod', type: 'request'},
+      ],
+      focus: ['copy'],
+      status: {copy: 'ok'},
+      badges: {copy: 'Running'},
+      values: {cmd: 'kubectl debug checkout -it --copy-to=checkout-debug --container=app -- sh', result: {text: 'Shell in a copy', tone: 'good'}, where: 'New Pod'},
+    },
+    {
+      short: 'Forward',
+      kind: '원리',
+      title: 'port-forward reaches the copy from your machine',
+      text: [
+        'The copy has no labels, so no Service points at it. To call its HTTP port, run kubectl port-forward pod/checkout-debug 8080:8080. kubectl opens a stream through the API server and the kubelet into the Pod\'s network namespace.',
+        'Now curl localhost:8080 on your laptop reaches the copy, without a Service, Ingress or open firewall port. The same works for the original Pod, and for a tool you start in an ephemeral container, because it shares the Pod\'s network.',
+      ],
+      keyIdea: 'port-forward lasts as long as the command runs, and it needs RBAC on pods/portforward.',
+      flows: [
+        {from: 'user', to: 'api', label: 'port-forward', type: 'request'},
+        {from: 'api', to: 'kubelet', label: 'Stream', type: 'request'},
+        {from: 'kubelet', to: 'copy', label: ':8080', type: 'request'},
+      ],
+      focus: ['user', 'copy'],
+      values: {cmd: 'kubectl port-forward pod/checkout-debug 8080:8080', result: {text: 'localhost:8080 → copy', tone: 'good'}, where: 'Your machine'},
+    },
+    {
+      short: 'Node',
+      kind: '원리',
+      title: 'kubectl debug node/ runs a Pod in the host namespaces',
+      text: [
+        'If the problem is the node itself, run kubectl debug node/worker-1 -it --image=ubuntu. kubectl creates a Pod pinned to that node. It runs in the host IPC, network and PID namespaces, and the node\'s root filesystem is mounted at /host.',
+        'You can read /host/var/log, see every process on the node and test the node\'s network, with no SSH access. The Pod is not privileged by default, so some reads and chroot /host may fail. --profile=sysadmin gives it root privileges.',
+      ],
+      keyIdea: 'A node debugging Pod is a normal Pod. It gets a name like node-debugger-worker-1-xxxxx, and you must delete it yourself.',
+      flows: [
+        {from: 'user', to: 'api', label: 'debug node/', type: 'request'},
+        {from: 'api', to: 'kubelet', label: 'Pod for worker-1', type: 'watch'},
+        {from: 'kubelet', to: 'nodedbg', label: 'Start', type: 'request'},
+        {from: 'nodedbg', to: 'hostfs', label: '/host', type: 'request'},
+      ],
+      focus: ['nodedbg', 'hostfs'],
+      status: {nodedbg: 'ok'},
+      badges: {nodedbg: 'Running'},
+      values: {cmd: 'kubectl debug node/worker-1 -it --image=ubuntu', result: {text: 'Shell with host view', tone: 'good'}, where: 'Node worker-1'},
+    },
+    {
+      short: 'RBAC',
+      kind: '주의',
+      title: 'Debugging needs its own permissions',
+      text: [
+        'A teammate with the built-in edit role tries kubectl debug and gets Forbidden: cannot patch resource pods/ephemeralcontainers. That subresource is on purpose not part of the default edit and admin roles, because adding a container to a running Pod is powerful.',
+        'Grant patch and update on pods/ephemeralcontainers only to the people who debug. Node debugging needs permission to create Pods, and the namespace must allow host namespaces and hostPath, which the baseline and restricted Pod Security levels block.',
+      ],
+      keyIdea: 'kubectl auth can-i patch pods/ephemeralcontainers -n shop tells you before you try.',
+      flows: [
+        {from: 'user', to: 'api', label: 'debug', type: 'request'},
+        {from: 'api', to: 'user', label: '403 Forbidden', type: 'response', bend: 40},
+      ],
+      focus: ['api'],
+      status: {api: 'warn'},
+      values: {cmd: 'kubectl auth can-i patch pods/ephemeralcontainers', result: {text: 'no · Forbidden', tone: 'bad'}},
+    },
+    {
+      short: 'Cleanup',
+      kind: '주의',
+      title: 'Copies and node Pods stay until you delete them',
+      text: [
+        'kubectl debug does not clean up after you. The copy checkout-debug and the node-debugger Pod keep running and keep using resources. A node Pod with host access is also a security risk if left behind.',
+        'Delete them with kubectl delete pod checkout-debug and kubectl delete pod node-debugger-worker-1-xxxxx. Ephemeral containers go away only when their Pod is replaced.',
+      ],
+      keyIdea: 'Use a clear naming pattern for copies and list leftover debug Pods with kubectl get pods -A | grep debug.',
+      flows: [
+        {from: 'user', to: 'api', label: 'delete pod', type: 'request'},
+      ],
+      focus: ['copy', 'nodedbg'],
+      status: {copy: 'gone', nodedbg: 'gone'},
+      badges: {copy: null, nodedbg: null},
+      values: {cmd: 'kubectl delete pod checkout-debug', result: 'Deleted', where: '—'},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Pick the tool by what is broken',
+      text: [
+        'Container running but image has no tools: add an ephemeral container, with --target to see its processes. Container crashing: read logs --previous, then start a copy with --copy-to and a different command or image. Node problem: kubectl debug node/ with the host filesystem at /host.',
+        'Each one needs RBAC, and each one leaves something behind. Ephemeral containers stay in the Pod until it is replaced. Copies and node Pods stay until you delete them.',
+      ],
+      keyIdea: 'Debug from outside the image instead of putting a shell into production images.',
+      flows: [
+        {from: 'user', to: 'api', label: 'debug', type: 'request'},
+        {from: 'api', to: 'kubelet', label: 'Start', type: 'watch'},
+      ],
+      focus: ['app', 'dbg', 'nodedbg'],
+      status: {app: null, api: null, copy: null, nodedbg: null},
+      badges: {app: null},
+    },
+  ]}
+/>
+
+## Which way to debug
+
+| Situation | Use | What it can see | What stays behind |
+|---|---|---|---|
+| Container runs and has a shell | `kubectl exec -it <pod> -- sh` | Everything inside that container | Nothing |
+| Container runs, image has no shell (distroless) | `kubectl debug -it <pod> --image=busybox:1.36 --target=<container>` | Pod network; with `--target`, the container's processes and `/proc/<pid>/root` | A Terminated ephemeral container until the Pod is replaced |
+| Container crashes at startup | `kubectl logs <pod> --previous`, then `kubectl debug <pod> -it --copy-to=<name> --container=<c> -- sh` | A copy of the Pod with a new command or image (`--set-image`) | The copy Pod, until you delete it |
+| Need to call the app from your laptop | `kubectl port-forward pod/<pod> 8080:8080` | One port of the Pod's network | Nothing after you stop it |
+| Node problem (disk, network, processes) | `kubectl debug node/<node> -it --image=ubuntu` | Host PID, network and IPC namespaces; host files at `/host` | The node-debugger Pod, until you delete it |
+| `Forbidden ... pods/ephemeralcontainers` | Grant `patch`, `update` on `pods/ephemeralcontainers` | — | — |
+
+## Try it yourself
+
+```bash
+kubectl run demo --image=registry.k8s.io/pause:3.10 --restart=Never   # an image with no shell
+kubectl exec -it demo -- sh                                # fails: no sh in the image
+kubectl debug -it demo --image=busybox:1.36 --target=demo  # ephemeral container; try: ps
+kubectl get pod demo -o jsonpath='{.spec.ephemeralContainers[*].name}{"\n"}'   # it stays in the spec
+kubectl debug demo -it --copy-to=demo-debug --image=busybox:1.36 --share-processes   # copy with a debug container
+kubectl debug node/$(kubectl get pod demo -o jsonpath='{.spec.nodeName}') -it --image=ubuntu   # try: ls /host
+kubectl auth can-i patch pods/ephemeralcontainers         # do you have the permission?
+kubectl get pods | grep -E 'debug|node-debugger'          # leftovers
+kubectl delete pod demo demo-debug                        # clean up (and the node-debugger-... Pod)
+```
+
+<Quiz questions={[
+  {q: 'kubectl exec -it web -- sh fails with "executable file not found in $PATH". The container is running. What is the best next step?', options: ['Restart the Pod so exec works', 'Add an ephemeral container with kubectl debug and --target', 'Delete the Deployment and redeploy with a shell'], answer: 1, why: 'The image has no shell, so exec cannot run one. An ephemeral container brings its own tools, and --target lets it see the app\'s processes.'},
+  {q: 'You finished debugging and want to remove the ephemeral container you added. What happens?', options: ['kubectl debug --rm removes it', 'It is removed when you exit the shell', 'It cannot be removed; it stays until the Pod is replaced'], answer: 2, why: 'Ephemeral containers cannot be changed or removed. After exit they stay as Terminated until the Pod itself is deleted or replaced.'},
+  {q: 'A Pod is in CrashLoopBackOff and its logs do not explain why. Why is kubectl debug --copy-to with -- sh useful here?', options: ['It starts a copy with a different command, so the container stays up and you can inspect it', 'It fixes the crash in the original Pod', 'It sends the original Pod\'s traffic to the copy'], answer: 0, why: 'The copy runs your command instead of the crashing one, so there is a live container to inspect. The original Pod is unchanged, and the copy gets no Service traffic because its labels are dropped.'},
+]} />
+
+Further reading: [Debug Running Pods](https://kubernetes.io/docs/tasks/debug/debug-application/debug-running-pod/) · [Ephemeral Containers](https://kubernetes.io/docs/concepts/workloads/pods/ephemeral-containers/) · [Debugging Kubernetes Nodes With Kubectl](https://kubernetes.io/docs/tasks/debug/debug-cluster/kubectl-node-debug/) · [Reading status in three layers and the troubleshooting order](../intermediate/troubleshoot-status.mdx) · [Node NotReady and component failures (CKA)](../cert/node-troubleshoot.mdx)

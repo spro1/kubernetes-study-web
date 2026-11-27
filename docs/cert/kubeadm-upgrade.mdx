@@ -1,7 +1,7 @@
 ---
 id: kubeadm-upgrade
 title: Upgrading a cluster with kubeadm (CKA)
-sidebar_label: 03 · kubeadm upgrade
+sidebar_label: 04 · kubeadm upgrade
 description: Follow an animation of the order in which you upgrade a kubeadm cluster by one minor version, for the control plane (kubeadm → plan → apply → kubelet) and for workers (kubeadm → upgrade node → drain → kubelet → uncordon)
 summary: 'From control plane to workers, the order for moving up one minor version at a time.'
 icon: layers
@@ -203,5 +203,11 @@ sudo kubeadm upgrade plan                            # Component versions; chang
 sudo kubeadm certs check-expiration                  # Certificates renewed by apply
 kubelet --version                                    # This node's kubelet
 ```
+
+<Quiz questions={[
+  {q: 'kubeadm upgrade apply v1.37.x succeeded, but kubectl get nodes still shows the control plane node at 1.36. Why?', options: ['apply failed silently and must be rerun', 'VERSION is the kubelet version, and kubeadm does not change the kubelet package', 'The node must be rebooted', 'kubectl get nodes caches old versions'], answer: 1, why: 'kubeadm only changes components and config. You install the kubelet and kubectl packages, then run systemctl daemon-reload and systemctl restart kubelet.'},
+  {q: 'You are upgrading worker-1 to 1.37. Which kubeadm command do you run on it?', options: ['sudo kubeadm upgrade apply v1.37.x', 'sudo kubeadm upgrade plan', 'sudo kubeadm upgrade node'], answer: 2, why: 'apply runs only once, on the first control plane node. On workers, upgrade node updates this node\'s kubelet config for the new version.'},
+  {q: 'On the control plane node, apt shows no 1.37 kubeadm package. What did you skip?', options: ['Switching the pkgs.k8s.io repository address to 1.37', 'Running kubeadm upgrade plan', 'Draining the node'], answer: 0, why: 'The official package repository has a separate address per minor version. Until you switch it to 1.37, the new packages do not show up.'},
+]} />
 
 Further reading: [CNCF certification curriculum](https://github.com/cncf/curriculum) · [Upgrading kubeadm clusters](https://kubernetes.io/docs/tasks/administer-cluster/kubeadm/kubeadm-upgrade/) · [Version skew policy](https://kubernetes.io/docs/setup/release/version-skew-policy/) · [Draining Nodes and Upgrading the Cluster](../k8s/node-drain.mdx)

@@ -1,0 +1,262 @@
+---
+id: reverse-proxy
+title: Reverse Proxies and Load Balancing
+sidebar_label: 02 · Reverse proxy
+description: Animated walkthrough of forward and reverse proxies, L4 and L7 load balancing, balancing algorithms, health checks, sticky sessions, X-Forwarded-For and the client IP, TLS termination and passthrough, timeouts with 502 and 504, and upstream keep-alive pools
+summary: 'What a reverse proxy sees at L4 and L7, how it picks and checks backends, why the client IP gets lost, and what 502 and 504 really mean.'
+icon: split
+hide_table_of_contents: true
+---
+
+# Reverse Proxies and Load Balancing
+
+Almost every request you serve passes through a reverse proxy such as nginx, HAProxy or Envoy before your code sees it. Follow one request through an L4 load balancer and an L7 proxy and see how a backend is chosen and checked, what headers get added, and where 502 and 504 come from.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~12 min', level: 'Intermediate'}}
+  groups={[
+    {label: 'Your servers', x: 215, y: 25, w: 770, h: 410, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'client', label: 'Client', sub: 'IP 203.0.113.7', icon: 'browser', tone: 'ext', x: 100, y: 230, show: true},
+    {id: 'fwd', label: 'Forward proxy', sub: 'Acts for clients', icon: 'gate', tone: 'ext', x: 100, y: 390},
+    {id: 'l4', label: 'L4 load balancer', sub: 'Sees IP:port', icon: 'scale', tone: 'cp', x: 310, y: 230, w: 160},
+    {id: 'rp', label: 'Reverse proxy', sub: 'L7 · host, path, headers', icon: 'split', tone: 'node', x: 540, y: 230, w: 180},
+    {id: 'app1', label: 'App 1', sub: '10.0.1.11:8080', icon: 'server', tone: 'app', x: 840, y: 95},
+    {id: 'app2', label: 'App 2', sub: '10.0.1.12:8080', icon: 'server', tone: 'app', x: 840, y: 230},
+    {id: 'app3', label: 'App 3', sub: '10.0.1.13:8080', icon: 'server', tone: 'app', x: 840, y: 365},
+  ]}
+  metrics={[
+    {id: 'layer', label: 'Layer'},
+    {id: 'sees', label: 'Proxy sees'},
+    {id: 'ip', label: 'App sees client as'},
+    {id: 'status', label: 'Response'},
+  ]}
+  learn={[
+    {text: 'Forward proxy vs reverse proxy, L4 vs L7', at: 1},
+    {text: 'Round robin, least connections and consistent hashing', at: 3},
+    {text: 'Active and passive health checks, and why to avoid sticky sessions', at: 4},
+    {text: 'X-Forwarded-For and which client IP to trust', at: 6},
+    {text: 'TLS termination vs passthrough, timeouts, 502 vs 504, keep-alive pools', at: 7},
+  ]}
+  steps={[
+    {
+      short: 'Start',
+      kind: '시작',
+      title: 'A forward proxy works for clients, a reverse proxy for servers',
+      text: [
+        'A forward proxy sits next to clients, for example a company egress proxy. Clients are configured to use it, it reaches any site for them, and those sites see the proxy instead of the client.',
+        'A reverse proxy sits in front of your servers. Clients do not know it is a proxy. They connect to one public address, and the proxy decides which backend answers. Load balancers, Ingress controllers and API gateways are all reverse proxies.',
+      ],
+      flows: [
+        {from: 'client', to: 'fwd', label: 'Outbound', type: 'request'},
+        {from: 'client', to: 'l4', label: 'shop.example.com', type: 'request'},
+      ],
+      focus: ['fwd', 'l4', 'rp'],
+    },
+    {
+      short: 'L4',
+      kind: '원리',
+      title: 'An L4 balancer moves connections, not requests',
+      text: [
+        'An L4 load balancer works with TCP or UDP. It sees source and destination IP and port, picks a target when a connection opens, and keeps all bytes of that connection on the same target. It cannot read the URL or headers.',
+        'That makes it fast and protocol-agnostic: databases, gRPC, MQTT and TLS all pass through unchanged. Cloud network load balancers, IPVS and HAProxy in mode tcp work this way.',
+      ],
+      flows: [
+        {from: 'client', to: 'l4', label: 'TCP :443', type: 'request'},
+        {from: 'l4', to: 'rp', label: 'Same connection', type: 'request'},
+      ],
+      focus: ['l4'],
+      values: {layer: 'L4 (TCP)', sees: '203.0.113.7 → :443'},
+    },
+    {
+      short: 'L7',
+      kind: '원리',
+      title: 'An L7 proxy reads each HTTP request',
+      text: [
+        'An L7 reverse proxy ends the client\'s HTTP connection and parses every request. It sees the Host, the path, headers and cookies, so it can route /api to one pool and / to another, rewrite paths, add headers, retry or return errors itself.',
+        'It then sends the request over a separate connection to the backend. Two connections, two sets of timeouts. This is what nginx, HAProxy in mode http and Envoy do, and what an Ingress or Gateway controller runs underneath.',
+      ],
+      keyIdea: 'L4 decides once per connection. L7 decides per request, so one keep-alive connection can still spread across backends.',
+      flows: [
+        {from: 'l4', to: 'rp', label: 'GET /api/cart', type: 'request'},
+        {from: 'rp', to: 'app1', label: 'New connection', type: 'request'},
+      ],
+      focus: ['rp'],
+      values: {layer: 'L7 (HTTP)', sees: 'Host, /api/cart, headers'},
+    },
+    {
+      short: 'Algorithms',
+      kind: '원리',
+      title: 'Round robin, least connections, consistent hash',
+      text: [
+        'Round robin takes backends in turn, and is the default in nginx and Envoy. It is fine when requests cost about the same. Least connections (least_conn in nginx, leastconn in HAProxy, LEAST_REQUEST in Envoy) sends to the backend with the fewest active requests, which helps when some requests are slow.',
+        'Consistent hashing maps a key such as the URL or a user ID to a backend. The same key keeps landing on the same backend, which is good for caches, and adding or removing a backend moves only a small share of keys instead of reshuffling all of them.',
+      ],
+      flows: [
+        {from: 'rp', to: 'app1', label: '1', type: 'request'},
+        {from: 'rp', to: 'app2', label: '2', type: 'request'},
+        {from: 'rp', to: 'app3', label: '3', type: 'request'},
+      ],
+      focus: ['rp', 'app1', 'app2', 'app3'],
+    },
+    {
+      short: 'Health',
+      kind: '장애',
+      title: 'A dead backend must leave the pool',
+      text: [
+        'App 3 stops answering. Active health checks probe each backend on a timer, for example GET /healthz, and remove it after several failures. HAProxy uses check on a server line and Envoy health_checks on the cluster. Open-source nginx has no active checks.',
+        'Passive checks watch real traffic instead. In nginx, max_fails failures within fail_timeout (by default 1 and 10s) mark a server unavailable for fail_timeout. Envoy calls this outlier detection. Passive checks need no extra traffic but only notice after real requests fail.',
+      ],
+      keyIdea: 'Use both when you can: active checks catch a dead backend before users do, passive checks catch one that answers /healthz but fails real requests.',
+      flows: [
+        {from: 'rp', to: 'app3', label: 'GET /healthz', type: 'watch'},
+        {from: 'rp', to: 'app1', type: 'request'},
+        {from: 'rp', to: 'app2', type: 'request'},
+      ],
+      focus: ['rp', 'app3'],
+      status: {app3: 'error'},
+      badges: {app3: 'Removed'},
+    },
+    {
+      short: 'Sticky',
+      kind: '주의',
+      title: 'Sticky sessions pin users, and that hurts later',
+      text: [
+        'Sticky sessions send a client to the same backend every time, by a cookie the proxy sets or by hashing the client IP. Apps that keep sessions in memory seem to need this.',
+        'The cost shows up later. Load becomes uneven when a few heavy users stick to one backend. When that backend dies or is redeployed, its users lose their sessions. Draining takes long because pinned users keep coming back. Keep session state in a shared store or a token, so any backend can serve any request.',
+      ],
+      flows: [{from: 'rp', to: 'app1', label: 'Always app 1', type: 'request'}],
+      focus: ['rp', 'app1'],
+      status: {app1: 'warn'},
+      badges: {app1: 'Pinned users'},
+    },
+    {
+      short: 'Client IP',
+      kind: '문제',
+      title: 'The app sees the proxy, not the client',
+      text: [
+        'At L7 the backend\'s TCP peer is the proxy, so logs, rate limits and geo checks all see 10.0.0.5. The proxy adds X-Forwarded-For: 203.0.113.7, and each later proxy appends its peer. The standard Forwarded header (RFC 7239) carries the same idea as for=203.0.113.7.',
+        'Clients can send their own X-Forwarded-For, so the left-most value can be fake. Trust only the entries added by proxies you run: walk the list from the right and stop at the first address that is not your proxy. In nginx that is set_real_ip_from with real_ip_recursive on. At L4 there is no header, so use the PROXY protocol or a balancer that keeps the source IP.',
+      ],
+      keyIdea: 'Never take the first X-Forwarded-For value at face value. Configure which proxies are trusted.',
+      flows: [
+        {from: 'rp', to: 'app1', label: 'X-Forwarded-For', type: 'request'},
+      ],
+      focus: ['rp', 'app1'],
+      status: {app1: null},
+      badges: {app1: 'XFF: 203.0.113.7'},
+      values: {ip: {text: '10.0.0.5 (the proxy)', tone: 'bad'}},
+    },
+    {
+      short: 'TLS',
+      kind: '원리',
+      title: 'Terminate TLS at the proxy, or pass it through',
+      text: [
+        'With TLS termination, the proxy holds the certificate and decrypts. Only then can it read the path and headers, add X-Forwarded-For and route at L7. It can send plain HTTP to the backend or open a new TLS connection to it (re-encryption).',
+        'With TLS passthrough, the proxy forwards encrypted bytes untouched. It can only route by IP, port and the SNI name in the ClientHello, and the backend holds the certificate. Use it when the backend must see the client\'s TLS itself, for example for end-to-end mTLS.',
+      ],
+      flows: [
+        {from: 'l4', to: 'rp', label: 'TLS', type: 'request'},
+        {from: 'rp', to: 'app2', label: 'HTTP or new TLS', type: 'request'},
+      ],
+      focus: ['rp'],
+      badges: {app1: null, rp: 'Cert here'},
+      values: {ip: {text: 'From XFF, trusted hops', tone: 'good'}, sees: 'Decrypted request'},
+    },
+    {
+      short: '502 · 504',
+      kind: '장애',
+      title: '502 is a bad answer, 504 is no answer in time',
+      text: [
+        '502 Bad Gateway means the proxy reached for the upstream and got something unusable: connection refused, connection reset, or an invalid response. Typical causes are a crashed app, the wrong port, or the app closing a connection the proxy was about to use.',
+        '504 Gateway Timeout means the upstream accepted the request but did not answer within the proxy\'s timeout. In nginx, proxy_read_timeout defaults to 60s and counts the gap between two reads, not the whole response. The work may still finish on the backend. Envoy returns 503 when no healthy upstream is left.',
+      ],
+      keyIdea: '502: look at the app and the connection. 504: look at slow queries and the timeout chain. Each hop\'s timeout should be longer than the one behind it.',
+      flows: [
+        {from: 'rp', to: 'app2', label: 'Waits 60s', type: 'request'},
+        {from: 'rp', to: 'l4', label: '504', type: 'response'},
+      ],
+      focus: ['rp', 'app2'],
+      status: {app2: 'warn'},
+      badges: {rp: null, app2: 'Slow query'},
+      values: {status: {text: '504 Gateway Timeout', tone: 'bad'}},
+    },
+    {
+      short: 'Keep-alive',
+      kind: '원리',
+      title: 'Reuse upstream connections, and get idle timeouts in order',
+      text: [
+        'Opening a new TCP and TLS connection for every request wastes time and ports. Proxies keep a pool of idle keep-alive connections to each backend and reuse them. In nginx this is the keepalive directive in the upstream block, which needs HTTP/1.1 to the upstream (the default only since nginx 1.29.7).',
+        'Idle timeouts must line up. If the app closes idle connections after 5s and the proxy keeps them for 60s, the proxy sometimes sends a request on a connection the app just closed, and the user gets a random 502. Make the backend\'s idle timeout longer than the proxy\'s.',
+      ],
+      flows: [
+        {from: 'rp', to: 'app1', label: 'Reused', type: 'request'},
+        {from: 'rp', to: 'app2', label: 'Reused', type: 'request'},
+      ],
+      focus: ['rp'],
+      status: {app2: null},
+      badges: {app2: null, rp: 'Pool'},
+      values: {status: {text: '200 OK', tone: 'good'}},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'One address outside, choices and checks inside',
+      text: [
+        'An L4 balancer moves connections by IP and port. An L7 proxy reads each request, picks a healthy backend with an algorithm, and adds headers that carry the real client.',
+        'Most surprises come from the edges between hops: a trusted-proxy list for X-Forwarded-For, where TLS ends, timeouts that grow toward the client, and idle timeouts that shrink toward the proxy.',
+      ],
+      keyIdea: 'When users see 502 or 504, read the proxy\'s access and error logs first. They say which upstream it tried, how long it waited and why it gave up.',
+      flows: [
+        {from: 'client', to: 'l4', type: 'request'},
+        {from: 'l4', to: 'rp', type: 'request'},
+        {from: 'rp', to: 'app1', type: 'request'},
+        {from: 'rp', to: 'app2', type: 'request'},
+      ],
+      focus: ['l4', 'rp'],
+      status: {app3: null},
+      badges: {app3: null, rp: null},
+      values: {status: '—'},
+    },
+  ]}
+/>
+
+## L4 or L7, and what each status code means
+
+| | L4 load balancer | L7 reverse proxy |
+|---|---|---|
+| Works on | TCP or UDP connections | HTTP requests |
+| Sees | IP and port (SNI with TLS passthrough) | Host, path, headers, cookies |
+| Decides | Once per connection | Per request |
+| Client IP for the app | Kept or via PROXY protocol, depending on mode | `X-Forwarded-For` or `Forwarded` header |
+| Can do | Any protocol, very fast | Path routing, rewrites, retries, auth, header changes |
+| Examples | Cloud network LB, IPVS, HAProxy `mode tcp` | nginx, HAProxy `mode http`, Envoy, cloud application LB |
+
+| Status from the proxy | Meaning | Common cause | Check |
+|---|---|---|---|
+| 502 Bad Gateway | Upstream refused, reset or sent an invalid response | App crashed, wrong port, upstream closed an idle keep-alive connection | App logs, upstream port, idle timeouts |
+| 503 Service Unavailable | No backend can take the request | All backends failed health checks, or none are configured | Health check results, endpoints behind the proxy |
+| 504 Gateway Timeout | Upstream did not answer within the proxy timeout | Slow query or downstream call, timeout set too low | Upstream response time, `proxy_read_timeout` or the route timeout |
+
+## Try it yourself
+
+```bash
+curl -sv -o /dev/null https://example.com/ 2>&1 | grep -iE '^< (server|via|x-cache)'   # Which proxy answered
+curl -s -o /dev/null -w '%{http_code} %{time_total}s\n' https://example.com/           # Status and total time
+curl -s -H 'X-Forwarded-For: 1.2.3.4' http://localhost:8080/ip   # Does your app trust a forged header? (your own test endpoint)
+nginx -T 2>/dev/null | grep -E 'proxy_(connect|read|send)_timeout|keepalive|real_ip'   # Effective nginx timeouts and trust settings
+echo 'show servers state' | socat stdio /var/run/haproxy.sock   # HAProxy backend state (needs a stats socket)
+curl -s localhost:9901/clusters | grep health_flags              # Envoy admin: health of each upstream host
+kubectl logs -n ingress-nginx deploy/ingress-nginx-controller | grep -E '" 50[234] '   # 502/503/504 in Ingress access logs
+```
+
+<Quiz questions={[
+  {q: 'A user\'s requests all arrive on one keep-alive connection. Behind an L4 balancer they always hit the same backend, behind an L7 proxy they spread out. Why?', options: ['The L4 balancer uses sticky sessions by default', 'L4 picks a target once per connection, while L7 picks one per HTTP request', 'L7 proxies close the connection after every request'], answer: 1, why: 'An L4 balancer only sees the TCP connection, so every byte on it goes to one target. An L7 proxy ends the client connection and decides again for each request, over its own upstream connections.'},
+  {q: 'Your app reads the client IP from the first value of X-Forwarded-For to rate-limit logins. What is wrong?', options: ['Nothing, the first value is always the real client', 'X-Forwarded-For is only set at L4', 'A client can send its own X-Forwarded-For, so the first value can be anything'], answer: 2, why: 'Proxies append to whatever header arrives. Only the entries added by proxies you trust are reliable, so walk the list from the right and stop at the first untrusted address.'},
+  {q: 'Users get a few random 502s per hour. The app is healthy. The app closes idle connections after 5s and the proxy keeps idle upstream connections for 60s. What is going on?', options: ['The proxy reuses connections the app already closed, and the request fails', 'The app is too slow, so the proxy times out', 'The health check removes all backends for a moment'], answer: 0, why: 'A request sent on a connection the backend just closed is refused or reset, which the proxy reports as 502. A timeout would be 504. Make the backend idle timeout longer than the proxy\'s.'},
+]} />
+
+Further reading: [nginx upstream module](https://nginx.org/en/docs/http/ngx_http_upstream_module.html) · [HAProxy configuration manual](https://docs.haproxy.org/) · [Envoy load balancing](https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/upstream/load_balancing/load_balancing) · [RFC 7239: Forwarded](https://datatracker.ietf.org/doc/html/rfc7239) · [When You Type an Address](../basic/web-request.mdx) · [How a Request Reaches a Pod](../k8s/traffic.mdx) · [Ingress Rules and TLS](../feature/ingress.mdx)

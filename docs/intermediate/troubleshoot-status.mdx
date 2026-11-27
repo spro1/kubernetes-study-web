@@ -1,7 +1,7 @@
 ---
 id: troubleshoot-status
 title: Reading status in three layers and the troubleshooting order
-sidebar_label: 11 · Reading status
+sidebar_label: 13 · Reading status
 description: Follow an animation that unpacks the STATUS column of kubectl get pods into pod phase, container state and reason, and shows whether to check events or logs first for Pending, ImagePullBackOff and CrashLoopBackOff
 summary: 'Reading Pod phase, container state and reason, and whether to check events or logs first.'
 icon: alert
@@ -186,5 +186,11 @@ kubectl get events --sort-by=.metadata.creationTimestamp   # Recent events (gone
 kubectl logs <pod> --previous                        # Logs of the exited container
 kubectl describe node <node>                         # Node Conditions when many pods fail
 ```
+
+<Quiz questions={[
+  {q: 'A pod is stuck in Pending and kubectl logs shows nothing. Where should you look first?', options: ['The previous container\'s logs', 'The events, with kubectl describe pod', 'The app\'s config file'], answer: 1, why: 'No container has ever run, so there are no logs. Events show the reason, such as FailedScheduling with Insufficient cpu or memory.'},
+  {q: 'A pod shows CrashLoopBackOff. What should you check first?', options: ['The node\'s pressure conditions', 'The image name and tag', 'The logs of the previously exited container (kubectl logs --previous)', 'The Service endpoints'], answer: 2, why: 'The container runs but the program keeps exiting. The current container has just started, so the cause is in the logs of the one that exited before it.'},
+  {q: 'Several pods on the same node fail at once, and some show Unknown. What should you look at?', options: ['Each pod\'s logs one by one', 'The node status and node events (NotReady, pressure conditions)', 'The image registry credentials'], answer: 1, why: 'When pods on one node fail together, the problem is on the node, not one pod. Check whether it is NotReady or under MemoryPressure or DiskPressure.'},
+]} />
 
 Further reading: [Debug pods](https://kubernetes.io/docs/tasks/debug/debug-application/debug-pods/) · [kubectl cheat sheet](https://kubernetes.io/docs/reference/kubectl/cheatsheet/) · [Pod lifecycle](https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/) · [When a Pod Dies (Self-Healing)](../k8s/self-healing.mdx)

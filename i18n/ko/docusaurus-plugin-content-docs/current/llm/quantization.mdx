@@ -223,7 +223,7 @@ hide_table_of_contents: true
 - 형식을 Deployment의 노드 선택에 반영한다. FP8 모델을 FP8 텐서 코어가 없는 노드에 올리면 돌기는 하지만 계획한 속도는 안 나온다.
 - 지표는 전과 같은 엔진 지표를 본다. KV 캐시 사용률, 대기 요청 수, TTFT와 TPOT이다. 양자화가 효과가 있다면 같은 부하에서 KV 캐시 사용률이 내려가거나, 레플리카 하나가 더 많은 요청을 받는다.
 
-## 직접 해 보기
+## 직접 확인해 보기
 
 ```bash
 vllm serve Qwen/Qwen2.5-7B-Instruct-AWQ                       # 미리 양자화된 4비트 체크포인트. 방법은 config.json에서 읽는다
@@ -232,5 +232,11 @@ vllm serve <모델> --kv-cache-dtype fp8                        # KV 캐시를 F
 nvidia-smi --query-gpu=name,memory.used,memory.total --format=csv   # 예: NVIDIA. GPU 모델과 메모리
 curl -s http://<엔진>:8000/metrics | grep -E 'vllm:(kv_cache_usage_perc|num_requests_running)'   # 같은 부하에서 KV 여유
 ```
+
+<Quiz questions={[
+  {q: '70B 모델의 가중치는 4비트에서 BF16과 비교해 대략 얼마나 차지하는가?', options: ['약 140GB 대신 약 35–40GB', '약 140GB 대신 약 70GB', '약 280GB 대신 약 140GB', '약 70GB 대신 약 8GB'], answer: 0, why: '가중치 메모리는 파라미터 수 × 파라미터당 바이트다. 70B × 0.5바이트 ≈ 35GB에 스케일 값이 조금 더해지고, BF16은 70B × 2바이트 ≈ 140GB이기 때문이다.'},
+  {q: 'FP8 텐서 코어가 없는 GPU에 FP8 모델을 올리면 어떻게 되는가?', options: ['모델이 올라가지 않는다', '돌기는 하고 메모리도 아끼지만 계산은 빨라지지 않는다', '엔진이 디스크의 체크포인트를 조용히 BF16으로 되돌린다', '프리필은 빨라지고 디코드는 느려진다'], answer: 1, why: '엔진은 FP8 가중치를 올려 커널 안에서 16비트로 펼쳐 돌릴 수 있다. 메모리는 아끼지만 계산이 빨라지려면 FP8 텐서 코어가 있어야 하므로, FP8 워크로드는 맞는 노드에 묶기 때문이다.'},
+  {q: '4비트 모델이 일반 벤치마크에서 좋은 점수를 냈다. 운영에 내기 전에 무엇을 해야 하는가?', options: ['모델 카드로 충분하니 할 일이 없다', 'KV 캐시 정밀도를 올려 보완한다', '우리 평가 질문을 BF16 기준 모델과 양자화 모델에 넣고 점수를 비교한다', 'KV 캐시를 FP32로 바꾼다'], answer: 2, why: '정확도 손실은 코드, 수학, 긴 문서, 특정 언어처럼 우리 작업에서 드러난다. 양자화는 모델을 바꾸는 일로 다루고 기준 모델과 비교해야 하기 때문이다.'},
+]} />
 
 더 읽을거리: [vLLM 양자화](https://docs.vllm.ai/en/latest/features/quantization/) · [AWQ 논문](https://arxiv.org/abs/2306.00978) · [GPTQ 논문](https://arxiv.org/abs/2210.17323) · [SmoothQuant 논문](https://arxiv.org/abs/2211.10438) · [딥러닝용 FP8 형식](https://arxiv.org/abs/2209.05433) · [KV 캐시가 차오르기까지](../llm/kv-cache.mdx) · [질문 읽기와 답 쓰기 (프리필·디코드)](../llm/prefill-decode.mdx) · [모델이 처음 뜨기까지 (콜드 스타트)](../ai/cold-start.mdx)

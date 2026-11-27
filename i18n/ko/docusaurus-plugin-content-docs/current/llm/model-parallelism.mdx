@@ -249,4 +249,10 @@ kubectl get leaderworkerset -A                        # 그룹과 그룹 크기
 kubectl get pods -L leaderworkerset.sigs.k8s.io/worker-index   # 0 = 리더, 1부터 = 워커
 ```
 
+<Quiz questions={[
+  {q: '텐서 병렬(TP) 묶음을 한 노드 안에 두어야 하는 이유는 무엇인가?', options: ['쿠버네티스가 노드를 건너는 TP를 스케줄링하지 못한다', 'TP는 GPU마다 같은 CPU 모델이 필요하다', 'TP는 GPU마다 모델 전체를 복사한다', 'TP는 토큰마다 층당 두 번쯤 all-reduce를 해서 NVLink 같은 빠른 링크가 필요하다'], answer: 3, why: '각 GPU는 부분 결과만 계산하므로 층마다 조각 결과를 합쳐야 한다. 토큰마다 일어나는 수십 번의 작고 지연에 민감한 교환은 NVLink로는 빠르지만 일반 네트워크로는 멈추기 때문이다.'},
+  {q: '레플리카 하나에 노드 두 대가 필요한 모델이다. 리더 파드는 노드 A에 떴는데 노드 B에 빈 GPU가 없다. 노드 A의 GPU가 쓸모없이 묶이지 않게 하는 것은 무엇인가?', options: ['Kueue나 Volcano 같은 갱 스케줄링(전부 아니면 전무)', 'LWS replicas 수를 늘린다', '데이터 병렬로 바꾼다', 'TP 크기를 키운다'], answer: 0, why: 'LeaderWorkerSet 그룹은 모든 파드가 떠야 쓸모가 있다. 갱 스케줄링은 그룹 전체를 배치하거나 아예 배치하지 않으므로, GPU를 쥔 채 기다리는 반쪽 배치를 막기 때문이다.'},
+  {q: 'TP 2로 도는 레플리카에서 KV 캐시가 차서 요청이 줄을 선다. 레플리카를 늘리는 것 말고 무엇이 도움이 되는가?', options: ['TP 크기를 1로 줄인다', 'TP 크기를 키운다(또는 가중치 형식을 줄인다). GPU마다 KV 캐시 자리가 늘어난다', '파이프라인 병렬을 끈다', '어텐션 헤드를 늘린다'], answer: 1, why: '가중치를 더 많은 GPU에 나누면 GPU마다 KV 캐시 블록에 쓸 메모리가 생겨 동시 요청과 긴 문맥을 더 받는다. 대신 통신이 늘기 때문이다.'},
+]} />
+
 더 읽을거리: [vLLM 병렬화와 확장](https://docs.vllm.ai/en/stable/serving/parallelism_scaling.html) · [LeaderWorkerSet](https://lws.sigs.k8s.io/) · [Megatron-LM 논문](https://arxiv.org/abs/1909.08053) · [Kueue](https://kueue.sigs.k8s.io/) · [KV 캐시가 차오르기까지](../llm/kv-cache.mdx) · [읽는 곳과 쓰는 곳 나누기](../llm/pd-disaggregation.mdx) · [조건으로 GPU 받기 (DRA)](../k8s/dra.mdx)

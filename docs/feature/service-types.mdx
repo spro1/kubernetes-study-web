@@ -190,4 +190,10 @@ kubectl get endpointslices -l kubernetes.io/service-name=shop-svc   # Are target
 kubectl get svc shop-svc -o yaml                       # type, selector, ports, sessionAffinity
 ```
 
+<Quiz questions={[
+  {q: 'An external user cannot reach a Service of type ClusterIP. Why?', options: ['The Service has no pods behind it', 'ClusterIP is reachable only inside the cluster', 'ClusterIP only opens ports 30000-32767'], answer: 1, why: 'A ClusterIP address means something only on the cluster\'s internal network. To expose it outside, change the type or put an Ingress in front.'},
+  {q: 'A LoadBalancer Service on-premises shows EXTERNAL-IP stuck at <pending>. What should you check?', options: ['Whether a load balancer implementation such as MetalLB and an address pool exist', 'Whether the selector matches the pods', 'Whether the NodePort range is full', 'Whether the pods passed their readiness probe'], answer: 0, why: 'With no load balancer implementation or no free address, the Service is created but no external address is attached.'},
+  {q: 'A Service exists with no error, but nothing connects and its endpoints are empty. What is the most likely cause?', options: ['The Service type is wrong', 'The Service needs type LoadBalancer to get endpoints', 'The selector does not match the pod labels'], answer: 2, why: 'A wrong selector silently leaves zero targets. Compare the selector with the pod labels side by side.'},
+]} />
+
 Further reading: [Service](https://kubernetes.io/docs/concepts/services-networking/service/) · [EndpointSlices](https://kubernetes.io/docs/concepts/services-networking/endpoint-slices/) · [Finding Services by Name (Service·DNS)](../k8s/service-dns.mdx)

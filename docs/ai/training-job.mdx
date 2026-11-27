@@ -1,7 +1,7 @@
 ---
 id: training-job
 title: From Training Job to Model
-sidebar_label: 07 · From Training Job to Model
+sidebar_label: 08 · From Training Job to Model
 description: Follow a training or evaluation Job as it waits in a Kueue queue, is admitted when GPU quota frees up, runs on GPU nodes, writes checkpoints, and is registered as a version in a model registry.
 summary: 'A training Job waits in a queue for GPU quota, runs, saves checkpoints and becomes a model version.'
 icon: hammer
@@ -195,5 +195,11 @@ kubectl get workloads -n <namespace>                 # One Workload per Job, adm
 kubectl describe workload <name> -n <namespace>      # Why it waits: quota, queue, preemption
 kubectl describe clusterqueue <name>                 # Quota usage and borrowing (step 4)
 ```
+
+<Quiz questions={[
+  {q: 'You submit a training Job to Kueue and see no Pods at all. What is happening?', options: ['The scheduler could not find a GPU node', 'Kueue holds the Job suspended until its Workload is admitted', 'The Job failed validation and was rejected', 'The image is still being pulled'], answer: 1, why: 'Kueue suspends a submitted Job and creates a Workload for it. Pods are only created after Kueue admits the Workload and unsuspends the Job.'},
+  {q: 'A Job asks for more GPUs than its ClusterQueue can provide even with borrowing. What happens?', options: ['It stays Pending forever, and kubectl describe workload explains why', 'Kueue rejects it right away with an error', 'Kueue starts the Pods that fit and queues the rest'], answer: 0, why: 'An over-quota request is never admitted but is not rejected either. It waits, and the Workload status message gives the reason.'},
+  {q: 'Your long training Job runs on quota borrowed from another queue in the cohort. Why do checkpoints matter here?', options: ['Kueue needs checkpoints to compute the quota', 'Checkpoints keep the Job from being preempted', 'Pod logs are stored inside the checkpoints', 'If the owner reclaims the quota, the Job is preempted and without a checkpoint it starts over'], answer: 3, why: 'A Job on borrowed quota can be preempted when the owner reclaims it. Its Pods are terminated, and only a checkpoint lets the restart resume instead of starting from scratch.'},
+]} />
 
 Further reading: [Jobs](https://kubernetes.io/docs/concepts/workloads/controllers/job/) · [Kueue overview](https://kueue.sigs.k8s.io/docs/overview/)

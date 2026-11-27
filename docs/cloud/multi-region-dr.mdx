@@ -1,7 +1,7 @@
 ---
 id: multi-region-dr
 title: When a Whole Region Goes Down
-sidebar_label: 10 · When a Whole Region Goes Down
+sidebar_label: 14 · When a Whole Region Goes Down
 description: Animated walkthrough of disaster recovery across regions, why replication is not a backup, the 3-2-1 rule and immutable backups, the four strategies from backup and restore to active-active with their RPO, RTO and cost, DNS failover, and failover drills
 summary: 'Backups versus replication, the four DR strategies and their RPO/RTO/cost, DNS failover and drills.'
 icon: shield
@@ -245,5 +245,11 @@ dig +noall +answer shop.example.com                                    # The TTL
 ```
 
 Restore drill checklist: pick a backup at random → restore into an empty environment → start the app against it → check the newest record's time (your RPO) → write down the total time (your RTO) and every manual step.
+
+<Quiz questions={[
+  {q: 'Someone runs DROP TABLE on the primary DB in region A. A cross-region replica runs in region B. What gets the data back?', options: ['Promote the replica in region B', 'Restore a point-in-time backup from before the mistake', 'Fail DNS over to region B'], answer: 1, why: 'Replication copies the DROP TABLE to the replica within seconds, just like a good write. Only a point-in-time backup can go back to before the mistake.'},
+  {q: 'Region A goes down and the replica in region B is promoted to primary. How much data is lost?', options: ['Whatever had not replicated yet, so the replication lag at that moment', 'Nothing, because the replica is a full copy', 'Everything since the last nightly backup'], answer: 0, why: 'Replication is asynchronous, so the real RPO equals the lag at the moment of failure. That is why the replication lag metric is worth watching every day.'},
+  {q: 'An internal tool can be down for hours, and the team wants the lowest standing cost. Which DR strategy fits?', options: ['Multi-site active-active', 'Warm standby', 'Pilot light', 'Backup and restore'], answer: 3, why: 'Backup and restore keeps nothing running in region B, only backups. Its RPO and RTO are hours, which suits systems that can be down for a while.'},
+]} />
 
 Further reading: [Disaster recovery options in the cloud (AWS whitepaper)](https://docs.aws.amazon.com/whitepapers/latest/disaster-recovery-workloads-on-aws/disaster-recovery-options-in-the-cloud.html) · [Reliability pillar (AWS Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/reliability-pillar/welcome.html) · [DNS failover (Route 53)](https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/dns-failover.html) · [Disaster recovery planning guide (Google Cloud)](https://cloud.google.com/architecture/dr-scenarios-planning-guide) · [When One Availability Zone Goes Down](../cloud/az-failover.mdx) · [How DNS Finds an Address](../basic/dns-resolution.mdx)

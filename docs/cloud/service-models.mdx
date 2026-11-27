@@ -187,4 +187,10 @@ kubectl get nodes -o wide                            # Node OS image and kernel:
 aws s3api get-public-access-block --bucket <bucket>   # Is storage open to anyone? (AWS example)
 ```
 
+<Quiz questions={[
+  {q: 'Your team runs its web servers on IaaS virtual machines. A critical OS vulnerability is announced. Who must apply the patch?', options: ['The provider, because it owns the virtual machines', 'Nobody, IaaS patches itself', 'Your team, because with IaaS everything from the OS up is yours'], answer: 2, why: 'With IaaS the provider handles only hardware and virtualization. Renting a VM does not mean the provider patches its OS.'},
+  {q: 'A storage bucket was set to "anyone can read" by mistake and customer data leaked. Under the shared responsibility model, whose problem is this?', options: ['Yours, because data and access settings are the user\'s responsibility in every model', 'The provider\'s, because it runs the storage service', 'Shared equally, so neither side must act'], answer: 0, why: 'The provider protects the cloud itself (buildings, equipment, virtualization). What you put in it, such as data, accounts and settings, stays yours.'},
+  {q: 'What do you give up when moving a service from IaaS to PaaS?', options: ['Control over your data', 'Any need to write application code', 'The ability to run in the cloud', 'Freedom to choose OS and runtime versions, since you can only pick what the provider supports'], answer: 3, why: 'PaaS takes OS patching and runtime upgrades off your hands, but you choose only among the languages and versions the provider offers.'},
+]} />
+
 Further reading: [The NIST Definition of Cloud Computing (SP 800-145)](https://csrc.nist.gov/pubs/sp/800/145/final) · [Shared Responsibility Model (AWS)](https://aws.amazon.com/compliance/shared-responsibility-model/) · [From One Server to Containers](../basic/server-to-container.mdx)

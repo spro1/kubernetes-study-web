@@ -1,7 +1,7 @@
 ---
 id: service-dns
 title: Finding Services by Name (Service·DNS)
-sidebar_label: 06 · Finding Services by Name
+sidebar_label: 08 · Finding Services by Name
 description: Follow, step by step, how a pod calls another service by name through a CoreDNS lookup and the Service virtual IP to reach a target pod, and how name lookup fails across namespaces, with typos, or when DNS is down
 summary: 'What happens when a Pod calls another service by name, and what changes across namespaces.'
 icon: book
@@ -195,5 +195,11 @@ kubectl exec <pod> -- cat /etc/resolv.conf           # search list, own namespac
 kubectl run dns-test --image=busybox:1.36 --rm -it --restart=Never -- nslookup <service>.<namespace>   # Throwaway Pod, removed on exit
 kubectl get pods -n kube-system -l k8s-app=kube-dns   # Is CoreDNS healthy?
 ```
+
+<Quiz questions={[
+  {q: 'The admin pod in namespace ops calls the short name order-svc, which lives in namespace shop, and gets "name not found". Why?', options: ['Traffic between namespaces is blocked by default', 'The short name is expanded with the caller\'s own namespace, so it looks up order-svc.ops.svc.cluster.local', 'CoreDNS is down'], answer: 1, why: 'The first search entry is the pod\'s own namespace. Call order-svc.shop or the full name to reach a Service in another namespace.'},
+  {q: 'Calling a Service by IP works, but calling it by name fails with no response. What should you suspect first?', options: ['CoreDNS is down, or a network policy blocks DNS lookups on port 53', 'The Service selector does not match the pod labels', 'The Service name in the config has a typo'], answer: 0, why: 'If the IP works, the Service and pods are fine. A typo gets an immediate "not found" answer, while no response at all points to the DNS server.'},
+  {q: 'ping to a Service\'s ClusterIP gets no reply. What does that tell you?', options: ['The Service is broken', 'The Service has no Ready pods', 'Not much: a ClusterIP is a virtual IP with only port translation rules, so test by connecting to the port'], answer: 2, why: 'A Service IP is not attached to any real device and usually does not answer ping. Connecting to its port is the real check.'},
+]} />
 
 Further reading: [Service](https://kubernetes.io/docs/concepts/services-networking/service/) · [DNS for Services and Pods](https://kubernetes.io/docs/concepts/services-networking/dns-pod-service/)

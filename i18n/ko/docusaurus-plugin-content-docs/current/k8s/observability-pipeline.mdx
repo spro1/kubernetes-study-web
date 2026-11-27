@@ -1,7 +1,7 @@
 ---
 id: observability-pipeline
 title: 로그·메트릭·트레이스가 파드를 떠나는 길
-sidebar_label: 08 · 로그·메트릭·트레이스
+sidebar_label: 10 · 로그·메트릭·트레이스
 description: 파드의 stdout이 노드의 로그 파일이 되고 kubectl logs와 로그 에이전트 데몬셋이 그것을 읽는 과정, 프로메테우스가 /metrics를 찾아 긁어 가는 과정, metrics-server의 역할, OTLP로 트레이스를 보내는 과정을 애니메이션으로 본다
 summary: '신호 셋, 길 셋: 노드의 로그 파일, 프로메테우스가 당겨 가는 /metrics, OTLP로 밀어 보내는 트레이스.'
 icon: chart
@@ -239,5 +239,11 @@ kubectl get servicemonitor,podmonitor -A             # 프로메테우스 오퍼
 ```
 
 프로메테우스에서 `up == 0`으로 실패한 대상을, `topk(10, count by (__name__) ({__name__=~".+"}))`로 시계열이 많은 메트릭을 찾는다.
+
+<Quiz questions={[
+  {q: '새벽 3시에 파드가 죽어 디플로이먼트가 새 파드로 바꿨다. kubectl logs에는 새 파드의 로그만 보인다. 왜인가?', options: ['kubectl logs는 기본으로 마지막 50줄만 읽기 때문이다', '예전 파드의 노드 로그 파일이 파드와 함께 정리되었고, 로그 에이전트가 노드 밖으로 보내지 않았기 때문이다', '프로메테우스가 파드를 긁어 가면서 로그를 지웠기 때문이다'], answer: 1, why: 'kubectl logs는 kubelet을 거쳐 노드의 파일을 읽는다. 파드가 사라지면 데몬셋 로그 에이전트가 미리 로그 저장소로 보내지 않은 한 파일도 함께 사라지기 때문이다.'},
+  {q: '앱이 멈춰 프로메테우스가 더는 긁어 가지 못한다. 오류율 알림이 울리지 않을 수 있는 이유는 무엇인가?', options: ['앱의 시계열에 새 샘플이 들어오지 않아 알릴 데이터가 없기 때문이다. up == 0 알림이 필요하다', '프로메테우스가 마지막 오류율을 계속 반복해 기록하기 때문이다', 'metrics-server가 스크레이프를 넘겨받아 오류 0을 보고하기 때문이다', '네트워크 정책이 스크레이프와 함께 알림도 막기 때문이다'], answer: 0, why: '스크레이프가 실패하면 up이 0이 되고 앱의 시계열은 갱신이 멈춘다. 데이터가 없으면 오류율 알림도 울리지 않으니 중요한 job에는 up == 0 알림을 걸어야 하기 때문이다.'},
+  {q: '어제 파드의 CPU 사용량이 얼마였는지 보고 싶다. 어디를 봐야 하는가?', options: ['Metrics API를 읽는 kubectl top pod', 'Jaeger 같은 트레이스 백엔드', '긁어 간 값을 타임스탬프와 함께 저장하는 프로메테우스'], answer: 2, why: 'metrics-server는 kubectl top과 HPA를 위해 최신 CPU·메모리 값만 들고 있다. 기록은 프로메테우스의 일이기 때문이다.'},
+]} />
 
 더 읽을거리: [로깅 아키텍처](https://kubernetes.io/docs/concepts/cluster-administration/logging/) · [리소스 메트릭 파이프라인](https://kubernetes.io/docs/tasks/debug/debug-cluster/resource-metrics-pipeline/) · [프로메테우스 kubernetes_sd_config](https://prometheus.io/docs/prometheus/latest/configuration/configuration/#kubernetes_sd_config) · [프로메테우스 이름과 레이블](https://prometheus.io/docs/practices/naming/) · [OTLP 명세](https://opentelemetry.io/docs/specs/otlp/) · [OpenTelemetry Collector](https://opentelemetry.io/docs/collector/) · [SLO와 알람 설계](../advanced/slo-alert.mdx) · [부하에 맞춰 늘어나기 (HPA)](../k8s/autoscaling.mdx)

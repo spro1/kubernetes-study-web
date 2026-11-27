@@ -1,0 +1,258 @@
+---
+id: lora-serving
+title: Serving Many LoRA Adapters on One Base Model
+sidebar_label: 12 · LoRA Serving
+description: Animated walkthrough of LoRA fine-tuning and multi-LoRA serving, from low-rank adapter matrices to vLLM --enable-lora, adapter selection by model name, GPU and CPU adapter caches, mixed-adapter batches, adapter-aware routing and adapter versioning
+summary: 'Why a LoRA adapter is MBs while the base model is GBs, how one GPU serves many adapters per request, and what swapping, routing and versioning cost.'
+icon: layers
+hide_table_of_contents: true
+---
+
+# Serving Many LoRA Adapters on One Base Model
+
+LoRA fine-tuning leaves the base model alone and trains a small add-on, the **adapter**. Because adapters are small, one GPU can hold one copy of the base model and apply a different adapter to each request.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~12 min', level: 'Advanced'}}
+  groups={[
+    {label: 'Replica 1 · one GPU host', x: 420, y: 30, w: 350, h: 400, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'client', label: 'Applications', sub: 'SQL bot · support bot', icon: 'browser', tone: 'ext', x: 95, y: 225, w: 150, show: true},
+    {id: 'gw', label: 'Gateway + EPP', sub: 'picks a replica', icon: 'gate', tone: 'cp', x: 290, y: 225, w: 160},
+    {id: 'base', label: 'Base model', sub: 'GBs · loaded once', icon: 'server', tone: 'node', x: 520, y: 110, w: 160, show: true},
+    {id: 'slots', label: 'GPU LoRA slots', sub: '--max-loras', icon: 'layers', tone: 'app', x: 520, y: 240, w: 160},
+    {id: 'la', label: 'sql-lora', sub: 'MBs', icon: 'box', tone: 'app', size: 'sm', x: 700, y: 110},
+    {id: 'lb', label: 'support-lora', sub: 'MBs', icon: 'box', tone: 'app', size: 'sm', x: 700, y: 240, w: 120},
+    {id: 'cpu', label: 'CPU adapter cache', sub: '--max-cpu-loras', icon: 'disk', tone: 'store', x: 520, y: 370, w: 170},
+    {id: 'r2', label: 'Replica 2', sub: 'other adapters loaded', icon: 'server', tone: 'node', x: 880, y: 110, w: 160},
+    {id: 'train', label: 'LoRA training', sub: 'trains A and B only', icon: 'hammer', tone: 'ext', x: 880, y: 240, w: 160},
+    {id: 'store', label: 'Adapter registry', sub: 'versioned files', icon: 'registry', tone: 'store', x: 880, y: 370, w: 160},
+  ]}
+  metrics={[
+    {id: 'model', label: 'Requested model'},
+    {id: 'gpu', label: 'Adapters on GPU'},
+    {id: 'cost', label: 'Extra cost'},
+  ]}
+  learn={[
+    {text: 'Why a LoRA adapter is tiny next to the base model', at: 1},
+    {text: 'How a request picks an adapter by model name', at: 3},
+    {text: 'What --max-loras and --max-lora-rank limit', at: 4},
+    {text: 'What swapping adapters in and out costs', at: 5},
+    {text: 'Routing to replicas that already hold the adapter', at: 7},
+    {text: 'Versioning adapters so results do not change silently', at: 8},
+  ]}
+  steps={[
+    {
+      short: 'Start',
+      kind: '시작',
+      title: 'Many tasks, one base model',
+      text: [
+        'Two teams want their own tuned model: one writes SQL, one answers support tickets. Both start from the same open base model.',
+        'A full fine-tune makes a complete copy of every weight per task. Each copy needs its own GPU memory, so ten tasks mean ten full models to serve.',
+      ],
+      flows: [{from: 'client', to: 'base', label: 'one model per task?', type: 'request', bend: 0.1}],
+      focus: ['client', 'base'],
+      values: {model: '—', gpu: '—', cost: {text: 'one full model per task', tone: 'bad'}},
+    },
+    {
+      short: 'LoRA',
+      kind: '원리',
+      title: 'LoRA trains two small matrices instead of all weights',
+      text: [
+        'LoRA (Low-Rank Adaptation) freezes the base weights W. For chosen layers it adds a product B·A of two thin matrices with a small rank r, so the layer computes W·x + B·A·x.',
+        'Training updates only A and B. The saved adapter holds just those matrices, which is MBs, while the base model is GBs. The adapter only works with the exact base model it was trained on.',
+      ],
+      keyIdea: 'Rank r sets the adapter size and capacity. A larger r can learn more but costs more memory per adapter.',
+      flows: [{from: 'train', to: 'store', label: 'save adapter', type: 'request'}],
+      focus: ['train', 'store'],
+      badges: {store: 'sql-lora · support-lora'},
+      values: {cost: {text: 'MBs per task', tone: 'good'}},
+    },
+    {
+      short: 'Serve',
+      kind: '원리',
+      title: 'The server loads the base once and registers adapters',
+      text: [
+        'With vLLM, --enable-lora turns on adapter support and --lora-modules name=path registers adapters at startup. The base weights sit in GPU memory once.',
+        'GET /v1/models lists each adapter as its own model, with parent set to the base model. To the client, every adapter looks like a separate model name.',
+      ],
+      flows: [
+        {from: 'store', to: 'cpu', label: 'load', type: 'request', bend: 0.1},
+        {from: 'cpu', to: 'slots', label: 'to GPU', type: 'request'},
+      ],
+      focus: ['base', 'slots'],
+      badges: {store: null, base: 'shared'},
+      values: {gpu: 'sql-lora'},
+    },
+    {
+      short: 'Pick',
+      kind: '원리',
+      title: 'The request picks an adapter by model name',
+      text: [
+        'The SQL bot sends "model": "sql-lora". The server runs the shared base weights and adds the sql-lora matrices in the LoRA layers for this request only.',
+        'A request with the base model name gets no adapter. One HTTP API serves all variants, and the model field is the switch.',
+      ],
+      flows: [
+        {from: 'client', to: 'gw', label: 'model: sql-lora', type: 'request'},
+        {from: 'gw', to: 'base', label: 'forward', type: 'request', bend: -0.1},
+        {from: 'slots', to: 'la', label: 'apply', type: 'watch'},
+      ],
+      focus: ['la', 'base'],
+      status: {la: 'ok'},
+      values: {model: 'sql-lora'},
+    },
+    {
+      short: 'Mixed batch',
+      kind: '원리',
+      title: 'Requests for different adapters share one batch',
+      text: [
+        'With continuous batching, requests for sql-lora, support-lora and the plain base model can run in the same step. The base computation is shared; each request adds its own small B·A term.',
+        '--max-loras caps how many different adapters one batch may contain (vLLM default 1). --max-lora-rank must be at least the largest rank you plan to serve (default 16); a higher-rank adapter does not load.',
+      ],
+      keyIdea: 'Each GPU LoRA slot reserves memory for an adapter of the maximum rank. Raising --max-loras or --max-lora-rank leaves less memory for the KV cache.',
+      flows: [
+        {from: 'client', to: 'gw', label: 'model: support-lora', type: 'request'},
+        {from: 'gw', to: 'base', label: 'same batch', type: 'request', bend: -0.1},
+        {from: 'slots', to: 'lb', label: 'apply', type: 'watch'},
+      ],
+      focus: ['slots', 'la', 'lb'],
+      status: {lb: 'ok'},
+      badges: {slots: '2 slots used'},
+      values: {model: 'sql-lora + support-lora', gpu: 'sql-lora · support-lora', cost: {text: 'small extra per adapter', tone: 'good'}},
+    },
+    {
+      short: 'Swap',
+      kind: '주의',
+      title: 'When the GPU slots are full, adapters swap',
+      text: [
+        'A third adapter is requested while both GPU slots hold busy adapters. The new request waits until a slot frees, then its adapter is copied in and a less recently used one is evicted.',
+        'Adapters evicted from the GPU can stay in host memory, up to --max-cpu-loras. Copying from CPU memory is fast; loading from disk or a remote registry is slower. Either way, it adds latency to the first request that needs it.',
+      ],
+      keyIdea: 'Many rarely used adapters on few slots cause constant swapping. Size the slots for the adapters that are active at the same time, not for the whole catalog.',
+      flows: [
+        {from: 'cpu', to: 'slots', label: 'swap in', type: 'request'},
+        {from: 'slots', to: 'cpu', label: 'evict', type: 'response', bend: 0.25},
+      ],
+      focus: ['slots', 'cpu'],
+      status: {slots: 'warn'},
+      badges: {slots: 'full', cpu: 'LRU cache'},
+      values: {gpu: 'full · swapping', cost: {text: 'wait + copy on a miss', tone: 'bad'}},
+    },
+    {
+      short: 'Dynamic',
+      kind: '주의',
+      title: 'Load and unload adapters without a restart',
+      text: [
+        'With VLLM_ALLOW_RUNTIME_LORA_UPDATING=True, POST /v1/load_lora_adapter with lora_name and lora_path adds an adapter to a running server, and /v1/unload_lora_adapter removes it.',
+        'Anyone who can reach these endpoints can load arbitrary files into your server. The vLLM docs warn against it in production outside an isolated, trusted environment, so keep them off the public route.',
+      ],
+      flows: [{from: 'store', to: 'cpu', label: 'load_lora_adapter', type: 'request', bend: 0.1}],
+      focus: ['store', 'cpu'],
+      status: {slots: null},
+      badges: {slots: null, cpu: '+ new adapter'},
+      values: {gpu: 'sql-lora · support-lora', cost: '—'},
+    },
+    {
+      short: 'Route',
+      kind: '원리',
+      title: 'Send the request to a replica that already has the adapter',
+      text: [
+        'With several replicas, each holds a different set of adapters on its GPU. If round-robin sends sql-lora traffic to Replica 2, that replica has to load it first.',
+        'The endpoint picker in the Gateway API Inference Extension tracks which adapters each model server has active (vLLM reports them in the vllm:lora_requests_info metric). It prefers a replica that already has the adapter, then one with a free slot.',
+      ],
+      keyIdea: 'Adapter affinity is like prefix-cache affinity: the cache only helps if the request lands where the cache is.',
+      flows: [
+        {from: 'client', to: 'gw', label: 'model: sql-lora', type: 'request'},
+        {from: 'r2', to: 'gw', label: 'no sql-lora', type: 'watch', bend: 0.2},
+        {from: 'gw', to: 'base', label: 'has sql-lora', type: 'request', bend: -0.1},
+      ],
+      focus: ['gw', 'r2'],
+      status: {r2: 'off'},
+      badges: {cpu: null, gw: 'adapter affinity'},
+      values: {model: 'sql-lora', cost: {text: 'no load on the hot path', tone: 'good'}},
+    },
+    {
+      short: 'Versions',
+      kind: '문제',
+      title: 'Overwriting an adapter changes answers silently',
+      text: [
+        'The SQL team retrains and uploads the new files under the same name sql-lora. Some replicas still hold the old one in memory, others load the new one. The same request now gets different answers depending on the replica.',
+        'Give every trained adapter an immutable versioned name, such as sql-lora-v3, and record which base model and rank it needs. Clients or a routing alias move from v2 to v3 on purpose, and rollback is switching the name back.',
+      ],
+      flows: [{from: 'train', to: 'store', label: 'sql-lora (overwrite)', type: 'request'}],
+      focus: ['store', 'r2', 'base'],
+      status: {r2: 'warn', base: 'warn'},
+      badges: {gw: null, store: 'same name, new files', r2: 'old or new?'},
+      values: {cost: {text: 'inconsistent answers', tone: 'bad'}},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'One base in memory, small adapters per request',
+      text: [
+        'LoRA trains small low-rank matrices, so each task adds MBs, not another full model. The server keeps one base model on the GPU and applies the adapter named in each request, even mixing adapters in one batch.',
+        'GPU slots, rank limit and the CPU cache decide how many adapters stay hot. Routing by adapter and immutable version names keep latency and answers predictable.',
+      ],
+      keyIdea: 'If latency spikes only for some model names, check adapter swaps: GPU slots in use, cache misses, and whether routing sends that adapter to replicas that do not hold it.',
+      flows: [
+        {from: 'client', to: 'gw', label: 'model: sql-lora-v3', type: 'request'},
+        {from: 'gw', to: 'base', label: 'affinity', type: 'request', bend: -0.1},
+      ],
+      focus: ['base', 'slots', 'gw'],
+      status: {r2: null, base: null, la: null, lb: null},
+      badges: {store: 'sql-lora-v3', r2: null},
+      values: {model: 'sql-lora-v3', cost: {text: 'MBs per task', tone: 'good'}},
+    },
+  ]}
+/>
+
+## vLLM LoRA settings
+
+| Flag or setting | What it controls | Watch out |
+|---|---|---|
+| `--enable-lora` | Turns on adapter support | Without it, adapter model names are unknown |
+| `--lora-modules name=path` | Adapters registered at startup | The name is what clients send as `model` |
+| `--max-loras` | Max different adapters in one batch (default 1) | Each slot reserves GPU memory, leaving less for the KV cache |
+| `--max-lora-rank` | Largest adapter rank accepted (default 16) | Set it to the largest rank you serve; higher wastes memory |
+| `--max-cpu-loras` | Adapters kept in host memory | Must be at least `--max-loras`; misses go to disk or the registry |
+| `VLLM_ALLOW_RUNTIME_LORA_UPDATING=True` | Enables `/v1/load_lora_adapter` and `/v1/unload_lora_adapter` | Lets callers load files; keep it in trusted networks only |
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| Latency spikes for some adapters only | Adapter swapped in on demand | More GPU slots, larger CPU cache, or adapter-aware routing |
+| Adapter fails to load | Rank above `--max-lora-rank`, or trained on another base | Raise the limit, or retrain on the served base model |
+| Same prompt, different answers across replicas | One adapter name, several file versions | Immutable names like `sql-lora-v3` |
+
+## Try it yourself
+
+```bash
+# Serve a base model with one adapter registered at startup
+vllm serve meta-llama/Llama-3.2-3B-Instruct --enable-lora \
+  --lora-modules sql-lora=jeeejeee/llama32-3b-text2sql-spider \
+  --max-loras 4 --max-lora-rank 64 --max-cpu-loras 8
+
+curl -s localhost:8000/v1/models | jq '.data[] | {id, parent}'   # Adapters appear with parent = base model
+
+# Pick the adapter by model name
+curl -s localhost:8000/v1/completions -H 'Content-Type: application/json' \
+  -d '{"model": "sql-lora", "prompt": "List all users older than 30 in SQL:", "max_tokens": 64}'
+
+# Dynamic loading (only on a server started with VLLM_ALLOW_RUNTIME_LORA_UPDATING=True, trusted network)
+curl -s -X POST localhost:8000/v1/load_lora_adapter -H 'Content-Type: application/json' \
+  -d '{"lora_name": "sql-lora-v3", "lora_path": "/adapters/sql-lora-v3"}'
+curl -s -X POST localhost:8000/v1/unload_lora_adapter -H 'Content-Type: application/json' \
+  -d '{"lora_name": "sql-lora"}'
+
+curl -s localhost:8000/metrics | grep vllm:lora_requests_info   # Which adapters are running and waiting
+```
+
+<Quiz questions={[
+  {q: 'Why can one GPU serve dozens of LoRA fine-tunes but not dozens of full fine-tunes?', options: ['LoRA adapters are compressed with quantization', 'Each adapter stores only small low-rank matrices, and all of them share one copy of the base weights', 'LoRA models skip the attention layers'], answer: 1, why: 'LoRA freezes the base weights and trains only A and B with a small rank. Adapters are MBs and reuse the one base model in GPU memory.'},
+  {q: 'A server has --max-loras 2. Three requests for three different adapters arrive at once. What happens?', options: ['The third waits until a slot frees and its adapter is swapped in', 'All three run in the same batch anyway', 'The server merges the third adapter into the base weights'], answer: 0, why: '--max-loras caps the different adapters in one batch. The third request waits, then its adapter is loaded from the CPU cache or storage, which adds latency.'},
+  {q: 'Why should the gateway route sql-lora requests to replicas that already have sql-lora loaded?', options: ['Other replicas cannot load adapters at all', 'It lets the replicas use a higher --max-lora-rank', 'A replica without it must load it first, adding latency and possibly evicting an adapter others need'], answer: 2, why: 'Loading on the hot path costs time and churns the slots. Adapter affinity keeps adapters hot where traffic for them already goes.'},
+]} />
+
+Further reading: [vLLM LoRA adapters](https://docs.vllm.ai/en/latest/features/lora.html) · [LoRA paper](https://arxiv.org/abs/2106.09685) · [Gateway API Inference Extension](https://gateway-api-inference-extension.sigs.k8s.io/) · [Which Replica Gets the Request (Inference Routing)](../ai/inference-routing.mdx) · [Batching Requests (Continuous Batching)](../llm/continuous-batching.mdx)

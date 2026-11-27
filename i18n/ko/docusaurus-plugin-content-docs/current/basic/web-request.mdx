@@ -187,4 +187,10 @@ curl -v -o /dev/null https://<도메인>/               # 연결, 인증서, 요
 curl -s -o /dev/null -w '%{http_code} %{time_total}s\n' https://<도메인>/   # 상태 코드와 응답 시간
 ```
 
+<Quiz questions={[
+  {q: '화면은 떴는데 목록이 비어 있다. 어느 단계에서 문제가 났을 가능성이 가장 큰가?', options: ['도메인의 DNS 조회', '화면이 뜬 뒤 보내는 데이터 요청(API)', 'HTTPS 연결 때의 인증서 확인'], answer: 1, why: '화면 파일을 받았으니 DNS·연결·인증서는 정상이다. 목록은 따로 보내는 API 요청으로 받으므로, 개발자 도구에서 그 응답의 상태 코드를 본다.'},
+  {q: '요청이 504를 돌려줬다. 다시 시도하기 전에 무엇을 염두에 둬야 하는가?', options: ['요청이 어느 서버에도 닿지 않았다', '사용자가 로그인하지 않았다', '기다리다 포기한 것이라 작업이 서버에서 계속 진행 중이거나 이미 끝났을 수 있다', '페이지가 존재하지 않는다'], answer: 2, why: '504는 뒤쪽 서버를 기다리다 시간이 초과됐다는 뜻이다. 요청이 실제로는 처리됐을 수도 있으므로 뒤쪽 서버의 응답 시간과 상태부터 확인한다.'},
+  {q: '웹 서버 1이 멈췄다. 사용자가 같은 주소로 계속 접속할 수 있는 이유는 무엇인가?', options: ['로드밸런서가 멈춘 서버를 빼고 나머지 서버로 요청을 보내기 때문이다', 'DNS가 도메인을 새 IP 주소로 자동으로 바꾸기 때문이다', '브라우저가 443 대신 80번 포트로 다시 시도하기 때문이다'], answer: 0, why: '로드밸런서는 서버 여러 대 앞에 선 대표 주소다. 멈춘 서버로는 요청을 보내지 않으므로 사용자는 어느 서버가 멈췄는지 알 필요가 없기 때문이다.'},
+]} />
+
 더 읽을거리: [HTTP 개요 (MDN)](https://developer.mozilla.org/ko/docs/Web/HTTP/Overview) · [HTTP 상태 코드 (MDN)](https://developer.mozilla.org/ko/docs/Web/HTTP/Status) · [서비스 (쿠버네티스 문서)](https://kubernetes.io/ko/docs/concepts/services-networking/service/) · [서비스 및 파드용 DNS](https://kubernetes.io/ko/docs/concepts/services-networking/dns-pod-service/)

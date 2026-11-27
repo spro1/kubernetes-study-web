@@ -201,4 +201,10 @@ kubectl get endpointslices -l kubernetes.io/service-name=<service>   # Pod IPs b
 kubectl get configmap kube-proxy -n kube-system -o jsonpath='{.data.config\.conf}' | grep mode   # kube-proxy mode (empty = iptables)
 ```
 
+<Quiz questions={[
+  {q: 'Login works, but large list queries between Pods on different nodes fail. Which layer should you suspect?', options: ['The Service NAT rules', 'The overlay MTU: the Pod-side MTU is not smaller than the physical MTU', 'DNS name resolution', 'RBAC on the Service'], answer: 1, why: 'An overlay adds an envelope header, so packets grow. If the MTUs do not match, small requests pass but large responses get cut.'},
+  {q: 'Pods on the same node talk fine, but traffic to Pods on other nodes fails. What should you check?', options: ['The overlay or direct routing setup and firewalls between nodes', 'Whether the Service has ready endpoints', 'Whether the CNI assigned the Pods an IP'], answer: 0, why: 'Same-node traffic never leaves the node. If only cross-node traffic fails, the broken layer is the delivery between nodes.'},
+  {q: 'Where does a Service IP like 10.96.12.34 get turned into a Pod IP?', options: ['On the Service\'s own virtual network device', 'On the receiving node, after it unwraps the overlay envelope', 'On the physical router between nodes', 'On the sending node, by NAT rules from kube-proxy (iptables or IPVS) or eBPF'], answer: 3, why: 'The Service IP is not attached to any device. Rules on the sending node intercept the packet and rewrite the destination to one ready Pod IP.'},
+]} />
+
 Further reading: [Cluster networking](https://kubernetes.io/docs/concepts/cluster-administration/networking/) · [Service](https://kubernetes.io/docs/concepts/services-networking/service/) · [Virtual IPs and service proxies](https://kubernetes.io/docs/reference/networking/virtual-ips/)

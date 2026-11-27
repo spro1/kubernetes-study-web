@@ -1,7 +1,7 @@
 ---
 id: infra-as-code
 title: Infrastructure as Code with Terraform
-sidebar_label: 12 · Infrastructure as Code
+sidebar_label: 16 · Infrastructure as Code
 description: Animated walkthrough of Terraform (or OpenTofu) from .tf code to init, plan and apply, the state file in a remote backend with locking, drift from console changes, replace versus update in place, and destroy
 summary: 'Code, init, plan and apply, shared state with a lock, drift, and why a -/+ in the plan deserves a second look.'
 icon: layers
@@ -224,5 +224,11 @@ terraform state show aws_instance.web   # Recorded attributes and real ID
 terraform destroy                   # Delete everything in the state (asks first)
 # OpenTofu: the same commands with tofu instead of terraform
 ```
+
+<Quiz questions={[
+  {q: 'A colleague opened port 22 on the security group in the console. The next plan proposes ~ update in place to remove it. What happens if you apply it without thinking?', options: ['Terraform adds port 22 to your code', 'The colleague\'s change is silently undone', 'The plan fails because the state is corrupted'], answer: 1, why: 'The code and state still say only 443, so Terraform moves the cloud back to match. Use plan -refresh-only to see drift, then choose on purpose.'},
+  {q: 'Changing a database\'s attribute shows -/+ and "# forces replacement" in the plan. What does that mean?', options: ['The attribute changes on the existing object and its ID stays the same', 'Only the state file is rewritten, the cloud is untouched', 'Terraform reads a data source during apply', 'The old object is destroyed and a new one is created, which for a database means data loss'], answer: 3, why: 'Some attributes cannot change on a live object, so Terraform replaces it. prevent_destroy = true makes such a plan fail.'},
+  {q: 'Two engineers run terraform apply at the same time against a remote backend with locking. What happens?', options: ['The second one fails with "Error acquiring the state lock"', 'Both run, and the state files are merged afterwards', 'The second one overwrites the first one\'s state'], answer: 0, why: 'Locking stops two applies at once, so the second fails instead of corrupting the shared state.'},
+]} />
 
 Further reading: [What is Terraform?](https://developer.hashicorp.com/terraform/intro) · [terraform plan](https://developer.hashicorp.com/terraform/cli/commands/plan) · [State](https://developer.hashicorp.com/terraform/language/state) · [State locking](https://developer.hashicorp.com/terraform/language/state/locking) · [The lifecycle meta-argument](https://developer.hashicorp.com/terraform/language/meta-arguments/lifecycle) · [OpenTofu docs](https://opentofu.org/docs/) · [How a Request Travels Inside a VPC](../cloud/vpc-request.mdx) · [Permission Checks on One API Request (IAM)](../cloud/iam-request.mdx) · [Helm and GitOps](../intermediate/gitops-sync.mdx)

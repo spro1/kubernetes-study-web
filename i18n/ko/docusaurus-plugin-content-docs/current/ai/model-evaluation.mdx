@@ -1,0 +1,241 @@
+---
+id: model-evaluation
+title: 배포 전후에 모델 평가하기
+sidebar_label: 16 · 모델 평가
+description: 실제 업무로 만든 오프라인 평가 세트, 정확 일치와 pass@k, LLM 심판의 편향과 사람 라벨로 보정하기, 오염, CI 회귀 관문, 안전·거절 평가, 품질·지연을 보는 온라인 카나리, 모델 버전별 결과 기록까지 LLM 평가를 애니메이션으로 따라간다
+summary: '실제 업무로 평가 세트를 만들고 공정하게 채점한 뒤, 새 모델·프롬프트·양자화를 CI에서 걸러 내고, 카나리에서 실제 품질과 지연으로 확인한다.'
+icon: chart
+hide_table_of_contents: true
+---
+
+# 배포 전후에 모델 평가하기
+
+새 모델, 프롬프트, 양자화는 채팅 몇 번에서는 멀쩡해 보여도 실제 업무에서 깨질 수 있다. 평가는 "괜찮아 보인다"를 비교할 수 있는 숫자로 바꾼다. 배포 전에는 오프라인으로, 배포 뒤에는 실제 트래픽으로 잰다.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '약 12분', level: '중급'}}
+  groups={[
+    {label: '운영 환경', x: 705, y: 200, w: 190, h: 235, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'cand', label: '후보', sub: '모델 · 프롬프트 · 양자화', icon: 'box', tone: 'app', x: 100, y: 110, w: 160, show: true},
+    {id: 'data', label: '평가 세트', sub: '실제 업무에서', icon: 'book', tone: 'store', x: 100, y: 300, w: 160},
+    {id: 'runner', label: '평가 실행기', sub: 'CI 작업', icon: 'gear', tone: 'cp', x: 330, y: 205, w: 160},
+    {id: 'judge', label: 'LLM 심판', sub: '열린 답 채점', icon: 'target', tone: 'node', x: 560, y: 90, w: 160},
+    {id: 'human', label: '사람 라벨', sub: '심판 보정', icon: 'user', tone: 'ext', x: 800, y: 90, w: 160},
+    {id: 'gate', label: '회귀 관문', sub: '승격 또는 차단', icon: 'shield', tone: 'cp', x: 560, y: 330, w: 160},
+    {id: 'results', label: '결과 저장소', sub: '모델 버전별', icon: 'db', tone: 'store', x: 330, y: 395, w: 160},
+    {id: 'canary', label: '카나리', sub: '트래픽 일부', icon: 'split', tone: 'node', x: 800, y: 260, w: 160},
+    {id: 'stable', label: '안정 모델', sub: '현재 버전', icon: 'server', tone: 'node', x: 800, y: 380, w: 160},
+  ]}
+  metrics={[
+    {id: 'cand', label: '후보'},
+    {id: 'base', label: '기준'},
+    {id: 'verdict', label: '판정'},
+  ]}
+  learn={[
+    {text: '데모가 아니라 실제 업무로 평가 세트 만들기', at: 1},
+    {text: '정확 일치, pass@k, 업무별 점수', at: 2},
+    {text: 'LLM 심판의 편향과 사람 라벨로 보정하기', at: 4},
+    {text: '오염된 시험 데이터가 점수를 부풀리는 이유', at: 6},
+    {text: '안전·거절 평가를 포함한 CI 회귀 관문', at: 7},
+    {text: '품질·지연을 보는 카나리·A/B와 버전별 기록', at: 8},
+  ]}
+  steps={[
+    {
+      short: '시작',
+      kind: '시작',
+      title: '"괜찮아 보이는" 더 싼 모델',
+      text: [
+        '팀은 GPU 메모리를 아끼려고 서빙 모델을 4비트 양자화 버전으로 바꾸려 한다. 손으로 채팅 몇 번 해 보니 전과 똑같아 보인다.',
+        '채팅 몇 번으로는 긴 꼬리를 알 수 없다. 드문 의도, 긴 문서, 엄격한 출력 형식 같은 것들이다. 물을 것은 "돌아가나"가 아니라 "우리 업무에서 지금 쓰는 것만큼은 되나"다.',
+      ],
+      flows: [{from: 'cand', to: 'runner', label: '새 버전', type: 'request'}],
+      focus: ['cand'],
+      values: {cand: 'chat-model q4', base: 'chat-model bf16', verdict: '—'},
+    },
+    {
+      short: '평가 세트',
+      kind: '원리',
+      title: '평가 세트는 실제 업무로 만든다',
+      text: [
+        '로그에서 실제 요청을 뽑아 개인 정보를 지우고, 항목마다 기대 답이나 채점 기준을 붙인다. 예전에 깨졌던 어렵고 드문 경우도 넣고, SQL·요약·도구 사용처럼 구간으로 묶는다.',
+        '세트는 비공개로 두고 버전을 매긴다. 트래픽과 닮은 잘 고른 수백 개 항목이 유명한 공개 벤치마크보다 더 많이 알려 준다.',
+      ],
+      flows: [{from: 'data', to: 'runner', label: '평가 세트 v7', type: 'request'}],
+      focus: ['data', 'runner'],
+      badges: {data: 'v7 · 구간 6개'},
+    },
+    {
+      short: '지표',
+      kind: '원리',
+      title: '업무마다 확인할 수 있는 방식으로 채점한다',
+      text: [
+        '짧은 사실형 답은 정규화한 뒤 정확 일치로 본다. 코드는 pass@k를 쓴다. 답을 k개 만들어 그중 하나라도 단위 테스트를 통과하면 푼 것으로 센다. 구조화된 출력은 JSON이 파싱되고 필드가 맞는지 본다.',
+        '나머지 업무는 저마다 점수가 필요하다. 에이전트는 도구와 인자가 맞는지, RAG는 출처를 달았는지, 추출은 F1을 본다. 의견보다 프로그램이 돌릴 수 있는 검사를 우선한다.',
+      ],
+      keyIdea: 'pass@1이 사용자가 한 번에 보는 결과다. pass@k가 높아도 뒤에서 답들을 시험해 하나를 고르는 장치가 없으면 소용없다.',
+      flows: [{from: 'runner', to: 'cand', label: '평가 세트 실행', type: 'request'}],
+      focus: ['runner'],
+      badges: {runner: 'EM · pass@k · JSON'},
+      values: {cand: 'SQL pass@1 71%', base: 'SQL pass@1 73%'},
+    },
+    {
+      short: '심판',
+      kind: '원리',
+      title: 'LLM 심판이 열린 답을 채점한다',
+      text: [
+        '요약이나 상담 답변에는 정답 문자열이 하나로 정해져 있지 않다. LLM 심판은 질문, 채점 기준, 답을 읽고 점수를 매기거나, 답 두 개를 비교해 나은 쪽을 고른다.',
+        '수천 개 항목도 몇 분이면 끝난다. 하지만 심판도 모델이라서, 출시 결정에 믿고 쓰기 전에 점수를 점검해야 한다.',
+      ],
+      flows: [{from: 'runner', to: 'judge', label: '답 + 기준', type: 'request'}, {from: 'judge', to: 'runner', label: '점수 1–5', type: 'response', bend: 0.2}],
+      focus: ['judge'],
+      badges: {runner: null, judge: '기준 v3'},
+    },
+    {
+      short: '편향',
+      kind: '주의',
+      title: '심판은 먼저 본 것, 긴 것, 자기 것을 좋아한다',
+      text: [
+        '알려진 심판 편향은 셋이다. 위치 편향(먼저 보여 준 답을 선호), 길이 편향(긴 답을 선호), 자기 선호(자기 모델 계열의 답을 선호).',
+        '대응은 이렇다. 쌍 비교는 순서를 바꿔 두 번 돌려 양쪽에서 같은 결과만 센다. 기준에 길이는 보지 말라고 적는다. 후보와 다른 계열의 모델을 심판으로 쓴다.',
+      ],
+      flows: [{from: 'judge', to: 'runner', label: 'A 먼저 vs B 먼저', type: 'response', bend: 0.2}],
+      focus: ['judge'],
+      status: {judge: 'warn'},
+      badges: {judge: '위치 · 길이 · 자기'},
+    },
+    {
+      short: '보정',
+      kind: '원리',
+      title: '사람 라벨로 심판을 보정한다',
+      text: [
+        '사람이 같은 기준으로 항목 일부를 채점한다. 심판과 비교해 얼마나 자주 일치하는지, 어느 구간에서 어긋나는지 본다.',
+        '어떤 구간에서 일치율이 낮으면 기준을 고치거나 그 구간은 사람이 계속 본다. 심판 모델이나 기준이 바뀌면 모든 점수가 바뀌므로 그때마다 다시 확인한다.',
+      ],
+      flows: [{from: 'human', to: 'judge', label: '일치도 확인', type: 'watch'}],
+      focus: ['human', 'judge'],
+      status: {judge: 'ok'},
+      badges: {judge: '대부분 구간 일치', human: '200개 항목'},
+    },
+    {
+      short: '오염',
+      kind: '문제',
+      title: '수상하게 높은 점수: 시험지가 새어 나갔다',
+      text: [
+        '두 번째 후보가 어떤 공개 벤치마크에서는 기준보다 훨씬 높지만, 우리 세트에서는 나을 게 없다. 학습 데이터에 그 시험 문항이 들어 있어서, 문제를 푸는 게 아니라 답을 기억하고 있을 가능성이 크다.',
+        '주 평가 세트는 비공개로 두고 절대 학습에 쓰지 않는다. 학습 데이터와 평가 항목이 겹치는지 검사하고, 시간이 지나면 새 실제 업무로 세트를 갱신한다.',
+      ],
+      flows: [{from: 'data', to: 'runner', label: '공개 세트', type: 'request'}],
+      focus: ['data', 'runner'],
+      status: {judge: null, data: 'error'},
+      badges: {judge: null, human: null, data: '학습에서 봤나?'},
+      values: {cand: {text: '공개 92% · 우리 70%', tone: 'bad'}},
+    },
+    {
+      short: '관문',
+      kind: '원리',
+      title: 'CI의 회귀 관문이 승격을 정한다',
+      text: [
+        '새 모델, 프롬프트, 양자화는 모두 CI에서 같은 평가를 거친다. 관문은 평균만이 아니라 구간마다 기준과 비교해, 어느 구간이든 정해 둔 폭보다 떨어지면 막는다.',
+        '관문은 안전·거절 평가도 돌린다. 해로운 요청은 여전히 거절해야 하고, 멀쩡한 요청을 더 자주 거절해서도 안 된다. 지연과 출력 길이도 본다. 느리거나 말이 많아진 모델은 정확도를 지켜도 사용자를 실망시킨다.',
+      ],
+      keyIdea: '평균이 아니라 구간으로 막는다. 전체로는 조금 떨어져도 가장 중요한 업무에서는 크게 떨어졌을 수 있다.',
+      flows: [
+        {from: 'runner', to: 'gate', label: '구간별 점수', type: 'request', bend: 0.1},
+        {from: 'gate', to: 'canary', label: 'q4 승격', type: 'request'},
+      ],
+      focus: ['gate'],
+      status: {data: null, gate: 'ok'},
+      badges: {data: null, gate: '모든 구간 허용 폭 안'},
+      values: {cand: '2점 안 · 거절 정상', verdict: {text: '카나리로 승격', tone: 'good'}},
+    },
+    {
+      short: '카나리',
+      kind: '원리',
+      title: '카나리로 실제 트래픽에서 확인한다',
+      text: [
+        '오프라인 세트가 모든 것을 담지는 못한다. 카나리는 실제 트래픽의 일부를 후보로 보내고, A/B 시험은 사용자를 나눈다. 나머지는 안정 모델이 처리한다.',
+        '둘 사이의 품질 신호(작업 성공, 싫어요, 재시도, 사람 상담 연결)와 지연(첫 토큰까지 시간, p95)을 비교한다. 점진 배포 도구는 비율을 단계적으로 올리다가 숫자가 한계를 넘으면 자동으로 되돌린다.',
+      ],
+      flows: [
+        {from: 'gate', to: 'canary', label: '일부', type: 'request'},
+        {from: 'gate', to: 'stable', label: '나머지', type: 'request', bend: 0.15},
+      ],
+      focus: ['canary', 'stable'],
+      status: {gate: null, canary: 'ok'},
+      badges: {gate: null, canary: 'TTFT · 성공률'},
+      values: {verdict: '카나리 진행 중'},
+    },
+    {
+      short: '기록',
+      kind: '원리',
+      title: '결과마다 무엇이 만들었는지 함께 남긴다',
+      text: [
+        '실행마다 모델 버전, 프롬프트 버전, 양자화, 서빙 엔진 설정, 평가 세트 버전, 심판 버전을 구간별 점수 옆에 기록한다.',
+        '그래야 나중에 점수가 떨어졌을 때 원인을 변경 하나로 좁히고, 옛 모델과 새 모델을 공정하게 비교한다. 버전이 붙지 않은 점수는 재현할 수 없다.',
+      ],
+      flows: [{from: 'runner', to: 'results', label: '점수 + 버전', type: 'request'}, {from: 'canary', to: 'results', label: '온라인 지표', type: 'watch', bend: 0.2}],
+      focus: ['results'],
+      status: {canary: null},
+      badges: {canary: null, results: 'q4 · 프롬프트 v12 · 세트 v7'},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '오프라인으로 회귀를 막고, 온라인으로 확인한다',
+      text: [
+        '평가 세트는 실제 업무로 만들고, 업무에 맞는 검사로 채점한다. 정확 일치, pass@k, 사람으로 보정한 심판이다. 심판 편향과 오염된 시험 데이터를 경계한다.',
+        'CI 관문은 후보마다 안전·거절을 포함해 구간별로 기준과 비교한다. 그다음 카나리가 실제 트래픽에서 품질과 지연을 확인하고, 모든 결과는 버전과 함께 저장한다.',
+      ],
+      keyIdea: '모델을 바꾼 뒤 불만이 들어오면 세 가지를 본다. 구간별로 관문을 통과했나, 평가 세트가 아직 지금 트래픽을 닮았나, 카나리에서 무엇이 보였나.',
+      flows: [
+        {from: 'cand', to: 'runner', label: '변경마다', type: 'request'},
+        {from: 'runner', to: 'gate', label: '관문', type: 'request', bend: 0.1},
+      ],
+      focus: ['runner', 'gate', 'canary'],
+      badges: {results: null},
+      values: {verdict: {text: '근거를 갖고 승격', tone: 'good'}},
+    },
+  ]}
+/>
+
+## 어떤 일에 어떤 평가를 쓰나
+
+| 방법 | 잘 맞는 곳 | 주의할 점 |
+|---|---|---|
+| 정확 일치 | 짧은 답, 라벨, ID | 대소문자·공백·문장부호를 먼저 정규화한다 |
+| pass@k | 단위 테스트가 있는 코드 | 사용자가 보는 것은 pass@1이다. 테스트가 튼튼해야 한다 |
+| 형식 검사 | JSON, 도구 호출, 스키마 | 형식이 맞아도 내용이 맞는 것은 아니다 |
+| LLM 심판 | 요약, 답변, 열린 답 | 위치·길이·자기 선호 편향. 사람으로 보정한다 |
+| 사람 검토 | 작은 표본, 새 업무, 심판 보정 | 느리고 비싸다. 기준을 분명히 한다 |
+| 안전·거절 평가 | 해로운 요청 거절, 멀쩡한 요청 응답 | 지나친 거절과 모자란 거절을 함께 본다 |
+| 온라인 카나리·A/B | 실제 트래픽, 실제 지연 | 트래픽이 충분해야 하고 자동 되돌리기가 필요하다 |
+
+## 직접 확인해 보기
+
+```bash
+# 기준 모델과 후보에 같은 평가를 돌린다 (둘 다 OpenAI 호환 API로 서빙)
+lm_eval --model local-completions --tasks gsm8k \
+  --model_args model=chat-model,base_url=http://baseline:8000/v1/completions \
+  --output_path results/baseline --log_samples
+lm_eval --model local-completions --tasks gsm8k \
+  --model_args model=chat-model,base_url=http://candidate:8000/v1/completions \
+  --output_path results/candidate --log_samples
+
+# 점수를 나란히 비교한다
+find results -name 'results_*.json' -exec jq -c '{file: input_filename, results}' {} \;
+
+# 온라인 카나리를 지켜본다 (Argo Rollouts로 배포한다면)
+kubectl argo rollouts get rollout chat-model -n llm --watch
+```
+
+<Quiz questions={[
+  {q: '후보가 평균으로는 1점 낮은데 SQL 구간에서는 9점 낮다. 관문은 어떻게 해야 하나?', options: ['평균 하락이 작으니 통과시킨다', '한 구간이 허용 폭보다 떨어졌으니 막는다', 'LLM 심판이 답을 좋아하면 통과시킨다'], answer: 1, why: '평균은 구간 회귀를 감춘다. 구간별로 막아야 중요한 업무 하나의 큰 하락을 잡는다.'},
+  {q: 'LLM 심판이 먼저 읽은 답을 더 좋아한다. 흔한 해결책은?', options: ['비교마다 순서를 바꿔 두 번 돌리고 양쪽에서 같은 결과만 센다', '채점 기준을 더 길게 쓴다', '후보 모델이 자기 답을 채점하게 한다'], answer: 0, why: '위치 편향이다. 순서를 바꾸고 일관된 결과만 남기면 사라진다. 자기 채점은 자기 선호 편향을 더한다.'},
+  {q: '어떤 모델이 공개 벤치마크에서는 비공개 평가 세트보다 훨씬 높게 나온다. 그럴듯한 이유는?', options: ['비공개 세트는 늘 더 어렵기 때문에', '공개 세트가 정확 일치를 써서', '학습 데이터에 벤치마크 문항이 들어 있었기 때문에 (오염)'], answer: 2, why: '시험 문항이 학습에 새면 모델은 답을 기억해 낸다. 실제 업무로 만든 비공개·최신 평가 세트가 이를 막는다.'},
+]} />
+
+더 읽을거리: [lm-evaluation-harness](https://github.com/EleutherAI/lm-evaluation-harness) · [Judging LLM-as-a-Judge (편향)](https://arxiv.org/abs/2306.05685) · [Evaluating LLMs Trained on Code (pass@k)](https://arxiv.org/abs/2107.03374) · [모델을 작게 만들기 (양자화)](../llm/quantization.mdx) · [Argo Rollouts로 점진적 배포하기](../feature/argo-rollouts.mdx) · [학습 작업이 모델이 되기까지](../ai/training-job.mdx)

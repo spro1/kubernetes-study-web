@@ -184,4 +184,10 @@ kubectl get pods -n shop                               # READY 2/2 means the pro
 kubectl get peerauthentication -A                      # mTLS mode (PERMISSIVE, STRICT)
 ```
 
+<Quiz questions={[
+  {q: 'You labelled the shop namespace with istio-injection=enabled, but its running pods still show READY 1/1. Why?', options: ['Injection applies only to pods created after the label; existing pods must be recreated', 'istiod needs a VirtualService before it injects proxies', 'The label must be set on each Deployment, not the namespace'], answer: 0, why: 'The injection setting applies to new pods only. Recreate the pods (for example with kubectl rollout restart) and they come back as 2/2 with a proxy.'},
+  {q: 'Which statement matches how Istio splits its work?', options: ['istiod carries every request between pods', 'The app code encrypts traffic with certificates from istiod', 'istiod pushes rules and certificates; the sidecar proxies carry requests and do mTLS', 'Kiali enforces the traffic rules'], answer: 2, why: 'istiod is the control plane: it hands out rules and certificates but does not carry requests. The proxies are the data plane that carry requests, verify each other with mTLS, and record metrics.'},
+  {q: 'Pods in a namespace without the injection label call into the mesh. What happens by default, and what changes with STRICT?', options: ['They are always rejected, by default and in STRICT', 'By default (PERMISSIVE) their plaintext requests are accepted; STRICT rejects them', 'They are given a certificate automatically, so both modes accept them'], answer: 1, why: 'Without a proxy they have no certificate and send plaintext. PERMISSIVE accepts both plaintext and mTLS, while STRICT rejects plaintext, so check for such callers before switching.'},
+]} />
+
 Further reading: [Istio concepts](https://istio.io/latest/docs/concepts/) · [Istio security (mTLS)](https://istio.io/latest/docs/concepts/security/) · [Istio observability](https://istio.io/latest/docs/concepts/observability/) · [Kiali](https://kiali.io/) · [Blocking and Allowing Traffic (NetworkPolicy)](../k8s/network-policy.mdx)

@@ -1,7 +1,7 @@
 ---
 id: workload-types
 title: Workload Types
-sidebar_label: 03 · Workload Types
+sidebar_label: 04 · Workload Types
 description: Compare in animation the ownership chain of Deployment, ReplicaSet and Pod, the StatefulSet with fixed names and storage, and the DaemonSet that runs one Pod per node
 summary: 'How Deployments, StatefulSets and DaemonSets handle Pods, and how to choose.'
 icon: layers
@@ -187,5 +187,11 @@ kubectl get statefulset,pvc -n <namespace>           # Ordinal Pods and their vo
 kubectl get daemonset -A                             # DESIRED/READY vs node count
 kubectl logs deploy/<name>                           # Logs by the higher resource name
 ```
+
+<Quiz questions={[
+  {q: 'Pod db-0 of a StatefulSet is deleted and recreated. What comes back?', options: ['A Pod with a new random suffix and an empty volume', 'A Pod named db-0 that reuses its volume data-db-0', 'A Pod named db-2, since 0 and 1 were already used'], answer: 1, why: 'A StatefulSet fixes Pod names by ordinal and gives each Pod its own volume. A recreated db-0 keeps its name and reattaches the same volume, so the data carries over.'},
+  {q: 'You need a log collector on every node, including nodes that join later. Which workload fits?', options: ['A Deployment with replicas set to the node count', 'A StatefulSet', 'A DaemonSet'], answer: 2, why: 'A DaemonSet runs one Pod per matching node and follows the node count. When a node joins, it creates a Pod there automatically.'},
+  {q: 'A script saved the IP of a Deployment Pod, and it broke after the next deploy. Why, and what should it use instead?', options: ['Pods are replaced, not repaired, so the new Pod has a different name and IP. Use a Service', 'The ReplicaSet repaired the Pod and reset its network. Restart the script', 'Pod IPs change only when the node restarts. Pin the Pod to one node'], answer: 0, why: 'On a deploy or node failure, Pods are replaced with new ones that get a new suffix and IP. A Service gives a fixed address.'},
+]} />
 
 Further reading: [Workloads (Kubernetes docs)](https://kubernetes.io/docs/concepts/workloads/) · [Deployments](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/) · [StatefulSets](https://kubernetes.io/docs/concepts/workloads/controllers/statefulset/) · [DaemonSet](https://kubernetes.io/docs/concepts/workloads/controllers/daemonset/)

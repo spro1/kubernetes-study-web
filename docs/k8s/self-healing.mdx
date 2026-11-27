@@ -191,4 +191,10 @@ kubectl get nodes                                    # NotReady nodes
 kubectl get pod <pod> -o jsonpath='{.spec.tolerations}'   # not-ready wait (300s by default)
 ```
 
+<Quiz questions={[
+  {q: 'A container exits from an unhandled error, but its node is fine. Who brings it back, and how fast?', options: ['The scheduler places a new pod on another node within minutes', 'The kubelet on the same node restarts the container within seconds', 'The ReplicaSet controller recreates the pod after 5 minutes'], answer: 1, why: 'Container restarts are handled by that node\'s kubelet alone, with no control plane involved, so it takes seconds. The pod and node stay the same.'},
+  {q: 'A pod shows CrashLoopBackOff. Where should you look for the cause?', options: ['kubectl get nodes, to find a NotReady node', 'The scheduler\'s events for the pod', 'The previous container\'s logs (kubectl logs --previous)', 'The Service endpoints'], answer: 2, why: 'CrashLoopBackOff is a symptom: the kubelet is waiting to retry a container that keeps dying. The cause is in the logs from the last run.'},
+  {q: 'A node loses power. Why does it take minutes, not seconds, before its pods run elsewhere?', options: ['Controllers mark it NotReady, then wait 5 minutes by default before replacing its pods', 'The kubelet on that node must first restart the containers 5 times', 'The scheduler only runs once every 5 minutes'], answer: 0, why: 'The node\'s kubelet stopped too, so controllers act instead. They wait (5 minutes by default) in case it is a brief blip, then a new pod is created and scheduled on another node.'},
+]} />
+
 Further reading: [Pod Lifecycle](https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/) · [Configure Liveness, Readiness and Startup Probes](https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/)

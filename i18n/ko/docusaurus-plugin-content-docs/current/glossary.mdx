@@ -1,0 +1,269 @@
+---
+id: glossary
+title: 용어집
+description: DNS와 컨테이너부터 쿠버네티스, GPU, LLM 서빙까지 K8s Flow 레슨에 나오는 용어를 한 문장으로 풀고, 각 용어를 설명하는 레슨에 연결한다.
+hide_table_of_contents: false
+displayed_sidebar: lessons
+---
+
+# 용어집
+
+레슨에 나오는 말을 짧고 쉽게 풀어 둔 곳이다. 브라우저 찾기(**Ctrl+F**, 맥은 **⌘F**)로 용어를 바로 찾으면 된다. 각 용어는 그것을 실제로 보여 주는 레슨에 연결돼 있으니, 한 문장으로 부족하면 레슨을 열어 다이어그램을 한 단계씩 넘겨 보자.
+
+## 웹과 네트워크
+
+| 용어 | 뜻 | 레슨 |
+| --- | --- | --- |
+| URL | 주소창에 치는 주소로, 스킴(`https`), 호스트 이름, 포트(생략 가능), 경로로 이뤄진다. | [주소창에 주소를 입력하면](./basic/web-request.mdx) |
+| IP address (IP 주소) | `10.0.1.15`처럼 네트워크에서 기계 하나를 가리키는 번호다. | [요청 한 번의 아래층: TCP/IP 계층](./basic/tcp-ip-layers.mdx) |
+| Port (포트) | 기계 안의 어느 프로그램이 트래픽을 받을지 고르는 번호다. HTTPS는 443을 쓴다. | [요청 한 번의 아래층: TCP/IP 계층](./basic/tcp-ip-layers.mdx) |
+| TCP | 연결을 맺고 바이트를 순서대로 전달하며, 잃어버린 것은 다시 보내는 전송 프로토콜이다. | [요청 한 번의 아래층: TCP/IP 계층](./basic/tcp-ip-layers.mdx) |
+| NAT | 패킷의 출발지나 목적지 주소를 바꿔 쓰는 것이다. 사설 기계 여러 대가 공인 IP 하나를 함께 쓸 때 쓴다. | [VPC 안에서 요청이 가는 길](./cloud/vpc-request.mdx) |
+| DNS | `www.example.com` 같은 이름을 IP 주소로 바꿔 주는 시스템이다. | [DNS가 주소를 찾아가는 길](./basic/dns-resolution.mdx) |
+| TTL | DNS 레코드나 캐시 항목 같은 저장된 답을 다시 가져오기 전까지 재사용해도 되는 시간이다. | [DNS가 주소를 찾아가는 길](./basic/dns-resolution.mdx) |
+| Load balancer (로드 밸런서) | 들어오는 요청을 여러 서버에 나눠 보내는 구성 요소다. | [주소창에 주소를 입력하면](./basic/web-request.mdx) |
+| Symmetric encryption (대칭키 암호) | 같은 비밀 키로 잠그고 여는 암호 방식이다. 빨라서 대량 트래픽에 쓴다. | [개발자에게 필요한 암호 기초](./basic/crypto-basics.mdx) |
+| Public-key cryptography (공개키 암호) | 키 한 쌍에서 한쪽 키로 암호화하거나 서명한 것을 다른 쪽 키로만 풀거나 검증할 수 있는 방식이다. | [개발자에게 필요한 암호 기초](./basic/crypto-basics.mdx) |
+| Hash (해시) | 데이터의 고정 길이 지문이다. 데이터가 조금만 바뀌어도 해시가 달라진다. | [개발자에게 필요한 암호 기초](./basic/crypto-basics.mdx) |
+| Digital signature (전자 서명) | 개인 키로 암호화한 해시로, 누가 만들었는지와 바뀌지 않았음을 증명한다. | [개발자에게 필요한 암호 기초](./basic/crypto-basics.mdx) |
+| HTTPS / TLS | HTTP를 TLS 안에 실어 보내는 것이다. TLS는 연결을 암호화하고 서버의 신원을 증명한다. | [HTTPS와 인증서](./basic/https-cert.mdx) |
+| Certificate (인증서) | 도메인 이름과 공개 키를 묶어 서명한 문서다. | [HTTPS와 인증서](./basic/https-cert.mdx) |
+| Certificate authority (CA, 인증 기관) | 인증서에 서명하는 믿을 만한 기관이다. 클라이언트는 이미 믿는 CA까지 이어지는 인증서를 믿는다. | [HTTPS와 인증서](./basic/https-cert.mdx) |
+
+## 리눅스와 컨테이너
+
+| 용어 | 뜻 | 레슨 |
+| --- | --- | --- |
+| Process (프로세스) | 실행 중인 프로그램으로, 자기 ID(PID)와 메모리, 열린 파일을 가진다. | [쿠버네티스를 위한 리눅스 기초](./basic/linux-basics.mdx) |
+| SSH | 암호화된 연결로 원격 기계에 로그인하고 명령을 실행하는 프로토콜이다. | [SSH 키로 서버에 들어가기까지](./basic/ssh-keys.mdx) |
+| SSH key pair (SSH 키 쌍) | 내가 갖는 개인 키와 서버에 올려 두는 공개 키로, 비밀번호 없이 로그인할 때 쓴다. | [SSH 키로 서버에 들어가기까지](./basic/ssh-keys.mdx) |
+| Virtual machine (VM, 가상 머신) | 물리 하드웨어 위에 흉내 낸, 자기 운영체제를 가진 컴퓨터 한 대다. | [서버 한 대에서 컨테이너까지](./basic/server-to-container.mdx) |
+| Container (컨테이너) | 호스트 커널을 함께 쓰지만 자기만의 파일, 네트워크, 프로세스 목록을 보는 격리된 프로세스다. | [서버 한 대에서 컨테이너까지](./basic/server-to-container.mdx) |
+| Linux namespace (리눅스 네임스페이스) | 프로세스에 PID, 네트워크, 마운트 같은 것의 독자적인 시야를 주는 커널 기능으로, 컨테이너 격리의 바탕이다. | [리눅스는 컨테이너를 어떻게 격리하나](./basic/linux-isolation.mdx) |
+| cgroup | 프로세스 묶음이 쓸 수 있는 CPU와 메모리를 제한하고 측정하는 커널 기능이다. | [리눅스는 컨테이너를 어떻게 격리하나](./basic/linux-isolation.mdx) |
+| Container image (컨테이너 이미지) | 컨테이너를 띄우는 데 쓰는, 읽기 전용 파일 시스템과 설정을 묶은 꾸러미다. | [이미지가 만들어지고 실행되기까지](./basic/container-image.mdx) |
+| Registry (레지스트리) | 이미지를 저장하고 `push`와 `pull`에 응답하는 서버다. | [이미지가 만들어지고 실행되기까지](./basic/container-image.mdx) |
+| Tag / digest (태그 / 다이제스트) | 태그(`:1.2`)는 옮겨 붙일 수 있는 버전 이름이고, 다이제스트(`sha256:...`)는 정확한 내용의 고정 해시다. | [이미지가 만들어지고 실행되기까지](./basic/container-image.mdx) |
+| Container runtime (컨테이너 런타임) | 노드에서 이미지를 받아 컨테이너를 시작하고 멈추는 소프트웨어다(containerd 등). | [파드가 뜨기까지](./k8s/pod-startup.mdx) |
+| Merge request / pull request (머지 리퀘스트 / 풀 리퀘스트) | 브랜치를 리뷰받고 메인 브랜치에 합쳐 달라는 요청이다. | [브랜치에서 머지 리퀘스트까지](./basic/git-merge-request.mdx) |
+| CI/CD | 변경마다 자동으로 테스트하고 빌드하며(CI) 환경에 배포하는(CD) 것이다. | [파이프라인이 도는 순서](./basic/cicd-pipeline.mdx) |
+| kind | 도커 컨테이너 안에 로컬 쿠버네티스 클러스터를 띄우는 도구로, 실습에 쓰기 좋다. | [노트북에 실습 클러스터 만들기](./basic/lab-cluster.mdx) |
+
+## 애플리케이션 기초 (HTTP·인증·데이터)
+
+| 용어 | 뜻 | 레슨 |
+| --- | --- | --- |
+| Status code (상태 코드) | `200 OK`, `404 Not Found`, `503 Service Unavailable`처럼 요청 결과를 알리는 세 자리 숫자다. | [주소창에 주소를 입력하면](./basic/web-request.mdx) |
+| HTTP/2 | TCP 연결 하나로 여러 요청을 동시에 보내는(멀티플렉싱) HTTP 버전이다. | [HTTP/1.1, HTTP/2, HTTP/3](./basic/http-versions.mdx) |
+| HTTP/3 / QUIC | UDP 기반 전송인 QUIC 위에서 도는 HTTP 버전으로, 패킷 하나를 잃어도 다른 스트림이 멈추지 않는다. | [HTTP/1.1, HTTP/2, HTTP/3](./basic/http-versions.mdx) |
+| Reverse proxy (리버스 프록시) | 앱 앞에서 클라이언트 요청을 받아 알맞은 백엔드로 넘기는 서버다. | [리버스 프록시와 로드밸런싱](./basic/reverse-proxy.mdx) |
+| JWT | 누구인지, 언제 만료되는지 같은 클레임을 담은 서명된 토큰으로, 서버가 조회 없이 검증할 수 있다. | [로그인은 이렇게 동작한다 (세션, JWT, OIDC)](./basic/auth-login.mdx) |
+| OIDC | OAuth 2.0 위의 로그인 표준으로, ID 공급자가 사용자가 누구인지 담은 ID 토큰을 발급한다. | [로그인은 이렇게 동작한다 (세션, JWT, OIDC)](./basic/auth-login.mdx) |
+| Transaction (트랜잭션) | 모두 성공하거나 모두 되돌려지는 데이터베이스 변경 묶음이다. | [앱이 데이터베이스에 저장할 때](./basic/database-basics.mdx) |
+| WAL (write-ahead log, 선행 기록 로그) | 데이터베이스가 변경을 먼저 적어 두는 로그로, 장애 뒤에 이를 보고 복구한다. | [앱이 데이터베이스에 저장할 때](./basic/database-basics.mdx) |
+| Cache hit / miss (캐시 적중 / 실패) | 적중은 데이터가 이미 캐시에 있는 것이고, 실패는 느린 원본에서 가져와야 하는 것이다. | [애플리케이션 캐시는 이렇게 움직인다](./basic/caching.mdx) |
+| Message queue (메시지 큐) | 생산자가 메시지를 넣고 소비자가 나중에 꺼내 가는 버퍼로, 둘이 같은 속도로 돌 필요가 없게 한다. | [메시지 큐가 서비스를 떼어 놓는 방식](./basic/message-queue.mdx) |
+
+## 클라우드
+
+| 용어 | 뜻 | 레슨 |
+| --- | --- | --- |
+| IaaS / PaaS / SaaS | 클라우드가 인프라만, 플랫폼까지, 애플리케이션 전체까지 맡는 서비스 모델이다. | [누가 어디까지 맡나 (IaaS·PaaS·SaaS)](./cloud/service-models.mdx) |
+| Region (리전) | 클라우드가 데이터 센터 묶음을 운영하는 지리적 지역이다(서울 등). | [가용 영역 하나가 멈추면](./cloud/az-failover.mdx) |
+| Availability zone (AZ, 가용 영역) | 리전 안에서 전원과 네트워크가 분리된 데이터 센터 묶음으로, 하나가 멈춰도 나머지는 산다. | [가용 영역 하나가 멈추면](./cloud/az-failover.mdx) |
+| VPC | 클라우드 안에 만든 나만의 사설 네트워크다. | [VPC 안에서 요청이 가는 길](./cloud/vpc-request.mdx) |
+| Subnet (서브넷) | 가용 영역 하나에 속한 VPC 안의 IP 대역이다. 퍼블릭 서브넷은 인터넷으로 바로 나가고, 프라이빗 서브넷은 그렇지 않다. | [VPC 안에서 요청이 가는 길](./cloud/vpc-request.mdx) |
+| Security group (보안 그룹) | VM이나 네트워크 인터페이스에 붙어 들어오고 나가는 트래픽을 허용 목록으로 거르는 상태 기반 방화벽이다. | [VPC 안에서 요청이 가는 길](./cloud/vpc-request.mdx) |
+| Auto Scaling group (오토스케일링 그룹) | 목표 대수나 부하에 맞춰 클라우드가 늘리고 줄이고 교체하는 같은 모양의 VM 묶음이다. | [가상 머신 자동 증감 (오토스케일링 그룹)](./cloud/auto-scaling-group.mdx) |
+| IAM | 누가(사용자, 역할) 어떤 리소스에 어떤 동작을 할 수 있는지 정하는 클라우드 서비스다. | [API 요청 하나의 권한 검사 (IAM)](./cloud/iam-request.mdx) |
+| SSO / federation (SSO / 페더레이션) | 회사 ID 공급자에서 한 번 로그인하면 SAML이나 OIDC로 클라우드 계정 같은 다른 시스템도 믿어 주는 방식이다. | [사람을 위한 싱글 사인온 (SSO와 페더레이션)](./cloud/sso-federation.mdx) |
+| KMS | 암호화 키를 보관하고, 키를 밖으로 내주지 않고 그 키로 데이터를 암호화·복호화하는 관리형 서비스다. | [클라우드 KMS가 데이터를 암호화하는 방식 (봉투 암호화)](./cloud/kms-encryption.mdx) |
+| Object storage (오브젝트 스토리지) | 파일을 버킷 안의 객체로 두고 HTTP로 키를 지정해 읽고 쓰는 저장소다(S3 등). | [오브젝트 스토리지는 이렇게 움직인다](./cloud/object-storage.mdx) |
+| Managed database (관리형 데이터베이스) | 백업, 패치, 장애 조치를 클라우드가 대신 맡아 주는 데이터베이스다. | [매니지드 데이터베이스가 대신 해 주는 일](./cloud/managed-database.mdx) |
+| CDN | 사용자 가까운 엣지 서버가 콘텐츠를 캐시해, 모든 요청이 원본까지 가지 않게 하는 네트워크다. | [CDN이 요청에 답하는 방식](./cloud/cdn.mdx) |
+| WAF / DDoS protection (WAF / DDoS 방어) | WAF는 HTTP 요청을 검사해 SQL 인젝션 같은 공격을 막고, DDoS 방어는 서비스를 쓰러뜨리려는 트래픽 홍수를 흡수한다. | [공개 엔드포인트 지키기 (WAF와 DDoS)](./cloud/waf-ddos.mdx) |
+| Serverless function (서버리스 함수) | 이벤트가 올 때만 클라우드가 실행하는 코드로, 쉴 때는 0까지 줄고 호출 단위로 과금된다. | [서버리스 함수는 이렇게 실행된다](./cloud/serverless.mdx) |
+| VPC peering (VPC 피어링) | 두 VPC를 사설로 이어 사설 IP로 통신하게 하는 연결이다. | [네트워크 잇기: 피어링·트랜짓·VPN·프라이빗 엔드포인트](./cloud/hybrid-network.mdx) |
+| RPO / RTO | RPO는 잃어도 되는 데이터의 양이고, RTO는 멈춰 있어도 되는 시간이다. | [리전 전체가 멈추면](./cloud/multi-region-dr.mdx) |
+| Infrastructure as code (IaC, 코드형 인프라) | 콘솔을 클릭하는 대신 인프라를 파일로 적고 테라폼 같은 도구로 적용하는 것이다. | [테라폼으로 하는 코드형 인프라](./cloud/infra-as-code.mdx) |
+| Managed Kubernetes (관리형 쿠버네티스) | 컨트롤 플레인은 클라우드가 운영하고 워크로드는 내가 운영하는 서비스다(EKS, GKE, AKS 등). | [관리형 쿠버네티스 — 누가 무엇을 운영하나](./cloud/managed-kubernetes.mdx) |
+
+## 쿠버네티스 오브젝트
+
+| 용어 | 뜻 | 레슨 |
+| --- | --- | --- |
+| Cluster (클러스터) | 쿠버네티스 컨트롤 플레인 하나가 함께 관리하는 기계(노드) 묶음이다. | [파드가 뜨기까지](./k8s/pod-startup.mdx) |
+| Control plane (컨트롤 플레인) | 클러스터 상태를 저장하고 그에 따라 움직이는 구성 요소들로, API 서버, etcd, 스케줄러, 컨트롤러 매니저가 있다. | [파드가 뜨기까지](./k8s/pod-startup.mdx) |
+| Node (노드) | 파드를 실행하는 클러스터의 기계 한 대다(VM 또는 물리 서버). | [파드가 뜨기까지](./k8s/pod-startup.mdx) |
+| API server (API 서버) | 클러스터의 정문으로, 오브젝트를 읽고 쓰는 모든 요청이 여기를 지난다. | [API 요청이 저장되기까지](./advanced/api-request-path.mdx) |
+| etcd | 컨트롤 플레인이 모든 오브젝트를 저장하는 키-값 데이터베이스다. | [컨트롤 플레인 고가용성과 etcd 쿼럼](./advanced/etcd-quorum.mdx) |
+| Scheduler (스케줄러) | 새 파드마다 올라갈 노드를 고르는 구성 요소다. | [파드를 어느 노드에 둘까 (스케줄링)](./k8s/scheduling.mdx) |
+| Controller (컨트롤러) | 오브젝트를 지켜보며 실제 상태가 원하는 상태와 같아질 때까지 계속 고치는 루프다. | [원하는 상태와 컨트롤 루프](./basic/desired-state.mdx) |
+| Desired state (원하는 상태) | 레플리카 3개처럼 내가 원한다고 선언한 것으로, 컨트롤러가 이를 현실로 만든다. | [원하는 상태와 컨트롤 루프](./basic/desired-state.mdx) |
+| kubelet | 모든 노드에 있는 에이전트로, 배정된 파드의 컨테이너를 띄우고 상태를 보고한다. | [파드가 뜨기까지](./k8s/pod-startup.mdx) |
+| kubectl | API 서버와 대화하는 명령줄 도구다. | [매니페스트 읽고 적용하기](./k8s/manifest-anatomy.mdx) |
+| Manifest (매니페스트) | `apiVersion`, `kind`, `metadata`, `spec`으로 오브젝트를 적은 YAML 파일이다. | [매니페스트 읽고 적용하기](./k8s/manifest-anatomy.mdx) |
+| Label / selector (레이블 / 셀렉터) | 레이블은 오브젝트에 붙이는 키-값 꼬리표이고, 셀렉터는 그 레이블로 오브젝트를 고른다. | [매니페스트 읽고 적용하기](./k8s/manifest-anatomy.mdx) |
+| Namespace (네임스페이스) | 클러스터 안에서 오브젝트를 묶는 이름 붙은 칸으로, 팀이나 환경을 나눌 때 쓴다. | [네임스페이스와 리소스 쿼터](./feature/namespace-quota.mdx) |
+| Pod (파드) | 쿠버네티스가 실행하는 가장 작은 단위로, 네트워크 주소와 볼륨을 함께 쓰는 컨테이너 하나 이상이다. | [파드가 뜨기까지](./k8s/pod-startup.mdx) |
+| Deployment (디플로이먼트) | 같은 모양의 상태 없는 파드를 정해진 수만큼 유지하고 새 버전을 배포하는 오브젝트다. | [워크로드 종류](./basic/workload-types.mdx) |
+| ReplicaSet (레플리카셋) | 디플로이먼트가 만드는 오브젝트로, 한 버전의 파드를 정해진 수만큼 유지한다. | [무중단 배포 (롤링 업데이트)](./k8s/rolling-update.mdx) |
+| DaemonSet (데몬셋) | 모든 노드(또는 조건에 맞는 노드)에 파드를 하나씩 띄우는 오브젝트다. | [워크로드 종류](./basic/workload-types.mdx) |
+| StatefulSet (스테이트풀셋) | 데이터베이스처럼 고정된 이름과 자기 저장소가 필요한 파드를 위한 오브젝트다. | [스테이트풀셋과 데이터베이스](./intermediate/statefulset.mdx) |
+| Job / CronJob (잡 / 크론잡) | 잡은 작업이 끝날 때까지 파드를 돌리고, 크론잡은 일정에 맞춰 잡을 만든다. | [한 번 돌고 끝나는 일 (Job·CronJob)](./k8s/job-cronjob.mdx) |
+| ConfigMap (컨피그맵) | 파드가 환경 변수나 파일로 읽는, 비밀이 아닌 설정을 담는 오브젝트다. | [설정과 비밀값 (ConfigMap·Secret)](./k8s/config-secret.mdx) |
+| Secret (시크릿) | 비밀번호 같은 민감한 값을 담는 오브젝트다. 기본으로는 base64 인코딩일 뿐 암호화가 아니다. | [설정과 비밀값 (ConfigMap·Secret)](./k8s/config-secret.mdx) |
+| Init / sidecar container (init / 사이드카 컨테이너) | init 컨테이너는 앱이 뜨기 전에 끝까지 실행되고, 사이드카는 같은 파드에서 앱 옆에 함께 돈다(로그 수집기, 프록시 등). | [멀티 컨테이너 파드 — init과 사이드카 (CKAD)](./cert/multi-container.mdx) |
+| imagePullSecrets | 레지스트리 자격 증명을 담은 시크릿을 가리켜, kubelet이 프라이빗 레지스트리에서 이미지를 받게 한다. | [사설 레지스트리에서 이미지 받기](./k8s/private-registry.mdx) |
+| Finalizer (파이널라이저) | 오브젝트에 붙은 표시로, 어떤 컨트롤러가 정리를 마치고 떼어 낼 때까지 삭제를 막는다. | [삭제는 생각보다 복잡하다](./advanced/deletion-finalizer.mdx) |
+| CRD | CustomResourceDefinition으로, 쿠버네티스 API에 새 오브젝트 종류를 추가한다. | [CRD와 오퍼레이터](./advanced/crd-operator.mdx) |
+| Operator (오퍼레이터) | 데이터베이스 같은 특정 앱을 운영하는 방법을 담은, 커스텀 리소스용 컨트롤러다. | [CRD와 오퍼레이터](./advanced/crd-operator.mdx) |
+
+## 쿠버네티스 네트워크
+
+| 용어 | 뜻 | 레슨 |
+| --- | --- | --- |
+| Service (서비스) | 계속 바뀌는 파드 묶음 앞에 놓인 고정 가상 주소이자 DNS 이름이다. | [이름으로 찾아가기 (Service·DNS)](./k8s/service-dns.mdx) |
+| ClusterIP | 클러스터 안에서만 닿는 기본 Service 종류다. | [서비스 종류 (ClusterIP · NodePort · LoadBalancer)](./feature/service-types.mdx) |
+| NodePort | 모든 노드에 같은 포트를 열어 밖에서 Service에 닿게 하는 종류다. | [서비스 종류 (ClusterIP · NodePort · LoadBalancer)](./feature/service-types.mdx) |
+| LoadBalancer (Service 종류) | 클라우드에 노드를 가리키는 외부 로드 밸런서를 요청하는 Service 종류다. | [서비스 종류 (ClusterIP · NodePort · LoadBalancer)](./feature/service-types.mdx) |
+| EndpointSlice (엔드포인트슬라이스) | Service 뒤의 준비된 파드 IP 목록으로, 컨트롤러가 최신으로 유지한다. | [요청이 파드에 닿기까지](./k8s/traffic.mdx) |
+| kube-proxy | Service IP가 실제 파드 IP로 가도록 iptables나 IPVS 규칙을 심는 노드 구성 요소다. | [요청이 파드에 닿기까지](./k8s/traffic.mdx) |
+| CoreDNS | `web.default.svc.cluster.local` 같은 이름에 답하는 클러스터 DNS 서버다. | [이름으로 찾아가기 (Service·DNS)](./k8s/service-dns.mdx) |
+| Ingress (인그레스) | 바깥 트래픽을 Service로 보내는 호스트·경로 기반 HTTP 라우팅 규칙을 담은 오브젝트다. | [인그레스 규칙과 TLS](./feature/ingress.mdx) |
+| Ingress controller (인그레스 컨트롤러) | 인그레스 오브젝트를 읽고 실제로 트래픽을 라우팅하는 프록시다(NGINX 등). | [인그레스 규칙과 TLS](./feature/ingress.mdx) |
+| Gateway API (게이트웨이 API) | 인프라 역할과 앱 라우팅 역할을 나눈 새 라우팅 오브젝트 묶음이다(GatewayClass, Gateway, HTTPRoute). | [게이트웨이 API HTTPRoute가 파드에 닿기까지](./feature/gateway-api.mdx) |
+| HTTPRoute | HTTP 요청을 조건으로 골라 백엔드 Service로 보내는 게이트웨이 API 오브젝트다. | [게이트웨이 API HTTPRoute가 파드에 닿기까지](./feature/gateway-api.mdx) |
+| CNI | 파드마다 IP를 주고 파드 네트워크를 잇는 플러그인 규격이다(Calico, Cilium 등). | [파드에서 파드로 가는 패킷](./advanced/packet-path.mdx) |
+| NetworkPolicy (네트워크 정책) | 고른 파드로 들어가고 나가는 트래픽 가운데 적힌 것만 허용하는 오브젝트다. | [통신 막고 열기 (네트워크 정책)](./k8s/network-policy.mdx) |
+| Service mesh (서비스 메시) | 앱을 고치지 않고 서비스 사이의 암호화, 재시도, 트래픽 라우팅을 맡는 프록시 계층이다. | [서비스 메시 ① 사이드카와 상호 인증](./feature/mesh-sidecar.mdx) |
+| mTLS (상호 TLS) | 양쪽이 모두 인증서를 내밀어 서로의 신원을 증명하는 TLS다. | [서비스 메시 ① 사이드카와 상호 인증](./feature/mesh-sidecar.mdx) |
+| VirtualService / DestinationRule | Istio 오브젝트다. VirtualService는 요청을 어디로 보낼지(90/10 분할 등) 정하고, DestinationRule은 서브셋과 정책을 정의한다. | [서비스 메시 ② 트래픽 나누기](./feature/mesh-traffic.mdx) |
+| Mesh gateway (메시 게이트웨이) | 메시 가장자리에서 들어오고 나가는 트래픽을 맡는 Envoy 프록시다. | [서비스 메시 ③ 메시 게이트웨이](./feature/mesh-gateway.mdx) |
+| Ambient mode (앰비언트 모드) | 사이드카 없는 Istio 모드로, 노드마다 있는 ztunnel이 mTLS를 맡고 필요하면 waypoint 프록시가 HTTP 규칙을 맡는다. | [서비스 메시 ④ 사이드카 없는 앰비언트 모드](./feature/mesh-ambient.mdx) |
+
+## 스케줄링과 스케일링
+
+| 용어 | 뜻 | 레슨 |
+| --- | --- | --- |
+| Requests (요청값) | 컨테이너에 보장되는 CPU와 메모리로, 스케줄러는 이 숫자로 파드를 배치한다. | [요청값과 상한값](./intermediate/requests-limits.mdx) |
+| Limits (상한값) | 컨테이너가 쓸 수 있는 최대 CPU나 메모리다. CPU를 넘기면 스로틀링되고, 메모리를 넘기면 죽는다. | [요청값과 상한값](./intermediate/requests-limits.mdx) |
+| QoS class (QoS 클래스) | 요청값과 상한값으로 정해지는 Guaranteed, Burstable, BestEffort로, 자원이 부족할 때 누가 먼저 쫓겨날지 가른다. | [요청값과 상한값](./intermediate/requests-limits.mdx) |
+| OOMKilled | 메모리 상한을 넘겨 커널이 죽인 컨테이너의 상태다. | [요청값과 상한값](./intermediate/requests-limits.mdx) |
+| Liveness probe (활성 프로브) | 실패하면 컨테이너를 다시 시작하는 주기적인 검사다. | [헬스 체크 — 살아 있나, 받을 준비가 됐나](./intermediate/probes.mdx) |
+| Readiness probe (준비 프로브) | 실패하는 동안 재시작 없이 파드를 Service 엔드포인트에서 빼는 검사다. | [헬스 체크 — 살아 있나, 받을 준비가 됐나](./intermediate/probes.mdx) |
+| Rolling update (롤링 업데이트) | 파드를 몇 개씩 바꿔 가며 새 버전을 배포해 서비스가 멈추지 않게 하는 방식이다. | [무중단 배포 (롤링 업데이트)](./k8s/rolling-update.mdx) |
+| Blue/green deployment (블루/그린 배포) | 새 버전을 옛 버전 옆에 띄워 두고 트래픽을 한 번에 넘기는 방식이다. | [블루/그린과 카나리를 기본 요소로 (CKAD)](./cert/deploy-strategies.mdx) |
+| Canary (카나리) | 새 버전에 트래픽을 조금만 먼저 보내 보고, 괜찮으면 비율을 늘리는 방식이다. | [블루/그린과 카나리를 기본 요소로 (CKAD)](./cert/deploy-strategies.mdx) |
+| Self-healing (자가 치유) | 쿠버네티스가 실패한 컨테이너를 다시 띄우고 잃은 파드를 채워 원하는 수를 지키는 것이다. | [파드가 죽으면 (자가 치유)](./k8s/self-healing.mdx) |
+| CrashLoopBackOff | 컨테이너가 계속 죽어서 kubelet이 재시작 사이 대기 시간을 점점 늘리는 상태다. | [상태를 세 단계로 읽고 문제 확인하기](./intermediate/troubleshoot-status.mdx) |
+| Graceful shutdown (정상 종료) | 파드를 먼저 트래픽에서 빼고 SIGTERM을 보내, 처리 중인 요청을 끝내고 내려가게 하는 것이다. | [정상 종료 — 요청을 잃지 않고 내려가기](./intermediate/graceful-shutdown.mdx) |
+| HPA | Horizontal Pod Autoscaler로, CPU 같은 지표에 따라 레플리카 수를 바꾼다. | [부하에 맞춰 늘어나기 (HPA)](./k8s/autoscaling.mdx) |
+| VPA | Vertical Pod Autoscaler로, 파드의 CPU·메모리 요청값을 추천하거나 직접 바꾼다. | [파드 크기 자동 조정 (VPA)](./feature/vpa.mdx) |
+| Cluster Autoscaler / Karpenter | 파드를 놓을 자리가 없으면 노드를 더하고, 비어 있는 노드는 빼는 도구다. | [노드를 늘리고 줄이기 (Cluster Autoscaler와 Karpenter)](./k8s/node-autoscaling.mdx) |
+| KEDA | 큐 길이 같은 이벤트 소스를 보고 워크로드를 늘리고 줄이는 오토스케일러로, 0까지 줄일 수 있다. | [KEDA로 이벤트에 맞춰 늘리기](./k8s/keda.mdx) |
+| Node affinity (노드 어피니티) | 특정 레이블을 가진 노드를 반드시 또는 되도록 고르게 하는 파드 규칙이다. | [파드를 어느 노드에 둘까 (스케줄링)](./k8s/scheduling.mdx) |
+| Taint / toleration (테인트 / 톨러레이션) | 테인트는 노드에서 파드를 밀어내고, 맞는 톨러레이션을 가진 파드만 그 노드에 올라갈 수 있다. | [파드를 어느 노드에 둘까 (스케줄링)](./k8s/scheduling.mdx) |
+| Topology spread constraints (토폴로지 분산 제약) | 워크로드의 파드를 영역이나 노드에 고르게 펼치는 규칙이다. | [파드를 존에 고르게 펼치기 (토폴로지 분산 제약)](./k8s/topology-spread.mdx) |
+| PriorityClass / preemption (우선순위 / 선점) | 파드에 우선순위를 주고, 자리가 없으면 스케줄러가 낮은 우선순위 파드를 쫓아내 높은 파드를 앉힌다. | [우선순위와 선점](./advanced/priority-preemption.mdx) |
+| Cordon / drain (코든 / 드레인) | 코든은 노드에 새 파드가 못 오게 막고, 드레인은 거기에 더해 파드를 내보내 노드를 정비할 수 있게 한다. | [노드 비우기와 클러스터 업그레이드](./k8s/node-drain.mdx) |
+| PodDisruptionBudget (PDB) | 드레인 같은 자발적 축출 때 한 앱의 파드가 동시에 몇 개까지 빠질 수 있는지 정한 한도다. | [노드 비우기와 클러스터 업그레이드](./k8s/node-drain.mdx) |
+| ResourceQuota / LimitRange | ResourceQuota는 네임스페이스 전체 자원 총량을 묶고, LimitRange는 컨테이너별 기본값과 범위를 정한다. | [네임스페이스와 리소스 쿼터](./feature/namespace-quota.mdx) |
+
+## 스토리지
+
+| 용어 | 뜻 | 레슨 |
+| --- | --- | --- |
+| Volume (볼륨) | 컨테이너에 마운트되는 디렉터리로, 컨테이너가 재시작돼도 남을 수 있다. | [저장 공간이 붙기까지 (PVC·PV)](./k8s/storage-volume.mdx) |
+| PersistentVolume (PV) | 클러스터에 등록된 실제 저장 공간 한 조각이다(클라우드 디스크, NFS 공유 등). | [저장 공간이 붙기까지 (PVC·PV)](./k8s/storage-volume.mdx) |
+| PersistentVolumeClaim (PVC) | 파드가 크기와 접근 모드를 정해 저장 공간을 달라는 요청으로, 맞는 PV에 묶인다. | [저장 공간이 붙기까지 (PVC·PV)](./k8s/storage-volume.mdx) |
+| StorageClass (스토리지클래스) | PV를 필요할 때 만들 때 어떤 프로비저너와 설정을 쓸지 정한 틀이다. | [저장 공간이 붙기까지 (PVC·PV)](./k8s/storage-volume.mdx) |
+| CSI driver (CSI 드라이버) | 쿠버네티스가 특정 저장 시스템을 만들고 붙이고 마운트하게 해 주는 플러그인이다. | [볼륨이 붙는 시점과 장애](./advanced/volume-binding.mdx) |
+| WaitForFirstConsumer | 파드가 스케줄될 때까지 볼륨 생성을 미루는 바인딩 모드로, 디스크가 파드와 같은 영역에 생기게 한다. | [볼륨이 붙는 시점과 장애](./advanced/volume-binding.mdx) |
+| Velero | 쿠버네티스 오브젝트와 볼륨 스냅샷을 백업하고 복구하는 도구다. | [클러스터 백업과 복구](./advanced/cluster-backup.mdx) |
+
+## 보안
+
+| 용어 | 뜻 | 레슨 |
+| --- | --- | --- |
+| Authentication / authorization (인증 / 인가) | 인증은 누구인지 확인하고, 인가는 무엇을 해도 되는지 확인한다. | [API 요청이 저장되기까지](./advanced/api-request-path.mdx) |
+| RBAC | 역할 기반 접근 제어로, 권한을 역할로 묶고 그 역할을 사용자나 서비스 어카운트에 준다. | [누가 무엇을 할 수 있나 (RBAC)](./k8s/rbac.mdx) |
+| Role / ClusterRole / RoleBinding | Role(네임스페이스 하나)이나 ClusterRole(클러스터 전체)은 리소스에 허용된 동작을 적고, RoleBinding은 그것을 사용자, 그룹, 서비스 어카운트에 준다. | [누가 무엇을 할 수 있나 (RBAC)](./k8s/rbac.mdx) |
+| ServiceAccount (서비스 어카운트) | 파드 안에서 도는 프로그램이 API 서버를 부를 때 쓰는 신원이다. | [파드는 자신을 어떻게 증명하나 (서비스 어카운트 토큰)](./advanced/serviceaccount-token.mdx) |
+| Projected token (프로젝티드 토큰) | kubelet이 파드에 마운트하고 갱신해 주는, 수명이 짧고 대상(audience)이 정해진 서비스 어카운트 토큰이다. | [파드는 자신을 어떻게 증명하나 (서비스 어카운트 토큰)](./advanced/serviceaccount-token.mdx) |
+| Admission control (어드미션 제어) | 인가 다음 단계로, 웹훅이나 정책이 오브젝트를 저장 전에 거부하거나 고칠 수 있다. | [CEL과 웹훅으로 거는 어드미션 정책](./advanced/admission-policy.mdx) |
+| ValidatingAdmissionPolicy | CEL 식으로 쓰는 내장 어드미션 검사로, 웹훅 서버가 필요 없다. | [CEL과 웹훅으로 거는 어드미션 정책](./advanced/admission-policy.mdx) |
+| Pod Security Standards (파드 보안 기준) | 파드가 할 수 있는 일을 제한하는 세 단계(privileged, baseline, restricted)로, 네임스페이스 단위로 적용한다. | [파드 보안 기준과 securityContext](./advanced/pod-security.mdx) |
+| securityContext | `runAsNonRoot`, 권한(capability) 빼기, 읽기 전용 루트 파일 시스템 같은 파드·컨테이너 설정이다. | [파드 보안 기준과 securityContext](./advanced/pod-security.mdx) |
+| Encryption at rest (저장 시 암호화) | 시크릿을 etcd에 쓰기 전에 암호화해, 디스크나 백업을 도둑맞아도 드러나지 않게 하는 것이다. | [시크릿을 안전하게 지키기](./advanced/secret-management.mdx) |
+| cert-manager | TLS 인증서를 요청하고 쿠버네티스 시크릿으로 저장하고 갱신하는 컨트롤러다. | [cert-manager로 TLS 인증서 자동 발급하기](./advanced/cert-manager.mdx) |
+| SBOM | 소프트웨어 자재 명세서로, 이미지 안에 든 모든 패키지와 버전의 목록이다. | [이미지와 공급망 보안](./advanced/supply-chain.mdx) |
+| Image signing (이미지 서명) | cosign 등으로 이미지 다이제스트에 서명해, 실행 전에 누가 만들었는지 클러스터가 검증하게 하는 것이다. | [이미지와 공급망 보안](./advanced/supply-chain.mdx) |
+| Runtime security (런타임 보안) | Falco 등으로 컨테이너가 실제로 하는 일을 지켜보고, 셸이 열리는 것 같은 이상 행동에 경보를 내는 것이다. | [런타임 보안 — 이상 행동 잡기 (CKS)](./cert/runtime-security.mdx) |
+| Audit log (감사 로그) | 누가 언제 어떤 오브젝트에 무엇을 했는지 API 서버가 남기는 기록이다. | [감사 로그](./advanced/audit-log.mdx) |
+| 4C | Cloud, Cluster, Container, Code로 나눈 클라우드 네이티브 보안의 네 층으로, 각 층은 바깥 층에 기댄다. | [4C와 위협 모델로 클러스터 보기 (KCSA·KCNA)](./cert/threat-model.mdx) |
+
+## 운영과 관측
+
+| 용어 | 뜻 | 레슨 |
+| --- | --- | --- |
+| Helm chart / release (헬름 차트 / 릴리스) | 차트는 템플릿 매니페스트와 기본값을 묶은 꾸러미이고, 릴리스는 그것을 설치한 하나의 사본으로 되돌릴 수 있는 리비전을 가진다. | [헬름 릴리스의 설치·업그레이드·롤백](./k8s/helm-release.mdx) |
+| Kustomize overlay (Kustomize 오버레이) | 공통 base 매니페스트 위에 덧씌우는 환경별 패치 묶음이다. | [Kustomize로 환경별 배포 (CKA·CKAD)](./cert/kustomize.mdx) |
+| GitOps | 원하는 클러스터 상태를 Git에 두고, 클러스터 안의 에이전트가 그 상태로 맞추게 하는 방식이다. | [Helm과 GitOps](./intermediate/gitops-sync.mdx) |
+| Argo CD | Git과 클러스터를 비교해 어긋남(drift)을 보여 주고 차이를 동기화하는 GitOps 도구다. | [Helm과 GitOps](./intermediate/gitops-sync.mdx) |
+| Argo Rollouts | 카나리와 블루/그린 배포를 맡는 컨트롤러로, 트래픽을 단계별로 옮기고 지표가 나쁘면 되돌린다. | [Argo Rollouts로 점진적 배포하기](./feature/argo-rollouts.mdx) |
+| kubeadm | 내 기계에 클러스터 컨트롤 플레인을 만들고 업그레이드하는 공식 도구다. | [kubeadm으로 클러스터 업그레이드 (CKA)](./cert/kubeadm-upgrade.mdx) |
+| NotReady | kubelet이 정상 하트비트를 더 보내지 않는다는 뜻의 노드 상태다. | [노드 NotReady와 구성요소 장애 (CKA)](./cert/node-troubleshoot.mdx) |
+| Ephemeral container (임시 컨테이너) | `kubectl debug`로 실행 중인 파드에 잠시 붙이는 디버그용 컨테이너다. | [kubectl debug로 실행 중인 파드 디버깅하기](./k8s/kubectl-debug.mdx) |
+| Quorum (쿼럼) | 쓰기가 인정되려면 동의해야 하는 etcd 멤버의 과반으로, 멤버 3개면 1개가 죽어도 버틴다. | [컨트롤 플레인 고가용성과 etcd 쿼럼](./advanced/etcd-quorum.mdx) |
+| Certificate expiry (인증서 만료) | 클러스터 구성 요소 인증서(kubeadm 기본 1년)가 갱신되지 않으면 클러스터가 멈추는 문제다. | [클러스터 인증서 만료](./advanced/cluster-cert.mdx) |
+| Metrics / logs / traces (메트릭 / 로그 / 트레이스) | 세 가지 신호로, 시간에 따른 숫자, 일어난 일을 적은 텍스트, 요청 하나가 서비스들을 지나간 경로다. | [로그·메트릭·트레이스가 파드를 떠나는 길](./k8s/observability-pipeline.mdx) |
+| SLI / SLO | SLI는 측정한 서비스 수준(빠르고 성공한 요청의 비율 등)이고, SLO는 그 목표치다. | [SLO와 알람 설계](./advanced/slo-alert.mdx) |
+| Error budget / burn rate (에러 버짓 / 소진율) | SLO가 기간 동안 허용하는 실패량과 그것을 써 버리는 속도로, 빨리 탈 때 알람을 울린다. | [SLO와 알람 설계](./advanced/slo-alert.mdx) |
+| Incident response (장애 대응) | 장애를 선언하고 역할을 나누고 먼저 완화한 뒤, 탓하지 않는 사후 분석을 쓰는 절차다. | [장애 대응: 알람에서 포스트모템까지](./advanced/incident-response.mdx) |
+| Chaos engineering (카오스 엔지니어링) | 일부러 장애(파드 죽이기, 지연 넣기)를 일으켜 시스템이 예상대로 버티는지 확인하는 것이다. | [쿠버네티스 카오스 엔지니어링](./advanced/chaos-engineering.mdx) |
+| Multi-cluster (멀티 클러스터) | 격리, 리전, 장애 조치를 위해 여러 클러스터에 워크로드를 나눠 돌리고, 도구로 그 사이를 동기화하고 라우팅하는 것이다. | [클러스터 여러 개를 한 무리로 운영하기](./advanced/multi-cluster.mdx) |
+
+## AI와 GPU
+
+| 용어 | 뜻 | 레슨 |
+| --- | --- | --- |
+| GPU / NPU | 병렬 계산용 가속기 칩이다. GPU는 범용이고, NPU는 신경망 전용으로 만든 것이다. | [GPU·NPU가 노드 자원이 되기까지 (디바이스 플러그인)](./ai/device-plugin.mdx) |
+| Device plugin (디바이스 플러그인) | 노드에 가속기가 몇 개 있는지 kubelet에 알리고 컨테이너에 쓸 수 있게 준비하는 노드 에이전트다. | [GPU·NPU가 노드 자원이 되기까지 (디바이스 플러그인)](./ai/device-plugin.mdx) |
+| DRA | Dynamic Resource Allocation으로, 단순 개수 대신 모델이나 메모리 같은 속성으로 장치를 요청한다. | [조건으로 GPU 받기 (DRA)](./k8s/dra.mdx) |
+| ResourceClaim / DeviceClass | ResourceClaim은 파드의 장치 요청이고, DeviceClass는 장치 종류와 고르는 규칙에 이름을 붙인 것이다. | [가속기를 조건으로 받기 (DRA 심화)](./ai/accelerator-allocation.mdx) |
+| MIG | Multi-Instance GPU로, NVIDIA GPU 하나를 메모리와 연산이 분리된 조각으로 나눈다. | [GPU 나눠 쓰기](./feature/gpu-sharing.mdx) |
+| Time-slicing (시분할) | 여러 파드가 차례로 GPU 하나를 나눠 쓰는 방식으로, 메모리는 격리되지 않는다. | [가속기 나눠 쓰기 (시분할·MPS)](./ai/accelerator-sharing.mdx) |
+| DCGM exporter | GPU 사용률, 메모리, 온도 같은 지표를 프로메테우스에 내보내는 NVIDIA 도구다. | [쿠버네티스에서 GPU 모니터링](./ai/gpu-monitoring.mdx) |
+| Model weights (모델 가중치) | 모델이 학습한 숫자들로, safetensors 같은 파일에 담기며 수 기가바이트에 이를 수 있다. | [모델이 배포 가능해지기까지](./ai/model-packaging.mdx) |
+| Cold start (콜드 스타트) | 새 레플리카가 이미지를 받고 가중치를 올리고 준비를 마쳐 요청을 받기까지 걸리는 지연이다. | [모델이 처음 뜨기까지 (콜드 스타트)](./ai/cold-start.mdx) |
+| Inference engine (추론 엔진) | 모델을 가속기에 올리고 응답을 생성하는 서버다(vLLM 등). | [추론 API 요청이 응답을 받기까지](./ai/inference-request.mdx) |
+| Inference routing (추론 라우팅) | 라운드 로빈 대신 부하, 대기열 길이, 캐시된 프리픽스를 보고 요청을 받을 모델 레플리카를 고르는 것이다. | [요청을 어느 레플리카로 보낼까 (추론 라우팅)](./ai/inference-routing.mdx) |
+| LoRA adapter (LoRA 어댑터) | 기본 모델을 특정 용도에 맞추는 작은 추가 가중치로, 여러 어댑터가 올려 둔 기본 모델 하나를 함께 쓸 수 있다. | [베이스 모델 하나로 LoRA 어댑터 여러 개 서빙하기](./ai/lora-serving.mdx) |
+| LLM autoscaling (LLM 오토스케일링) | CPU 대신 대기열 깊이나 KV 캐시 사용량 같은 신호로 추론 레플리카를 늘리고 줄이는 것이다. | [LLM 추론 오토스케일링](./ai/llm-autoscaling.mdx) |
+| RAG | 검색 증강 생성으로, 관련 문서를 먼저 찾아 질문과 함께 모델에 주는 방식이다. | [RAG 파이프라인이 문서로 답하기까지](./ai/rag-pipeline.mdx) |
+| Embedding (임베딩) | 텍스트의 의미를 나타내는 숫자 목록으로, 비슷한 텍스트끼리 가깝게 놓인다. | [RAG 파이프라인이 문서로 답하기까지](./ai/rag-pipeline.mdx) |
+| AI agent (AI 에이전트) | 모델이 단계를 계획하고 도구를 부르기를 작업이 끝날 때까지 되풀이하게 하는 프로그램이다. | [도구를 부르는 LLM 에이전트 서빙하기](./ai/agent-serving.mdx) |
+| Model evaluation (모델 평가) | 고정된 테스트 세트로 변경 전후 모델 품질을 재서 퇴보를 잡아내는 것이다. | [배포 전후에 모델 평가하기](./ai/model-evaluation.mdx) |
+
+## LLM 서빙
+
+| 용어 | 뜻 | 레슨 |
+| --- | --- | --- |
+| Token (토큰) | LLM이 읽고 쓰는 단위로, 보통 단어 하나나 단어의 일부다. | [답이 한 토큰씩 만들어지기까지](./llm/token-generation.mdx) |
+| Sampling / temperature (샘플링 / 온도) | 모델이 낸 확률에서 다음 토큰을 고르는 것으로, 온도가 높을수록 선택이 더 무작위해진다. | [답이 한 토큰씩 만들어지기까지](./llm/token-generation.mdx) |
+| Prefill (프리필) | 모델이 프롬프트 전체를 한 번에 병렬로 읽는 첫 단계로, 연산량이 병목이다. | [질문 읽기와 답 쓰기 (프리필·디코드)](./llm/prefill-decode.mdx) |
+| Decode (디코드) | 한 단계에 토큰 하나씩 만드는 단계로, 연산보다 메모리 대역폭이 병목이다. | [질문 읽기와 답 쓰기 (프리필·디코드)](./llm/prefill-decode.mdx) |
+| TTFT | Time to first token으로, 답이 나오기 시작할 때까지 사용자가 기다리는 시간이다. | [질문 읽기와 답 쓰기 (프리필·디코드)](./llm/prefill-decode.mdx) |
+| TPOT | Time per output token으로, 답이 흘러나오는 동안 토큰 사이의 간격이다. | [질문 읽기와 답 쓰기 (프리필·디코드)](./llm/prefill-decode.mdx) |
+| KV cache (KV 캐시) | 앞선 토큰의 어텐션 키와 값을 담아 두는 GPU 메모리로, 매 단계 다시 계산하지 않게 한다. | [KV 캐시가 차오르기까지](./llm/kv-cache.mdx) |
+| PagedAttention | 메모리 페이지처럼 작은 고정 크기 블록에 KV 캐시를 담아 낭비를 줄이는 방식이다. | [KV 캐시가 차오르기까지](./llm/kv-cache.mdx) |
+| Prefix caching (프리픽스 캐싱) | 시스템 프롬프트처럼 요청들이 공유하는 프롬프트 앞부분의 KV 캐시를 재사용하는 것이다. | [KV 캐시가 차오르기까지](./llm/kv-cache.mdx) |
+| Continuous batching (연속 배칭) | 배치 전체가 끝나기를 기다리지 않고, 매 단계 실행 중인 배치에 요청을 넣고 빼는 방식이다. | [요청을 묶어 처리하기 (연속 배칭)](./llm/continuous-batching.mdx) |
+| Quantization (양자화) | 가중치(때로는 KV 캐시도)를 FP8이나 INT4처럼 더 적은 비트로 저장해 메모리를 아끼고 속도를 높이는 것이다. | [모델을 작게 만들기 (양자화)](./llm/quantization.mdx) |
+| Speculative decoding (추측 디코딩) | 작은 초안 모델이 토큰 여러 개를 추측하면 큰 모델이 한 번에 확인해 맞는 것만 받아들이는 방식이다. | [미리 추측하고 한 번에 확인하기 (추측 디코딩)](./llm/speculative-decoding.mdx) |
+| KV offloading (KV 오프로딩) | GPU 메모리에 다 못 담는 KV 캐시를 CPU 메모리나 디스크로 내려 두었다가 필요할 때 다시 올리는 것이다. | [넘치는 KV 캐시 내려 두기 (오프로딩)](./llm/kv-offloading.mdx) |
+| Tensor parallelism (TP, 텐서 병렬화) | 각 층의 행렬을 여러 GPU에 나눠, 토큰마다 함께 계산하는 방식이다. | [모델을 여러 GPU에 나눠 싣기 (TP·PP·EP)](./llm/model-parallelism.mdx) |
+| Pipeline parallelism (PP, 파이프라인 병렬화) | GPU마다 서로 다른 층 구간을 맡겨, 조립 라인처럼 활성값을 넘겨 가는 방식이다. | [모델을 여러 GPU에 나눠 싣기 (TP·PP·EP)](./llm/model-parallelism.mdx) |
+| Expert parallelism (EP, 전문가 병렬화) / MoE | 전문가 혼합(MoE) 모델은 토큰마다 일부 전문가만 돌고, EP는 전문가들을 서로 다른 GPU에 나눠 둔다. | [모델을 여러 GPU에 나눠 싣기 (TP·PP·EP)](./llm/model-parallelism.mdx) |
+| P/D disaggregation (프리필·디코드 분리) | 프리필과 디코드를 서로 다른 GPU 풀에서 돌리고 그 사이로 KV 캐시를 옮기는 방식이다. | [읽는 곳과 쓰는 곳 나누기 (프리필·디코드 분리)](./llm/pd-disaggregation.mdx) |

@@ -169,4 +169,10 @@ kubectl get namespace shop --show-labels                       # Is istio-inject
 istioctl analyze -n shop                                       # Find broken links
 ```
 
+<Quiz questions={[
+  {q: 'You created an Istio Gateway for shop.example.com but no VirtualService. What do external users get?', options: ['The request reaches the shop Service by host name', 'Usually a 404, because the ingress proxy does not know where to send it', 'A TLS error, because mTLS is not set up'], answer: 1, why: 'The Gateway only opens the door; the VirtualService is the signpost with the route rules. Without a linked VirtualService, the ingress proxy has nowhere to send the request.'},
+  {q: 'How do you check that a VirtualService is linked to a Gateway?', options: ['The Gateway lists the VirtualService under its selector', 'Both use the same namespace label', 'The Service lists the Gateway in its selector', 'The VirtualService lists the Gateway name under gateways and the same host under hosts'], answer: 3, why: 'A VirtualService attaches route rules to a Gateway by naming it under gateways, and the host must match. istioctl analyze also reports broken links.'},
+  {q: 'Requests pass the ingress proxy, but the target pods have no sidecar, so mesh rules do not apply on that hop. What should you check?', options: ['That the target namespace has the istio-injection label', 'That the Gateway selector matches the app pods', 'That the VirtualService destination names a pod instead of a Service'], answer: 0, why: 'The ingress proxy sends to the receiving pod\'s sidecar. For that pod to have a sidecar, its namespace needs the istio-injection label.'},
+]} />
+
 Further reading: [Istio ingress gateways](https://istio.io/latest/docs/tasks/traffic-management/ingress/ingress-control/) · [Gateway reference](https://istio.io/latest/docs/reference/config/networking/gateway/) · [Ingress](https://kubernetes.io/docs/concepts/services-networking/ingress/) · [Gateway API](https://kubernetes.io/docs/concepts/services-networking/gateway/)

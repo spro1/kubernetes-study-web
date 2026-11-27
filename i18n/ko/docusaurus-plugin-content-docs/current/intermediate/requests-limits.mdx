@@ -187,4 +187,10 @@ kubectl describe node <노드> | grep -A 8 'Allocated resources'   # 노드의 r
 kubectl get pod <파드> -o jsonpath='{.status.containerStatuses[*].lastState.terminated.reason}'   # OOMKilled인지
 ```
 
+<Quiz questions={[
+  {q: '노드의 CPU 사용률 그래프는 한가해 보이는데 새 파드가 Pending에 머문다. 가장 그럴듯한 원인은 무엇인가?', options: ['노드의 요청값 합계가 이미 차 있다', '파드의 상한값이 요청값보다 크다', 'metrics-server가 설치되어 있지 않다'], answer: 0, why: '스케줄러는 실제 사용률이 아니라 할당 가능량 대비 요청값 합계로 자리를 계산하기 때문이다. 할당이 차면 사용률과 무관하게 Pending이 된다.'},
+  {q: '컨테이너가 상한값보다 더 쓰려고 계속 시도한다. 레슨 내용과 맞는 결과는 무엇인가?', options: ['CPU든 메모리든 넘으면 강제 종료된다', 'CPU를 넘으면 종료되고, 메모리를 넘으면 느려지기만 한다', 'CPU를 넘으면 느려지기만 하고(스로틀링), 메모리를 넘으면 종료된다(OOMKilled)', '노드 자원이 모자라기 전까지는 둘 다 아무 영향이 없다'], answer: 2, why: 'CPU는 나눠 쓸 수 있는 자원이라 속도만 늦추고 컨테이너는 계속 돈다. 메모리는 이미 쓴 것을 돌려받을 수 없어 OOMKilled로 강제 종료되기 때문이다.'},
+  {q: '노드 메모리가 모자라다. kubelet은 어떤 파드를 가장 먼저 축출하는가?', options: ['요청값과 상한값이 같은 Guaranteed 파드', '요청값도 상한값도 적지 않은 BestEffort 파드', '요청값이 상한값보다 작은 Burstable 파드'], answer: 1, why: '축출 순서는 QoS 클래스를 따르기 때문이다. 아무것도 적지 않은 BestEffort가 가장 먼저, Guaranteed가 가장 나중에 나간다.'},
+]} />
+
 더 읽을거리: [파드 및 컨테이너 리소스 관리](https://kubernetes.io/ko/docs/concepts/configuration/manage-resources-containers/) · [쿠버네티스 스케줄러](https://kubernetes.io/ko/docs/concepts/scheduling-eviction/kube-scheduler/) · [파드에 대한 서비스 품질(QoS) 구성](https://kubernetes.io/ko/docs/tasks/configure-pod-container/quality-service-pod/) · [파드를 어느 노드에 둘까 (스케줄링)](../k8s/scheduling.mdx)

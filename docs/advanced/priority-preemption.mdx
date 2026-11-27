@@ -187,4 +187,10 @@ kubectl get pod <pod> -o jsonpath='{.status.nominatedNodeName}'   # Node the wai
 kubectl get pdb -A                                                # Disruption budgets (best-effort only)
 ```
 
+<Quiz questions={[
+  {q: 'A priority-100000 Pod cannot fit on a full node. Which Pods are candidates for preemption?', options: ['Any Pod on the node, starting with the newest', 'Only Pods with a lower priority value, and only as many as needed to make room', 'Pods with the same priority, so coredns is safe', 'Only Pods without a PDB'], answer: 1, why: 'Preemption evicts only lower-priority Pods, starting from the lowest and only as many as needed. Same-priority Pods and system components are not candidates.'},
+  {q: 'Your batch app has a PDB. Does that protect it from preemption?', options: ['Not fully: the scheduler prefers victims that respect PDBs, but preempts anyway if there is no other way', 'Yes, preemption waits for the PDB just like a drain', 'Yes, Pods covered by a PDB are never preempted'], answer: 0, why: 'A drain waits when a PDB refuses, but preemption honors PDBs only best-effort.'},
+  {q: 'Batch Pods keep disappearing, and kubectl get events shows frequent Preempted events. What should you suspect first?', options: ['A bug in the scheduler', 'The batch PriorityClass needs preemptionPolicy: Never', 'The PDB is set too low', 'A capacity shortage, so add capacity before tuning priorities'], answer: 3, why: 'Preemption happens only when there is no room. If it is frequent, suspect missing capacity before priority settings.'},
+]} />
+
 Further reading: [Pod priority and preemption](https://kubernetes.io/docs/concepts/scheduling-eviction/pod-priority-preemption/) · [Disruptions](https://kubernetes.io/docs/concepts/workloads/pods/disruptions/)

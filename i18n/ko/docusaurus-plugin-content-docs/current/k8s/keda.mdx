@@ -1,0 +1,259 @@
+---
+id: keda
+title: KEDA로 이벤트에 맞춰 늘리기
+sidebar_label: 10 · 이벤트 기반 확장 (KEDA)
+description: Kafka 랙·큐·Prometheus·cron 트리거를 가진 ScaledObject에서 KEDA가 만드는 HPA까지, 활성화 임계값과 확장 임계값, 0으로 줄이기와 콜드 스타트, cooldownPeriod, 메시지마다 Job 하나를 띄우는 ScaledJob, 비밀값을 다루는 TriggerAuthentication, 지표 소스가 죽었을 때의 fallback을 애니메이션으로 본다
+summary: 'CPU 대신 큐에 쌓인 일로, 0까지 줄인다. KEDA가 HPA에 값을 넣는 방식과 큐에 닿지 못할 때 벌어지는 일.'
+icon: bell
+hide_table_of_contents: true
+---
+
+# KEDA로 이벤트에 맞춰 늘리기
+
+큐 소비자는 메시지가 수천 개 쌓여도 CPU가 낮을 수 있다. **KEDA**가 밀린 양을 읽어 HPA를 움직이고, 0으로 줄였다 다시 깨우고, 큐에 닿지 못할 때 무엇을 하는지 따라간다.
+
+<StepDiagram
+  width={1000}
+  height={460}
+  meta={{duration: '약 13분', level: '중급'}}
+  groups={[
+    {label: '쿠버네티스 클러스터', x: 220, y: 30, w: 760, h: 420, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'kafka', label: 'Kafka 토픽', sub: 'orders · 랙', icon: 'archive', tone: 'ext', x: 110, y: 100, show: true},
+    {id: 'queue', label: '큐', sub: '예: RabbitMQ, SQS', icon: 'archive', tone: 'ext', x: 110, y: 230},
+    {id: 'prom', label: 'Prometheus', sub: 'PromQL 쿼리', icon: 'chart', tone: 'ext', x: 110, y: 370},
+    {id: 'so', label: 'ScaledObject', sub: '트리거 · 최소 · 최대', icon: 'gear', tone: 'store', x: 345, y: 100},
+    {id: 'ta', label: 'TriggerAuth', sub: 'Secret 참조', icon: 'shield', tone: 'store', x: 345, y: 370},
+    {id: 'sj', label: 'ScaledJob', sub: 'Job 템플릿', icon: 'gear', tone: 'store', x: 590, y: 370},
+    {id: 'op', label: 'KEDA 오퍼레이터', sub: '트리거 폴링 · 0↔1', icon: 'bell', tone: 'cp', x: 345, y: 230, w: 170},
+    {id: 'ma', label: '지표 서버', sub: 'External metrics API', icon: 'chart', tone: 'cp', x: 590, y: 230, w: 170},
+    {id: 'hpa', label: 'HPA', sub: 'keda-hpa-orders · 1↔N', icon: 'scale', tone: 'cp', x: 590, y: 100, w: 180},
+    {id: 'dep', label: '디플로이먼트', sub: 'orders 소비자', icon: 'pod', tone: 'app', x: 840, y: 230, w: 180, show: true},
+    {id: 'jobs', label: 'Job', sub: '메시지마다 하나', icon: 'box', tone: 'app', x: 840, y: 370, w: 180},
+  ]}
+  metrics={[
+    {id: 'lag', label: '랙 / 밀린 양'},
+    {id: 'replicas', label: '레플리카'},
+    {id: 'state', label: 'KEDA'},
+  ]}
+  learn={[
+    {text: 'CPU가 큐에 밀린 일을 놓치는 이유', at: 0},
+    {text: 'ScaledObject 트리거와 KEDA가 대신 만드는 HPA', at: 1},
+    {text: '활성화(0↔1) 임계값과 확장(1↔N) 임계값의 차이', at: 3},
+    {text: '0으로 줄이기, 콜드 스타트, cooldownPeriod', at: 4},
+    {text: 'TriggerAuthentication으로 비밀값 다루기, ScaledJob으로 메시지마다 Job 하나', at: 7},
+    {text: '지표 소스가 죽었을 때의 fallback', at: 9},
+  ]}
+  steps={[
+    {
+      short: '시작',
+      kind: '시작',
+      title: 'CPU는 낮은데 메시지가 쌓인다',
+      text: [
+        'orders 소비자는 Kafka 토픽에서 읽는다. 시간 대부분을 데이터베이스를 기다리며 보내서, 컨슈머 그룹이 5,000개 뒤처져도 CPU는 20% 근처다.',
+        'CPU 기준 HPA는 할 일이 없다고 본다. 중요한 숫자는 밀린 양, 즉 파드 바깥에서 기다리는 일의 양이다.',
+      ],
+      focus: ['kafka', 'dep'],
+      status: {kafka: 'warn'},
+      values: {lag: {text: '5,000', tone: 'bad'}, replicas: '2', state: '—'},
+    },
+    {
+      short: 'ScaledObject',
+      kind: '원리',
+      title: 'ScaledObject가 대상과 트리거를 정한다',
+      text: [
+        'ScaledObject를 쓴다. scaleTargetRef는 디플로이먼트를 가리킨다. triggers에는 이벤트 소스를 적는다. 여기서는 bootstrapServers·consumerGroup·topic·lagThreshold를 가진 kafka다. minReplicaCount 기본값은 0, maxReplicaCount는 100이다.',
+        '다른 트리거도 모양이 같다. RabbitMQ나 SQS의 큐 길이, 임계값이 붙은 Prometheus 쿼리, cron 시간대가 있다. KEDA에는 이런 스케일러가 많이 들어 있다.',
+      ],
+      keyIdea: '워크로드 하나에 ScaledObject 하나. 같은 디플로이먼트에 직접 만든 HPA를 또 붙이지 않는다. 두 컨트롤러가 레플리카 수를 두고 싸운다.',
+      flows: [{from: 'op', to: 'so', label: '감시', type: 'watch'}],
+      focus: ['so'],
+      badges: {so: 'kafka lagThreshold 100'},
+      values: {state: 'ScaledObject 생성'},
+    },
+    {
+      short: '오퍼레이터 + HPA',
+      kind: '원리',
+      title: 'KEDA가 HPA를 만들고 지표를 건넨다',
+      text: [
+        'KEDA 오퍼레이터는 ScaledObject를 보고 External 지표를 쓰는 HPA keda-hpa-orders를 만든다. KEDA 지표 서버가 external metrics API로 등록돼 있어서, HPA가 값을 물으면 현재 랙을 받는다.',
+        '계산은 평소의 HPA 그대로다. 레플리카당 AverageValue 목표가 100이면 랙 5,000은 50개를 요구한다. Kafka는 allowIdleConsumers를 켜지 않는 한 레플리카를 파티션 수로 묶는다. 파티션보다 많은 소비자는 놀기 때문이다.',
+      ],
+      keyIdea: 'KEDA는 HPA를 대신하지 않고 값을 넣어 준다. kubectl describe hpa keda-hpa-orders로 HPA가 받은 값을 본다.',
+      flows: [
+        {from: 'op', to: 'kafka', label: '랙 읽기', type: 'request'},
+        {from: 'op', to: 'hpa', label: '생성', type: 'request'},
+        {from: 'hpa', to: 'ma', label: 'External 지표', type: 'watch'},
+        {from: 'hpa', to: 'dep', label: 'replicas', type: 'request'},
+      ],
+      focus: ['op', 'ma', 'hpa'],
+      badges: {so: null, hpa: '목표 100 / 레플리카'},
+      values: {replicas: '2 → 12 (파티션 12)', state: '활성'},
+    },
+    {
+      short: '임계값',
+      kind: '원리',
+      title: '활성화는 0이냐 1이냐를, 임계값은 1에서 N까지를 정한다',
+      text: [
+        '트리거마다 숫자가 둘이다. 활성화 임계값(Kafka는 activationLagThreshold, Prometheus는 activationThreshold, 기본 0)은 워크로드를 아예 돌릴지 정한다. HPA는 0으로 갈 수 없어서 0 ↔ 1은 오퍼레이터가 직접 맡는다.',
+        '확장 임계값(lagThreshold)은 1과 maxReplicaCount 사이에서 HPA가 쓰는 레플리카당 목표다. 활성화는 지표가 값과 같을 때가 아니라 클 때만 걸린다.',
+      ],
+      keyIdea: '활성화 값을 잡음보다 위로, 예를 들어 흩어진 메시지 몇 개보다 크게 잡는다. 그래야 밤에 메시지 하나 때문에 몇 분마다 파드가 깨지 않는다.',
+      flows: [
+        {from: 'op', to: 'dep', label: '0 ↔ 1', type: 'request', bend: 0.25},
+        {from: 'hpa', to: 'dep', label: '1 ↔ N', type: 'request'},
+      ],
+      focus: ['op', 'hpa'],
+      badges: {hpa: null, op: 'activation > 5'},
+      values: {lag: '5,000 → 300'},
+    },
+    {
+      short: '0으로',
+      kind: '주의',
+      title: '0으로 줄이면 파드를 아끼고, 다음 메시지가 값을 치른다',
+      text: [
+        '밤에는 랙이 0으로 머문다. 활성 트리거가 없는 상태로 cooldownPeriod(기본 300초)가 지나면 오퍼레이터가 레플리카를 0으로 만든다. HPA는 쉬는 상태가 된다.',
+        '메시지가 오면 오퍼레이터가 다음 폴링(pollingInterval, 기본 30초)에서 보고 레플리카를 1로 만든다. 그다음 파드가 스케줄되고 이미지를 받고 시작해야 한다. 그동안 메시지는 토픽에 안전하게 남는다. 일반 HTTP 트래픽에는 이런 완충이 없어서, HTTP를 0으로 줄이려면 KEDA HTTP add-on 같은 것을 앞에 둬야 한다.',
+      ],
+      flows: [{from: 'op', to: 'dep', label: 'replicas 0', type: 'request', bend: 0.25}],
+      focus: ['op', 'dep'],
+      status: {dep: 'off', kafka: null},
+      badges: {op: null, dep: '레플리카 0'},
+      values: {lag: '0', replicas: '0', state: '비활성'},
+    },
+    {
+      short: '쿨다운',
+      kind: '주의',
+      title: 'cooldownPeriod는 0으로 가는 마지막 한 걸음만 맡는다',
+      text: [
+        'cooldownPeriod는 0으로 갈 때만 쓰인다. 12개에서 3개로 줄이는 것은 HPA 몫이고, HPA의 축소 안정화 창을 따른다.',
+        '그것을 바꾸려면 ScaledObject의 advanced.horizontalPodAutoscalerConfig.behavior를 쓴다. KEDA가 자기가 관리하는 HPA에 복사한다. 만들어진 HPA를 직접 고쳐도 남지 않는다.',
+      ],
+      keyIdea: '시계가 둘이다. 1 → 0은 cooldownPeriod, N → 1은 HPA behavior. 파드가 너무 빨리 사라지거나 너무 오래 남으면 둘 다 본다.',
+      flows: [{from: 'so', to: 'hpa', label: 'behavior', type: 'watch'}],
+      focus: ['so', 'hpa'],
+      status: {dep: null},
+      badges: {dep: null, so: 'cooldownPeriod 300'},
+      values: {replicas: '12 → 3', state: '활성'},
+    },
+    {
+      short: 'Cron',
+      kind: '원리',
+      title: '트리거가 여럿이면 가장 큰 요구가 이긴다',
+      text: [
+        'timezone·start·end·desiredReplicas를 가진 cron 트리거를 더한다. 아침 배치가 들어오기 전 08:00부터 10:00까지 레플리카 4개를 유지한다. 요청 지연에 대한 prometheus 트리거도 더한다.',
+        '트리거 하나가 같은 HPA의 지표 하나가 된다. HPA는 지표마다 레플리카 수를 계산하고 가장 큰 값을 고른다. 그래서 큐가 조용해도 cron이 깐 바닥은 그대로다.',
+      ],
+      flows: [
+        {from: 'op', to: 'prom', label: '쿼리', type: 'request'},
+        {from: 'op', to: 'kafka', label: '랙', type: 'request'},
+      ],
+      focus: ['op', 'prom'],
+      badges: {so: 'kafka + cron + prometheus'},
+      values: {replicas: 'max(랙, cron 4, prom)'},
+    },
+    {
+      short: 'TriggerAuth',
+      kind: '원리',
+      title: 'TriggerAuthentication이 자격 증명을 ScaledObject 밖에 둔다',
+      text: [
+        'Kafka 클러스터에 SASL 자격 증명이 필요하다. TriggerAuthentication은 sasl·username·password 같은 트리거 파라미터를 secretTargetRef로 Secret의 키에 연결한다. 트리거는 authenticationRef로 그것을 가리킨다.',
+        'ClusterTriggerAuthentication은 같은 일을 모든 네임스페이스에 해 준다. Secret 대신 podIdentity로 클라우드 워크로드 아이덴티티를 쓸 수도 있다.',
+      ],
+      keyIdea: 'ScaledObject가 Ready가 아니면 인증부터 본다. 키 이름이 틀린 것과 브로커에 닿지 않는 것은 똑같아 보인다.',
+      flows: [
+        {from: 'op', to: 'ta', label: 'Secret 읽기', type: 'request'},
+      ],
+      focus: ['ta', 'so'],
+      badges: {so: null, ta: 'sasl · user · password'},
+    },
+    {
+      short: 'ScaledJob',
+      kind: '원리',
+      title: '오래 걸리는 일은 ScaledJob이 메시지마다 Job 하나로 돌린다',
+      text: [
+        '영상 인코딩은 메시지 하나에 20분이 걸린다. 인코딩 도중 HPA가 디플로이먼트를 줄이면 일이 끊긴다. ScaledJob은 이것을 피한다. Job 템플릿을 갖고 있고, KEDA가 큐 길이를 보고 maxReplicaCount까지 Job을 만든다.',
+        'Job은 메시지 하나를 받아 끝내고 나간다. 일하는 중인 Job을 지우지 않으니 줄일 것도 없다. 오래된 Job은 successfulJobsHistoryLimit과 failedJobsHistoryLimit으로 치운다.',
+      ],
+      flows: [
+        {from: 'sj', to: 'jobs', label: 'Job 생성', type: 'request'},
+        {from: 'op', to: 'queue', label: '큐 길이', type: 'request'},
+      ],
+      focus: ['sj', 'jobs', 'queue'],
+      badges: {ta: null, jobs: '7개 실행 중'},
+      values: {state: 'ScaledJob · Job 7개'},
+    },
+    {
+      short: 'Fallback',
+      kind: '장애',
+      title: '브로커에 닿지 않아 지표가 사라진다',
+      text: [
+        'Kafka 브로커가 점검으로 내려갔다. 스케일러는 폴링마다 오류를 내고, ScaledObject는 Ready=False가 되고, HPA는 값을 받지 못해 그 트리거로는 확장을 멈춘다. 레플리카는 그때 수에 얼어붙는다.',
+        'spec.fallback(failureThreshold 3, replicas 6)을 두면 연속 3번 실패한 뒤 KEDA가 HPA를 레플리카 6개로 보내는 값을 건넨다. 기본 behavior는 static이다. currentReplicasIfHigher 같은 다른 값은 그쪽이 안전할 때 현재 수를 지킨다. fallback은 CPU·메모리를 뺀 Value·AverageValue 트리거에서만 되고, ScaledJob에는 없다.',
+      ],
+      keyIdea: 'fallback 레플리카는 부하를 몰라도 안전한 수로 고른다. 밀린 양만이 아니라 스케일러 오류에도 알림을 건다.',
+      flows: [
+        {from: 'op', to: 'kafka', label: '오류', type: 'request'},
+        {from: 'hpa', to: 'dep', label: 'fallback 6', type: 'request'},
+      ],
+      focus: ['kafka', 'op', 'hpa'],
+      status: {kafka: 'error', op: 'warn'},
+      badges: {jobs: null, so: 'fallback 6'},
+      values: {lag: {text: '알 수 없음', tone: 'bad'}, replicas: '6', state: {text: 'Ready=False · fallback', tone: 'bad'}},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '기다리는 일로 늘리고, 0과 오류에 대비한다',
+      text: [
+        'ScaledObject에 트리거를 적는다. 오퍼레이터가 트리거를 폴링해 활성화 임계값으로 0 ↔ 1을 맡고, HPA를 만들어 KEDA 지표 서버를 통해 임계값으로 1 ↔ N을 움직인다.',
+        '0으로 줄이면 비용 대신 콜드 스타트를 치른다. cooldownPeriod는 0으로 가는 걸음만 지킨다. 메시지 하나짜리 긴 일에는 ScaledJob이 맞다. TriggerAuthentication이 비밀값을 갖고, fallback이 소스가 사라졌을 때의 동작을 정한다.',
+      ],
+      keyIdea: 'kubectl get scaledobject로 READY와 ACTIVE를 보고, kubectl describe hpa로 HPA가 실제로 쓴 값을 본다.',
+      flows: [
+        {from: 'op', to: 'kafka', label: '랙', type: 'request'},
+        {from: 'hpa', to: 'ma', label: '지표', type: 'watch'},
+        {from: 'hpa', to: 'dep', label: 'replicas', type: 'request'},
+      ],
+      focus: ['op', 'ma', 'hpa'],
+      status: {kafka: null, op: null},
+      badges: {so: null},
+    },
+  ]}
+/>
+
+## 동작을 바꾸는 ScaledObject 필드
+
+| 필드 | 기본값 | 정하는 것 |
+|---|---|---|
+| `minReplicaCount` | 0 | 가장 적은 레플리카 수. 0보다 크면 활성화 임계값은 무시된다 |
+| `maxReplicaCount` | 100 | HPA에 넘기는 가장 많은 레플리카 수 |
+| `pollingInterval` | 30초 | 오퍼레이터가 트리거를 확인하는 간격 |
+| `cooldownPeriod` | 300초 | 마지막 활성 트리거 뒤 0으로 가기 전까지 기다리는 시간. 1 → 0에만 쓰인다 |
+| `initialCooldownPeriod` | 0초 | 만든 뒤 처음 0으로 가기 전까지 기다리는 시간 |
+| `idleReplicaCount` | 없음 | 활성 트리거가 없을 때의 레플리카 수(0만 지원하고, `minReplicaCount`보다 작아야 한다) |
+| `fallback.failureThreshold` / `fallback.replicas` | 없음 | 이만큼 폴링이 실패하면 이 수로 맞춘다 |
+| `advanced.horizontalPodAutoscalerConfig.behavior` | HPA 기본값 | 1 ↔ N에서 늘리고 줄이는 속도 |
+| 트리거의 `activation…`(예: `activationLagThreshold`) | 0 | 0에서 깨어나려면 지표가 이 값보다 커야 한다 |
+
+## 직접 확인해 보기
+
+```bash
+kubectl get scaledobject -A                          # READY, ACTIVE, FALLBACK, TRIGGERS
+kubectl describe scaledobject orders                 # 오퍼레이터가 남긴 조건과 이벤트
+kubectl get hpa keda-hpa-orders                      # KEDA가 만든 HPA
+kubectl describe hpa keda-hpa-orders                 # 현재 외부 지표 값과 확장 이벤트
+kubectl get --raw "/apis/external.metrics.k8s.io/v1beta1" | head -c 400   # KEDA 지표 서버가 등록됐는지
+kubectl get triggerauthentication,clustertriggerauthentication -A
+kubectl get scaledjob,jobs -A                        # ScaledJob과 그것이 만든 Job
+kubectl logs -n keda deploy/keda-operator | tail     # 스케일러 오류(네임스페이스는 설치에 맞게)
+```
+
+<Quiz questions={[
+  {q: 'ScaledObject가 minReplicaCount 0, cooldownPeriod 300이고 HPA 축소 창도 300초다. 부하가 레플리카 10개 분량에서 0으로 떨어진다. 10개에서 1개로 줄이는 것은 누가 정하나?', options: ['cooldownPeriod', 'HPA와 그 축소 behavior', 'pollingInterval'], answer: 1, why: 'cooldownPeriod는 1에서 0으로 가는 마지막 걸음만 맡는다. 1과 N 사이는 KEDA가 만든 HPA가 맡는다.'},
+  {q: '0으로 줄인 소비자에 밤마다 10분에 메시지 하나씩 와서 파드가 계속 떴다 꺼진다. 가장 직접적인 해결은?', options: ['maxReplicaCount를 올린다', 'pollingInterval을 줄인다', '흩어진 메시지 몇 개로는 깨지 않도록 활성화 임계값을 올린다'], answer: 2, why: '0 ↔ 1은 활성화가 정한다. 잡음보다 높게 잡으면 진짜 일이 생길 때까지 0에 머문다.'},
+  {q: '트리거가 쓰는 Prometheus 서버가 죽었고 fallback은 없다. 레플리카는 어떻게 되나?', options: ['HPA가 값을 받지 못해 그 트리거로는 확장을 멈추고, 레플리카는 그대로 남는다', 'KEDA가 곧바로 0으로 줄인다', 'KEDA가 안전하게 maxReplicaCount로 늘린다'], answer: 0, why: '값이 없으면 HPA는 새 수를 계산하지 못한다. fallback을 두면 failureThreshold번 실패한 뒤 KEDA가 fallback.replicas로 보내는 값을 건넨다.'},
+]} />
+
+더 읽을거리: [KEDA 개념](https://keda.sh/docs/latest/concepts/) · [ScaledObject 명세](https://keda.sh/docs/latest/reference/scaledobject-spec/) · [Job 확장](https://keda.sh/docs/latest/concepts/scaling-jobs/) · [Kafka 스케일러](https://keda.sh/docs/latest/scalers/apache-kafka/) · [인증](https://keda.sh/docs/latest/concepts/authentication/) · [부하에 맞춰 늘어나기 (HPA)](../k8s/autoscaling.mdx) · [LLM 추론 오토스케일링](../ai/llm-autoscaling.mdx) · [한 번 돌고 끝나는 일 (Job·CronJob)](../k8s/job-cronjob.mdx)

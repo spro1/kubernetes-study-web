@@ -236,4 +236,10 @@ curl -v http://<호스트>:8080/              # "Connected to" / "Connection ref
 sudo tcpdump -ni any 'tcp port 443 and tcp[tcpflags] & (tcp-syn|tcp-rst) != 0'   # SYN, SYN-ACK, RST 보기
 ```
 
+<Quiz questions={[
+  {q: '8080번 포트로 curl을 하자 곧바로 "Connection refused"가 뜬다. 무엇부터 확인하는가?', options: ['경로의 방화벽 규칙과 보안 그룹', '서버에서 앱이 떠 있고 그 포트·주소에서 대기하는지(ss -tlnp)', 'ping -M do로 경로 MTU'], answer: 1, why: '거부는 호스트가 SYN에 RST로 답했다는 뜻이라 호스트까지는 닿은 것이다. 그 포트·주소에서 대기하는 것이 없기 때문이다. 앱이 꺼졌거나 127.0.0.1에만 묶였을 수 있다.'},
+  {q: '패킷이 라우터 12개를 지나 서버로 간다. 홉마다 보통 바뀌는 것은 무엇인가?', options: ['목적지 IP 주소', '목적지 포트', '아무것도 바뀌지 않고 프레임이 그대로 전달된다', '프레임의 MAC 주소, 그리고 TTL이 1씩 줄어든다'], answer: 3, why: '라우터는 프레임을 벗기고 TTL을 1 줄인 뒤 다음 구간에 맞는 새 MAC으로 새 프레임에 싼다. IP 주소는 보통 끝까지 그대로다(흔한 예외가 NAT다).'},
+  {q: 'VPN을 거치니 연결도 되고 작은 요청도 되는데 큰 다운로드만 멈춘다. 가장 그럴듯한 원인은 무엇인가?', options: ['경로 MTU가 패킷보다 작은데, 그걸 알려 줄 ICMP가 막혔다', '443번 포트에서 대기하는 것이 없다', '라우팅 테이블에 기본 경로가 없다'], answer: 0, why: '터널이 헤더를 더 붙이므로 DF가 켜진 꽉 찬 패킷은 지나가지 못한다. ICMP "Fragmentation Needed"가 막히면 보내는 쪽이 패킷을 줄이지 못해 큰 응답만 멈추기 때문이다.'},
+]} />
+
 더 읽을거리: [RFC 9293: TCP](https://www.rfc-editor.org/rfc/rfc9293) · [RFC 791: IP](https://www.rfc-editor.org/rfc/rfc791) · [RFC 826: ARP](https://www.rfc-editor.org/rfc/rfc826) · [RFC 1191: 경로 MTU 탐색](https://www.rfc-editor.org/rfc/rfc1191) · [ip-route(8)](https://man7.org/linux/man-pages/man8/ip-route.8.html) · [ss(8)](https://man7.org/linux/man-pages/man8/ss.8.html) · [주소창에 주소를 입력하면](../basic/web-request.mdx) · [파드에서 파드로 가는 패킷](../advanced/packet-path.mdx)

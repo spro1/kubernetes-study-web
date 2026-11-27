@@ -1,0 +1,269 @@
+---
+id: glossary
+title: Glossary
+description: Plain one-sentence definitions of the terms used across K8s Flow, from DNS and containers to Kubernetes, GPUs and LLM serving, each linked to the lesson that explains it.
+hide_table_of_contents: false
+displayed_sidebar: lessons
+---
+
+# Glossary
+
+Short, plain definitions of the words used in the lessons. Use your browser's find (**Ctrl+F**, or **⌘F** on a Mac) to jump to a term. Each term links to the lesson that shows it in action, so if one sentence is not enough, open the lesson and step through the diagram.
+
+## Web & networking
+
+| Term | Meaning | Lesson |
+| --- | --- | --- |
+| URL | The address you type, made of a scheme (`https`), a host name, an optional port and a path. | [When You Type an Address](./basic/web-request.mdx) |
+| IP address | The number that identifies a machine on a network, such as `10.0.1.15`. | [Under One Request: TCP/IP Layers](./basic/tcp-ip-layers.mdx) |
+| Port | A number that picks which program on a machine gets the traffic, such as 443 for HTTPS. | [Under One Request: TCP/IP Layers](./basic/tcp-ip-layers.mdx) |
+| TCP | A transport protocol that sets up a connection and delivers bytes in order, resending anything lost. | [Under One Request: TCP/IP Layers](./basic/tcp-ip-layers.mdx) |
+| NAT | Rewriting a packet's source or destination address, for example so many private machines share one public IP. | [How a Request Travels Inside a VPC](./cloud/vpc-request.mdx) |
+| DNS | The system that turns a name like `www.example.com` into an IP address. | [How DNS Finds an Address](./basic/dns-resolution.mdx) |
+| TTL | How long a cached answer (a DNS record, a cache entry) may be reused before it must be fetched again. | [How DNS Finds an Address](./basic/dns-resolution.mdx) |
+| Load balancer | A component that spreads incoming requests across several servers. | [When You Type an Address](./basic/web-request.mdx) |
+| Symmetric encryption | Encryption where the same secret key locks and unlocks the data; fast, used for bulk traffic. | [Cryptography a Developer Needs](./basic/crypto-basics.mdx) |
+| Public-key cryptography | A key pair where what one key encrypts or signs only the other key can decrypt or verify. | [Cryptography a Developer Needs](./basic/crypto-basics.mdx) |
+| Hash | A fixed-length fingerprint of data; any change to the data changes the hash. | [Cryptography a Developer Needs](./basic/crypto-basics.mdx) |
+| Digital signature | A hash encrypted with a private key, proving who produced the data and that it was not changed. | [Cryptography a Developer Needs](./basic/crypto-basics.mdx) |
+| HTTPS / TLS | HTTP carried inside TLS, which encrypts the connection and proves the server's identity. | [HTTPS and Certificates](./basic/https-cert.mdx) |
+| Certificate | A signed document binding a domain name to a public key. | [HTTPS and Certificates](./basic/https-cert.mdx) |
+| Certificate authority (CA) | A trusted party that signs certificates; clients trust a certificate if it chains up to a CA they already trust. | [HTTPS and Certificates](./basic/https-cert.mdx) |
+
+## Linux & containers
+
+| Term | Meaning | Lesson |
+| --- | --- | --- |
+| Process | A running program, with its own ID (PID), memory and open files. | [Linux Basics for Kubernetes](./basic/linux-basics.mdx) |
+| SSH | A protocol for logging in to and running commands on a remote machine over an encrypted connection. | [How SSH Keys Get You Into a Server](./basic/ssh-keys.mdx) |
+| SSH key pair | A private key you keep and a public key you put on the server, used to log in without a password. | [How SSH Keys Get You Into a Server](./basic/ssh-keys.mdx) |
+| Virtual machine (VM) | A whole computer, with its own operating system, emulated on top of physical hardware. | [From One Server to Containers](./basic/server-to-container.mdx) |
+| Container | An isolated process that shares the host's kernel but sees its own files, network and process list. | [From One Server to Containers](./basic/server-to-container.mdx) |
+| Linux namespace | A kernel feature that gives a process its own view of something (PIDs, network, mounts), which is how containers are isolated. | [How Linux Isolates a Container](./basic/linux-isolation.mdx) |
+| cgroup | A kernel feature that limits and measures how much CPU and memory a group of processes may use. | [How Linux Isolates a Container](./basic/linux-isolation.mdx) |
+| Container image | A packaged, read-only file system plus settings, from which containers are started. | [How an Image Is Built and Run](./basic/container-image.mdx) |
+| Registry | A server that stores images and serves them on `push` and `pull`. | [How an Image Is Built and Run](./basic/container-image.mdx) |
+| Tag / digest | A tag is a movable name for an image version (`:1.2`); a digest (`sha256:...`) is a fixed hash of exact content. | [How an Image Is Built and Run](./basic/container-image.mdx) |
+| Container runtime | The node software (such as containerd) that pulls images and starts and stops containers. | [How a Pod Starts](./k8s/pod-startup.mdx) |
+| Merge request / pull request | A request to review a branch and merge it into the main branch. | [From Branch to Merge Request](./basic/git-merge-request.mdx) |
+| CI/CD | Automatically testing and building every change (CI) and shipping it to environments (CD). | [How a Pipeline Runs](./basic/cicd-pipeline.mdx) |
+| kind | A tool that runs a local Kubernetes cluster inside Docker containers, handy for practice. | [Build a Lab Cluster on Your Laptop](./basic/lab-cluster.mdx) |
+
+## App basics (HTTP/auth/data)
+
+| Term | Meaning | Lesson |
+| --- | --- | --- |
+| Status code | The three-digit result of a request, such as `200 OK`, `404 Not Found` or `503 Service Unavailable`. | [When You Type an Address](./basic/web-request.mdx) |
+| HTTP/2 | An HTTP version that sends many requests at once over one TCP connection (multiplexing). | [HTTP/1.1, HTTP/2 and HTTP/3](./basic/http-versions.mdx) |
+| HTTP/3 / QUIC | An HTTP version that runs over QUIC, a UDP-based transport, so one lost packet does not stall other streams. | [HTTP/1.1, HTTP/2 and HTTP/3](./basic/http-versions.mdx) |
+| Reverse proxy | A server in front of your apps that receives client requests and forwards them to the right backend. | [Reverse Proxies and Load Balancing](./basic/reverse-proxy.mdx) |
+| JWT | A signed token that carries claims (who you are, when it expires), so the server can verify it without a lookup. | [How Logging In Works (Sessions, JWT, OIDC)](./basic/auth-login.mdx) |
+| OIDC | A login standard on top of OAuth 2.0 where an identity provider issues an ID token saying who the user is. | [How Logging In Works (Sessions, JWT, OIDC)](./basic/auth-login.mdx) |
+| Transaction | A group of database changes that either all succeed or all roll back. | [What Happens When an App Saves to a Database](./basic/database-basics.mdx) |
+| WAL (write-ahead log) | A log the database writes changes to first, so it can recover them after a crash. | [What Happens When an App Saves to a Database](./basic/database-basics.mdx) |
+| Cache hit / miss | A hit is when the data is already in the cache; a miss means it must be fetched from the slower source. | [How an Application Cache Works](./basic/caching.mdx) |
+| Message queue | A buffer where producers drop messages and consumers pick them up later, so the two do not have to run in step. | [How a Message Queue Decouples Services](./basic/message-queue.mdx) |
+
+## Cloud
+
+| Term | Meaning | Lesson |
+| --- | --- | --- |
+| IaaS / PaaS / SaaS | Cloud service models where the provider runs more of the stack: just infrastructure, also the platform, or the whole application. | [Who Owns What (IaaS · PaaS · SaaS)](./cloud/service-models.mdx) |
+| Region | A geographic area (such as Seoul) where a cloud provider runs a group of data centers. | [When One Availability Zone Goes Down](./cloud/az-failover.mdx) |
+| Availability zone (AZ) | One or more data centers inside a region with separate power and network, so one can fail without the others. | [When One Availability Zone Goes Down](./cloud/az-failover.mdx) |
+| VPC | Your own private network inside a cloud provider. | [How a Request Travels Inside a VPC](./cloud/vpc-request.mdx) |
+| Subnet | An IP range inside a VPC tied to one AZ; public subnets route to the internet, private ones do not directly. | [How a Request Travels Inside a VPC](./cloud/vpc-request.mdx) |
+| Security group | A stateful firewall attached to a VM or network interface that lists which traffic is allowed in and out. | [How a Request Travels Inside a VPC](./cloud/vpc-request.mdx) |
+| Auto Scaling group | A set of identical VMs that the cloud grows, shrinks and replaces to keep a target count or load. | [Auto-Scaling VMs (Auto Scaling Groups)](./cloud/auto-scaling-group.mdx) |
+| IAM | The cloud service that decides who (users, roles) may do which actions on which resources. | [Permission Checks on One API Request (IAM)](./cloud/iam-request.mdx) |
+| SSO / federation | Logging in once at a company identity provider and being trusted by other systems, such as cloud accounts, through SAML or OIDC. | [Single Sign-On for People (SSO and Federation)](./cloud/sso-federation.mdx) |
+| KMS | A managed service that stores encryption keys and encrypts or decrypts data with them without handing the key out. | [How Cloud KMS Encrypts Your Data (Envelope Encryption)](./cloud/kms-encryption.mdx) |
+| Object storage | Storage that keeps files as objects in buckets, addressed by key over HTTP (such as S3). | [How Object Storage Works](./cloud/object-storage.mdx) |
+| Managed database | A database the cloud provider runs for you, handling backups, patching and failover. | [What a Managed Database Does for You](./cloud/managed-database.mdx) |
+| CDN | A network of edge servers near users that cache content so requests do not all travel to the origin. | [How a CDN Serves a Request](./cloud/cdn.mdx) |
+| WAF / DDoS protection | A WAF inspects HTTP requests and blocks attacks like SQL injection; DDoS protection absorbs floods of traffic meant to knock a service offline. | [Protecting a Public Endpoint (WAF and DDoS)](./cloud/waf-ddos.mdx) |
+| Serverless function | Code the cloud runs only when an event arrives, scaling to zero when idle and billing per call. | [How a Serverless Function Runs](./cloud/serverless.mdx) |
+| VPC peering | A private link between two VPCs so they can talk using private IPs. | [Connecting Networks: Peering, Transit, VPN and Private Endpoints](./cloud/hybrid-network.mdx) |
+| RPO / RTO | RPO is how much data you can afford to lose; RTO is how long you can afford to be down. | [When a Whole Region Goes Down](./cloud/multi-region-dr.mdx) |
+| Infrastructure as code (IaC) | Describing infrastructure in files that a tool such as Terraform applies, instead of clicking in a console. | [Infrastructure as Code with Terraform](./cloud/infra-as-code.mdx) |
+| Managed Kubernetes | A service such as EKS, GKE or AKS where the provider runs the control plane and you run the workloads. | [Managed Kubernetes — Who Runs What](./cloud/managed-kubernetes.mdx) |
+
+## Kubernetes objects
+
+| Term | Meaning | Lesson |
+| --- | --- | --- |
+| Cluster | A set of machines (nodes) managed together by one Kubernetes control plane. | [How a Pod Starts](./k8s/pod-startup.mdx) |
+| Control plane | The components that store and act on cluster state: API server, etcd, scheduler and controller manager. | [How a Pod Starts](./k8s/pod-startup.mdx) |
+| Node | One machine (VM or physical) in the cluster that runs Pods. | [How a Pod Starts](./k8s/pod-startup.mdx) |
+| API server | The front door of the cluster; every read and write of objects goes through it. | [How an API Request Gets Stored](./advanced/api-request-path.mdx) |
+| etcd | The key-value database where the control plane stores every object. | [Control Plane HA and etcd Quorum](./advanced/etcd-quorum.mdx) |
+| Scheduler | The component that picks a node for each new Pod. | [Which Node Gets the Pod (Scheduling)](./k8s/scheduling.mdx) |
+| Controller | A loop that watches objects and keeps changing the real world until it matches the desired state. | [Desired State and the Control Loop](./basic/desired-state.mdx) |
+| Desired state | What you declared you want (for example, three replicas), which controllers work to make true. | [Desired State and the Control Loop](./basic/desired-state.mdx) |
+| kubelet | The agent on every node that starts the containers for the Pods assigned to it and reports their status. | [How a Pod Starts](./k8s/pod-startup.mdx) |
+| kubectl | The command-line tool that talks to the API server. | [Reading and Applying a Manifest](./k8s/manifest-anatomy.mdx) |
+| Manifest | A YAML file describing an object, with `apiVersion`, `kind`, `metadata` and `spec`. | [Reading and Applying a Manifest](./k8s/manifest-anatomy.mdx) |
+| Label / selector | Labels are key-value tags on objects; selectors pick objects by those labels. | [Reading and Applying a Manifest](./k8s/manifest-anatomy.mdx) |
+| Namespace | A named group of objects inside a cluster, used to separate teams or environments. | [Namespaces and Resource Quotas](./feature/namespace-quota.mdx) |
+| Pod | The smallest unit Kubernetes runs: one or more containers that share a network address and volumes. | [How a Pod Starts](./k8s/pod-startup.mdx) |
+| Deployment | An object that keeps a set number of identical, stateless Pods running and rolls out new versions. | [Workload Types](./basic/workload-types.mdx) |
+| ReplicaSet | The object a Deployment creates to hold a fixed number of Pods for one version. | [Zero-Downtime Deploys (Rolling Update)](./k8s/rolling-update.mdx) |
+| DaemonSet | An object that runs one copy of a Pod on every node (or every matching node). | [Workload Types](./basic/workload-types.mdx) |
+| StatefulSet | An object for Pods that need a stable name and their own storage, such as databases. | [StatefulSets and databases](./intermediate/statefulset.mdx) |
+| Job / CronJob | A Job runs Pods until a task completes; a CronJob creates Jobs on a schedule. | [Run Once and Finish (Job · CronJob)](./k8s/job-cronjob.mdx) |
+| ConfigMap | An object holding non-secret settings that Pods read as environment variables or files. | [Config and Secrets (ConfigMap · Secret)](./k8s/config-secret.mdx) |
+| Secret | An object for sensitive values like passwords; only base64-encoded by default, not encrypted. | [Config and Secrets (ConfigMap · Secret)](./k8s/config-secret.mdx) |
+| Init / sidecar container | An init container runs to completion before the app starts; a sidecar runs beside the app in the same Pod, such as a log shipper or proxy. | [Multi-container pods — init and sidecar (CKAD)](./cert/multi-container.mdx) |
+| imagePullSecrets | A reference to a Secret holding registry credentials, so the kubelet can pull from a private registry. | [Pulling Images from a Private Registry](./k8s/private-registry.mdx) |
+| Finalizer | A marker on an object that blocks its deletion until some controller finishes cleanup and removes it. | [Deletion Is More Complex Than You Think](./advanced/deletion-finalizer.mdx) |
+| CRD | A CustomResourceDefinition, which adds a new object type to the Kubernetes API. | [CRDs and Operators](./advanced/crd-operator.mdx) |
+| Operator | A controller for a custom resource that encodes how to run a specific app, such as a database. | [CRDs and Operators](./advanced/crd-operator.mdx) |
+
+## Kubernetes networking
+
+| Term | Meaning | Lesson |
+| --- | --- | --- |
+| Service | A stable virtual address and DNS name in front of a changing set of Pods. | [Finding Services by Name (Service·DNS)](./k8s/service-dns.mdx) |
+| ClusterIP | The default Service type, reachable only from inside the cluster. | [Service Types (ClusterIP · NodePort · LoadBalancer)](./feature/service-types.mdx) |
+| NodePort | A Service type that opens the same port on every node to reach the Service from outside. | [Service Types (ClusterIP · NodePort · LoadBalancer)](./feature/service-types.mdx) |
+| LoadBalancer (Service type) | A Service type that asks the cloud for an external load balancer pointing at the nodes. | [Service Types (ClusterIP · NodePort · LoadBalancer)](./feature/service-types.mdx) |
+| EndpointSlice | The list of ready Pod IPs behind a Service, kept up to date by a controller. | [How a Request Reaches a Pod](./k8s/traffic.mdx) |
+| kube-proxy | The node component that programs iptables or IPVS rules so Service IPs reach real Pod IPs. | [How a Request Reaches a Pod](./k8s/traffic.mdx) |
+| CoreDNS | The cluster DNS server that answers names like `web.default.svc.cluster.local`. | [Finding Services by Name (Service·DNS)](./k8s/service-dns.mdx) |
+| Ingress | An object with HTTP routing rules (host and path) for sending outside traffic to Services. | [Ingress Rules and TLS](./feature/ingress.mdx) |
+| Ingress controller | The proxy (such as NGINX) that reads Ingress objects and actually routes the traffic. | [Ingress Rules and TLS](./feature/ingress.mdx) |
+| Gateway API | The newer set of routing objects (GatewayClass, Gateway, HTTPRoute) that splits infrastructure and app routing roles. | [How a Gateway API HTTPRoute Reaches a Pod](./feature/gateway-api.mdx) |
+| HTTPRoute | A Gateway API object that matches HTTP requests and sends them to backend Services. | [How a Gateway API HTTPRoute Reaches a Pod](./feature/gateway-api.mdx) |
+| CNI | The plugin interface (Calico, Cilium and others) that gives each Pod an IP and connects Pod networks. | [A Packet from Pod to Pod](./advanced/packet-path.mdx) |
+| NetworkPolicy | An object that allows only listed traffic to or from selected Pods. | [Blocking and Allowing Traffic (NetworkPolicy)](./k8s/network-policy.mdx) |
+| Service mesh | A layer of proxies that handles encryption, retries and traffic routing between services without app changes. | [Service Mesh ① Sidecars and Mutual Authentication](./feature/mesh-sidecar.mdx) |
+| mTLS | Mutual TLS, where both sides present certificates so each proves its identity to the other. | [Service Mesh ① Sidecars and Mutual Authentication](./feature/mesh-sidecar.mdx) |
+| VirtualService / DestinationRule | Istio objects: VirtualService says where requests go (for example 90/10 split), DestinationRule defines the subsets and policies. | [Service Mesh ② Splitting Traffic](./feature/mesh-traffic.mdx) |
+| Mesh gateway | An Envoy proxy at the edge of the mesh that handles traffic entering or leaving it. | [Service Mesh ③ Mesh Gateway](./feature/mesh-gateway.mdx) |
+| Ambient mode | An Istio mode without sidecars: a per-node ztunnel does mTLS, and optional waypoint proxies handle HTTP rules. | [Service Mesh ④ Ambient Mode Without Sidecars](./feature/mesh-ambient.mdx) |
+
+## Scheduling & scaling
+
+| Term | Meaning | Lesson |
+| --- | --- | --- |
+| Requests | The CPU and memory a container is guaranteed; the scheduler places Pods by these numbers. | [Requests and limits](./intermediate/requests-limits.mdx) |
+| Limits | The most CPU or memory a container may use; more CPU is throttled, more memory gets it killed. | [Requests and limits](./intermediate/requests-limits.mdx) |
+| QoS class | Guaranteed, Burstable or BestEffort, set from requests and limits; decides who is evicted first under pressure. | [Requests and limits](./intermediate/requests-limits.mdx) |
+| OOMKilled | The status of a container the kernel killed for going over its memory limit. | [Requests and limits](./intermediate/requests-limits.mdx) |
+| Liveness probe | A periodic check that restarts the container if it fails. | [Health checks — alive, and ready for requests?](./intermediate/probes.mdx) |
+| Readiness probe | A check that removes the Pod from Service endpoints while it fails, without restarting it. | [Health checks — alive, and ready for requests?](./intermediate/probes.mdx) |
+| Rolling update | Replacing Pods a few at a time so the app stays up during a new version rollout. | [Zero-Downtime Deploys (Rolling Update)](./k8s/rolling-update.mdx) |
+| Blue/green deployment | Running the new version beside the old one and switching all traffic at once. | [Blue/green and canary with core primitives (CKAD)](./cert/deploy-strategies.mdx) |
+| Canary | Sending a small share of traffic to a new version first and increasing it if things look healthy. | [Blue/green and canary with core primitives (CKAD)](./cert/deploy-strategies.mdx) |
+| Self-healing | Kubernetes restarting failed containers and replacing lost Pods to keep the desired count. | [When a Pod Dies (Self-Healing)](./k8s/self-healing.mdx) |
+| CrashLoopBackOff | A status where a container keeps crashing and the kubelet waits longer between each restart. | [Reading status in three layers and the troubleshooting order](./intermediate/troubleshoot-status.mdx) |
+| Graceful shutdown | Stopping a Pod by first taking it out of traffic, then sending SIGTERM so it finishes in-flight requests. | [Graceful shutdown — going down without losing requests](./intermediate/graceful-shutdown.mdx) |
+| HPA | The Horizontal Pod Autoscaler, which changes the replica count based on metrics like CPU. | [Scaling with Load (HPA)](./k8s/autoscaling.mdx) |
+| VPA | The Vertical Pod Autoscaler, which recommends or sets a Pod's CPU and memory requests. | [Automatic Pod Sizing (VPA)](./feature/vpa.mdx) |
+| Cluster Autoscaler / Karpenter | Tools that add nodes when Pods cannot be scheduled and remove nodes that sit empty. | [Adding and Removing Nodes (Cluster Autoscaler vs Karpenter)](./k8s/node-autoscaling.mdx) |
+| KEDA | An autoscaler that scales workloads on event sources such as queue length, including down to zero. | [Scaling on Events with KEDA](./k8s/keda.mdx) |
+| Node affinity | Pod rules that require or prefer nodes with certain labels. | [Which Node Gets the Pod (Scheduling)](./k8s/scheduling.mdx) |
+| Taint / toleration | A taint keeps Pods off a node; only Pods with a matching toleration may land there. | [Which Node Gets the Pod (Scheduling)](./k8s/scheduling.mdx) |
+| Topology spread constraints | Rules that spread a workload's Pods evenly across zones or nodes. | [Spreading Pods Across Zones (Topology Spread Constraints)](./k8s/topology-spread.mdx) |
+| PriorityClass / preemption | Pods get a priority; when there is no room, the scheduler may evict lower-priority Pods to fit a higher one. | [Priority and Preemption](./advanced/priority-preemption.mdx) |
+| Cordon / drain | Cordon marks a node unschedulable; drain also evicts its Pods so it can be maintained. | [Draining Nodes and Upgrading the Cluster](./k8s/node-drain.mdx) |
+| PodDisruptionBudget | A limit on how many Pods of an app may be voluntarily evicted at once, for example during a drain. | [Draining Nodes and Upgrading the Cluster](./k8s/node-drain.mdx) |
+| ResourceQuota / LimitRange | ResourceQuota caps the total resources in a namespace; LimitRange sets per-container defaults and bounds. | [Namespaces and Resource Quotas](./feature/namespace-quota.mdx) |
+
+## Storage
+
+| Term | Meaning | Lesson |
+| --- | --- | --- |
+| Volume | A directory mounted into a container that can outlive a container restart. | [How Storage Gets Attached (PVC·PV)](./k8s/storage-volume.mdx) |
+| PersistentVolume (PV) | A piece of real storage (a cloud disk, an NFS share) registered in the cluster. | [How Storage Gets Attached (PVC·PV)](./k8s/storage-volume.mdx) |
+| PersistentVolumeClaim (PVC) | A Pod's request for storage of a certain size and access mode, bound to a matching PV. | [How Storage Gets Attached (PVC·PV)](./k8s/storage-volume.mdx) |
+| StorageClass | A template that says which provisioner and settings to use when creating PVs on demand. | [How Storage Gets Attached (PVC·PV)](./k8s/storage-volume.mdx) |
+| CSI driver | A plugin that lets Kubernetes create, attach and mount a particular storage system. | [When Volumes Attach, and Failures](./advanced/volume-binding.mdx) |
+| WaitForFirstConsumer | A binding mode that delays creating a volume until a Pod is scheduled, so the disk lands in the same zone. | [When Volumes Attach, and Failures](./advanced/volume-binding.mdx) |
+| Velero | A tool that backs up Kubernetes objects and volume snapshots and restores them. | [Backing Up and Restoring a Cluster](./advanced/cluster-backup.mdx) |
+
+## Security
+
+| Term | Meaning | Lesson |
+| --- | --- | --- |
+| Authentication / authorization | Authentication checks who you are; authorization checks what you are allowed to do. | [How an API Request Gets Stored](./advanced/api-request-path.mdx) |
+| RBAC | Role-based access control: permissions are grouped into roles and roles are granted to users or ServiceAccounts. | [Who Can Do What (RBAC)](./k8s/rbac.mdx) |
+| Role / ClusterRole / RoleBinding | A Role (one namespace) or ClusterRole (cluster-wide) lists allowed verbs on resources; a RoleBinding grants it to a user, group or ServiceAccount. | [Who Can Do What (RBAC)](./k8s/rbac.mdx) |
+| ServiceAccount | An identity for programs running in Pods, used when they call the API server. | [How a Pod Proves Who It Is (ServiceAccount Tokens)](./advanced/serviceaccount-token.mdx) |
+| Projected token | A short-lived, audience-bound ServiceAccount token the kubelet mounts into a Pod and refreshes. | [How a Pod Proves Who It Is (ServiceAccount Tokens)](./advanced/serviceaccount-token.mdx) |
+| Admission control | The step after authorization where webhooks or policies can reject or modify an object before it is stored. | [Admission Policies with CEL and Webhooks](./advanced/admission-policy.mdx) |
+| ValidatingAdmissionPolicy | A built-in admission check written in CEL expressions, with no webhook server needed. | [Admission Policies with CEL and Webhooks](./advanced/admission-policy.mdx) |
+| Pod Security Standards | Three built-in levels (privileged, baseline, restricted) that limit what Pods may do, enforced per namespace. | [Pod Security Standards and securityContext](./advanced/pod-security.mdx) |
+| securityContext | Pod and container settings such as `runAsNonRoot`, dropped capabilities and a read-only root file system. | [Pod Security Standards and securityContext](./advanced/pod-security.mdx) |
+| Encryption at rest | Encrypting Secrets before they are written to etcd, so a stolen disk or backup does not reveal them. | [Keeping Secrets Safe](./advanced/secret-management.mdx) |
+| cert-manager | A controller that requests, stores and renews TLS certificates as Kubernetes Secrets. | [Automatic TLS Certificates with cert-manager](./advanced/cert-manager.mdx) |
+| SBOM | A software bill of materials: the list of every package and version inside an image. | [Image and Supply Chain Security](./advanced/supply-chain.mdx) |
+| Image signing | Signing an image digest (for example with cosign) so the cluster can verify who built it before running it. | [Image and Supply Chain Security](./advanced/supply-chain.mdx) |
+| Runtime security | Watching what containers actually do (for example with Falco) and alerting on abnormal behavior like a shell opening. | [Runtime security — catching abnormal behavior (CKS)](./cert/runtime-security.mdx) |
+| Audit log | The API server's record of who did what to which object, and when. | [Audit Logs](./advanced/audit-log.mdx) |
+| 4C | Cloud, Cluster, Container, Code: the four layers of cloud native security, each relying on the one outside it. | [Viewing the cluster through the 4Cs and a threat model (KCSA·KCNA)](./cert/threat-model.mdx) |
+
+## Operations & observability
+
+| Term | Meaning | Lesson |
+| --- | --- | --- |
+| Helm chart / release | A chart is a package of templated manifests plus default values; a release is one installed copy of it, with revisions you can roll back to. | [How a Helm Release Is Installed, Upgraded and Rolled Back](./k8s/helm-release.mdx) |
+| Kustomize overlay | A per-environment set of patches applied on top of shared base manifests. | [Per-environment deploys with Kustomize (CKA·CKAD)](./cert/kustomize.mdx) |
+| GitOps | Keeping the desired cluster state in Git and letting an in-cluster agent sync the cluster to it. | [Helm and GitOps](./intermediate/gitops-sync.mdx) |
+| Argo CD | A GitOps tool that compares Git with the cluster, shows drift and syncs the difference. | [Helm and GitOps](./intermediate/gitops-sync.mdx) |
+| Argo Rollouts | A controller for canary and blue/green rollouts that shifts traffic step by step and rolls back on bad metrics. | [Progressive Delivery with Argo Rollouts](./feature/argo-rollouts.mdx) |
+| kubeadm | The official tool for creating and upgrading a cluster's control plane on your own machines. | [Upgrading a cluster with kubeadm (CKA)](./cert/kubeadm-upgrade.mdx) |
+| NotReady | A node status meaning the kubelet has stopped reporting healthy heartbeats. | [Node NotReady and component failures (CKA)](./cert/node-troubleshoot.mdx) |
+| Ephemeral container | A temporary debug container added to a running Pod with `kubectl debug`. | [Debugging a Running Pod with kubectl debug](./k8s/kubectl-debug.mdx) |
+| Quorum | The majority of etcd members that must agree before a write counts; three members tolerate one failure. | [Control Plane HA and etcd Quorum](./advanced/etcd-quorum.mdx) |
+| Certificate expiry | Cluster component certificates (kubeadm defaults to one year) that stop the cluster working if not renewed. | [Cluster Certificate Expiry](./advanced/cluster-cert.mdx) |
+| Metrics / logs / traces | The three signals: numbers over time, text records of events, and the path of one request across services. | [How Logs, Metrics and Traces Leave a Pod](./k8s/observability-pipeline.mdx) |
+| SLI / SLO | An SLI is a measured service level (such as the share of fast, successful requests); an SLO is the target for it. | [SLOs and Alert Design](./advanced/slo-alert.mdx) |
+| Error budget / burn rate | The failures an SLO allows over a period, and how fast you are using them up; alerts fire on fast burn. | [SLOs and Alert Design](./advanced/slo-alert.mdx) |
+| Incident response | The routine for handling an outage: declare it, assign roles, mitigate first, then write a blameless postmortem. | [Incident Response: From Alert to Postmortem](./advanced/incident-response.mdx) |
+| Chaos engineering | Injecting failures on purpose (killing Pods, adding latency) to check the system copes as expected. | [Chaos Engineering on Kubernetes](./advanced/chaos-engineering.mdx) |
+| Multi-cluster | Running workloads across several clusters for isolation, regions or failover, with tools that sync and route between them. | [Running a Fleet of Clusters](./advanced/multi-cluster.mdx) |
+
+## AI/GPU
+
+| Term | Meaning | Lesson |
+| --- | --- | --- |
+| GPU / NPU | Accelerator chips for parallel math; GPUs are general-purpose, NPUs are built specifically for neural networks. | [How GPUs and NPUs become node resources (device plugins)](./ai/device-plugin.mdx) |
+| Device plugin | A node agent that tells the kubelet how many accelerators a node has and sets them up for containers. | [How GPUs and NPUs become node resources (device plugins)](./ai/device-plugin.mdx) |
+| DRA | Dynamic Resource Allocation: requesting devices by attributes (model, memory) instead of a plain count. | [Requesting GPUs by Criteria (DRA)](./k8s/dra.mdx) |
+| ResourceClaim / DeviceClass | A ResourceClaim is a Pod's request for devices; a DeviceClass names a kind of device and its selection rules. | [Getting Accelerators by Criteria (DRA in Depth)](./ai/accelerator-allocation.mdx) |
+| MIG | Multi-Instance GPU: splitting one NVIDIA GPU into isolated slices with their own memory and compute. | [Sharing GPUs](./feature/gpu-sharing.mdx) |
+| Time-slicing | Sharing one GPU by letting several Pods take turns, with no memory isolation. | [Sharing Accelerators (Time-Slicing, MPS)](./ai/accelerator-sharing.mdx) |
+| DCGM exporter | An NVIDIA tool that exposes GPU metrics (utilization, memory, temperature) to Prometheus. | [Monitoring GPUs on Kubernetes](./ai/gpu-monitoring.mdx) |
+| Model weights | The learned numbers of a model, stored in files (for example safetensors) that can be many gigabytes. | [Getting a Model Ready to Deploy](./ai/model-packaging.mdx) |
+| Cold start | The delay before a new replica can serve, spent pulling the image, loading weights and warming up. | [Until a Model First Starts (Cold Start)](./ai/cold-start.mdx) |
+| Inference engine | The server (such as vLLM) that loads a model onto accelerators and generates responses. | [From API Request to Response](./ai/inference-request.mdx) |
+| Inference routing | Choosing which model replica gets a request using load, queue length and cached prefixes, not just round robin. | [Which Replica Gets the Request (Inference Routing)](./ai/inference-routing.mdx) |
+| LoRA adapter | A small set of extra weights that specializes a base model; many adapters can share one loaded base. | [Serving Many LoRA Adapters on One Base Model](./ai/lora-serving.mdx) |
+| LLM autoscaling | Scaling inference replicas on signals like queue depth or KV cache use rather than CPU. | [Autoscaling LLM Inference](./ai/llm-autoscaling.mdx) |
+| RAG | Retrieval-augmented generation: finding relevant documents first and giving them to the model with the question. | [How a RAG Pipeline Answers From Your Documents](./ai/rag-pipeline.mdx) |
+| Embedding | A list of numbers representing the meaning of text, so similar text ends up close together. | [How a RAG Pipeline Answers From Your Documents](./ai/rag-pipeline.mdx) |
+| AI agent | A program that has a model plan steps and call tools in a loop until a task is done. | [Serving an LLM Agent That Calls Tools](./ai/agent-serving.mdx) |
+| Model evaluation | Measuring a model's quality on a fixed test set before and after changes, so regressions are caught. | [Evaluating a Model Before and After Deploy](./ai/model-evaluation.mdx) |
+
+## LLM serving
+
+| Term | Meaning | Lesson |
+| --- | --- | --- |
+| Token | The unit an LLM reads and writes, often a word or part of a word. | [How an Answer Is Built One Token at a Time](./llm/token-generation.mdx) |
+| Sampling / temperature | Picking the next token from the model's probabilities; higher temperature makes the choice more random. | [How an Answer Is Built One Token at a Time](./llm/token-generation.mdx) |
+| Prefill | The first phase, where the model reads the whole prompt in one parallel pass; compute-bound. | [Reading the Question, Writing the Answer (Prefill and Decode)](./llm/prefill-decode.mdx) |
+| Decode | The phase that generates one token per step; limited by memory bandwidth rather than compute. | [Reading the Question, Writing the Answer (Prefill and Decode)](./llm/prefill-decode.mdx) |
+| TTFT | Time to first token: how long the user waits before the answer starts appearing. | [Reading the Question, Writing the Answer (Prefill and Decode)](./llm/prefill-decode.mdx) |
+| TPOT | Time per output token: the gap between tokens once the answer is streaming. | [Reading the Question, Writing the Answer (Prefill and Decode)](./llm/prefill-decode.mdx) |
+| KV cache | GPU memory holding the attention keys and values of earlier tokens so they are not recomputed each step. | [How the KV Cache Fills Up](./llm/kv-cache.mdx) |
+| PagedAttention | Storing the KV cache in small fixed-size blocks, like memory pages, to avoid wasted space. | [How the KV Cache Fills Up](./llm/kv-cache.mdx) |
+| Prefix caching | Reusing the KV cache of a shared prompt prefix (such as a system prompt) across requests. | [How the KV Cache Fills Up](./llm/kv-cache.mdx) |
+| Continuous batching | Adding and removing requests from the running batch at every step instead of waiting for the whole batch to finish. | [Batching Requests (Continuous Batching)](./llm/continuous-batching.mdx) |
+| Quantization | Storing weights (and sometimes the KV cache) in fewer bits, such as FP8 or INT4, to save memory and speed up. | [Making a Model Smaller (Quantization)](./llm/quantization.mdx) |
+| Speculative decoding | A small draft model guesses several tokens and the big model checks them all in one step, keeping the ones it agrees with. | [Guess Ahead, Check Once (Speculative Decoding)](./llm/speculative-decoding.mdx) |
+| KV offloading | Moving KV cache that does not fit in GPU memory to CPU memory or disk, and bringing it back when needed. | [Offloading Overflowing KV Cache](./llm/kv-offloading.mdx) |
+| Tensor parallelism (TP) | Splitting each layer's matrices across GPUs that compute together on every token. | [Splitting a Model Across GPUs (TP, PP, EP)](./llm/model-parallelism.mdx) |
+| Pipeline parallelism (PP) | Giving each GPU a different range of layers, passing activations along like an assembly line. | [Splitting a Model Across GPUs (TP, PP, EP)](./llm/model-parallelism.mdx) |
+| Expert parallelism (EP) / MoE | In a mixture-of-experts model only a few experts run per token; EP places different experts on different GPUs. | [Splitting a Model Across GPUs (TP, PP, EP)](./llm/model-parallelism.mdx) |
+| P/D disaggregation | Running prefill and decode on separate GPU pools and transferring the KV cache between them. | [Splitting Prefill and Decode (P/D Disaggregation)](./llm/pd-disaggregation.mdx) |

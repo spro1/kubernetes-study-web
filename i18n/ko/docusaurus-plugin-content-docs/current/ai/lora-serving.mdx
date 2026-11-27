@@ -1,0 +1,258 @@
+---
+id: lora-serving
+title: 베이스 모델 하나로 LoRA 어댑터 여러 개 서빙하기
+sidebar_label: 12 · LoRA 서빙
+description: LoRA 미세 조정의 저랭크 행렬부터 vLLM --enable-lora, 모델 이름으로 어댑터 고르기, GPU·CPU 어댑터 캐시, 어댑터를 섞은 배치, 어댑터를 보고 고르는 라우팅, 어댑터 버전 관리까지 애니메이션으로 따라간다
+summary: 'LoRA 어댑터는 MB, 베이스 모델은 GB인 이유, GPU 하나가 요청마다 다른 어댑터를 쓰는 방식, 교체·라우팅·버전 관리에 드는 비용.'
+icon: layers
+hide_table_of_contents: true
+---
+
+# 베이스 모델 하나로 LoRA 어댑터 여러 개 서빙하기
+
+LoRA 미세 조정은 베이스 모델을 그대로 두고 작은 덧붙임, 곧 **어댑터**만 학습한다. 어댑터가 작으니 GPU 하나에 베이스 모델을 한 벌만 올려 두고 요청마다 다른 어댑터를 얹을 수 있다.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '약 12분', level: '심화'}}
+  groups={[
+    {label: '레플리카 1 · GPU 서버 한 대', x: 420, y: 30, w: 350, h: 400, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'client', label: '애플리케이션', sub: 'SQL 봇 · 상담 봇', icon: 'browser', tone: 'ext', x: 95, y: 225, w: 150, show: true},
+    {id: 'gw', label: '게이트웨이 + EPP', sub: '레플리카 고르기', icon: 'gate', tone: 'cp', x: 290, y: 225, w: 160},
+    {id: 'base', label: '베이스 모델', sub: 'GB · 한 번만 올림', icon: 'server', tone: 'node', x: 520, y: 110, w: 160, show: true},
+    {id: 'slots', label: 'GPU LoRA 슬롯', sub: '--max-loras', icon: 'layers', tone: 'app', x: 520, y: 240, w: 160},
+    {id: 'la', label: 'sql-lora', sub: 'MB', icon: 'box', tone: 'app', size: 'sm', x: 700, y: 110},
+    {id: 'lb', label: 'support-lora', sub: 'MB', icon: 'box', tone: 'app', size: 'sm', x: 700, y: 240, w: 120},
+    {id: 'cpu', label: 'CPU 어댑터 캐시', sub: '--max-cpu-loras', icon: 'disk', tone: 'store', x: 520, y: 370, w: 170},
+    {id: 'r2', label: '레플리카 2', sub: '다른 어댑터를 올림', icon: 'server', tone: 'node', x: 880, y: 110, w: 160},
+    {id: 'train', label: 'LoRA 학습', sub: 'A와 B만 학습', icon: 'hammer', tone: 'ext', x: 880, y: 240, w: 160},
+    {id: 'store', label: '어댑터 저장소', sub: '버전별 파일', icon: 'registry', tone: 'store', x: 880, y: 370, w: 160},
+  ]}
+  metrics={[
+    {id: 'model', label: '요청한 모델'},
+    {id: 'gpu', label: 'GPU에 올라간 어댑터'},
+    {id: 'cost', label: '추가 비용'},
+  ]}
+  learn={[
+    {text: 'LoRA 어댑터가 베이스 모델보다 훨씬 작은 이유', at: 1},
+    {text: '요청이 모델 이름으로 어댑터를 고르는 방식', at: 3},
+    {text: '--max-loras와 --max-lora-rank가 제한하는 것', at: 4},
+    {text: '어댑터를 넣고 빼는 데 드는 비용', at: 5},
+    {text: '어댑터를 이미 가진 레플리카로 보내는 라우팅', at: 7},
+    {text: '결과가 몰래 바뀌지 않게 어댑터 버전 관리하기', at: 8},
+  ]}
+  steps={[
+    {
+      short: '시작',
+      kind: '시작',
+      title: '일은 여럿, 베이스 모델은 하나',
+      text: [
+        '두 팀이 각자 맞춘 모델을 원한다. 한 팀은 SQL을 쓰고, 다른 팀은 상담 문의에 답한다. 둘 다 같은 공개 베이스 모델에서 출발한다.',
+        '전체 미세 조정은 일마다 모든 가중치를 통째로 복사한다. 복사본마다 GPU 메모리가 따로 들어서, 일이 열 개면 전체 모델 열 개를 서빙해야 한다.',
+      ],
+      flows: [{from: 'client', to: 'base', label: '일마다 모델 하나?', type: 'request', bend: 0.1}],
+      focus: ['client', 'base'],
+      values: {model: '—', gpu: '—', cost: {text: '일마다 전체 모델', tone: 'bad'}},
+    },
+    {
+      short: 'LoRA',
+      kind: '원리',
+      title: 'LoRA는 가중치 전부 대신 작은 행렬 두 개를 학습한다',
+      text: [
+        'LoRA(Low-Rank Adaptation)는 베이스 가중치 W를 얼려 둔다. 고른 층마다 랭크 r이 작은 얇은 행렬 두 개의 곱 B·A를 더해서, 그 층은 W·x + B·A·x를 계산한다.',
+        '학습은 A와 B만 바꾼다. 저장된 어댑터에는 이 행렬만 들어 있어 MB 단위이고, 베이스 모델은 GB 단위다. 어댑터는 학습에 쓴 바로 그 베이스 모델에서만 동작한다.',
+      ],
+      keyIdea: '랭크 r이 어댑터의 크기와 표현력을 정한다. r이 크면 더 많이 배울 수 있지만 어댑터마다 메모리가 더 든다.',
+      flows: [{from: 'train', to: 'store', label: '어댑터 저장', type: 'request'}],
+      focus: ['train', 'store'],
+      badges: {store: 'sql-lora · support-lora'},
+      values: {cost: {text: '일마다 MB', tone: 'good'}},
+    },
+    {
+      short: '서빙',
+      kind: '원리',
+      title: '서버는 베이스를 한 번 올리고 어댑터를 등록한다',
+      text: [
+        'vLLM에서는 --enable-lora로 어댑터 기능을 켜고, --lora-modules 이름=경로로 시작할 때 어댑터를 등록한다. 베이스 가중치는 GPU 메모리에 한 번만 올라간다.',
+        'GET /v1/models는 어댑터를 각각 하나의 모델로 보여 주고, parent에 베이스 모델을 적는다. 클라이언트 쪽에서는 어댑터마다 다른 모델 이름처럼 보인다.',
+      ],
+      flows: [
+        {from: 'store', to: 'cpu', label: '불러오기', type: 'request', bend: 0.1},
+        {from: 'cpu', to: 'slots', label: 'GPU로', type: 'request'},
+      ],
+      focus: ['base', 'slots'],
+      badges: {store: null, base: '공유'},
+      values: {gpu: 'sql-lora'},
+    },
+    {
+      short: '고르기',
+      kind: '원리',
+      title: '요청은 모델 이름으로 어댑터를 고른다',
+      text: [
+        'SQL 봇이 "model": "sql-lora"를 보낸다. 서버는 공유하는 베이스 가중치를 돌리고, 이 요청에 한해서만 LoRA 층에 sql-lora 행렬을 더한다.',
+        '베이스 모델 이름으로 온 요청에는 어댑터를 얹지 않는다. HTTP API 하나로 모든 변형을 서빙하고, model 필드가 스위치 역할을 한다.',
+      ],
+      flows: [
+        {from: 'client', to: 'gw', label: 'model: sql-lora', type: 'request'},
+        {from: 'gw', to: 'base', label: '전달', type: 'request', bend: -0.1},
+        {from: 'slots', to: 'la', label: '적용', type: 'watch'},
+      ],
+      focus: ['la', 'base'],
+      status: {la: 'ok'},
+      values: {model: 'sql-lora'},
+    },
+    {
+      short: '섞인 배치',
+      kind: '원리',
+      title: '어댑터가 다른 요청도 한 배치에서 돈다',
+      text: [
+        '연속 배칭에서는 sql-lora, support-lora, 어댑터 없는 베이스 요청이 같은 단계에 함께 돌 수 있다. 베이스 계산은 같이 하고, 요청마다 자기 B·A 항만 작게 더한다.',
+        '--max-loras는 한 배치에 들어갈 수 있는 서로 다른 어댑터 수의 상한이다(vLLM 기본값 1). --max-lora-rank는 서빙할 가장 큰 랭크 이상이어야 하고(기본값 16), 이보다 랭크가 큰 어댑터는 올라가지 않는다.',
+      ],
+      keyIdea: 'GPU LoRA 슬롯마다 최대 랭크 어댑터 크기만큼 메모리를 잡아 둔다. --max-loras나 --max-lora-rank를 올리면 KV 캐시에 쓸 메모리가 줄어든다.',
+      flows: [
+        {from: 'client', to: 'gw', label: 'model: support-lora', type: 'request'},
+        {from: 'gw', to: 'base', label: '같은 배치', type: 'request', bend: -0.1},
+        {from: 'slots', to: 'lb', label: '적용', type: 'watch'},
+      ],
+      focus: ['slots', 'la', 'lb'],
+      status: {lb: 'ok'},
+      badges: {slots: '슬롯 2개 사용'},
+      values: {model: 'sql-lora + support-lora', gpu: 'sql-lora · support-lora', cost: {text: '어댑터마다 조금', tone: 'good'}},
+    },
+    {
+      short: '교체',
+      kind: '주의',
+      title: 'GPU 슬롯이 다 차면 어댑터를 바꿔 끼운다',
+      text: [
+        '두 슬롯 모두 바쁜 어댑터로 차 있는데 세 번째 어댑터 요청이 온다. 새 요청은 슬롯이 빌 때까지 기다리고, 그다음 어댑터가 복사되어 들어오며 가장 오래 안 쓴 어댑터가 밀려난다.',
+        'GPU에서 밀려난 어댑터는 --max-cpu-loras 개수까지 호스트 메모리에 남을 수 있다. CPU 메모리에서 복사하면 빠르고, 디스크나 원격 저장소에서 불러오면 더 느리다. 어느 쪽이든 그 어댑터가 필요한 첫 요청은 늦어진다.',
+      ],
+      keyIdea: '자주 안 쓰는 어댑터는 많은데 슬롯이 적으면 교체가 끊이지 않는다. 슬롯 수는 전체 목록이 아니라 동시에 바쁜 어댑터 수에 맞춘다.',
+      flows: [
+        {from: 'cpu', to: 'slots', label: '넣기', type: 'request'},
+        {from: 'slots', to: 'cpu', label: '빼기', type: 'response', bend: 0.25},
+      ],
+      focus: ['slots', 'cpu'],
+      status: {slots: 'warn'},
+      badges: {slots: '가득 참', cpu: 'LRU 캐시'},
+      values: {gpu: '가득 참 · 교체 중', cost: {text: '없으면 대기 + 복사', tone: 'bad'}},
+    },
+    {
+      short: '동적 로딩',
+      kind: '주의',
+      title: '재시작 없이 어댑터를 올리고 내린다',
+      text: [
+        'VLLM_ALLOW_RUNTIME_LORA_UPDATING=True로 띄우면, POST /v1/load_lora_adapter에 lora_name과 lora_path를 보내 실행 중인 서버에 어댑터를 더하고, /v1/unload_lora_adapter로 뺀다.',
+        '이 엔드포인트에 닿을 수 있으면 누구나 서버에 아무 파일이나 올릴 수 있다. vLLM 문서도 격리되고 믿을 수 있는 환경이 아니면 운영에서 쓰지 말라고 경고하니, 공개 경로에는 열지 않는다.',
+      ],
+      flows: [{from: 'store', to: 'cpu', label: 'load_lora_adapter', type: 'request', bend: 0.1}],
+      focus: ['store', 'cpu'],
+      status: {slots: null},
+      badges: {slots: null, cpu: '+ 새 어댑터'},
+      values: {gpu: 'sql-lora · support-lora', cost: '—'},
+    },
+    {
+      short: '라우팅',
+      kind: '원리',
+      title: '어댑터를 이미 가진 레플리카로 보낸다',
+      text: [
+        '레플리카가 여럿이면 GPU에 올린 어댑터 묶음이 저마다 다르다. 돌아가며 보내다가 sql-lora 요청이 레플리카 2로 가면, 그 레플리카는 먼저 어댑터를 불러와야 한다.',
+        'Gateway API 추론 확장의 분배기(EPP)는 모델 서버마다 어떤 어댑터가 활성인지 지켜본다(vLLM은 vllm:lora_requests_info 지표로 알린다). 어댑터를 이미 가진 레플리카를 먼저, 그다음 빈 슬롯이 있는 레플리카를 고른다.',
+      ],
+      keyIdea: '어댑터 친화 라우팅은 프리픽스 캐시 라우팅과 같다. 캐시가 있는 곳에 요청이 떨어져야 캐시가 도움이 된다.',
+      flows: [
+        {from: 'client', to: 'gw', label: 'model: sql-lora', type: 'request'},
+        {from: 'r2', to: 'gw', label: 'sql-lora 없음', type: 'watch', bend: 0.2},
+        {from: 'gw', to: 'base', label: 'sql-lora 있음', type: 'request', bend: -0.1},
+      ],
+      focus: ['gw', 'r2'],
+      status: {r2: 'off'},
+      badges: {cpu: null, gw: '어댑터 친화'},
+      values: {model: 'sql-lora', cost: {text: '요청 중 로딩 없음', tone: 'good'}},
+    },
+    {
+      short: '버전',
+      kind: '문제',
+      title: '어댑터를 덮어쓰면 답이 몰래 바뀐다',
+      text: [
+        'SQL 팀이 다시 학습해서 새 파일을 같은 이름 sql-lora로 올린다. 어떤 레플리카는 옛 어댑터를 메모리에 들고 있고, 어떤 레플리카는 새것을 불러온다. 같은 요청인데 레플리카에 따라 답이 다르다.',
+        '학습한 어댑터마다 sql-lora-v3처럼 바뀌지 않는 버전 이름을 붙이고, 필요한 베이스 모델과 랭크를 함께 적어 둔다. 클라이언트나 라우팅 별칭이 v2에서 v3로 일부러 옮기고, 되돌릴 때는 이름만 되돌린다.',
+      ],
+      flows: [{from: 'train', to: 'store', label: 'sql-lora (덮어쓰기)', type: 'request'}],
+      focus: ['store', 'r2', 'base'],
+      status: {r2: 'warn', base: 'warn'},
+      badges: {gw: null, store: '이름 같고 파일 새것', r2: '옛것? 새것?'},
+      values: {cost: {text: '답이 제각각', tone: 'bad'}},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '메모리에는 베이스 하나, 요청마다 작은 어댑터',
+      text: [
+        'LoRA는 작은 저랭크 행렬만 학습하므로 일이 늘어도 전체 모델이 아니라 MB씩만 늘어난다. 서버는 GPU에 베이스 모델 하나를 두고 요청에 적힌 어댑터를 얹으며, 한 배치에 여러 어댑터를 섞기도 한다.',
+        'GPU 슬롯, 랭크 상한, CPU 캐시가 몇 개의 어댑터를 바로 쓸 수 있게 둘지 정한다. 어댑터를 보고 고르는 라우팅과 바뀌지 않는 버전 이름이 지연과 답을 예측 가능하게 한다.',
+      ],
+      keyIdea: '특정 모델 이름에서만 지연이 튄다면 어댑터 교체를 의심한다. 사용 중인 GPU 슬롯, 캐시 누락, 그 어댑터가 없는 레플리카로 요청이 가는지를 본다.',
+      flows: [
+        {from: 'client', to: 'gw', label: 'model: sql-lora-v3', type: 'request'},
+        {from: 'gw', to: 'base', label: '친화 라우팅', type: 'request', bend: -0.1},
+      ],
+      focus: ['base', 'slots', 'gw'],
+      status: {r2: null, base: null, la: null, lb: null},
+      badges: {store: 'sql-lora-v3', r2: null},
+      values: {model: 'sql-lora-v3', cost: {text: '일마다 MB', tone: 'good'}},
+    },
+  ]}
+/>
+
+## vLLM LoRA 설정
+
+| 플래그·설정 | 정하는 것 | 주의할 점 |
+|---|---|---|
+| `--enable-lora` | 어댑터 기능 켜기 | 없으면 어댑터 모델 이름을 모른다 |
+| `--lora-modules 이름=경로` | 시작할 때 등록하는 어댑터 | 이 이름이 클라이언트가 보내는 `model`이다 |
+| `--max-loras` | 한 배치에 들어가는 서로 다른 어댑터 수 상한 (기본값 1) | 슬롯마다 GPU 메모리를 잡아 KV 캐시가 줄어든다 |
+| `--max-lora-rank` | 받아들이는 가장 큰 어댑터 랭크 (기본값 16) | 서빙할 가장 큰 랭크에 맞춘다. 더 크면 메모리 낭비다 |
+| `--max-cpu-loras` | 호스트 메모리에 두는 어댑터 수 | `--max-loras` 이상이어야 한다. 없으면 디스크나 저장소에서 읽는다 |
+| `VLLM_ALLOW_RUNTIME_LORA_UPDATING=True` | `/v1/load_lora_adapter`, `/v1/unload_lora_adapter` 켜기 | 호출자가 파일을 올릴 수 있으니 믿을 수 있는 망에서만 쓴다 |
+
+| 증상 | 흔한 원인 | 해결 |
+|---|---|---|
+| 일부 어댑터에서만 지연이 튄다 | 요청 때마다 어댑터를 바꿔 끼움 | GPU 슬롯·CPU 캐시 늘리기, 어댑터 친화 라우팅 |
+| 어댑터가 올라가지 않는다 | 랭크가 `--max-lora-rank`보다 크거나, 다른 베이스로 학습함 | 상한을 올리거나 서빙 중인 베이스로 다시 학습 |
+| 같은 프롬프트인데 레플리카마다 답이 다르다 | 어댑터 이름 하나에 파일 버전이 여럿 | `sql-lora-v3`처럼 바뀌지 않는 이름 |
+
+## 직접 확인해 보기
+
+```bash
+# 베이스 모델을 띄우면서 어댑터 하나를 등록한다
+vllm serve meta-llama/Llama-3.2-3B-Instruct --enable-lora \
+  --lora-modules sql-lora=jeeejeee/llama32-3b-text2sql-spider \
+  --max-loras 4 --max-lora-rank 64 --max-cpu-loras 8
+
+curl -s localhost:8000/v1/models | jq '.data[] | {id, parent}'   # 어댑터는 parent = 베이스 모델로 보인다
+
+# 모델 이름으로 어댑터를 고른다
+curl -s localhost:8000/v1/completions -H 'Content-Type: application/json' \
+  -d '{"model": "sql-lora", "prompt": "List all users older than 30 in SQL:", "max_tokens": 64}'
+
+# 동적 로딩 (VLLM_ALLOW_RUNTIME_LORA_UPDATING=True로 띄운 서버, 믿을 수 있는 망에서만)
+curl -s -X POST localhost:8000/v1/load_lora_adapter -H 'Content-Type: application/json' \
+  -d '{"lora_name": "sql-lora-v3", "lora_path": "/adapters/sql-lora-v3"}'
+curl -s -X POST localhost:8000/v1/unload_lora_adapter -H 'Content-Type: application/json' \
+  -d '{"lora_name": "sql-lora"}'
+
+curl -s localhost:8000/metrics | grep vllm:lora_requests_info   # 실행 중·대기 중인 어댑터
+```
+
+<Quiz questions={[
+  {q: 'GPU 하나가 LoRA 미세 조정 수십 개는 서빙할 수 있는데 전체 미세 조정 수십 개는 못 하는 이유는?', options: ['LoRA 어댑터는 양자화로 압축되어 있어서', '어댑터마다 작은 저랭크 행렬만 담고, 모두 베이스 가중치 한 벌을 함께 쓰기 때문에', 'LoRA 모델은 어텐션 층을 건너뛰어서'], answer: 1, why: 'LoRA는 베이스 가중치를 얼려 두고 랭크가 작은 A와 B만 학습한다. 어댑터는 MB 단위이고 GPU 메모리의 베이스 모델 하나를 같이 쓴다.'},
+  {q: '--max-loras 2인 서버에 서로 다른 어댑터 세 개를 쓰는 요청이 한꺼번에 온다. 어떻게 되나?', options: ['세 번째 요청은 슬롯이 빌 때까지 기다렸다가 어댑터를 바꿔 끼운 뒤 돈다', '셋 다 그냥 한 배치에서 돈다', '서버가 세 번째 어댑터를 베이스 가중치에 합쳐 버린다'], answer: 0, why: '--max-loras는 한 배치의 서로 다른 어댑터 수를 제한한다. 세 번째 요청은 기다리고, 그 뒤 CPU 캐시나 저장소에서 어댑터를 불러오느라 늦어진다.'},
+  {q: 'sql-lora 요청을 sql-lora가 이미 올라간 레플리카로 보내야 하는 이유는?', options: ['다른 레플리카는 어댑터를 아예 못 올려서', '그래야 --max-lora-rank를 더 높게 쓸 수 있어서', '없는 레플리카는 먼저 불러와야 해서 지연이 늘고, 다른 요청이 쓰던 어댑터를 밀어낼 수도 있어서'], answer: 2, why: '요청 처리 중에 어댑터를 불러오면 시간이 들고 슬롯이 계속 뒤바뀐다. 어댑터 친화 라우팅은 그 어댑터 트래픽이 가는 곳에 어댑터를 계속 올려 둔다.'},
+]} />
+
+더 읽을거리: [vLLM LoRA 어댑터](https://docs.vllm.ai/en/latest/features/lora.html) · [LoRA 논문](https://arxiv.org/abs/2106.09685) · [Gateway API Inference Extension](https://gateway-api-inference-extension.sigs.k8s.io/) · [요청을 어느 레플리카로 보낼까 (추론 라우팅)](../ai/inference-routing.mdx) · [요청을 묶어 처리하기 (연속 배칭)](../llm/continuous-batching.mdx)

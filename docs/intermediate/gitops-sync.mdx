@@ -1,7 +1,7 @@
 ---
 id: gitops-sync
 title: Helm and GitOps
-sidebar_label: 07 · Helm and GitOps
+sidebar_label: 08 · Helm and GitOps
 description: Follow an animation of how a Helm chart and values become a release and revisions, and how a sync tool keeps the cluster matching Git as the source of truth and reverts drift
 summary: 'Charts and releases, syncing the cluster to Git as the source of truth, and drift.'
 icon: git
@@ -188,5 +188,11 @@ argocd app get <app>                                 # Argo CD: Synced or OutOfS
 argocd app diff <app>                                # Drift between Git and the cluster
 flux get kustomizations -A                           # Flux: ready state and applied revision
 ```
+
+<Quiz questions={[
+  {q: 'You roll a Helm release at revision 2 back to revision 1. What does helm history show afterwards?', options: ['Revision 2 is deleted and the release is at revision 1 again', 'A new revision 3 that records the rollback', 'No change, because rollbacks are not recorded'], answer: 1, why: 'A rollback is recorded as a new revision. Rolling back from revision 2 to revision 1 creates revision 3.'},
+  {q: 'In a GitOps setup, an operator scales a Deployment from 3 to 5 Pods with kubectl. What is most likely to happen?', options: ['The 5 Pods stay until the next CI pipeline run', 'The GitOps tool commits replicas: 5 back to Git', 'The tool detects drift, marks it OutOfSync and, depending on settings, reverts it to 3', 'The API server rejects the edit'], answer: 2, why: 'The GitOps tool keeps comparing the live state with Git. A direct edit shows up as drift and can be reverted to what Git says.'},
+  {q: 'Version 1.4.2 has a bug and the cluster is managed by Argo CD. What is the GitOps way to roll back?', options: ['Revert Git to the earlier commit and let the tool sync the cluster to 1.4.1', 'Run helm rollback directly against the cluster', 'Edit the Deployment image with kubectl set image'], answer: 0, why: 'In GitOps, Git is the source of truth. Reverting the commit changes the desired state, the tool follows it, and the rollback is recorded in Git history.'},
+]} />
 
 Further reading: [Helm docs](https://helm.sh/docs/) · [OpenGitOps principles](https://opengitops.dev/) · [Argo CD docs](https://argo-cd.readthedocs.io/en/stable/) · [Flux docs](https://fluxcd.io/flux/)

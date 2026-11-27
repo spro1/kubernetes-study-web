@@ -1,7 +1,7 @@
 ---
 id: object-storage
 title: 오브젝트 스토리지는 이렇게 움직인다
-sidebar_label: 06 · 오브젝트 스토리지
+sidebar_label: 08 · 오브젝트 스토리지
 description: Amazon S3를 예로 버킷과 키, 서명된 HTTPS 요청, 버킷 정책과 퍼블릭 액세스 차단, 미리 서명된 URL, 쓰기 직후 읽기 일관성, 버전 관리, 수명 주기 규칙, 멀티파트 업로드를 애니메이션으로 따라간다
 summary: '버킷과 키, 서명된 요청, 403과 실수로 공개된 버킷, 미리 서명된 URL, 버전 관리와 수명 주기 규칙.'
 icon: archive
@@ -225,5 +225,11 @@ aws s3api get-bucket-versioning --bucket shop-images       # Enabled / Suspended
 aws s3api list-object-versions --bucket shop-images --prefix photos/123.jpg   # 버전과 삭제 마커
 aws s3api list-multipart-uploads --bucket shop-images      # 요금만 나가는 미완료 업로드
 ```
+
+<Quiz questions={[
+  {q: '상품 페이지가 비공개 S3 객체 URL을 img 태그에 그대로 넣었고, 브라우저는 403을 받는다. 안전한 해결책은 무엇인가?', options: ['퍼블릭 액세스 차단을 끄고 모두에게 버킷 읽기를 허용한다', '앱이 만료가 짧은 미리 서명된 URL을 브라우저에 건네거나, 비공개 버킷 앞에 CDN을 둔다', '키에서 슬래시를 빼도록 이름을 바꾼다'], answer: 1, why: '익명 GET에는 서명이 없으니 403이 안전한 기본값이다. 미리 서명된 URL이나 CDN을 쓰면 버킷을 비공개로 둔 채 접근을 내줄 수 있기 때문이다.'},
+  {q: '버전 관리가 켜져 있다. 누군가 버전 ID 없이 photos/123.jpg에 DELETE를 보낸다. 어떻게 되는가?', options: ['객체와 모든 버전이 완전히 지워진다', '버전이 있는 객체는 지울 수 없어 403으로 실패한다', '삭제 마커가 붙어 GET은 404를 돌려주지만, 이전 버전은 남아 되살릴 수 있다', '그 키만 버전 관리가 꺼진다'], answer: 2, why: '버전 관리가 켜져 있으면 버전 ID 없는 DELETE는 삭제 마커만 붙인다. 이전 버전이 남아 있어 데이터를 되살릴 수 있기 때문이다.'},
+  {q: '두 쓰기가 같은 키에 같은 순간 PUT한다. 오브젝트 스토리지는 어떻게 하는가?', options: ['마지막 쓰기가 이기고 다른 쪽은 조용히 사라진다', '객체를 잠가 두 번째 쓰기를 기다리게 한다', '두 업로드를 객체 하나로 합친다'], answer: 0, why: '오브젝트 스토리지는 객체를 대신 잠가 주지 않는다. 키를 겹치지 않게 만들거나, 서비스가 지원하면 조건부 쓰기를 써야 하기 때문이다.'},
+]} />
 
 더 읽을거리: [Amazon S3란 무엇인가 (AWS)](https://docs.aws.amazon.com/AmazonS3/latest/userguide/Welcome.html) · [퍼블릭 액세스 차단 (AWS)](https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html) · [미리 서명된 URL (AWS)](https://docs.aws.amazon.com/AmazonS3/latest/userguide/using-presigned-url.html) · [버전 관리 (AWS)](https://docs.aws.amazon.com/AmazonS3/latest/userguide/Versioning.html) · [수명 주기 (AWS)](https://docs.aws.amazon.com/AmazonS3/latest/userguide/object-lifecycle-mgmt.html) · [멀티파트 업로드 (AWS)](https://docs.aws.amazon.com/AmazonS3/latest/userguide/mpuoverview.html) · [API 요청 하나의 권한 검사 (IAM)](../cloud/iam-request.mdx) · [저장 공간이 붙기까지 (PVC·PV)](../k8s/storage-volume.mdx)

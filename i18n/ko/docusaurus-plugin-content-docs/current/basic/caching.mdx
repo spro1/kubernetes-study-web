@@ -1,7 +1,7 @@
 ---
 id: caching
 title: 애플리케이션 캐시는 이렇게 움직인다
-sidebar_label: 04 · 애플리케이션 캐시
+sidebar_label: 05 · 애플리케이션 캐시
 description: 데이터베이스 앞에 둔 Redis·Valkey 같은 캐시 서버로 캐시 어사이드 읽기, 쓰기 때 무효화, TTL과 오래된 데이터, 메모리가 찼을 때의 축출, 인기 키의 캐시 스탬피드, 캐시가 죽었을 때를 애니메이션으로 본다
 summary: '캐시 어사이드 읽기, 쓰기 때 무효화, TTL과 축출, 인기 키의 스탬피드, 캐시가 죽었을 때 DB가 받는 부하.'
 icon: bulb
@@ -243,5 +243,11 @@ redis-cli CONFIG GET maxmemory-policy              # 메모리가 찼을 때의 
 ```
 
 `valkey-cli`도 같은 명령을 받는다.
+
+<Quiz questions={[
+  {q: '다른 서비스가 데이터베이스에서 가격을 직접 바꿨는데, 사용자는 몇 분 동안 옛 가격을 본다. 이 상태가 얼마나 갈지를 제한하는 것은 무엇인가?', options: ['캐시 키의 TTL', '축출 정책', '데이터베이스의 버퍼 풀', '캐시 적중률'], answer: 0, why: '캐시는 변경을 전달받지 못했으니 낡은 사본이 만료될 때까지 남기 때문이다. TTL이 오래된 데이터 구간의 상한이다.'},
+  {q: '첫 화면의 인기 키가 만료되자 데이터베이스에 같은 쿼리가 한꺼번에 몰린다. 한 요청만 다시 채우게 하는 방법은 무엇인가?', options: ['maxmemory-policy를 noeviction으로 바꾼다', '읽을 때마다 새 값을 캐시에 덮어쓴다', '처음 미스를 낸 요청이 짧은 잠금(SET ... NX EX)을 잡고 DB를 읽고, 나머지는 기다리거나 옛 값을 준다'], answer: 2, why: '이것은 캐시 스탬피드다. 잠금을 쓰면 데이터베이스에 쿼리 하나만 가기 때문이다. 흔들린 TTL과 미리 갱신도 도움이 된다.'},
+  {q: '순수한 캐시로 쓰는 Redis가 maxmemory-policy를 기본값 그대로 둔다. 메모리가 차면 어떻게 되는가?', options: ['가장 오래 안 쓴 키부터 지운다', '기본값이 noeviction이라 새 쓰기가 OOM 오류로 실패한다', '넘치는 키를 디스크에 쓴다', 'TTL이 있는 키를 한꺼번에 모두 지운다'], answer: 1, why: 'noeviction은 데이터 저장소에는 맞지만 순수한 캐시에는 맞지 않기 때문이다. 캐시라면 maxmemory와 allkeys-lru 같은 allkeys-* 정책을 정하고 evicted_keys를 본다.'},
+]} />
 
 더 읽을거리: [Redis 키 축출](https://redis.io/docs/latest/develop/reference/eviction/) · [Redis EXPIRE](https://redis.io/docs/latest/commands/expire/) · [Redis INFO](https://redis.io/docs/latest/commands/info/) · [Valkey 문서](https://valkey.io/docs/) · [CDN이 요청을 처리하는 방식](../cloud/cdn.mdx) · [데이터베이스 기초](../basic/database-basics.mdx)

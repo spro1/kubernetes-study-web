@@ -1,0 +1,260 @@
+---
+id: roadmap
+title: Learning paths & certifications
+description: Ordered lesson paths for five goals, and how K8s Flow lessons map to the official CKA, CKAD, CKS and KCNA exam domains.
+displayed_sidebar: lessons
+---
+
+# Learning paths & certifications
+
+The full track list goes from easy to hard, but you rarely need all of it. Pick the path that matches your goal below, or use the certification maps to see which lessons cover which exam domain.
+
+## Learning paths by goal
+
+### Total beginner → first deploy
+
+You have never run a container. By the end you can deploy an app, expose it and update it without downtime.
+
+1. [When You Type an Address](./basic/web-request.mdx): the request every later lesson builds on.
+2. [How DNS Finds an Address](./basic/dns-resolution.mdx): names are how everything finds everything, in and out of a cluster.
+3. [Linux Basics for Kubernetes](./basic/linux-basics.mdx): processes, files and the shell you will use in every lab.
+4. [From One Server to Containers](./basic/server-to-container.mdx): why containers exist at all.
+5. [How an Image Is Built and Run](./basic/container-image.mdx): what you actually ship.
+6. [Build a Lab Cluster on Your Laptop](./basic/lab-cluster.mdx): set up the cluster you will run every "Try it yourself" on.
+7. [Desired State and the Control Loop](./basic/desired-state.mdx): the one idea all of Kubernetes rests on.
+8. [Reading and Applying a Manifest](./k8s/manifest-anatomy.mdx): read YAML before you write it.
+9. [Workload Types](./basic/workload-types.mdx): Deployment, StatefulSet, DaemonSet, Job, and when to use each.
+10. [How a Pod Starts](./k8s/pod-startup.mdx): what happens after `kubectl apply`.
+11. [How a Request Reaches a Pod](./k8s/traffic.mdx): how users reach your app.
+12. [Config and Secrets (ConfigMap · Secret)](./k8s/config-secret.mdx): keep config out of the image.
+13. [Zero-Downtime Deploys (Rolling Update)](./k8s/rolling-update.mdx): ship version two safely.
+14. [Reading status in three layers and the troubleshooting order](./intermediate/troubleshoot-status.mdx): what to do when it does not come up.
+
+### Backend developer on Kubernetes
+
+You write services and want them to behave well on a cluster.
+
+1. [Reading and Applying a Manifest](./k8s/manifest-anatomy.mdx): the format every other lesson uses.
+2. [How a Pod Starts](./k8s/pod-startup.mdx): where startup time and failures come from.
+3. [Finding Services by Name (Service·DNS)](./k8s/service-dns.mdx): how your service calls another.
+4. [Config and Secrets (ConfigMap · Secret)](./k8s/config-secret.mdx): environment-specific settings.
+5. [Health checks — alive, and ready for requests?](./intermediate/probes.mdx): stop traffic going to a Pod that is not ready.
+6. [Requests and limits](./intermediate/requests-limits.mdx): avoid OOM kills and CPU throttling.
+7. [Graceful shutdown — going down without losing requests](./intermediate/graceful-shutdown.mdx): deploys without dropped requests.
+8. [Zero-Downtime Deploys (Rolling Update)](./k8s/rolling-update.mdx): how a new version replaces the old one.
+9. [Blue/green and canary with core primitives (CKAD)](./cert/deploy-strategies.mdx): safer release patterns.
+10. [Multi-container pods — init and sidecar (CKAD)](./cert/multi-container.mdx): helpers next to your app.
+11. [Run Once and Finish (Job · CronJob)](./k8s/job-cronjob.mdx): batch work and scheduled tasks.
+12. [Scaling with Load (HPA)](./k8s/autoscaling.mdx): add replicas under load.
+13. [Ingress Rules and TLS](./feature/ingress.mdx): put your API on a hostname with HTTPS.
+14. [How Logs, Metrics and Traces Leave a Pod](./k8s/observability-pipeline.mdx): see what your service is doing.
+15. [Debugging a Running Pod with kubectl debug](./k8s/kubectl-debug.mdx): get inside a running Pod when logs are not enough.
+
+### Platform/SRE engineer
+
+You run the cluster other teams deploy to.
+
+1. [How an API Request Gets Stored](./advanced/api-request-path.mdx): authentication, admission and etcd on every request.
+2. [Which Node Gets the Pod (Scheduling)](./k8s/scheduling.mdx): affinity, taints and how placement is decided.
+3. [Who Can Do What (RBAC)](./k8s/rbac.mdx): give teams exactly the access they need.
+4. [Namespaces and Resource Quotas](./feature/namespace-quota.mdx): keep tenants from starving each other.
+5. [Admission Policies with CEL and Webhooks](./advanced/admission-policy.mdx): enforce rules at the API.
+6. [Draining Nodes and Upgrading the Cluster](./k8s/node-drain.mdx): maintenance without outages.
+7. [Upgrading a cluster with kubeadm (CKA)](./cert/kubeadm-upgrade.mdx): the exact upgrade order.
+8. [Node NotReady and component failures (CKA)](./cert/node-troubleshoot.mdx): the most common on-call page.
+9. [Control Plane HA and etcd Quorum](./advanced/etcd-quorum.mdx): what keeps the control plane alive.
+10. [Cluster Certificate Expiry](./advanced/cluster-cert.mdx): an outage you can schedule away.
+11. [Helm and GitOps](./intermediate/gitops-sync.mdx): the cluster state lives in Git.
+12. [Backing Up and Restoring a Cluster](./advanced/cluster-backup.mdx): be able to recover.
+13. [SLOs and Alert Design](./advanced/slo-alert.mdx): alert on what users feel.
+14. [Incident Response: From Alert to Postmortem](./advanced/incident-response.mdx): run an incident from page to postmortem.
+15. [Chaos Engineering on Kubernetes](./advanced/chaos-engineering.mdx): find weak spots before they find you.
+
+### Cloud engineer
+
+You build the network, identity and managed services that clusters sit on.
+
+1. [Who Owns What (IaaS · PaaS · SaaS)](./cloud/service-models.mdx): the shared responsibility line.
+2. [How a Request Travels Inside a VPC](./cloud/vpc-request.mdx): subnets, routes and security groups.
+3. [When One Availability Zone Goes Down](./cloud/az-failover.mdx): design for zone failure.
+4. [Permission Checks on One API Request (IAM)](./cloud/iam-request.mdx): how cloud access is decided.
+5. [Single Sign-On for People (SSO and Federation)](./cloud/sso-federation.mdx): one identity across accounts and tools.
+6. [How Cloud KMS Encrypts Your Data (Envelope Encryption)](./cloud/kms-encryption.mdx): who holds the keys to your data.
+7. [What a Managed Database Does for You](./cloud/managed-database.mdx): what the provider runs for you and what it does not.
+8. [Connecting Networks: Peering, Transit, VPN and Private Endpoints](./cloud/hybrid-network.mdx): linking VPCs and on-prem.
+9. [Protecting a Public Endpoint (WAF and DDoS)](./cloud/waf-ddos.mdx): filter bad traffic at the edge.
+10. [When a Whole Region Goes Down](./cloud/multi-region-dr.mdx): disaster recovery choices.
+11. [Infrastructure as Code with Terraform](./cloud/infra-as-code.mdx): make all of the above repeatable.
+12. [Where a Cloud Bill Comes From](./cloud/cloud-cost.mdx): know what each design choice costs.
+13. [Managed Kubernetes — Who Runs What](./cloud/managed-kubernetes.mdx): where the cloud ends and Kubernetes begins.
+
+### AI/LLM infrastructure engineer
+
+You run GPUs and model servers on Kubernetes. Do the beginner path first if Pods and Services are new to you.
+
+1. [How GPUs and NPUs become node resources (device plugins)](./ai/device-plugin.mdx): how a GPU becomes schedulable.
+2. [Requesting GPUs by Criteria (DRA)](./k8s/dra.mdx): the newer, more precise way to ask for devices.
+3. [Sharing GPUs](./feature/gpu-sharing.mdx): MIG, time-slicing and when to share.
+4. [Monitoring GPUs on Kubernetes](./ai/gpu-monitoring.mdx): utilization, memory and the metrics that matter.
+5. [How an Answer Is Built One Token at a Time](./llm/token-generation.mdx): the loop every LLM server runs.
+6. [Reading the Question, Writing the Answer (Prefill and Decode)](./llm/prefill-decode.mdx): why the two phases behave so differently.
+7. [How the KV Cache Fills Up](./llm/kv-cache.mdx): the memory that limits concurrency.
+8. [Batching Requests (Continuous Batching)](./llm/continuous-batching.mdx): how servers keep the GPU busy.
+9. [Making a Model Smaller (Quantization)](./llm/quantization.mdx): fit bigger models on fewer GPUs.
+10. [Splitting a Model Across GPUs (TP, PP, EP)](./llm/model-parallelism.mdx): when one GPU is not enough.
+11. [Until a Model First Starts (Cold Start)](./ai/cold-start.mdx): why the first replica takes minutes.
+12. [Which Replica Gets the Request (Inference Routing)](./ai/inference-routing.mdx): cache-aware routing.
+13. [Autoscaling LLM Inference](./ai/llm-autoscaling.mdx): scale on the right signal.
+14. [Serving Many LoRA Adapters on One Base Model](./ai/lora-serving.mdx): many fine-tunes on one base model.
+15. [Evaluating a Model Before and After Deploy](./ai/model-evaluation.mdx): check quality before and after you ship.
+
+## Certification maps
+
+These maps use the official curricula from the CNCF curriculum repository ([github.com/cncf/curriculum](https://github.com/cncf/curriculum)), checked on 2026-11-27:
+
+- CKA: [CKA_Curriculum_v1.37.pdf](https://github.com/cncf/curriculum/blob/master/CKA_Curriculum_v1.37.pdf) (added 2026-10-15)
+- CKAD: [CKAD_Curriculum_v1.37.pdf](https://github.com/cncf/curriculum/blob/master/CKAD_Curriculum_v1.37.pdf) (added 2026-10-01)
+- CKS: [CKS_Curriculum v1.37.pdf](https://github.com/cncf/curriculum/blob/master/CKS_Curriculum%20v1.37.pdf) (added 2026-11-03)
+- KCNA: [KCNA_Curriculum.pdf](https://github.com/cncf/curriculum/blob/master/KCNA_Curriculum.pdf) (unversioned, published 2025-11-24)
+
+Curricula change with Kubernetes releases. Before you book an exam, check the official page linked under each exam.
+
+The lessons show how things work. The exams also test speed with `kubectl` and the official docs, which only practice builds. Each "Not covered here" list says what to study elsewhere.
+
+### KCNA: Kubernetes and Cloud Native Associate (entry level)
+
+[Official page](https://training.linuxfoundation.org/certification/kubernetes-cloud-native-associate/). Online, proctored, multiple-choice exam, 90 minutes. A good first certification: it tests concepts, not typing speed.
+
+**Kubernetes Fundamentals: 44%** (core concepts, administration, scheduling, containerization)
+- [Desired State and the Control Loop](./basic/desired-state.mdx), [Workload Types](./basic/workload-types.mdx), [How a Pod Starts](./k8s/pod-startup.mdx), [Reading and Applying a Manifest](./k8s/manifest-anatomy.mdx)
+- [Which Node Gets the Pod (Scheduling)](./k8s/scheduling.mdx), [How an API Request Gets Stored](./advanced/api-request-path.mdx)
+- [How Linux Isolates a Container](./basic/linux-isolation.mdx), [How an Image Is Built and Run](./basic/container-image.mdx)
+
+**Container Orchestration: 28%** (networking, security, troubleshooting, storage)
+- [How a Request Reaches a Pod](./k8s/traffic.mdx), [Finding Services by Name (Service·DNS)](./k8s/service-dns.mdx), [Blocking and Allowing Traffic (NetworkPolicy)](./k8s/network-policy.mdx)
+- [Who Can Do What (RBAC)](./k8s/rbac.mdx), [Viewing the cluster through the 4Cs and a threat model (KCSA·KCNA)](./cert/threat-model.mdx)
+- [Reading status in three layers and the troubleshooting order](./intermediate/troubleshoot-status.mdx)
+- [How Storage Gets Attached (PVC·PV)](./k8s/storage-volume.mdx)
+
+**Cloud Native Application Delivery: 16%** (application delivery, debugging)
+- [How a Pipeline Runs](./basic/cicd-pipeline.mdx), [Helm and GitOps](./intermediate/gitops-sync.mdx), [How a Helm Release Is Installed, Upgraded and Rolled Back](./k8s/helm-release.mdx), [Zero-Downtime Deploys (Rolling Update)](./k8s/rolling-update.mdx)
+- [Debugging a Running Pod with kubectl debug](./k8s/kubectl-debug.mdx)
+
+**Cloud Native Architecture: 12%** (observability, ecosystem and principles, community and collaboration)
+- [How Logs, Metrics and Traces Leave a Pod](./k8s/observability-pipeline.mdx), [Scaling with Load (HPA)](./k8s/autoscaling.mdx), [How a Serverless Function Runs](./cloud/serverless.mdx), [Service Mesh ① Sidecars and Mutual Authentication](./feature/mesh-sidecar.mdx)
+
+**Not covered here:** CNCF project maturity levels (sandbox, incubating, graduated), the CNCF landscape, how the Kubernetes community and SIGs work, open standards (OCI, CNI, CSI, CRI) as a topic of their own.
+
+### CKA: Certified Kubernetes Administrator
+
+[Official page](https://training.linuxfoundation.org/certification/certified-kubernetes-administrator-cka/). Online, proctored, performance-based: you solve tasks on a command line, 2 hours, based on Kubernetes v1.37.
+
+**Troubleshooting: 30%**
+- [Node NotReady and component failures (CKA)](./cert/node-troubleshoot.mdx): clusters, nodes and control plane components.
+- [Reading status in three layers and the troubleshooting order](./intermediate/troubleshoot-status.mdx), [Debugging a Running Pod with kubectl debug](./k8s/kubectl-debug.mdx): application failures.
+- [How Logs, Metrics and Traces Leave a Pod](./k8s/observability-pipeline.mdx), [Requests and limits](./intermediate/requests-limits.mdx): resource usage and container output.
+- [A Packet from Pod to Pod](./advanced/packet-path.mdx), [Finding Services by Name (Service·DNS)](./k8s/service-dns.mdx): services and networking.
+
+**Cluster Architecture, Installation and Configuration: 25%**
+- [Who Can Do What (RBAC)](./k8s/rbac.mdx)
+- [Upgrading a cluster with kubeadm (CKA)](./cert/kubeadm-upgrade.mdx), [Draining Nodes and Upgrading the Cluster](./k8s/node-drain.mdx), [Cluster Certificate Expiry](./advanced/cluster-cert.mdx): cluster lifecycle.
+- [Control Plane HA and etcd Quorum](./advanced/etcd-quorum.mdx), [Backing Up and Restoring a Cluster](./advanced/cluster-backup.mdx): highly available control plane.
+- [How a Helm Release Is Installed, Upgraded and Rolled Back](./k8s/helm-release.mdx), [Per-environment deploys with Kustomize (CKA·CKAD)](./cert/kustomize.mdx)
+- [CRDs and Operators](./advanced/crd-operator.mdx)
+
+**Services and Networking: 20%**
+- [A Packet from Pod to Pod](./advanced/packet-path.mdx): connectivity between Pods.
+- [Blocking and Allowing Traffic (NetworkPolicy)](./k8s/network-policy.mdx)
+- [Service Types (ClusterIP · NodePort · LoadBalancer)](./feature/service-types.mdx), [How a Request Reaches a Pod](./k8s/traffic.mdx)
+- [How a Gateway API HTTPRoute Reaches a Pod](./feature/gateway-api.mdx), [Ingress Rules and TLS](./feature/ingress.mdx)
+- [Finding Services by Name (Service·DNS)](./k8s/service-dns.mdx): CoreDNS.
+
+**Workloads and Scheduling: 15%**
+- [Zero-Downtime Deploys (Rolling Update)](./k8s/rolling-update.mdx): rolling updates and rollbacks.
+- [Config and Secrets (ConfigMap · Secret)](./k8s/config-secret.mdx)
+- [Scaling with Load (HPA)](./k8s/autoscaling.mdx), [Automatic Pod Sizing (VPA)](./feature/vpa.mdx): workload autoscaling.
+- [When a Pod Dies (Self-Healing)](./k8s/self-healing.mdx), [Health checks — alive, and ready for requests?](./intermediate/probes.mdx)
+- [Which Node Gets the Pod (Scheduling)](./k8s/scheduling.mdx), [Requests and limits](./intermediate/requests-limits.mdx), [Spreading Pods Across Zones (Topology Spread Constraints)](./k8s/topology-spread.mdx): admission and scheduling.
+
+**Storage: 10%**
+- [How Storage Gets Attached (PVC·PV)](./k8s/storage-volume.mdx), [When Volumes Attach, and Failures](./advanced/volume-binding.mdx): StorageClasses, dynamic provisioning, PVs and PVCs.
+
+**Not covered here:** building a new cluster with `kubeadm init` and `kubeadm join`, preparing the underlying infrastructure (container runtime, kernel modules, swap), CNI, CSI and CRI as installable interfaces, reclaim policies (access modes appear only briefly).
+
+### CKAD: Certified Kubernetes Application Developer
+
+[Official page](https://training.linuxfoundation.org/certification/certified-kubernetes-application-developer-ckad/). Online, proctored, performance-based, 2 hours, based on Kubernetes v1.37.
+
+**Application Environment, Configuration and Security: 25%**
+- [CRDs and Operators](./advanced/crd-operator.mdx)
+- [How an API Request Gets Stored](./advanced/api-request-path.mdx), [Admission Policies with CEL and Webhooks](./advanced/admission-policy.mdx): authentication, authorization and admission.
+- [Requests and limits](./intermediate/requests-limits.mdx), [Namespaces and Resource Quotas](./feature/namespace-quota.mdx)
+- [Config and Secrets (ConfigMap · Secret)](./k8s/config-secret.mdx)
+- [How a Pod Proves Who It Is (ServiceAccount Tokens)](./advanced/serviceaccount-token.mdx)
+- [Pod Security Standards and securityContext](./advanced/pod-security.mdx): SecurityContexts and capabilities.
+
+**Application Design and Build: 20%**
+- [How an Image Is Built and Run](./basic/container-image.mdx)
+- [Workload Types](./basic/workload-types.mdx), [Run Once and Finish (Job · CronJob)](./k8s/job-cronjob.mdx)
+- [Multi-container pods — init and sidecar (CKAD)](./cert/multi-container.mdx)
+- [How Storage Gets Attached (PVC·PV)](./k8s/storage-volume.mdx)
+
+**Application Deployment: 20%**
+- [Blue/green and canary with core primitives (CKAD)](./cert/deploy-strategies.mdx)
+- [Zero-Downtime Deploys (Rolling Update)](./k8s/rolling-update.mdx)
+- [How a Helm Release Is Installed, Upgraded and Rolled Back](./k8s/helm-release.mdx)
+- [Per-environment deploys with Kustomize (CKA·CKAD)](./cert/kustomize.mdx)
+
+**Services and Networking: 20%**
+- [Blocking and Allowing Traffic (NetworkPolicy)](./k8s/network-policy.mdx)
+- [Service Types (ClusterIP · NodePort · LoadBalancer)](./feature/service-types.mdx), [Finding Services by Name (Service·DNS)](./k8s/service-dns.mdx)
+- [Ingress Rules and TLS](./feature/ingress.mdx)
+
+**Application Observability and Maintenance: 15%**
+- [Health checks — alive, and ready for requests?](./intermediate/probes.mdx)
+- [How Logs, Metrics and Traces Leave a Pod](./k8s/observability-pipeline.mdx): `kubectl logs`, `kubectl top`.
+- [Reading status in three layers and the troubleshooting order](./intermediate/troubleshoot-status.mdx), [Debugging a Running Pod with kubectl debug](./k8s/kubectl-debug.mdx)
+
+**Not covered here:** API deprecations and migrating manifests (`kubectl convert`, deprecated API versions), ephemeral volume types such as `emptyDir` beyond a passing mention.
+
+### CKS: Certified Kubernetes Security Specialist
+
+[Official page](https://training.linuxfoundation.org/certification/certified-kubernetes-security-specialist/). Online, proctored, performance-based, 2 hours, based on Kubernetes v1.37. You must pass the CKA before you can take the CKS.
+
+**Cluster Setup: 15%**
+- [Blocking and Allowing Traffic (NetworkPolicy)](./k8s/network-policy.mdx)
+- [Ingress Rules and TLS](./feature/ingress.mdx), [Automatic TLS Certificates with cert-manager](./advanced/cert-manager.mdx)
+
+**Cluster Hardening: 15%**
+- [Who Can Do What (RBAC)](./k8s/rbac.mdx)
+- [How a Pod Proves Who It Is (ServiceAccount Tokens)](./advanced/serviceaccount-token.mdx)
+- [How an API Request Gets Stored](./advanced/api-request-path.mdx): restricting access to the API.
+- [Upgrading a cluster with kubeadm (CKA)](./cert/kubeadm-upgrade.mdx)
+
+**System Hardening: 10%**
+- [Runtime security — catching abnormal behavior (CKS)](./cert/runtime-security.mdx), [Pod Security Standards and securityContext](./advanced/pod-security.mdx): AppArmor and seccomp.
+- [Permission Checks on One API Request (IAM)](./cloud/iam-request.mdx): least-privilege identity.
+
+**Minimize Microservice Vulnerabilities: 20%**
+- [Pod Security Standards and securityContext](./advanced/pod-security.mdx), [Admission Policies with CEL and Webhooks](./advanced/admission-policy.mdx)
+- [Keeping Secrets Safe](./advanced/secret-management.mdx)
+- [Namespaces and Resource Quotas](./feature/namespace-quota.mdx): multi-tenancy.
+- [Service Mesh ① Sidecars and Mutual Authentication](./feature/mesh-sidecar.mdx): Pod-to-Pod encryption with Istio.
+
+**Supply Chain Security: 20%**
+- [Image and Supply Chain Security](./advanced/supply-chain.mdx): SBOMs, signing and scanning.
+- [How an Image Is Built and Run](./basic/container-image.mdx): base image footprint.
+- [Pulling Images from a Private Registry](./k8s/private-registry.mdx): permitted registries.
+
+**Monitoring, Logging and Runtime Security: 20%**
+- [Runtime security — catching abnormal behavior (CKS)](./cert/runtime-security.mdx): behavioral detection and immutable containers.
+- [Audit Logs](./advanced/audit-log.mdx)
+- [Viewing the cluster through the 4Cs and a threat model (KCSA·KCNA)](./cert/threat-model.mdx): phases of an attack.
+
+**Not covered here:** CIS benchmarks and kube-bench, protecting node metadata endpoints, verifying platform binaries with checksums, minimizing the host OS, sandboxed runtimes (gVisor, Kata), Pod-to-Pod encryption with Cilium, static analysis tools named in the curriculum (Kubesec, KubeLinter).
+
+## How to study
+
+- **Do every "Try it yourself".** Most lessons end with commands to run. Set up the [Build a Lab Cluster on Your Laptop](./basic/lab-cluster.mdx) once and run them there. The CKA, CKAD and CKS are hands-on, so watching the diagram is not enough.
+- **Take the quiz at the end of each lesson.** If you miss a question, step back through the diagram to the part it asks about.
+- **Look up words in the [Glossary](./glossary.mdx).** When a term in a lesson or the curriculum is unfamiliar, check it before moving on.

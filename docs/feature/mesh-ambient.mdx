@@ -1,0 +1,253 @@
+---
+id: mesh-ambient
+title: Service Mesh ④ Ambient Mode Without Sidecars
+sidebar_label: 08 · Mesh ambient mode
+description: Animated walkthrough of Istio ambient mode, from the istio.io/dataplane-mode=ambient namespace label and the per-node ztunnel that carries mTLS over HBONE on port 15008, to L4 and L7 AuthorizationPolicy, waypoint proxies, and the L7 rules that are ignored when no waypoint exists
+summary: 'Join the mesh with a namespace label and no Pod restart, let a per-node ztunnel do mTLS over HBONE, and add a waypoint only where you need L7 rules.'
+icon: layers
+hide_table_of_contents: true
+---
+
+# Service Mesh ④ Ambient Mode Without Sidecars
+
+Ambient mode moves the mesh proxy out of the Pod. A per-node **ztunnel** handles mTLS and identity at L4, and an optional **waypoint** proxy adds L7 features only where you ask for them. Watch what works with ztunnel alone, and what silently does not.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~13 min', level: 'Advanced'}}
+  groups={[
+    {label: 'Node 1', x: 30, y: 130, w: 420, h: 170, tone: 'biz'},
+    {label: 'Node 2', x: 550, y: 130, w: 420, h: 170, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'istiod', label: 'istiod', sub: 'Config and certificates', icon: 'gear', tone: 'cp', x: 500, y: 65, show: true},
+    {id: 'web', label: 'Pod web', sub: 'ns shop', icon: 'pod', tone: 'app', size: 'sm', x: 130, y: 215, show: true},
+    {id: 'zt1', label: 'ztunnel', sub: 'DaemonSet · node 1', icon: 'shield', tone: 'node', x: 330, y: 215},
+    {id: 'zt2', label: 'ztunnel', sub: 'DaemonSet · node 2', icon: 'shield', tone: 'node', x: 670, y: 215},
+    {id: 'api', label: 'Pod api', sub: 'ns shop', icon: 'pod', tone: 'app', size: 'sm', x: 870, y: 215, show: true},
+    {id: 'route', label: 'HTTPRoute', sub: 'retries · header match', icon: 'route', tone: 'store', x: 170, y: 380},
+    {id: 'wp', label: 'Waypoint', sub: 'Envoy · L7 · ns shop', icon: 'gate', tone: 'node', x: 500, y: 380, w: 160},
+    {id: 'authz', label: 'AuthorizationPolicy', sub: 'Who may call api', icon: 'ticket', tone: 'store', x: 830, y: 380, w: 180},
+  ]}
+  metrics={[
+    {id: 'path', label: 'Path'},
+    {id: 'mtls', label: 'mTLS'},
+    {id: 'l4', label: 'L4 policy'},
+    {id: 'l7', label: 'L7 rules'},
+  ]}
+  learn={[
+    {text: 'Joining the mesh with a namespace label, no sidecar and no restart', at: 1},
+    {text: 'What ztunnel does per node, and what it does not', at: 2},
+    {text: 'How HBONE tunnels traffic over mTLS on port 15008', at: 3},
+    {text: 'Why L7 rules are ignored, or deny everything, without a waypoint', at: 5},
+    {text: 'Adding a waypoint and attaching L7 routes and policies to it', at: 7},
+  ]}
+  steps={[
+    {
+      short: 'Start',
+      kind: '시작',
+      title: 'Pod web calls Pod api, with no mesh yet',
+      text: [
+        'web on node 1 calls api on node 2 in namespace shop. Traffic is plain TCP, with no identity and no encryption.',
+        'Sidecar mode would add an Envoy proxy to every Pod and restart them all. Ambient mode splits that work in two: a shared L4 proxy on each node, and an L7 proxy only where you need one. Ambient mode is generally available since Istio 1.24.',
+      ],
+      flows: [{from: 'web', to: 'api', label: 'Plain TCP', type: 'request'}],
+      focus: ['web', 'api'],
+      values: {path: 'web → api', mtls: {text: 'None', tone: 'bad'}, l4: '—', l7: '—'},
+    },
+    {
+      short: 'Label',
+      kind: '원리',
+      title: 'One namespace label adds the Pods to the mesh',
+      text: [
+        'You label the namespace: istio.io/dataplane-mode=ambient. Nothing is injected into the Pods, so they keep READY 1/1 and are not restarted.',
+        'The Istio CNI node agent sets up traffic redirection inside each Pod\'s network namespace. From then on, the Pod\'s inbound and outbound traffic goes through the ztunnel on its node.',
+      ],
+      keyIdea: 'Removing the label takes the Pods out of the mesh again, also without a restart. This makes ambient easy to try one namespace at a time.',
+      flows: [{from: 'web', to: 'zt1', label: 'Redirected', type: 'request'}],
+      focus: ['web', 'zt1'],
+      badges: {web: 'ambient', api: 'ambient'},
+    },
+    {
+      short: 'ztunnel',
+      kind: '원리',
+      title: 'ztunnel is a per-node L4 proxy',
+      text: [
+        'ztunnel runs as a DaemonSet, one Pod per node. istiod gives it certificates for the workload identities of the Pods on its node, so it can speak mTLS on their behalf.',
+        'ztunnel works at L3 and L4 only: mTLS, identity, L4 authorization and TCP telemetry. It does not parse HTTP, so it knows nothing about paths, headers or retries.',
+      ],
+      keyIdea: 'istioctl ztunnel-config workloads lists the workloads each ztunnel knows. Meshed Pods show PROTOCOL HBONE.',
+      flows: [
+        {from: 'istiod', to: 'zt1', label: 'Certs', type: 'watch'},
+        {from: 'istiod', to: 'zt2', label: 'Certs', type: 'watch'},
+      ],
+      focus: ['zt1', 'zt2', 'istiod'],
+    },
+    {
+      short: 'HBONE',
+      kind: '원리',
+      title: 'HBONE tunnels the connection over mTLS',
+      text: [
+        'ztunnel on node 1 opens an mTLS connection to ztunnel on node 2, port 15008. Inside it, an HTTP CONNECT request opens a tunnel for web\'s TCP stream. HTTP/2 lets many streams share one connection. This is HBONE.',
+        'Each side checks the other\'s certificate, so api\'s ztunnel knows the caller is the web ServiceAccount identity. The apps still send and receive plain TCP.',
+      ],
+      flows: [
+        {from: 'web', to: 'zt1', label: 'TCP', type: 'request'},
+        {from: 'zt1', to: 'zt2', label: 'HBONE :15008', type: 'request'},
+        {from: 'zt2', to: 'api', label: 'TCP', type: 'request'},
+      ],
+      focus: ['zt1', 'zt2'],
+      values: {path: 'web → ztunnel → ztunnel → api', mtls: {text: 'On (HBONE)', tone: 'good'}},
+    },
+    {
+      short: 'L4 policy',
+      kind: '원리',
+      title: 'ztunnel enforces L4 AuthorizationPolicy',
+      text: [
+        'An AuthorizationPolicy on api allows only the web identity. The destination ztunnel checks it on each new connection and rejects other callers.',
+        'At L4, ztunnel can match source principals, namespaces, IP blocks and destination ports. That covers most "who may talk to whom" rules without any L7 proxy.',
+      ],
+      flows: [
+        {from: 'authz', to: 'zt2', label: 'principals, ports', type: 'watch'},
+        {from: 'zt1', to: 'zt2', label: 'HBONE', type: 'request'},
+      ],
+      focus: ['authz', 'zt2'],
+      badges: {authz: 'L4 rule'},
+      values: {l4: {text: 'Enforced by ztunnel', tone: 'good'}},
+    },
+    {
+      short: 'L7 ignored',
+      kind: '문제',
+      title: 'An HTTP route without a waypoint does nothing',
+      text: [
+        'The team adds an HTTPRoute for api with retries and a header match that sends testers to a new version. kubectl apply succeeds, but nothing changes. Requests still go straight from ztunnel to ztunnel.',
+        'No proxy on the path reads HTTP, so no one applies the rule. Retries, timeouts, header routing, fault injection and L7 telemetry all need a waypoint.',
+      ],
+      keyIdea: 'If an L7 rule has no effect in ambient mode, first check whether a waypoint serves that Service at all.',
+      flows: [
+        {from: 'route', to: 'zt1', label: 'Not applied', type: 'watch'},
+        {from: 'zt1', to: 'zt2', label: 'HBONE', type: 'request'},
+      ],
+      focus: ['route'],
+      status: {route: 'warn'},
+      values: {l7: {text: 'Ignored (no waypoint)', tone: 'bad'}},
+    },
+    {
+      short: 'L7 policy',
+      kind: '주의',
+      title: 'An L7 ALLOW rule on ztunnel blocks everything',
+      text: [
+        'Next, someone changes the policy to allow only GET from web. ztunnel cannot evaluate HTTP methods, so it skips that rule. With an ALLOW policy, a skipped rule never matches, and all traffic to api is denied.',
+        'The reverse is just as risky. A DENY policy that only has L7 conditions is skipped too, so it blocks nothing.',
+      ],
+      keyIdea: 'Keep policies that ztunnel enforces to L4 fields. Attach policies with methods, paths or headers to a waypoint.',
+      flows: [{from: 'zt1', to: 'zt2', label: 'Denied', type: 'request'}],
+      focus: ['authz', 'zt2'],
+      status: {authz: 'error', api: 'error', route: null},
+      badges: {authz: 'methods: GET'},
+      values: {l4: {text: 'All denied', tone: 'bad'}},
+    },
+    {
+      short: 'Waypoint',
+      kind: '원리',
+      title: 'A waypoint adds L7 for one namespace',
+      text: [
+        'istioctl waypoint apply -n shop --enroll-namespace creates a Gateway with class istio-waypoint and labels the namespace istio.io/use-waypoint=waypoint. Istio runs it as an Envoy Deployment.',
+        'Now ztunnel sends traffic for Services in shop to the waypoint first. The waypoint applies L7 rules, then sends the request on over HBONE. By default a waypoint serves Service traffic. You can also enroll a single Service with the same label.',
+      ],
+      flows: [
+        {from: 'zt1', to: 'wp', label: 'HBONE', type: 'request'},
+        {from: 'wp', to: 'zt2', label: 'HBONE', type: 'request'},
+      ],
+      focus: ['wp'],
+      status: {authz: null, api: null},
+      badges: {wp: 'use-waypoint'},
+      values: {path: 'web → ztunnel → waypoint → ztunnel → api'},
+    },
+    {
+      short: 'L7 works',
+      kind: '원리',
+      title: 'Routes and L7 policies attach to the waypoint',
+      text: [
+        'The HTTPRoute with the api Service as its parentRef now takes effect: retries and the header match run in the waypoint. VirtualService also works with waypoints, but Istio marks that use as Alpha.',
+        'The L7 AuthorizationPolicy moves to targetRefs that point at the api Service (or the waypoint Gateway). The waypoint enforces methods and paths, and ztunnel keeps enforcing L4 rules.',
+      ],
+      flows: [
+        {from: 'route', to: 'wp', label: 'parentRef: api', type: 'watch'},
+        {from: 'authz', to: 'wp', label: 'targetRefs', type: 'watch'},
+        {from: 'wp', to: 'zt2', label: 'GET only', type: 'request'},
+      ],
+      focus: ['wp', 'route', 'authz'],
+      status: {route: 'ok', authz: 'ok'},
+      badges: {authz: 'L7 · waypoint'},
+      values: {l4: {text: 'Enforced by ztunnel', tone: 'good'}, l7: {text: 'Enforced by waypoint', tone: 'good'}},
+    },
+    {
+      short: 'Cost',
+      kind: '주의',
+      title: 'Fewer proxies, but shared ones',
+      text: [
+        'Without sidecars, proxy memory and CPU no longer grow with the number of Pods. You pay for one ztunnel per node and a waypoint only where L7 is needed, and you can scale the waypoint on its own.',
+        'The trade-off: one ztunnel serves every meshed Pod on its node, so upgrading or restarting it touches all of them. Traffic through a waypoint also takes an extra hop.',
+      ],
+      keyIdea: 'Watch ztunnel and waypoint Pods like shared infrastructure: resource limits, logs and a careful upgrade plan.',
+      flows: [{from: 'zt1', to: 'wp', label: 'Extra hop', type: 'request'}],
+      focus: ['zt1', 'zt2', 'wp'],
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'ztunnel for L4 everywhere, waypoints for L7 where needed',
+      text: [
+        'A namespace label puts Pods in the mesh without sidecars or restarts. ztunnel on each node gives every connection mTLS and identity over HBONE on port 15008 and enforces L4 policy.',
+        'Anything that needs HTTP (routes, retries, L7 authorization, L7 metrics) needs a waypoint. Without one, routes are ignored and L7 policies are skipped, which can deny or allow more than you meant.',
+      ],
+      keyIdea: 'Before you write an L7 rule in ambient mode, make sure the target Service is served by a waypoint.',
+      flows: [
+        {from: 'web', to: 'zt1', label: 'TCP', type: 'request'},
+        {from: 'zt1', to: 'wp', label: 'HBONE', type: 'request'},
+        {from: 'wp', to: 'zt2', label: 'HBONE', type: 'request'},
+        {from: 'zt2', to: 'api', label: 'TCP', type: 'request'},
+      ],
+      focus: ['zt1', 'zt2', 'wp'],
+      status: {route: null, authz: null},
+      badges: {authz: null, wp: null},
+    },
+  ]}
+/>
+
+## What runs where
+
+| Feature | Sidecar mode | Ambient, ztunnel only | Ambient with a waypoint |
+|---|---|---|---|
+| Join the mesh | Injection label, then restart the Pods | `istio.io/dataplane-mode=ambient`, no restart | Same, plus `istio.io/use-waypoint` |
+| mTLS and workload identity | Sidecar | ztunnel (HBONE, port 15008) | ztunnel |
+| AuthorizationPolicy on principals, namespaces, ports | Sidecar | ztunnel | ztunnel or waypoint |
+| AuthorizationPolicy on methods, paths, headers | Sidecar | Not enforced: ALLOW denies all, DENY blocks nothing | Waypoint, attached with `targetRefs` |
+| HTTPRoute, retries, timeouts, header routing | Sidecar | Ignored | Waypoint |
+| VirtualService | Sidecar | Ignored | Waypoint (Alpha) |
+| Metrics | L4 and L7 | L4 (TCP) only | L4 and L7 |
+| Proxy count | One per Pod | One per node | One per node, plus waypoints |
+
+## Try it yourself
+
+```bash
+kubectl label namespace shop istio.io/dataplane-mode=ambient   # Add the namespace to the mesh
+kubectl get pods -n shop                                       # Still READY 1/1, no restarts
+kubectl get daemonset ztunnel -n istio-system                  # One ztunnel per node
+istioctl ztunnel-config workloads                              # PROTOCOL HBONE for meshed Pods
+kubectl logs -n istio-system -l app=ztunnel | grep -E "inbound|outbound"   # Connections and identities
+istioctl waypoint apply -n shop --enroll-namespace             # Create a waypoint and label the namespace
+kubectl get gateways.gateway.networking.k8s.io -n shop        # waypoint, class istio-waypoint, PROGRAMMED
+kubectl get namespace shop -L istio.io/dataplane-mode,istio.io/use-waypoint   # Which labels are on
+kubectl get authorizationpolicy -n shop -o yaml                # selector (ztunnel) or targetRefs (waypoint)?
+```
+
+<Quiz questions={[
+  {q: 'You label a namespace istio.io/dataplane-mode=ambient. What happens to its running Pods?', options: ['They restart with a sidecar container', 'They join the mesh as they are, and their traffic goes through the node\'s ztunnel', 'Nothing until you install a waypoint'], answer: 1, why: 'Ambient mode injects nothing into Pods. The CNI node agent redirects their traffic to ztunnel, so Pods join without a restart.'},
+  {q: 'An HTTPRoute with retries for Service api exists, but retries never happen. No waypoint is deployed. Why?', options: ['ztunnel works at L4 and does not read HTTP, so no proxy applies the route', 'HTTPRoute is not supported by Istio', 'Retries need a sidecar in the calling Pod'], answer: 0, why: 'Only a waypoint (or a sidecar) processes HTTP. With ztunnel alone, L7 routing rules are ignored.'},
+  {q: 'Without a waypoint, an ALLOW AuthorizationPolicy says: from web, methods GET. What is the result?', options: ['Only GET from web is allowed', 'Everything is allowed, because the rule is skipped', 'All traffic to the workload is denied, because the skipped rule never matches'], answer: 2, why: 'ztunnel skips rules it cannot evaluate. With ALLOW, no rule matches, so traffic is denied. Attach L7 policies to a waypoint.'},
+]} />
+
+Further reading: [Ambient mode overview](https://istio.io/latest/docs/ambient/overview/) · [HBONE](https://istio.io/latest/docs/ambient/architecture/hbone/) · [Configure waypoint proxies](https://istio.io/latest/docs/ambient/usage/waypoint/) · [L4 authorization policy in ambient](https://istio.io/latest/docs/ambient/usage/l4-policy/) · [Ambient GA announcement](https://istio.io/latest/blog/2024/ambient-reaches-ga/) · [Service Mesh ① Sidecars and Mutual Authentication](../feature/mesh-sidecar.mdx) · [Service Mesh ② Splitting Traffic](../feature/mesh-traffic.mdx) · [How a Gateway API HTTPRoute Reaches a Pod](../feature/gateway-api.mdx)

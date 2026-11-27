@@ -1,0 +1,272 @@
+---
+id: argo-rollouts
+title: Progressive Delivery with Argo Rollouts
+sidebar_label: 09 · Argo Rollouts
+description: Animated walkthrough of Argo Rollouts, from the Rollout resource and canary steps with setWeight and pause to AnalysisTemplates on Prometheus, automatic abort, blue-green with a preview Service, traffic routers and the kubectl argo rollouts commands
+summary: 'A Rollout that moves traffic step by step, checks a Prometheus success rate on the way, and rolls back by itself when the numbers go bad.'
+icon: split
+hide_table_of_contents: true
+---
+
+# Progressive Delivery with Argo Rollouts
+
+A plain Deployment replaces Pods and hopes for the best. Follow a **Rollout** as it sends a growing share of traffic to a new version, checks a success rate in Prometheus at each step, and aborts on its own when the check fails.
+
+<StepDiagram
+  width={1000}
+  height={460}
+  meta={{duration: '~13 min', level: 'Advanced'}}
+  groups={[
+    {label: 'Namespace shop', x: 230, y: 30, w: 745, h: 415, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'user', label: 'You or CI', sub: 'new image tag', icon: 'user', tone: 'ext', x: 110, y: 90, show: true},
+    {id: 'ctrl', label: 'Rollouts controller', sub: 'argo-rollouts', icon: 'gear', tone: 'cp', x: 110, y: 240, w: 170, show: true},
+    {id: 'prom', label: 'Prometheus', sub: 'request metrics', icon: 'chart', tone: 'store', x: 110, y: 390},
+    {id: 'rollout', label: 'Rollout web', sub: 'template + strategy', icon: 'layers', tone: 'store', x: 370, y: 90, show: true},
+    {id: 'router', label: 'Traffic router', sub: 'Ingress · mesh · Gateway', icon: 'route', tone: 'node', x: 370, y: 240, w: 170},
+    {id: 'analysis', label: 'AnalysisRun', sub: 'success-rate', icon: 'target', tone: 'store', x: 370, y: 390, w: 160},
+    {id: 'svcS', label: 'Service web-stable', sub: 'stable · active', icon: 'target', tone: 'cp', x: 610, y: 130, w: 170},
+    {id: 'svcC', label: 'Service web-canary', sub: 'canary · preview', icon: 'target', tone: 'cp', x: 610, y: 350, w: 170},
+    {id: 'rs1', label: 'ReplicaSet v1', sub: 'stable', icon: 'pod', tone: 'app', x: 860, y: 130, show: true},
+    {id: 'rs2', label: 'ReplicaSet v2', sub: 'new version', icon: 'pod', tone: 'app', x: 860, y: 350},
+  ]}
+  metrics={[
+    {id: 'weight', label: 'Canary weight'},
+    {id: 'analysis', label: 'Analysis'},
+    {id: 'phase', label: 'Rollout status'},
+  ]}
+  learn={[
+    {text: 'A Rollout replaces a Deployment and adds canary or blue-green steps', at: 0},
+    {text: 'Replica-count weights versus a traffic router', at: 2},
+    {text: 'An AnalysisTemplate that queries Prometheus', at: 3},
+    {text: 'Automatic abort when analysis fails, and what abort leaves', at: 5},
+    {text: 'Blue-green with a preview Service and promotion', at: 7},
+  ]}
+  steps={[
+    {
+      short: 'Start',
+      kind: '시작',
+      title: 'A Rollout takes the place of the Deployment',
+      text: [
+        'The web app runs as a Rollout (apiVersion argoproj.io/v1alpha1). Its spec looks like a Deployment: replicas, selector and a Pod template. The difference is spec.strategy, which holds canary or blueGreen with steps.',
+        'The Argo Rollouts controller watches Rollouts and manages their ReplicaSets itself. You install the controller in the cluster and the kubectl argo rollouts plugin on your machine. An existing Deployment can be adopted with workloadRef instead of copying its template.',
+      ],
+      keyIdea: 'Do not keep a Deployment and a Rollout managing the same Pods. Either replace it, or use workloadRef and let the Rollout scale the Deployment down.',
+      flows: [
+        {from: 'ctrl', to: 'rollout', label: 'Watch', type: 'watch'},
+        {from: 'svcS', to: 'rs1', label: '100%', type: 'request'},
+      ],
+      focus: ['rollout', 'ctrl'],
+      status: {rs1: 'ok'},
+      values: {weight: '0%', analysis: '—', phase: {text: 'Healthy', tone: 'good'}},
+    },
+    {
+      short: 'Steps',
+      kind: '원리',
+      title: 'A new image starts the canary steps',
+      text: [
+        'CI changes the image to web:2.0. The controller creates ReplicaSet v2 and starts the steps: setWeight: 20, pause: {duration: 10m}, setWeight: 50, pause: {}, then 100%.',
+        'setWeight sets the share of traffic for the canary. pause with a duration waits that long. pause: {} waits until someone promotes the Rollout. kubectl argo rollouts get rollout web --watch shows the current step, the weight and both ReplicaSets.',
+      ],
+      flows: [
+        {from: 'user', to: 'rollout', label: 'image web:2.0', type: 'request'},
+        {from: 'ctrl', to: 'rs2', label: 'Create v2', type: 'request'},
+      ],
+      focus: ['user', 'rs2'],
+      status: {rs2: 'ok'},
+      badges: {rollout: 'Step 1/5'},
+      values: {weight: '20%', phase: 'Progressing'},
+    },
+    {
+      short: 'Routing',
+      kind: '원리',
+      title: 'Weights come from Pod counts or from a traffic router',
+      text: [
+        'Without trafficRouting, the controller can only change replica counts. With 10 replicas at 20%, it runs about 2 canary Pods and 8 stable Pods behind one Service. It is a best effort, so small replica counts give coarse steps.',
+        'With trafficRouting, you set stableService and canaryService. The controller points each Service at its ReplicaSet and writes the weight into the router: NGINX Ingress annotations, an Istio VirtualService, or an HTTPRoute through the Gateway API plugin. The stable ReplicaSet stays fully scaled, and 20% means 20% of requests.',
+      ],
+      keyIdea: 'You do not edit the VirtualService or HTTPRoute weights yourself. The controller owns them during a rollout.',
+      flows: [
+        {from: 'ctrl', to: 'router', label: 'weight 20', type: 'request'},
+        {from: 'router', to: 'svcS', label: '80%', type: 'request'},
+        {from: 'router', to: 'svcC', label: '20%', type: 'request'},
+        {from: 'svcS', to: 'rs1', label: 'v1', type: 'request'},
+        {from: 'svcC', to: 'rs2', label: 'v2', type: 'request'},
+      ],
+      focus: ['router', 'svcS', 'svcC'],
+      badges: {router: '80 / 20'},
+      values: {weight: {text: '20% of requests', tone: 'good'}},
+    },
+    {
+      short: 'Analysis',
+      kind: '원리',
+      title: 'An AnalysisTemplate turns a query into pass or fail',
+      text: [
+        'An AnalysisTemplate named success-rate holds a Prometheus query: requests to web-canary without a 5xx code, divided by all requests to it. successCondition: result[0] >= 0.95, interval: 5m, and a failureLimit.',
+        'The Rollout references it as background analysis (strategy.canary.analysis, optionally from a later step) or as an analysis step that blocks until it finishes. Each time, the controller creates an AnalysisRun, which measures, records the results and ends as Successful, Failed or Inconclusive.',
+      ],
+      keyIdea: 'Measure the canary only. A query over all Pods hides a bad canary behind healthy stable traffic.',
+      flows: [
+        {from: 'ctrl', to: 'analysis', label: 'Start run', type: 'request'},
+        {from: 'analysis', to: 'prom', label: 'PromQL', type: 'request'},
+        {from: 'prom', to: 'analysis', label: '0.995', type: 'response', bend: 40},
+      ],
+      focus: ['analysis', 'prom'],
+      status: {analysis: 'ok'},
+      badges: {analysis: 'Running'},
+      values: {analysis: {text: 'success rate 0.995 ≥ 0.95', tone: 'good'}},
+    },
+    {
+      short: 'Promote',
+      kind: '원리',
+      title: 'pause: {} waits for a person',
+      text: [
+        'At 50% the Rollout reaches pause: {} and stops with status Paused. Analysis keeps running in the background. A person checks dashboards and runs kubectl argo rollouts promote web to move to the next step.',
+        'promote --full skips all remaining steps, pauses and analysis and goes straight to 100%. It is for emergencies, because it also skips the safety checks.',
+      ],
+      keyIdea: 'Timed pauses keep things moving. An indefinite pause is a manual gate.',
+      flows: [
+        {from: 'user', to: 'rollout', label: 'promote', type: 'request'},
+        {from: 'router', to: 'svcS', label: '50%', type: 'request'},
+        {from: 'router', to: 'svcC', label: '50%', type: 'request'},
+      ],
+      focus: ['user', 'rollout'],
+      badges: {rollout: 'Paused · step 4/5', router: '50 / 50'},
+      values: {weight: '50%', phase: 'Paused'},
+    },
+    {
+      short: 'Abort',
+      kind: '장애',
+      title: 'The success rate drops and the Rollout aborts itself',
+      text: [
+        'Under more load, v2 starts returning 5xx. The query now returns 0.88. Each measurement below 0.95 counts as failed, and once there are more failed measurements than failureLimit, the AnalysisRun is Failed.',
+        'The controller aborts the Rollout. It sets the canary weight back to 0 and scales the canary down. The stable ReplicaSet was never scaled down, so it takes all traffic right away. The Rollout status becomes Degraded.',
+      ],
+      keyIdea: 'No one has to be awake for this rollback. The analysis is the on-call engineer for the release.',
+      flows: [
+        {from: 'prom', to: 'analysis', label: '0.88', type: 'response', bend: 40},
+        {from: 'analysis', to: 'ctrl', label: 'Failed', type: 'response'},
+        {from: 'ctrl', to: 'router', label: 'weight 0', type: 'request'},
+        {from: 'router', to: 'svcS', label: '100%', type: 'request'},
+      ],
+      focus: ['analysis', 'rs2'],
+      status: {analysis: 'error', rs2: 'error'},
+      badges: {analysis: 'Failed', router: '100 / 0', rollout: 'Aborted'},
+      values: {weight: {text: '0%', tone: 'bad'}, analysis: {text: '0.88 < 0.95 · Failed', tone: 'bad'}, phase: {text: 'Degraded', tone: 'bad'}},
+    },
+    {
+      short: 'After abort',
+      kind: '주의',
+      title: 'Abort reverts traffic, not the spec',
+      text: [
+        'After the abort, spec.template still says web:2.0. If the Rollout leaves the aborted state, it tries v2 again. With GitOps, Git also still says 2.0, so the controller and Git disagree with what is running.',
+        'Fix it by changing the template back or shipping a fixed image, for example with a Git revert. kubectl argo rollouts retry rollout web starts the same version again, which only makes sense if the cause was outside the app.',
+      ],
+      keyIdea: 'Degraded means stopped safely, not finished. Decide whether to fix forward or revert the image in the spec.',
+      flows: [
+        {from: 'user', to: 'rollout', label: 'image web:2.0.1', type: 'request'},
+      ],
+      focus: ['rollout'],
+      status: {analysis: null, rs2: 'off'},
+      badges: {analysis: null, rollout: 'spec: web:2.0'},
+      values: {analysis: '—'},
+    },
+    {
+      short: 'Blue-green',
+      kind: '원리',
+      title: 'Blue-green: a preview Service shows v2 before users see it',
+      text: [
+        'With strategy.blueGreen, you name an activeService and a previewService. The controller adds the rollouts-pod-template-hash label to each Service\'s selector. Active points at v1, preview at v2.',
+        'v2 is scaled to full size (or previewReplicaCount) and reachable only through the preview Service. prePromotionAnalysis can test it there. With autoPromotionEnabled: false, the Rollout pauses before switching. The default is true, which switches as soon as v2 is ready.',
+      ],
+      keyIdea: 'Point smoke tests and internal users at the preview Service. Production traffic does not move yet.',
+      flows: [
+        {from: 'svcS', to: 'rs1', label: 'active', type: 'request'},
+        {from: 'svcC', to: 'rs2', label: 'preview', type: 'request'},
+        {from: 'ctrl', to: 'analysis', label: 'prePromotion', type: 'request'},
+      ],
+      focus: ['svcC', 'rs2'],
+      status: {rs2: 'ok', analysis: 'ok'},
+      badges: {rollout: 'Paused', svcS: 'hash v1', svcC: 'hash v2', router: null},
+      values: {weight: 'active v1 · preview v2', analysis: {text: 'prePromotion OK', tone: 'good'}, phase: 'Paused'},
+    },
+    {
+      short: 'Switch',
+      kind: '원리',
+      title: 'Promotion swaps the active selector, then v1 waits before scaling down',
+      text: [
+        'kubectl argo rollouts promote web changes the active Service selector to the v2 hash. All production traffic moves at once. postPromotionAnalysis can check v2 under real load; if it fails, the Rollout aborts and switches active back to v1.',
+        'v1 is kept for scaleDownDelaySeconds, 30 seconds by default. Nodes need a moment to update their Service rules, and some requests may still go to v1 during that time.',
+      ],
+      keyIdea: 'Blue-green needs double capacity for a while. Canary with a traffic router needs less, but takes longer.',
+      flows: [
+        {from: 'user', to: 'rollout', label: 'promote', type: 'request'},
+        {from: 'svcS', to: 'rs2', label: 'active', type: 'request'},
+      ],
+      focus: ['svcS', 'rs2'],
+      status: {rs1: 'warn', analysis: null},
+      badges: {svcS: 'hash v2', svcC: null, rs1: 'scale down in 30s', rollout: null},
+      values: {weight: 'active v2', analysis: '—', phase: {text: 'Healthy', tone: 'good'}},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Small steps, measured at each one',
+      text: [
+        'A Rollout is a Deployment with a plan. Canary moves traffic with setWeight and pause, by Pod count or through a traffic router. Blue-green tests v2 behind a preview Service and swaps the active selector on promotion.',
+        'AnalysisTemplates turn a Prometheus query into pass or fail. A failed run aborts the Rollout and sends traffic back to stable without a person. After an abort, fix the spec, because it still names the bad version.',
+      ],
+      keyIdea: 'kubectl argo rollouts get rollout web --watch is the one screen to keep open during a release.',
+      flows: [
+        {from: 'ctrl', to: 'router', label: 'Weights', type: 'request'},
+        {from: 'analysis', to: 'prom', label: 'Check', type: 'request'},
+      ],
+      focus: ['rollout', 'analysis', 'router'],
+      status: {rs1: null, rs2: null},
+      badges: {svcS: null, rs1: null},
+    },
+  ]}
+/>
+
+## Canary or blue-green, and which commands
+
+| | Canary | Blue-green |
+|---|---|---|
+| Traffic moves | In steps (`setWeight`), by Pod count or by a traffic router | All at once, when the active selector changes |
+| Extra capacity | Only canary Pods (stable stays full with a router) | A full second copy until `scaleDownDelaySeconds` passes |
+| Test before users | Small share of real users | `previewService` and `prePromotionAnalysis` |
+| Automatic check | Background analysis or `analysis` steps | `prePromotionAnalysis`, `postPromotionAnalysis` |
+| Exact percentages | Need `trafficRouting` (Ingress, mesh, Gateway API plugin) | Not needed |
+
+| Command | What it does |
+|---|---|
+| `kubectl argo rollouts get rollout web --watch` | Live steps, weight, ReplicaSets and AnalysisRuns |
+| `kubectl argo rollouts promote web` | Leave the current pause and go to the next step |
+| `kubectl argo rollouts promote web --full` | Skip all remaining steps, pauses and analysis |
+| `kubectl argo rollouts abort web` | Send traffic back to stable and stop. The spec is not changed |
+| `kubectl argo rollouts retry rollout web` | Start an aborted Rollout again with the same spec |
+| `kubectl argo rollouts undo web` | Roll the template back to the previous revision |
+
+## Try it yourself
+
+```bash
+kubectl create namespace argo-rollouts
+kubectl apply -n argo-rollouts -f https://github.com/argoproj/argo-rollouts/releases/latest/download/install.yaml
+kubectl apply -f https://raw.githubusercontent.com/argoproj/argo-rollouts/master/docs/getting-started/basic/rollout.yaml   # demo Rollout (5 replicas)
+kubectl apply -f https://raw.githubusercontent.com/argoproj/argo-rollouts/master/docs/getting-started/basic/service.yaml
+kubectl argo rollouts get rollout rollouts-demo --watch          # keep this open in a second terminal
+kubectl argo rollouts set image rollouts-demo rollouts-demo=argoproj/rollouts-demo:yellow   # start a canary
+kubectl argo rollouts promote rollouts-demo                      # leave the indefinite pause
+kubectl argo rollouts set image rollouts-demo rollouts-demo=argoproj/rollouts-demo:red
+kubectl argo rollouts abort rollouts-demo                        # back to stable, status Degraded
+kubectl get analysisrun                                          # results, if the Rollout uses analysis
+```
+
+<Quiz questions={[
+  {q: 'A canary Rollout has 4 replicas and no trafficRouting. Why can setWeight: 10 not give the canary exactly 10% of requests?', options: ['Because setWeight only works with blue-green', 'Because the weight is approximated with Pod counts, and one Pod of four is already 25%', 'Because the canary gets no traffic until analysis passes'], answer: 1, why: 'Without a traffic router, the controller can only change Pod counts behind one Service. With 4 replicas the smallest step is one Pod, so 10% is not possible.'},
+  {q: 'The AnalysisRun fails and the Rollout aborts. What is true right after the abort?', options: ['Traffic is back on stable, but spec.template still names the new image', 'The image in spec.template is changed back to the old version', 'The Rollout is Healthy and the release is finished'], answer: 0, why: 'Abort moves traffic back and scales the canary down, but it does not edit the spec. The Rollout is Degraded until you fix the spec or retry.'},
+  {q: 'In blue-green, why is the old ReplicaSet kept for scaleDownDelaySeconds after promotion?', options: ['So postPromotionAnalysis can compare the two versions', 'Because the preview Service still needs it', 'Because nodes take a moment to update Service rules, and some requests may still reach v1'], answer: 2, why: 'The selector change spreads to nodes with a small delay. Keeping v1 up for that time stops requests from hitting Pods that are already gone.'},
+]} />
+
+Further reading: [Argo Rollouts docs](https://argo-rollouts.readthedocs.io/en/stable/) · [Canary](https://argo-rollouts.readthedocs.io/en/stable/features/canary/) · [Blue-green](https://argo-rollouts.readthedocs.io/en/stable/features/bluegreen/) · [Analysis and progressive delivery](https://argo-rollouts.readthedocs.io/en/stable/features/analysis/) · [Traffic management](https://argo-rollouts.readthedocs.io/en/stable/features/traffic-management/) · [Blue/green and canary with core primitives (CKAD)](../cert/deploy-strategies.mdx) · [Service Mesh ② Splitting Traffic](../feature/mesh-traffic.mdx)

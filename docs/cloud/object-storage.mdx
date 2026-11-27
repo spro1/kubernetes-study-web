@@ -1,7 +1,7 @@
 ---
 id: object-storage
 title: How Object Storage Works
-sidebar_label: 06 · Object Storage
+sidebar_label: 08 · Object Storage
 description: Animated walkthrough of object storage, using Amazon S3 as the example. Covers buckets and keys, signed HTTPS requests, bucket policies and Block Public Access, presigned URLs, read-after-write consistency, versioning, lifecycle rules and multipart upload
 summary: 'Buckets and keys, signed requests, a 403 versus an accidentally public bucket, presigned URLs, versioning and lifecycle rules.'
 icon: archive
@@ -225,5 +225,11 @@ aws s3api get-bucket-versioning --bucket shop-images       # Enabled / Suspended
 aws s3api list-object-versions --bucket shop-images --prefix photos/123.jpg   # Versions and delete markers
 aws s3api list-multipart-uploads --bucket shop-images      # Unfinished uploads you are still paying for
 ```
+
+<Quiz questions={[
+  {q: 'The product page puts a private S3 object URL straight into an img tag, and the browser gets 403. What is the safe fix?', options: ['Turn off Block Public Access and allow everyone to read the bucket', 'Have the app hand the browser a short-lived presigned URL, or put a CDN in front of the private bucket', 'Rename the key so it has no slash in it'], answer: 1, why: 'The anonymous GET has no signature, so 403 is the safe default. A presigned URL or a CDN gives access while the bucket stays private.'},
+  {q: 'Versioning is on. Someone sends DELETE for photos/123.jpg without a version ID. What happens?', options: ['The object and all its versions are erased for good', 'The request fails with 403 because versioned objects cannot be deleted', 'A delete marker is added, GET returns 404, and older versions can still be restored', 'Versioning is turned off for that key'], answer: 2, why: 'With versioning, a DELETE without a version ID only adds a delete marker. The older versions stay, so the data can be brought back.'},
+  {q: 'Two writers PUT the same key at the same moment. What does object storage do?', options: ['The last write wins and the other is silently lost', 'It locks the object so the second writer waits', 'It merges both uploads into one object'], answer: 0, why: 'Object storage does not lock objects for you. Use unique keys, or conditional writes where the service supports them.'},
+]} />
 
 Further reading: [What is Amazon S3?](https://docs.aws.amazon.com/AmazonS3/latest/userguide/Welcome.html) · [Blocking public access](https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html) · [Presigned URLs](https://docs.aws.amazon.com/AmazonS3/latest/userguide/using-presigned-url.html) · [Versioning](https://docs.aws.amazon.com/AmazonS3/latest/userguide/Versioning.html) · [Lifecycle](https://docs.aws.amazon.com/AmazonS3/latest/userguide/object-lifecycle-mgmt.html) · [Multipart upload](https://docs.aws.amazon.com/AmazonS3/latest/userguide/mpuoverview.html) · [Permission Checks on One API Request (IAM)](../cloud/iam-request.mdx) · [How Storage Gets Attached (PVC·PV)](../k8s/storage-volume.mdx)

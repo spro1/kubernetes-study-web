@@ -195,4 +195,10 @@ aws autoscaling describe-policies --auto-scaling-group-name <asg>   # Scaling po
 aws autoscaling describe-scaling-activities --auto-scaling-group-name <asg> --max-items 5   # Recent scale out/in and replacements
 ```
 
+<Quiz questions={[
+  {q: 'The CPU alarm fires and desired goes from 2 to 3, but for several minutes only 2 VMs take requests. Why?', options: ['The alarm must fire three times before anything happens', 'The new VM needs minutes to boot and must pass load balancer health checks before it gets requests', 'The max count of 4 blocks new VMs'], answer: 1, why: 'VMs take minutes to boot, far slower than containers. Only after passing health checks does a new VM start getting requests, so leave headroom in alarm thresholds.'},
+  {q: 'VM 1 fails health checks repeatedly. What does the auto scaling group do?', options: ['Lowers the desired count to 2', 'Waits for someone to restart VM 1', 'Sends an alert and does nothing else', 'Terminates VM 1 and creates a replacement from the launch template to keep the desired count'], answer: 3, why: 'The group keeps the actual count at the desired count, so it replaces unhealthy VMs on its own. Files stored inside the VM vanish with it.'},
+  {q: 'Why does the group wait out a cooldown right after scaling?', options: ['So it does not scale out and in every time load briefly wobbles', 'So the launch template can be rebuilt', 'Because the load balancer cannot register two VMs at once'], answer: 0, why: 'Right after a change, the next change waits for the cooldown period, which keeps brief load swings from causing repeated scaling.'},
+]} />
+
 Further reading: [Amazon EC2 Auto Scaling (AWS)](https://docs.aws.amazon.com/autoscaling/ec2/userguide/what-is-amazon-ec2-auto-scaling.html) · [Node Autoscaling (Kubernetes docs)](https://kubernetes.io/docs/concepts/cluster-administration/node-autoscaling/) · [Scaling with Load (HPA)](../k8s/autoscaling.mdx)

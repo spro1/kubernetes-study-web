@@ -1,7 +1,7 @@
 ---
 id: hybrid-network
 title: '네트워크 잇기: 피어링·트랜짓·VPN·프라이빗 엔드포인트'
-sidebar_label: 09 · 네트워크 잇기
+sidebar_label: 13 · 네트워크 잇기
 description: 전이되지 않는 VPC 피어링, 허브 역할의 트랜짓 게이트웨이, BGP로 경로를 나누는 사이트 간 VPN과 전용선, 하이브리드 DNS 전달, 서비스 하나만 여는 프라이빗 엔드포인트, 빠진 복귀 경로와 겹치는 CIDR까지 애니메이션으로 따라간다
 summary: '피어링, 트랜짓 허브, VPN과 전용선, 하이브리드 DNS, 프라이빗 엔드포인트, 그리고 경로가 양방향으로 있어야 하는 이유.'
 icon: route
@@ -257,5 +257,11 @@ traceroute 10.2.3.20          # 길이 어디서 끊기는가
 dig db.data.internal          # 이름이 연결 너머로 풀리는가
 nc -vz 10.2.3.20 5432         # 거부(닿았지만 듣는 프로세스 없음)인가, 타임아웃(버려짐)인가
 ```
+
+<Quiz questions={[
+  {q: '사무실은 VPN으로 VPC A에 닿고, VPC A는 VPC B와 피어링되어 있다. 보안 그룹은 모두 사무실 대역을 허용하는데도 사무실은 VPC B에 닿지 못한다. 왜인가?', options: ['VPN 터널의 대역폭이 모자라다', '피어링은 전이되지 않아서 사무실에서 온 트래픽이 피어링에서 버려진다', 'VPC B에 자체 인터넷 게이트웨이가 필요하다'], answer: 1, why: '피어링은 출발지나 목적지가 피어링된 두 VPC 중 하나인 트래픽만 나른다. 사무실에서 B로 가려면 트랜짓 게이트웨이 같은 허브가 필요하기 때문이다.'},
+  {q: '사무실에서 온 패킷은 DB에 닿지만 클라이언트는 타임아웃이다. DB 서브넷의 라우팅 테이블은 10.1.0.0/16만 안다. 무엇이 빠졌는가?', options: ['사무실 대역 10.50.0.0/16으로 돌아가는 경로', '더 큰 DB 인스턴스', 'DB의 DNS 레코드'], answer: 0, why: '동작하는 길에는 늘 두 방향의 경로가 있어야 한다. 10.50.0.0/16으로 돌아갈 경로가 없으면 응답은 기본 경로로 가거나 갈 곳이 없기 때문이다.'},
+  {q: '쇼핑몰은 두 네트워크를 잇지 않고 파트너의 결제 API 하나만 불러야 하며, CIDR이 겹친다. 어떤 방법이 맞는가?', options: ['VPC 피어링', '트랜짓 게이트웨이 연결', '사이트 간 VPN', '프라이빗 엔드포인트'], answer: 3, why: '프라이빗 엔드포인트는 서비스 하나에 한 방향으로만 닿고 CIDR이 겹쳐도 상관없다. 피어링과 트랜짓 게이트웨이는 네트워크 전체를 잇고 겹치지 않는 대역이 필요하기 때문이다.'},
+]} />
 
 더 읽을거리: [VPC 피어링 (AWS)](https://docs.aws.amazon.com/vpc/latest/peering/what-is-vpc-peering.html) · [트랜짓 게이트웨이 (AWS)](https://docs.aws.amazon.com/vpc/latest/tgw/what-is-transit-gateway.html) · [Site-to-Site VPN (AWS)](https://docs.aws.amazon.com/vpn/latest/s2svpn/VPC_VPN.html) · [AWS PrivateLink](https://docs.aws.amazon.com/vpc/latest/privatelink/what-is-privatelink.html) · [Route 53 Resolver](https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/resolver.html) · [VPC 안에서 요청이 가는 길](../cloud/vpc-request.mdx) · [요청 한 번의 아래층: TCP/IP 계층](../basic/tcp-ip-layers.mdx)

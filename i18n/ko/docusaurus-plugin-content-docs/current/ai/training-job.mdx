@@ -1,7 +1,7 @@
 ---
 id: training-job
 title: 학습 작업이 모델이 되기까지
-sidebar_label: 07 · 학습 작업이 모델이 되기까지
+sidebar_label: 08 · 학습 작업이 모델이 되기까지
 description: 학습·평가 Job이 Kueue 대기열에 들어가 GPU 쿼터가 비면 승인되고, GPU 노드에서 실행되어 체크포인트를 남긴 뒤 모델 레지스트리에 버전으로 등록되기까지를 애니메이션으로 따라간다
 summary: '학습 작업이 큐에서 GPU 쿼터를 기다렸다 실행되고, 체크포인트를 남겨 모델 버전이 되기까지.'
 icon: hammer
@@ -195,5 +195,11 @@ kubectl get workloads -n <네임스페이스>                 # Job마다 하나
 kubectl describe workload <이름> -n <네임스페이스>      # 기다리는 이유: 쿼터, 줄, 선점
 kubectl describe clusterqueue <이름>                 # 쿼터 사용량과 빌려 쓰기 (4단계)
 ```
+
+<Quiz questions={[
+  {q: 'Kueue에 학습 Job을 제출했는데 Pod가 하나도 없다. 무슨 일인가?', options: ['스케줄러가 GPU 노드를 찾지 못했다', 'Workload가 승인될 때까지 Kueue가 Job을 suspend 상태로 두고 있다', 'Job이 검증에 실패해 거절됐다', '아직 이미지를 받는 중이다'], answer: 1, why: 'Kueue는 제출된 Job을 suspend 상태로 만들고 Workload를 만든다. Pod는 Kueue가 Workload를 승인해 suspend를 푼 뒤에야 생기기 때문이다.'},
+  {q: 'ClusterQueue가 빌려 올 수 있는 양까지 더해도 모자란 GPU를 요청한 Job은 어떻게 되는가?', options: ['계속 Pending으로 남고, kubectl describe workload에 이유가 적힌다', 'Kueue가 바로 오류로 거절한다', '들어가는 Pod만 먼저 띄우고 나머지는 대기시킨다'], answer: 0, why: '쿼터를 넘는 요청은 승인되지 않지만 거절되지도 않는다. 계속 대기하고, Workload 상태 메시지에 이유가 남기 때문이다.'},
+  {q: '긴 학습 Job이 같은 코호트의 다른 대기열에서 빌린 쿼터로 돌고 있다. 여기서 체크포인트가 중요한 이유는 무엇인가?', options: ['Kueue가 쿼터를 계산하려면 체크포인트가 필요하다', '체크포인트가 있으면 Job이 선점되지 않는다', 'Pod 로그가 체크포인트 안에 저장된다', '주인이 쿼터를 되찾으면 Job이 선점되고, 체크포인트가 없으면 처음부터 다시 학습한다'], answer: 3, why: '빌린 쿼터로 돌던 Job은 주인이 쿼터를 되찾을 때 선점될 수 있다. Pod가 종료되므로 체크포인트가 있어야 처음부터가 아니라 이어서 학습할 수 있기 때문이다.'},
+]} />
 
 더 읽을거리: [잡](https://kubernetes.io/ko/docs/concepts/workloads/controllers/job/) · [Kueue 개요](https://kueue.sigs.k8s.io/docs/overview/)

@@ -204,4 +204,10 @@ kubectl get volumeattachments                            # Which node an RWO vol
 kubectl get volumesnapshotclass                          # Can snapshots work here?
 ```
 
+<Quiz questions={[
+  {q: 'A new PVC on a WaitForFirstConsumer StorageClass is Pending, and no Pod uses it yet. What does this mean?', options: ['The provisioner is broken', 'It is a normal wait; the volume is created once a Pod using it is placed on a node', 'The StorageClass does not support the access mode', 'The node has no free disk'], answer: 1, why: 'In this mode the volume is created only after the scheduler places the Pod, so Pending until a Pod appears is normal. The events say it is waiting for the first consumer.'},
+  {q: 'A db with one RWO volume is scaled from 1 to 2 replicas. Only the Pod on node-2 stays in ContainerCreating. Why?', options: ['RWO means one Pod, so the second Pod is refused', 'The volume is not expanded yet', 'node-2 has no CNI installed', 'RWO means one node, and the volume is already attached to node-1'], answer: 3, why: 'RWO limits a volume to one node; Pods on that same node can share it. To use it from several nodes you need RWX storage.'},
+  {q: 'Node-1 fails. Its db Pod used a local volume on node-1\'s disk. What happens when the Pod is rescheduled to node-2?', options: ['It cannot start, because the data is only on node-1\'s disk', 'The volume is detached and reattached to node-2 after a short wait', 'A snapshot is restored on node-2 automatically'], answer: 0, why: 'A local volume shares its node\'s fate. The Pod cannot start until node-1 returns, which is why a database on local volumes needs its own replication.'},
+]} />
+
 Further reading: [Persistent volumes](https://kubernetes.io/docs/concepts/storage/persistent-volumes/) · [Storage classes](https://kubernetes.io/docs/concepts/storage/storage-classes/) · [Volume snapshots](https://kubernetes.io/docs/concepts/storage/volume-snapshots/)

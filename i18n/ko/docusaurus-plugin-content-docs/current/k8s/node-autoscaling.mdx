@@ -1,0 +1,250 @@
+---
+id: node-autoscaling
+title: 노드를 늘리고 줄이기 (Cluster Autoscaler와 Karpenter)
+sidebar_label: 09 · 노드 오토스케일링
+description: 스케줄되지 못한 파드에서 시작해 Cluster Autoscaler가 노드 그룹 크기를 올리거나 Karpenter가 NodePool에서 맞는 인스턴스를 띄우는 과정, 몇 분 걸리는 프로비저닝 지연, 덜 쓰는 노드의 통합, 축소를 막는 것, 스팟 중단 처리를 애니메이션으로 본다
+summary: 'Pending 파드가 노드를 부른다. Cluster Autoscaler와 Karpenter가 어떻게 답하는지, 왜 몇 분이 걸리는지, 무엇이 노드를 못 지우게 하는지.'
+icon: cloud
+hide_table_of_contents: true
+---
+
+# 노드를 늘리고 줄이기 (Cluster Autoscaler와 Karpenter)
+
+HPA는 파드를 늘리지만, 파드가 올라갈 기계는 다른 누군가가 늘려야 한다. Pending 파드 하나를 **Cluster Autoscaler**와 **Karpenter**로 따라가 보고, 두 도구가 노드를 다시 지우는 과정과 그것을 막는 것을 본다.
+
+<StepDiagram
+  width={1000}
+  height={460}
+  meta={{duration: '약 13분', level: '중급'}}
+  groups={[
+    {label: '쿠버네티스 클러스터', x: 20, y: 30, w: 565, h: 420, tone: 'biz'},
+    {label: '클라우드 제공자', x: 600, y: 30, w: 380, h: 420, tone: 'plain'},
+  ]}
+  nodes={[
+    {id: 'pod', label: 'Pending 파드', sub: 'web · CPU 2 요청', icon: 'pod', tone: 'app', x: 110, y: 100, show: true},
+    {id: 'sched', label: 'kube-scheduler', sub: 'Unschedulable', icon: 'target', tone: 'cp', x: 110, y: 230, show: true},
+    {id: 'pdb', label: 'PDB', sub: 'web minAvailable', icon: 'shield', tone: 'store', x: 320, y: 370},
+    {id: 'ca', label: 'Cluster Autoscaler', sub: '노드 그룹 크기', icon: 'scale', tone: 'cp', x: 320, y: 100, w: 170},
+    {id: 'karp', label: 'Karpenter', sub: '파드 요구 읽기', icon: 'scale', tone: 'cp', x: 320, y: 230, w: 170},
+    {id: 'npool', label: 'NodePool', sub: '+ EC2NodeClass', icon: 'layers', tone: 'store', x: 110, y: 370, w: 170},
+    {id: 'n1', label: 'node-1', sub: '꽉 참', icon: 'server', tone: 'node', size: 'sm', x: 510, y: 165, show: true},
+    {id: 'n2', label: 'node-2', sub: '거의 놂', icon: 'server', tone: 'node', size: 'sm', x: 510, y: 300, show: true},
+    {id: 'n3', label: 'node-3', sub: '새 VM', icon: 'server', tone: 'node', size: 'sm', x: 510, y: 400},
+    {id: 'asg', label: '노드 그룹', sub: '인스턴스 타입 고정', icon: 'layers', tone: 'ext', x: 790, y: 100, w: 170},
+    {id: 'api', label: '컴퓨트 API', sub: 'VM 생성 · 삭제', icon: 'cloud', tone: 'ext', x: 790, y: 230, w: 170},
+    {id: 'spot', label: '스팟 중단 알림', sub: '중단 이벤트', icon: 'alert', tone: 'ext', x: 790, y: 370, w: 170},
+  ]}
+  metrics={[
+    {id: 'pending', label: 'Pending 파드'},
+    {id: 'nodes', label: '노드'},
+    {id: 'action', label: '오토스케일러'},
+  ]}
+  learn={[
+    {text: '노드 오토스케일러는 CPU가 아니라 스케줄 못 한 파드에 반응한다는 것', at: 0},
+    {text: 'Cluster Autoscaler가 템플릿으로 노드 그룹 크기를 바꾸는 방식', at: 1},
+    {text: 'Karpenter가 NodePool에서 파드에 맞는 인스턴스를 고르는 방식', at: 3},
+    {text: '새 노드가 몇 분 걸리는 이유', at: 4},
+    {text: '축소와 통합, 그리고 그것을 막는 것', at: 5},
+    {text: '스팟 중단을 다루는 법', at: 8},
+  ]}
+  steps={[
+    {
+      short: '시작',
+      kind: '시작',
+      title: '들어갈 노드가 없어 파드가 Pending이다',
+      text: [
+        'HPA가 web을 5개로 늘렸다. 새 파드는 CPU 2를 요청하는데, 요청되지 않은 CPU가 2만큼 남은 노드가 없다. 스케줄러는 PodScheduled=False, reason Unschedulable 조건을 단다.',
+        '노드 오토스케일러가 기다리는 신호가 바로 이 조건이다. CPU 사용률은 보지 않는다. 스케줄러가 못 놓은 파드를 찾고, 새 노드가 있으면 해결되는지 따진다.',
+      ],
+      keyIdea: '리소스 요청이 없는 파드는 어떤 노드에도 너무 커 보이지 않으니 확장을 부르지 않는다. 노드 오토스케일링을 움직이는 것은 요청이다.',
+      flows: [{from: 'sched', to: 'pod', label: 'Unschedulable', type: 'watch'}],
+      focus: ['pod', 'sched'],
+      status: {pod: 'warn', n1: 'warn'},
+      values: {pending: {text: '1', tone: 'bad'}, nodes: '2', action: '지켜보는 중'},
+    },
+    {
+      short: 'CA 시뮬레이션',
+      kind: '원리',
+      title: 'Cluster Autoscaler는 노드 그룹마다 파드를 올려 본다',
+      text: [
+        'Cluster Autoscaler는 노드 그룹 단위로 일한다. AWS Auto Scaling 그룹, GKE 노드 풀, Azure VM 스케일 세트 같은 것이다. 한 그룹의 노드는 모양이 모두 같다. 그룹마다 템플릿 노드를 만들어 Pending 파드가 이 노드 하나를 더 두면 들어가는지 시뮬레이션한다.',
+        '여러 그룹이 맞으면 expander가 하나를 고른다(예: least-waste, priority, random). 그다음 그 그룹의 desired 크기를 필요한 노드 수만큼 올린다.',
+      ],
+      keyIdea: 'Cluster Autoscaler는 인스턴스 타입을 고르지 않는다. 그룹을 고르고 크기만 바꾼다. 모양을 더 원하면 그룹을 더 만든다.',
+      flows: [
+        {from: 'ca', to: 'pod', label: 'Pending 감시', type: 'watch'},
+        {from: 'ca', to: 'asg', label: 'desired +1', type: 'request'},
+      ],
+      focus: ['ca', 'asg'],
+      badges: {asg: 'desired 2 → 3'},
+      values: {action: 'CA · 그룹 확장'},
+    },
+    {
+      short: '그룹 확장',
+      kind: '원리',
+      title: '클라우드가 그룹 템플릿으로 VM을 띄운다',
+      text: [
+        '노드 그룹이 직접 컴퓨트 API를 불러 템플릿의 인스턴스 타입·이미지·존 설정으로 VM을 띄운다. VM이 부팅하고 kubelet이 노드를 등록하면 스케줄러가 Pending 파드를 놓는다.',
+        '파드가 템플릿에 드러나지 않는 조건, 예를 들어 부팅할 때만 붙는 레이블을 요구하면 시뮬레이션이 틀릴 수 있다. 그러면 파드가 여전히 못 쓰는 노드가 하나 더 생긴다.',
+      ],
+      flows: [
+        {from: 'asg', to: 'api', label: '생성', type: 'request'},
+        {from: 'api', to: 'n3', label: 'VM', type: 'request'},
+      ],
+      focus: ['asg', 'n3'],
+      status: {n3: 'warn'},
+      badges: {asg: null, n3: '합류 중'},
+      values: {nodes: '2 + 합류 중 1'},
+    },
+    {
+      short: 'Karpenter',
+      kind: '원리',
+      title: 'Karpenter는 파드를 읽고 맞는 인스턴스를 띄운다',
+      text: [
+        'Karpenter는 노드 그룹을 거치지 않는다. Pending 파드의 요청·노드 셀렉터·어피니티·톨러레이션·토폴로지 분산을 읽고 NodePool과 맞춰 본다. NodePool에는 허용 조건(인스턴스 계열, 존, karpenter.sh/capacity-type의 spot·on-demand)과 한도가 적혀 있다.',
+        '대기 중인 파드 묶음에 맞는 인스턴스 타입을 골라 NodeClaim을 만들고 컴퓨트 API를 직접 부른다. NodePool은 이미지·서브넷·보안 그룹을 정하는 NodeClass(AWS는 EC2NodeClass)를 가리킨다.',
+      ],
+      keyIdea: 'NodePool 하나가 여러 인스턴스 타입을 덮는다. Karpenter는 고정된 그룹 크기를 바꾸는 대신 기다리는 파드에 맞춰 노드 크기를 정한다.',
+      flows: [
+        {from: 'karp', to: 'pod', label: '요구 읽기', type: 'watch'},
+        {from: 'npool', to: 'karp', label: '허용 조건', type: 'watch'},
+        {from: 'karp', to: 'api', label: '생성', type: 'request'},
+      ],
+      focus: ['karp', 'npool', 'api'],
+      badges: {n3: null, npool: 'spot, on-demand'},
+      values: {action: 'Karpenter · NodeClaim'},
+    },
+    {
+      short: '지연',
+      kind: '주의',
+      title: '새 노드는 초가 아니라 분 단위로 걸린다',
+      text: [
+        '어느 쪽이든 파드는 VM 부팅, kubelet 합류, CNI가 노드를 Ready로 만드는 것, 컨테이너 이미지 내려받기를 기다린다. 보통 몇 분이고, GPU 노드나 큰 이미지는 더 걸린다.',
+        'Cluster Autoscaler는 노드가 등록되기를 max-node-provision-time(기본 15분)까지 기다린다. 그래도 안 되면 실패로 보고 다른 그룹을 시도할 수 있다.',
+      ],
+      keyIdea: '트래픽이 갑자기 몰린다면 여유를 둔다. 파드를 일찍 늘리거나, 우선순위 낮은 자리 맡기 파드를 띄워 두면 진짜 파드가 그 자리를 밀어내고 바로 뜨고, 밀려난 자리 맡기 파드를 위해 노드가 늘어난다.',
+      focus: ['n3', 'pod'],
+      status: {n3: 'ok', pod: 'ok', n1: null},
+      badges: {n3: '부팅 · 합류 · 풀'},
+      values: {pending: {text: '0', tone: 'good'}, nodes: '3'},
+    },
+    {
+      short: 'CA 축소',
+      kind: '원리',
+      title: 'Cluster Autoscaler는 필요 없는 노드를 지운다',
+      text: [
+        '트래픽이 줄었다. node-2에는 작은 파드 하나만 남았다. Cluster Autoscaler는 노드의 파드 요청 합이 기준(기본 allocatable의 0.5) 아래이고 그 파드들이 다른 노드에 들어갈 수 있으면 노드를 불필요로 표시한다.',
+        'scale-down-unneeded-time(기본 10분) 동안 불필요 상태가 이어지면 PDB를 지키며 노드를 드레인하고 그룹을 줄인다.',
+      ],
+      flows: [
+        {from: 'ca', to: 'n2', label: '드레인', type: 'request'},
+        {from: 'ca', to: 'asg', label: 'desired -1', type: 'request'},
+      ],
+      focus: ['ca', 'n2'],
+      status: {n2: 'warn'},
+      badges: {npool: null, n3: null, n2: '요청 20%'},
+      values: {action: 'CA · 축소'},
+    },
+    {
+      short: '통합',
+      kind: '원리',
+      title: 'Karpenter는 통합한다: 지우거나 더 싼 것으로 바꾼다',
+      text: [
+        'Karpenter의 NodePool에는 spec.disruption이 있다. consolidationPolicy가 WhenEmptyOrUnderutilized(기본값)이면 파드가 다른 곳에 들어가는 노드를 지우거나, 노드 여러 개를 더 싼 하나로 바꾼다. WhenEmpty는 워크로드 파드가 없는 노드만 지운다. consolidateAfter는 얼마나 기다릴지 정한다.',
+        '중단 예산(budgets)은 한 번에 흔들 수 있는 노드 수를 제한한다(지정하지 않으면 10%). expireAfter(기본 720h)는 오래된 노드를 바꿔 새 이미지를 받게 한다.',
+      ],
+      flows: [
+        {from: 'karp', to: 'n2', label: '통합', type: 'request'},
+        {from: 'npool', to: 'karp', label: 'disruption', type: 'watch'},
+      ],
+      focus: ['karp', 'npool', 'n2'],
+      badges: {npool: 'WhenEmptyOrUnderutilized'},
+      values: {action: 'Karpenter · 통합'},
+    },
+    {
+      short: '막힘',
+      kind: '문제',
+      title: '어떤 파드는 노는 노드를 붙잡아 둔다',
+      text: [
+        'node-2가 남아서 계속 돈이 나간다. 더 이상 중단을 허용하지 않는 PDB가 축출을 막는다. Cluster Autoscaler는 로컬 스토리지(hostPath, 메모리가 아닌 emptyDir)를 쓰는 파드, PDB 없는 kube-system 파드, 컨트롤러 없는 파드, cluster-autoscaler.kubernetes.io/safe-to-evict: "false" 주석이 달린 파드가 있는 노드도 건너뛴다.',
+        'Karpenter는 karpenter.sh/do-not-disrupt: "true" 주석이 달린 파드가 있는 노드를 건너뛴다. PDB와 자기 예산도 지킨다.',
+      ],
+      keyIdea: '노드가 끝내 안 지워지면 오토스케일러가 아니라 그 노드의 파드를 본다. 파드 하나가 VM 하나를 통째로 붙잡을 수 있다.',
+      flows: [{from: 'pdb', to: 'n2', label: '남은 중단 없음', type: 'watch'}],
+      focus: ['pdb', 'n2'],
+      status: {n2: 'error'},
+      badges: {npool: null, n2: '드레인 불가'},
+      values: {action: {text: '축소 막힘', tone: 'bad'}},
+    },
+    {
+      short: '스팟',
+      kind: '장애',
+      title: '스팟 노드에 중단 알림이 온다',
+      text: [
+        'node-3은 스팟 인스턴스다. 클라우드가 짧은 예고(AWS는 2분) 뒤 회수한다. 이 이벤트를 받는 중단 큐를 설정해 두면 Karpenter가 노드에 테인트를 달고 드레인하면서 동시에 대체 노드를 띄운다.',
+        'Cluster Autoscaler는 이 알림을 직접 보지 않는다. 제공자의 관리형 노드 그룹이나 핸들러(예: AWS Node Termination Handler)가 노드를 드레인하고, 파드가 Pending이 되면 Cluster Autoscaler가 용량을 늘린다.',
+      ],
+      keyIdea: '스팟에 올리는 파드는 PDB와 함께 여러 개로 돌리고, 예고 시간 안에 넉넉히 끝나도록 종료를 짧게 만든다.',
+      flows: [
+        {from: 'spot', to: 'karp', label: '2분 예고', type: 'watch', bend: 0.2},
+        {from: 'karp', to: 'n3', label: '드레인', type: 'request'},
+        {from: 'karp', to: 'api', label: '대체', type: 'request'},
+      ],
+      focus: ['spot', 'karp', 'n3'],
+      status: {n2: null, n3: 'error'},
+      badges: {n2: null, n3: '중단됨'},
+      values: {action: '스팟 노드 대체'},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: 'Pending 파드가 노드를 늘리고, 요청이 지울 때를 정한다',
+      text: [
+        '두 도구 모두 파드를 스케줄할 수 없을 때 노드를 늘린다. Cluster Autoscaler는 미리 정한 노드 그룹의 크기를 바꾼다. Karpenter는 파드를 읽고 NodePool에서 인스턴스를 고른다.',
+        '둘 다 파드가 다른 곳에 들어가는 노드를 지우고, 둘 다 PDB와 축출 금지 주석에서 멈춘다. 새 노드에는 언제나 몇 분이 든다.',
+      ],
+      keyIdea: '요청을 정확히 잡고, 몰릴 때를 위한 여유를 두고, 안 줄어드는 노드에 어떤 파드가 있는지 본다.',
+      focus: ['ca', 'karp'],
+      status: {n3: null, pod: null, n2: null},
+      badges: {n3: null},
+    },
+  ]}
+/>
+
+## Cluster Autoscaler와 Karpenter 비교
+
+| | Cluster Autoscaler | Karpenter |
+|---|---|---|
+| 다루는 단위 | 노드 그룹(ASG, 노드 풀, VM 스케일 세트) | NodePool에서 나온 NodeClaim |
+| 인스턴스 타입 | 그룹마다 고정 | 허용 조건 안에서 파드 묶음마다 고름 |
+| 확장 방식 | 그룹 템플릿에 파드를 올려 보고 desired 크기를 올림 | 컴퓨트 API를 직접 부름 |
+| 축소 | 사용률 기준 아래이고 파드가 다른 곳에 들어가는 상태가 기본 10분 이어질 때 | 통합: 지우거나 더 싼 것으로 교체(`consolidationPolicy`, `consolidateAfter`) |
+| 파드가 있는 노드를 못 지우게 | `cluster-autoscaler.kubernetes.io/safe-to-evict: "false"` | `karpenter.sh/do-not-disrupt: "true"` |
+| 노드를 못 지우게 | 노드 주석 `cluster-autoscaler.kubernetes.io/scale-down-disabled: "true"` | 노드 주석 `karpenter.sh/do-not-disrupt: "true"`, 또는 `nodes: "0"` 예산 |
+| 스팟 중단 | 제공자나 별도 핸들러에 맡김 | 중단 큐로 직접 처리 |
+| 쓸 수 있는 곳 | 여러 클라우드 | AWS, Azure, Karpenter 연동이 있는 다른 제공자 |
+
+## 직접 확인해 보기
+
+```bash
+kubectl get pods -A --field-selector=status.phase=Pending      # 노드를 기다리는 파드
+kubectl describe pod <pod>                                     # Events: TriggeredScaleUp / NotTriggerScaleUp, 또는 Karpenter 이벤트
+kubectl get nodes -L node.kubernetes.io/instance-type,topology.kubernetes.io/zone
+
+# Cluster Autoscaler
+kubectl -n kube-system get configmap cluster-autoscaler-status -o yaml   # 그룹별 확장·축소 상태
+
+# Karpenter
+kubectl get nodepools                                          # 풀, 준비 상태, 사용 중인 자원
+kubectl get nodeclaims                                         # 띄운 노드마다 하나: 타입, 존, 용량 유형
+kubectl get ec2nodeclasses                                     # AWS: 이미지, 서브넷, 보안 그룹
+kubectl annotate pod <pod> karpenter.sh/do-not-disrupt=true    # 이 파드가 있는 노드를 통합에서 보호
+```
+
+<Quiz questions={[
+  {q: '모든 노드의 CPU 사용률이 30%인데 새 파드가 Pending이 되고 노드가 늘었다. 왜인가?', options: ['평균 CPU 사용률이 기준을 넘으면 오토스케일러가 노드를 늘린다', '스케줄러와 오토스케일러는 요청을 세고, 파드의 요청이 요청되지 않은 남은 자리에 들어가지 않는다', 'Pending 파드는 늘 새 노드에 놓인다'], answer: 1, why: '스케줄링과 노드 오토스케일링은 둘 다 리소스 요청으로 판단한다. 요청이 이미 노드를 채웠다면 사용률이 낮아도 소용없다.'},
+  {q: '파드가 기존 노드 그룹 어디에도 없는 GPU 타입을 요구한다. Cluster Autoscaler는 어떻게 하나?', options: ['쓸모 있는 일을 못 한다: 기존 그룹 크기만 바꾸므로 맞는 템플릿이 없어 파드는 Pending으로 남는다', '맞는 GPU 인스턴스를 직접 띄운다', '가장 비슷한 그룹의 인스턴스 타입을 바꾼다'], answer: 0, why: 'Cluster Autoscaler는 기존 그룹의 템플릿에 파드를 올려 본다. 맞는 것이 없으면 그룹을 새로 만들어야 한다. Karpenter라면 NodePool이 허용하는 한 맞는 타입을 고른다.'},
+  {q: '거의 노는 노드가 끝내 지워지지 않는다. 가장 그럴듯한 원인은?', options: ['노드가 너무 새것이다', '그 노드에 PDB에 막히거나 do-not-disrupt가 달린 것처럼 축출할 수 없는 파드가 있다', '축소는 밤에만 일어난다'], answer: 1, why: '두 도구 모두 노드를 지우기 전에 드레인한다. 축출할 수 없는 파드가 있으면 노드가 남는다.'},
+]} />
+
+더 읽을거리: [Cluster Autoscaler FAQ](https://github.com/kubernetes/autoscaler/blob/master/cluster-autoscaler/FAQ.md) · [Karpenter NodePool](https://karpenter.sh/docs/concepts/nodepools/) · [Karpenter 중단(disruption)](https://karpenter.sh/docs/concepts/disruption/) · [쿠버네티스 문서의 노드 오토스케일링](https://kubernetes.io/docs/concepts/cluster-administration/node-autoscaling/) · [부하에 맞춰 늘어나기 (HPA)](../k8s/autoscaling.mdx) · [관리형 쿠버네티스 — 누가 무엇을 운영하나](../cloud/managed-kubernetes.mdx) · [노드 비우기와 클러스터 업그레이드](../k8s/node-drain.mdx)

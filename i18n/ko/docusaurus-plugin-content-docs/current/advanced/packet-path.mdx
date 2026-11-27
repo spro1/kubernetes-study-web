@@ -201,4 +201,10 @@ kubectl get endpointslices -l kubernetes.io/service-name=<서비스>    # 서비
 kubectl get configmap kube-proxy -n kube-system -o jsonpath='{.data.config\.conf}' | grep mode   # kube-proxy 방식(비어 있으면 iptables)
 ```
 
+<Quiz questions={[
+  {q: '로그인은 되는데 다른 노드에 있는 파드 사이의 큰 목록 조회만 실패한다. 어느 층을 의심해야 하는가?', options: ['서비스의 변환 규칙', '오버레이 MTU: 파드 쪽 MTU가 물리 네트워크 MTU보다 작지 않다', 'DNS 이름 해석', '서비스에 걸린 RBAC'], answer: 1, why: '오버레이는 봉투 머리말을 붙이므로 패킷이 커진다. MTU가 맞지 않으면 작은 요청은 통과하고 큰 응답만 끊기기 때문이다.'},
+  {q: '같은 노드의 파드끼리는 잘 통신하는데 다른 노드의 파드로는 통신이 안 된다. 무엇을 확인해야 하는가?', options: ['오버레이·직접 라우팅 구성과 노드 사이 방화벽', '서비스에 준비된 엔드포인트가 있는지', 'CNI가 파드에 IP를 주었는지'], answer: 0, why: '같은 노드 통신은 노드 밖으로 나가지 않는다. 다른 노드로만 안 된다면 끊긴 층은 노드 간 전달이기 때문이다.'},
+  {q: '10.96.12.34 같은 서비스 IP는 어디서 파드 IP로 바뀌는가?', options: ['서비스 전용 가상 네트워크 장치에서', '받는 노드가 오버레이 봉투를 푼 뒤에', '노드 사이의 물리 라우터에서', '출발 노드에서 kube-proxy(iptables·IPVS)나 eBPF의 변환 규칙이'], answer: 3, why: '서비스 IP는 어떤 장치에도 붙어 있지 않다. 출발 노드의 규칙이 패킷을 가로채 목적지를 준비된 파드 IP 하나로 바꾸기 때문이다.'},
+]} />
+
 더 읽을거리: [클러스터 네트워킹](https://kubernetes.io/ko/docs/concepts/cluster-administration/networking/) · [서비스](https://kubernetes.io/ko/docs/concepts/services-networking/service/) · [가상 IP와 서비스 프록시](https://kubernetes.io/docs/reference/networking/virtual-ips/)

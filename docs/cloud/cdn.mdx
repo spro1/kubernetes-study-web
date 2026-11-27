@@ -1,7 +1,7 @@
 ---
 id: cdn
 title: How a CDN Serves a Request
-sidebar_label: 07 · How a CDN Serves a Request
+sidebar_label: 10 · How a CDN Serves a Request
 description: Animated walkthrough of a CDN request from DNS to the nearest edge, cache hit and miss, the origin fetch, Cache-Control and the cache key, revalidation with ETag and 304, purging after a deploy, private responses, origin shield and origin protection
 summary: 'Nearest edge, cache hit and miss, Cache-Control, revalidation with 304, purge vs versioned files, and keeping private pages out of the cache.'
 icon: cloud
@@ -232,5 +232,11 @@ curl -sI https://<your-site>/<file> | grep -iE 'cache-control|^age|etag|x-cache|
 curl -sI -H 'If-None-Match: "<etag from above>"' https://<your-site>/<file> | head -1     # 304 if unchanged
 curl -sI https://<your-site>/account | grep -i cache-control   # Personal pages should say private or no-store
 ```
+
+<Quiz questions={[
+  {q: 'You deploy a new app.js under the same name, and some users still get the old script. What fix does the lesson recommend so deploys need no purge?', options: ['Purge every path at the CDN after each deploy', 'Put a content hash in static file names, cache them for a year, and give the HTML a short TTL', 'Turn off the origin shield so edges fetch fresh copies'], answer: 1, why: 'With hashed names a deploy just points the HTML to new files. Purging takes time to reach every edge and cannot clear browser caches.'},
+  {q: 'The cached /account page showed one user\'s name to another user. What should the origin send for this page?', options: ['Cache-Control: public with a short max-age', 'A Set-Cookie header, trusting the CDN to skip it', 'Cache-Control: private or no-store'], answer: 2, why: 'private lets only the browser store it and no-store lets nobody store it. CDN behavior with Set-Cookie differs between vendors, so it is not something to rely on.'},
+  {q: '/index.html has max-age=60. After 60 seconds a user asks for it, and the file has not changed at the origin. What does the edge do?', options: ['Sends If-None-Match with the stored ETag, gets 304 Not Modified, and serves its copy', 'Throws the copy away and downloads the whole file again', 'Keeps serving the stale copy forever without asking', 'Returns 404 until the origin sends a new file'], answer: 0, why: 'A stale copy is revalidated, not thrown away. If the ETag still matches, the origin answers 304 with no body and only headers cross the network.'},
+]} />
 
 Further reading: [HTTP caching (MDN)](https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/Caching) · [RFC 9111: HTTP Caching](https://www.rfc-editor.org/rfc/rfc9111) · [Cache-Control (MDN)](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Cache-Control) · [When You Type an Address](../basic/web-request.mdx) · [How Object Storage Works](../cloud/object-storage.mdx)

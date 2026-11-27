@@ -181,4 +181,10 @@ curl -sN http://<engine>:8000/v1/completions -H 'Content-Type: application/json'
 curl -s http://<engine>:8000/metrics | grep -E 'vllm:(prompt|generation)_tokens_total'   # Input vs output tokens so far
 ```
 
+<Quiz questions={[
+  {q: 'Users report that answers stop abruptly in the middle of a sentence. What should you suspect first?', options: ['The model picked the end-of-sequence token too early', 'The temperature is too low', 'The tokenizer dropped some tokens', 'The request\'s max_tokens limit was reached'], answer: 3, why: 'If the maximum output length (max_tokens) is reached first, generation stops even mid-sentence. The response then reports finish_reason "length".'},
+  {q: 'Why does a 300-token answer take much longer than a 30-token answer to the same question?', options: ['Each output token needs one full pass through the model', 'Longer answers are tokenized twice', 'The input must be re-tokenized for every word', 'Streaming only starts after the whole answer is ready'], answer: 0, why: 'Generation is a loop: each answer token takes one full pass, so 300 tokens means 300 passes and holds the accelerator longer.'},
+  {q: 'The same question gets a slightly different answer each time. Why?', options: ['The tokenizer splits the text differently on each request', 'Sampling draws the next token from a probability table instead of always taking the top one', 'The model weights change between requests', 'The engine caches only part of the answer'], answer: 1, why: 'The model outputs probabilities for every candidate token, and sampling picks one in proportion to probability. Settings like temperature control how varied the pick is.'},
+]} />
+
 Further reading: [vLLM documentation](https://docs.vllm.ai/) · [KServe documentation](https://kserve.github.io/website/)

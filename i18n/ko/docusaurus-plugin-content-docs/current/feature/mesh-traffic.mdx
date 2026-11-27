@@ -194,4 +194,10 @@ kubectl edit virtualservice api              # 비율을 100 : 0으로 되돌리
 istioctl proxy-config routes deploy/web      # web 쪽 프록시가 받은 실제 규칙
 ```
 
+<Quiz questions={[
+  {q: '트래픽 정책도 가상 서비스도 없이 api 서비스 뒤에 v1 파드 하나와 v2 파드 하나를 띄웠다. 요청은 어디로 가는가?', options: ['규칙이 v2로 보내기 전까지는 모두 v1으로 간다', '프록시가 파드에 고르게 보내므로 절반쯤이 v2로 간다', '가장 새것이므로 모두 v2로 간다'], answer: 1, why: '서비스는 레이블로 파드를 묶어 v1과 v2를 구분하지 않기 때문이다. 나누기 규칙이 없으면 파드에 고르게 퍼져 절반쯤이 검증 안 된 v2로 간다.'},
+  {q: '가상 서비스가 서브셋 v2에 10%를 보내도록 했고, v1 파드 아홉 개 옆에 v2 파드는 하나뿐이다. v2는 얼마를 받는가?', options: ['정한 대로 10%', '파드 수에 따르므로 10%가 되는 것은 우연이다', '서브셋마다 하나씩이니 50%', 'v2 파드 수가 v1과 같아지기 전까지는 0%'], answer: 0, why: '비율은 파드 수와 상관없기 때문이다. 보내는 쪽 프록시가 요청마다 정해 둔 비율대로 목적지를 고른다.'},
+  {q: '90 : 10 카나리 중 v2에서 오류가 늘었다. 메시다운 되돌리기는 무엇인가?', options: ['v2 파드를 지우고 v1을 다시 배포한다', 'api 디플로이먼트에 kubectl rollout undo를 친다', '가상 서비스의 비율을 100 : 0으로 고친다'], answer: 2, why: '메시의 되돌리기는 비율 숫자만 바꾸기 때문이다. 규칙이 프록시에 내려가면 새 요청은 모두 v1으로 가고, v2 파드는 남겨 원인을 살핀다.'},
+]} />
+
 더 읽을거리: [Istio 트래픽 관리](https://istio.io/latest/docs/concepts/traffic-management/) · [VirtualService 레퍼런스](https://istio.io/latest/docs/reference/config/networking/virtual-service/) · [DestinationRule 레퍼런스](https://istio.io/latest/docs/reference/config/networking/destination-rule/) · [무중단 배포 (롤링 업데이트)](../k8s/rolling-update.mdx)

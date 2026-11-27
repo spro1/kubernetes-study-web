@@ -1,7 +1,7 @@
 ---
 id: node-drain
 title: Draining Nodes and Upgrading the Cluster
-sidebar_label: 02 · Draining and Upgrading
+sidebar_label: 03 · Draining and Upgrading
 description: Follow how the control plane is upgraded first, then each worker node is cordoned, drained, and uncordoned one at a time while a PodDisruptionBudget prevents a service outage.
 summary: 'The order of draining and upgrading nodes one by one, and the safeguard against removing too many at once.'
 icon: server
@@ -206,5 +206,11 @@ kubectl get pdb -A                                   # ALLOWED DISRUPTIONS 0 sta
 kubectl get pods -A -o wide --field-selector spec.nodeName=<node>   # Pods on that node
 kubectl drain <node> --ignore-daemonsets --dry-run=client   # Preview evictions, changes nothing
 ```
+
+<Quiz questions={[
+  {q: 'Why is the control plane upgraded before the worker nodes?', options: ['A kubelet must not be newer than the API server', 'Worker nodes cannot be drained while the control plane is old', 'The scheduler only runs on upgraded nodes'], answer: 0, why: 'A node\'s kubelet must not be newer than the API server, while it may lag by a few versions. So the control plane goes first and workers follow one at a time.'},
+  {q: 'You run kubectl drain on a node that runs the only replica of a Deployment. What happens to that Pod?', options: ['It is moved live to another node with no downtime', 'It is deleted and recreated on another node, so there is a brief outage', 'It stays on the node, because drain only cordons'], answer: 1, why: 'Drain does not move Pods; it deletes them and recreates them elsewhere. With a single replica there is a brief outage.'},
+  {q: 'An upgrade is stuck because drain on one node never finishes. web has 2 replicas and a PDB with minAvailable: 2. What is going on?', options: ['The node is still cordoned', 'DaemonSet Pods are blocking the drain', 'The kubelet version is too old', 'The PDB never allows an eviction, so drain waits forever'], answer: 3, why: 'With 2 replicas and minAvailable: 2, no Pod can ever be evicted. kubectl get pdb -A shows ALLOWED DISRUPTIONS at 0.'},
+]} />
 
 Further reading: [Safely Drain a Node](https://kubernetes.io/docs/tasks/administer-cluster/safely-drain-node/) · [Disruptions](https://kubernetes.io/docs/concepts/workloads/pods/disruptions/) · [Upgrading kubeadm clusters](https://kubernetes.io/docs/tasks/administer-cluster/kubeadm/kubeadm-upgrade/)

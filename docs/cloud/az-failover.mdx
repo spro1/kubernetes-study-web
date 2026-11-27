@@ -192,4 +192,10 @@ aws rds describe-db-instances --db-instance-identifier <db> --query 'DBInstances
 aws elbv2 describe-target-health --target-group-arn <tg-arn>   # Health check result per target
 ```
 
+<Quiz questions={[
+  {q: 'Zone A loses power. Why do some requests still fail for a short time even with a healthy server in zone B?', options: ['The load balancer needs interval × count failed health checks before it stops sending traffic to server A', 'Zone B must be restarted first', 'DNS must be changed by hand'], answer: 0, why: 'The load balancer only drops a server after a set number of consecutive health check failures. Requests arriving during that detection time can fail.'},
+  {q: 'After the standby DB is promoted, what must the app handle to keep working?', options: ['Switching to a new DB address by hand', 'Restoring the database from backup', 'Reconnecting with retries, because the existing connections were dropped', 'Copying data from the old primary'], answer: 2, why: 'The connection address stays the same and now points to the new primary, but dropped connections must be reopened by the app, so it needs retry handling.'},
+  {q: 'The DB uses synchronous replication to its standby. What is the RPO for a zone outage?', options: ['Everything since the last backup', 'Near 0, because the primary confirms a write only after the standby has it', 'Exactly the health check interval'], answer: 1, why: 'RPO is how much data you can lose. With synchronous replication, confirmed orders are already on the standby. Asynchronous replication could lose a short stretch.'},
+]} />
+
 Further reading: [Running in multiple zones (Kubernetes docs)](https://kubernetes.io/docs/setup/best-practices/multiple-zones/) · [Pod Topology Spread Constraints](https://kubernetes.io/docs/concepts/scheduling-eviction/topology-spread-constraints/) · [Regions and Availability Zones (AWS)](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/using-regions-availability-zones.html)

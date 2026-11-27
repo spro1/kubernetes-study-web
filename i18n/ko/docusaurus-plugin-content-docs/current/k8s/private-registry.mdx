@@ -1,0 +1,265 @@
+---
+id: private-registry
+title: 사설 레지스트리에서 이미지 받기
+sidebar_label: 06 · 사설 레지스트리
+description: 401과 ImagePullBackOff에서 시작해 imagePullSecrets, 서비스 어카운트, 네임스페이스 함정, kubelet 자격 증명 공급자, 요청 한도, 풀스루 캐시, KubeletEnsureSecretPulledImages까지 사설 이미지 풀을 애니메이션으로 본다
+summary: '사설 이미지가 401로 실패하는 이유, imagePullSecrets와 자격 증명 공급자가 노드에 로그인을 건네는 방식, 캐시된 이미지에도 자격 증명 확인이 필요한 이유.'
+icon: registry
+hide_table_of_contents: true
+---
+
+# 사설 레지스트리에서 이미지 받기
+
+파드가 아무에게나 내주지 않는 이미지를 달라고 한다. **파드 → kubelet → 런타임 → 레지스트리** 순서로 따라가며, 로그인이 어디서 오는지, 왜 빠지는지, 어떤 오류가 무엇을 말하는지 본다.
+
+<StepDiagram
+  width={1000}
+  height={460}
+  meta={{duration: '약 12분', level: '중급'}}
+  groups={[
+    {label: '네임스페이스 shop', x: 30, y: 30, w: 360, h: 260, tone: 'biz'},
+    {label: '네임스페이스 batch', x: 30, y: 315, w: 360, h: 130, tone: 'biz'},
+    {label: '노드 worker-1', x: 420, y: 30, w: 300, h: 415, tone: 'mgmt'},
+  ]}
+  nodes={[
+    {id: 'pod', label: '파드 web', sub: 'registry.example.com', icon: 'pod', tone: 'app', x: 120, y: 110, show: true},
+    {id: 'sa', label: '서비스 어카운트', sub: 'default', icon: 'ticket', tone: 'cp', x: 300, y: 110},
+    {id: 'secret', label: '시크릿 regcred', sub: 'dockerconfigjson', icon: 'shield', tone: 'store', x: 210, y: 230, w: 170},
+    {id: 'pod2', label: '파드 report', sub: '같은 이미지', icon: 'pod', tone: 'app', x: 210, y: 380},
+    {id: 'kubelet', label: 'kubelet', sub: '자격 증명 모음', icon: 'gear', tone: 'node', x: 570, y: 110, show: true},
+    {id: 'runtime', label: '런타임', sub: 'containerd · CRI-O', icon: 'box', tone: 'node', x: 570, y: 240, show: true},
+    {id: 'credprov', label: '자격 증명 플러그인', sub: 'exec · 짧은 수명', icon: 'agent', tone: 'node', x: 570, y: 375, w: 170},
+    {id: 'registry', label: '사설 레지스트리', sub: 'registry.example.com', icon: 'registry', tone: 'ext', x: 870, y: 110, w: 170, show: true},
+    {id: 'mirror', label: '풀스루 캐시', sub: 'docker.io 미러', icon: 'archive', tone: 'ext', x: 870, y: 260, w: 170},
+    {id: 'hub', label: 'Docker Hub', sub: '공개 · 요청 한도', icon: 'cloud', tone: 'ext', x: 870, y: 390, w: 170},
+  ]}
+  metrics={[
+    {id: 'image', label: '이미지'},
+    {id: 'creds', label: '자격 증명'},
+    {id: 'state', label: '파드 상태'},
+  ]}
+  learn={[
+    {text: '누가 이미지를 받고, 레지스트리는 왜 401을 주는가', at: 1},
+    {text: 'kubernetes.io/dockerconfigjson 타입의 imagePullSecrets', at: 2},
+    {text: '서비스 어카운트에 붙이는 풀 시크릿과 네임스페이스 함정', at: 3},
+    {text: '클라우드 레지스트리를 위한 자격 증명 공급자 플러그인', at: 5},
+    {text: '요청 한도, 미러, 캐시된 이미지의 자격 증명 확인', at: 6},
+  ]}
+  steps={[
+    {
+      short: '시작',
+      kind: '시작',
+      title: 'kubelet이 런타임에게 이미지를 받으라고 한다',
+      text: [
+        '네임스페이스 shop의 파드 web이 이미지 registry.example.com/shop/web:1.4.2 로 worker-1에 배치된다. kubelet은 노드에 이미지가 없는 것을 보고 CRI로 컨테이너 런타임에게 풀을 요청한다.',
+        'kubelet이 직접 내려받지는 않는다. 이미지 이름과, 그 레지스트리에 쓸 자격 증명이 있으면 그것을 런타임에 넘긴다. 레지스트리와 통신하는 것은 런타임이다.',
+      ],
+      flows: [
+        {from: 'pod', to: 'kubelet', label: '배치됨', type: 'watch'},
+        {from: 'kubelet', to: 'runtime', label: 'PullImage', type: 'request'},
+      ],
+      focus: ['pod', 'kubelet', 'runtime'],
+      values: {image: 'registry.example.com/shop/web:1.4.2', creds: '없음', state: 'ContainerCreating'},
+    },
+    {
+      short: '401',
+      kind: '문제',
+      title: '자격 증명이 없으면 레지스트리가 401을 준다',
+      text: [
+        '런타임이 로그인 없이 이미지 매니페스트를 달라고 한다. 사설 레지스트리는 401 Unauthorized로 답한다. kubelet은 Failed 이벤트(Failed to pull image ... 401 Unauthorized)를 남기고, 컨테이너는 ErrImagePull로 기다린다.',
+        'kubelet은 간격을 늘려 가며 최대 5분까지 다시 시도하고, 그 사이 상태는 ImagePullBackOff로 보인다. 요청이 하나도 바뀌지 않으니 기다리기만 해서는 절대 낫지 않는다.',
+      ],
+      keyIdea: '상태만 보지 말고 Failed 이벤트 메시지를 읽는다. 401이나 unauthorized는 로그인이 없거나 틀렸다는 뜻이다.',
+      flows: [
+        {from: 'runtime', to: 'registry', label: 'GET manifest', type: 'request'},
+        {from: 'registry', to: 'runtime', label: '401', type: 'response', bend: 40},
+      ],
+      focus: ['registry', 'runtime'],
+      status: {pod: 'error', registry: 'warn'},
+      badges: {pod: 'ImagePullBackOff'},
+      values: {creds: {text: '없음', tone: 'bad'}, state: {text: 'ErrImagePull → ImagePullBackOff', tone: 'bad'}},
+    },
+    {
+      short: '풀 시크릿',
+      kind: '원리',
+      title: 'imagePullSecret이 파드에 로그인을 준다',
+      text: [
+        'kubectl create secret docker-registry regcred --docker-server=registry.example.com --docker-username=... --docker-password=... -n shop 은 kubernetes.io/dockerconfigjson 타입의 시크릿을 만든다. 안에는 docker login이 쓰는 것과 같은 형식의 .dockerconfigjson 파일이 든다.',
+        '파드는 spec.imagePullSecrets에 이 시크릿을 적는다. kubelet이 시크릿을 읽고 이미지의 레지스트리와 맞는 항목을 골라 풀 요청에 함께 넘긴다. 레지스트리가 확인하고 풀이 성공한다.',
+      ],
+      keyIdea: '풀 시크릿에는 사람 비밀번호 말고 읽기 전용 로봇 계정이나 토큰을 쓴다.',
+      flows: [
+        {from: 'secret', to: 'kubelet', label: 'regcred', type: 'watch'},
+        {from: 'kubelet', to: 'runtime', label: '풀 + 인증', type: 'request'},
+        {from: 'runtime', to: 'registry', label: '인증됨', type: 'request'},
+        {from: 'registry', to: 'runtime', label: '레이어', type: 'response', bend: 40},
+      ],
+      focus: ['secret', 'registry'],
+      status: {pod: 'ok', registry: null},
+      badges: {pod: 'Running', secret: 'dockerconfigjson'},
+      values: {creds: {text: '파드 imagePullSecrets', tone: 'good'}, state: {text: 'Running', tone: 'good'}},
+    },
+    {
+      short: '서비스 어카운트',
+      kind: '원리',
+      title: '시크릿을 서비스 어카운트에 한 번만 붙인다',
+      text: [
+        '파드마다 imagePullSecrets를 적다 보면 빠뜨리기 쉽다. 대신 파드가 쓰는 서비스 어카운트에 regcred를 붙인다. kubectl patch serviceaccount default -n shop -p \'{"imagePullSecrets":[{"name":"regcred"}]}\'.',
+        '파드가 만들어질 때 ServiceAccount 어드미션 플러그인이 어카운트의 imagePullSecrets를 파드 스펙에 복사한다. 이미 있는 파드는 바뀌지 않으니 다시 띄워야 반영된다.',
+      ],
+      keyIdea: 'kubectl get pod web -o jsonpath=\'{.spec.imagePullSecrets}\' 로 파드가 실제로 받은 것을 본다.',
+      flows: [
+        {from: 'secret', to: 'sa', label: '등록', type: 'watch'},
+        {from: 'sa', to: 'pod', label: '생성 시 복사', type: 'watch'},
+      ],
+      focus: ['sa', 'pod'],
+      badges: {sa: 'regcred', secret: null},
+      values: {creds: {text: '서비스 어카운트에서', tone: 'good'}},
+    },
+    {
+      short: '네임스페이스',
+      kind: '문제',
+      title: '다른 네임스페이스의 시크릿은 쓸 수 없다',
+      text: [
+        '파드 report가 네임스페이스 batch에서 같은 이미지와 imagePullSecrets: regcred 로 뜬다. 다시 401로 실패한다. 파드는 자기 네임스페이스의 풀 시크릿만 쓸 수 있고, batch에는 regcred가 없다.',
+        'kubelet이 힌트를 남긴다. 이벤트 FailedToRetrieveImagePullSecret, Unable to retrieve some image pull secrets (regcred). 필요한 네임스페이스마다 시크릿을 만든다. 손으로 만들거나 네임스페이스 사이에 시크릿을 복사하는 도구를 쓴다.',
+      ],
+      keyIdea: '시크릿은 네임스페이스에 속한다. imagePullSecrets의 이름은 언제나 파드 자신의 네임스페이스에서 찾는다.',
+      flows: [
+        {from: 'pod2', to: 'kubelet', label: 'regcred?', type: 'request'},
+        {from: 'runtime', to: 'registry', label: '인증 없음', type: 'request'},
+        {from: 'registry', to: 'runtime', label: '401', type: 'response', bend: 40},
+      ],
+      focus: ['pod2'],
+      status: {pod2: 'error'},
+      badges: {pod2: 'ImagePullBackOff', sa: null},
+      values: {creds: {text: 'batch에 regcred 없음', tone: 'bad'}, state: {text: 'ImagePullBackOff', tone: 'bad'}},
+    },
+    {
+      short: '공급자',
+      kind: '원리',
+      title: '클라우드 레지스트리는 노드가 짧은 토큰을 받아 온다',
+      text: [
+        '클라우드 레지스트리(예: ECR, Artifact Registry, ACR)라면 보통 풀 시크릿을 쓰지 않는다. kubelet이 --image-credential-provider-config 와 --image-credential-provider-bin-dir 로 설정한 자격 증명 공급자 플러그인을 쓴다. 플러그인의 matchImages에 맞는 이미지라면 kubelet이 플러그인을 불러 짧은 수명의 로그인을 받는다.',
+        '플러그인은 노드의 클라우드 신원으로 그 로그인을 얻는다. 어느 네임스페이스에도 오래가는 비밀번호가 없고 토큰은 저절로 바뀐다. 새 버전에서는 파드의 서비스 어카운트 토큰도 플러그인에 넘길 수 있어서, 노드가 아니라 워크로드 단위로 접근을 정할 수 있다.',
+      ],
+      keyIdea: '노드 전체 자격 증명이면 그 노드의 모든 파드가 그 이미지를 받을 수 있다. 팀을 나눠야 하면 워크로드 신원이나 풀 시크릿을 쓴다.',
+      flows: [
+        {from: 'kubelet', to: 'credprov', label: 'exec', type: 'request'},
+        {from: 'credprov', to: 'kubelet', label: '토큰', type: 'response', bend: 40},
+        {from: 'runtime', to: 'registry', label: '인증됨', type: 'request'},
+      ],
+      focus: ['credprov', 'kubelet'],
+      status: {pod2: 'ok', credprov: 'ok'},
+      badges: {pod2: 'Running'},
+      values: {creds: {text: '자격 증명 플러그인', tone: 'good'}, state: {text: 'Running', tone: 'good'}},
+    },
+    {
+      short: '오류',
+      kind: '장애',
+      title: '풀 오류가 모두 로그인 문제는 아니다',
+      text: [
+        'manifest unknown이나 not found는 레지스트리가 들여보내 줬지만 그 이름이나 태그가 없다는 뜻이다. 철자, 태그, CPU 아키텍처를 확인한다. 자격 증명은 문제가 없다.',
+        'HTTP 429와 toomanyrequests는 요청 한도다. Docker Hub는 계정마다, 로그인이 없으면 출발지 IP마다 풀 수를 제한한다. NAT 주소 하나 뒤의 노드들은 그 한도를 함께 쓰므로, 큰 배포나 노드 풀 확장 때 한꺼번에 걸릴 수 있다.',
+      ],
+      keyIdea: '401·unauthorized는 자격 증명, manifest unknown은 이름·태그, 429 toomanyrequests는 요청 한도, timeout은 네트워크·DNS다.',
+      flows: [
+        {from: 'runtime', to: 'hub', label: '풀', type: 'request'},
+        {from: 'hub', to: 'runtime', label: '429', type: 'response', bend: 40},
+      ],
+      focus: ['hub', 'runtime'],
+      status: {credprov: null, hub: 'error'},
+      badges: {hub: 'toomanyrequests'},
+      values: {image: 'docker.io/library/redis:7', creds: '익명', state: {text: 'ImagePullBackOff', tone: 'bad'}},
+    },
+    {
+      short: '미러',
+      kind: '원리',
+      title: '풀스루 캐시가 반복되는 풀을 받아 낸다',
+      text: [
+        '런타임이 미러를 보게 한다. containerd라면 /etc/containerd/certs.d/docker.io/ 아래 hosts.toml 파일에 미러를 먼저, 원래 레지스트리를 대안으로 적는다. 파드의 이미지 이름은 바꾸지 않는다.',
+        '첫 풀은 캐시를 거쳐 계정 하나의 로그인으로 Docker Hub까지 간다. 같은 레이어를 다시 받을 때는 캐시가 준다. 요청 한도에 덜 걸리고, 원래 레지스트리가 느리거나 멈춰도 풀이 된다. Harbor 프록시 캐시나 클라우드 풀스루 캐시가 흔한 예다.',
+      ],
+      keyIdea: '미러 설정은 노드에 있다. kubectl이 아니라 노드 이미지나 노드 부트스트랩으로 배포한다.',
+      flows: [
+        {from: 'runtime', to: 'mirror', label: '풀', type: 'request'},
+        {from: 'mirror', to: 'hub', label: '없을 때만', type: 'request'},
+        {from: 'mirror', to: 'runtime', label: '레이어', type: 'response', bend: 40},
+      ],
+      focus: ['mirror'],
+      status: {hub: null, mirror: 'ok'},
+      badges: {hub: null, mirror: '캐시 적중'},
+      values: {creds: '미러가 자기 로그인을 쓴다', state: {text: 'Running', tone: 'good'}},
+    },
+    {
+      short: '캐시된 이미지',
+      kind: '주의',
+      title: '캐시된 이미지는 자격 증명 확인을 건너뛰곤 했다',
+      text: [
+        'imagePullPolicy가 IfNotPresent면 노드에 이미 있는 이미지는 레지스트리에 묻지 않고 쓴다. 예전에는 올바른 로그인이 없는 파드도, 다른 파드가 같은 노드에 받아 둔 사설 이미지라면 그냥 띄울 수 있었다.',
+        'KubeletEnsureSecretPulledImages 기능 게이트가 이 틈을 막는다. 쿠버네티스 v1.35부터 베타이고 기본으로 켜져 있다. kubelet은 이미지마다 어떤 자격 증명으로 받았는지 기억하고, 새 파드의 자격 증명을 확인한 뒤에 재사용한다. kubelet 설정 imagePullCredentialsVerificationPolicy의 기본값은 NeverVerifyPreloadedImages라서 kubelet 밖에서 노드에 넣은 이미지는 확인하지 않는다.',
+      ],
+      keyIdea: '예전 클러스터에서 여러 테넌트가 노드를 함께 쓴다면 imagePullPolicy Always나 AlwaysPullImages 어드미션 플러그인을 쓴다.',
+      flows: [
+        {from: 'pod2', to: 'kubelet', label: 'IfNotPresent', type: 'request'},
+        {from: 'kubelet', to: 'runtime', label: '자격 확인', type: 'request'},
+      ],
+      focus: ['pod2', 'kubelet'],
+      status: {mirror: null, pod2: 'warn'},
+      badges: {mirror: null, kubelet: '확인'},
+      values: {image: 'registry.example.com/shop/web:1.4.2', creds: '풀 기록과 대조', state: '자기 로그인에 달림'},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '로그인이 어디서 오는지 안다',
+      text: [
+        '풀은 런타임이 한다. kubelet은 파드의 imagePullSecrets(서비스 어카운트에서 왔을 수도 있다)나 노드의 자격 증명 공급자 플러그인에서 자격 증명을 가져와 넘긴다. 풀 시크릿은 파드 자신의 네임스페이스에 있어야 한다.',
+        '무엇을 바꾸기 전에 풀 오류부터 읽는다. 401은 자격 증명, manifest unknown은 이름이나 태그, 429는 요청 한도다. 미러는 원래 레지스트리로 가는 풀을 줄이고, 자격 증명 확인은 캐시된 이미지가 로그인 없이 공유되는 것을 막는다.',
+      ],
+      keyIdea: 'ImagePullBackOff를 보면 kubectl describe pod 로 Failed 이벤트 메시지를 끝까지 읽는다.',
+      flows: [
+        {from: 'secret', to: 'kubelet', label: '시크릿', type: 'watch'},
+        {from: 'credprov', to: 'kubelet', label: '플러그인', type: 'watch'},
+        {from: 'runtime', to: 'registry', label: '풀', type: 'request'},
+      ],
+      focus: ['kubelet', 'runtime', 'registry'],
+      status: {pod2: null, pod: null},
+      badges: {kubelet: null, pod: null, pod2: null},
+    },
+  ]}
+/>
+
+## 풀 오류와 그 뜻
+
+| 이벤트 메시지나 reason | 원인 | 고치는 법 |
+|---|---|---|
+| `401 Unauthorized`, `unauthorized`, `authorization failed` | 이 레지스트리에 쓸 자격 증명이 없거나 틀렸다 | 시크릿의 서버 이름이 이미지의 레지스트리와 정확히 같은지, 사용자와 토큰이 맞는지 본다 |
+| `FailedToRetrieveImagePullSecret` | 지정한 풀 시크릿이 파드의 네임스페이스에 없다 | 그 네임스페이스에 시크릿을 만들거나 이름을 고친다 |
+| `manifest unknown`, `not found` | 이름이나 태그가 없다(또는 이 CPU 아키텍처용 이미지가 없다) | 이미지 이름이나 태그를 고치고 레지스트리 화면에서 확인한다 |
+| `403 Forbidden`, `denied` | 로그인은 됐지만 이 계정은 이 저장소를 읽을 수 없다 | 계정이나 토큰에 풀 권한을 준다 |
+| `429 Too Many Requests`, `toomanyrequests` | 레지스트리 요청 한도. Docker Hub 익명 풀은 IP마다 걸리는 경우가 많다 | 로그인해서 받거나, 풀스루 캐시를 쓰거나, 이미지를 미러링한다 |
+| `i/o timeout`, `no such host` | 노드에서 본 네트워크, DNS, 프록시, 방화벽 문제 | 노드에서 `crictl pull` 등으로 시험하고 나가는 경로를 본다 |
+| `x509: certificate signed by unknown authority` | 노드가 레지스트리 인증서를 믿지 않는다 | 노드나 런타임 레지스트리 설정에 CA를 넣는다 |
+
+## 직접 확인해 보기
+
+```bash
+kubectl create secret docker-registry regcred -n shop \
+  --docker-server=registry.example.com \
+  --docker-username=robot-pull --docker-password="$TOKEN"         # 타입 kubernetes.io/dockerconfigjson
+kubectl get secret regcred -n shop -o jsonpath='{.data.\.dockerconfigjson}' | base64 -d   # 서버 이름 확인
+kubectl patch serviceaccount default -n shop \
+  -p '{"imagePullSecrets":[{"name":"regcred"}]}'                  # 새 파드가 저절로 받는다
+kubectl get pod web -n shop -o jsonpath='{.spec.imagePullSecrets}{"\n"}'   # 파드가 실제로 받은 것
+kubectl describe pod web -n shop | grep -A8 Events                 # Failed 메시지를 읽는다
+kubectl get events -A --field-selector reason=FailedToRetrieveImagePullSecret   # 네임스페이스에 시크릿이 없는 경우
+```
+
+<Quiz questions={[
+  {q: '네임스페이스 batch의 파드가 imagePullSecrets: regcred 를 적었고, regcred는 네임스페이스 shop에 있다. 어떻게 되는가?', options: ['kubelet이 shop에서 regcred를 찾아 풀이 성공한다', '시크릿은 batch에서만 찾으므로 그 로그인 없이 풀을 시도한다', '파드를 만들 때 API 서버가 거부한다'], answer: 1, why: '풀 시크릿은 파드 자신의 네임스페이스에서 찾는다. kubelet은 FailedToRetrieveImagePullSecret 이벤트를 남기고, 사설 레지스트리는 401로 답한다.'},
+  {q: '새 노드에 파드 200개를 배포하다가 Docker Hub에서 429 toomanyrequests로 실패한다. 이 공개 이미지에는 원래 자격 증명이 필요 없었다. 가장 도움이 되는 것은?', options: ['풀스루 캐시를 두거나 로그인해서 받는다', '같은 익명 접근으로 imagePullSecret을 새로 만든다', '더 빨리 다시 시도하도록 imagePullPolicy를 Always로 바꾼다'], answer: 0, why: '429는 로그인 오류가 아니라 요청 한도다. 캐시는 반복되는 풀을 가까이서 주고, 로그인한 풀은 따로 된, 보통 더 높은 한도를 받는다.'},
+  {q: 'KubeletEnsureSecretPulledImages가 켜져 있을 때 kubelet이 노드에 이미 있는 이미지도 자격 증명을 확인하는 이유는?', options: ['그 태그의 더 새 버전을 찾으려고', '안 쓰는 이미지를 지워 디스크를 아끼려고', '올바른 로그인이 없는 파드가 다른 파드가 받아 둔 사설 이미지를 쓰지 못하게 하려고'], answer: 2, why: 'IfNotPresent에서는 캐시된 이미지를 레지스트리에 묻지 않고 띄우곤 했다. 이제 kubelet은 새 파드의 자격 증명이 성공한 풀 기록과 맞는지 확인한다.'},
+]} />
+
+더 읽을거리: [이미지: 사설 레지스트리 쓰기](https://kubernetes.io/docs/concepts/containers/images/#using-a-private-registry) · [사설 레지스트리에서 이미지 받기](https://kubernetes.io/docs/tasks/configure-pod-container/pull-image-private-registry/) · [kubelet 이미지 자격 증명 공급자](https://kubernetes.io/docs/tasks/administer-cluster/kubelet-credential-provider/) · [containerd 레지스트리 호스트 설정](https://github.com/containerd/containerd/blob/main/docs/hosts.md) · [이미지가 만들어지고 실행되기까지](../basic/container-image.mdx) · [상태를 세 단계로 읽고 문제 확인하기](../intermediate/troubleshoot-status.mdx)

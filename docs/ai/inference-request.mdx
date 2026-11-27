@@ -1,7 +1,7 @@
 ---
 id: inference-request
 title: From API Request to Response
-sidebar_label: 09 · From API Request to Response
+sidebar_label: 10 · From API Request to Response
 description: Follow a request sent with an API key through API gateway authentication and rate limits to a vLLM replica and back as a stream, along with where rejected requests stop.
 summary: 'One inference request through API-key checks, the gateway and a replica to a streamed answer, and where it gets stopped.'
 icon: route
@@ -200,5 +200,11 @@ curl -sN http://<gateway>/v1/completions -H "Authorization: Bearer $API_KEY" -H 
 kubectl get networkpolicy -n <namespace>             # Only the gateway reaches model Pods (step 4)
 curl -s http://<engine>:8000/metrics | grep -E 'vllm:(num_requests_waiting|time_to_first_token_seconds)'   # Replica queue and TTFT
 ```
+
+<Quiz questions={[
+  {q: 'Requests without a key get 401 at the gateway, yet someone inside the cluster is calling the model with no key. What is most likely?', options: ['The auth service cache is stale', 'The key service is down', 'The model Service is reachable directly and no NetworkPolicy limits it to the gateway', 'vLLM ignores the Authorization header'], answer: 2, why: 'Gateway auth only protects requests that go through the gateway. Without a NetworkPolicy, a client can reach a replica directly and skip the key check.'},
+  {q: 'You revoke an API key, but it keeps working for a short while. Why?', options: ['The auth service caches the key list, so the revocation takes effect after a cache refresh', 'Revocation only applies to newly issued keys', 'The key service is on the request path and is slow', 'The gateway checks keys only on the first request of a connection'], answer: 0, why: 'The auth service usually caches the key list. A revoked key can keep working for up to one cache refresh interval.'},
+  {q: 'A key\'s actual token usage ends up slightly over its tokens-per-minute limit. Why can that happen?', options: ['The gateway counts input tokens only', 'Output tokens are known only when generation ends, so usage is charged after the response', 'The limit is enforced by the model server, not the gateway', 'Streaming responses are not counted'], answer: 1, why: 'The gateway charges usage after the response because the output token count is only known then. A request just under the limit still passes, so usage can slightly exceed it.'},
+]} />
 
 Further reading: [Network Policies](https://kubernetes.io/docs/concepts/services-networking/network-policies/) · [Gateway API](https://gateway-api.sigs.k8s.io/) · [Gateway API Inference Extension](https://gateway-api-inference-extension.sigs.k8s.io/)

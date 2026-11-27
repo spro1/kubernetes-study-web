@@ -1,7 +1,7 @@
 ---
 id: container-image
 title: How an Image Is Built and Run
-sidebar_label: 07 · How an Image Is Built and Run
+sidebar_label: 10 · How an Image Is Built and Run
 description: Follow step by step as a Dockerfile becomes a layered image, gets a name and tag, is pushed to a registry and scanned for vulnerabilities, then runs as a container on a node and goes away
 summary: 'Dockerfile, layers, names and tags, registries, and how a node pulls and runs it.'
 icon: box
@@ -188,5 +188,11 @@ docker pull <image>                                  # Layers already present ar
 trivy image <image>                                  # Vulnerabilities by severity (if Trivy is installed)
 kubectl get pod <pod> -o jsonpath='{.status.containerStatuses[*].imageID}'   # Digest the node actually pulled
 ```
+
+<Quiz questions={[
+  {q: 'Two servers both run web:latest but behave differently. What is the most likely reason?', options: ['latest always points to the newest image, so one server is broken', 'Each server pulled latest at a different time, and the tag had moved to a different image in between', 'The registry gives each server a randomly chosen layer'], answer: 1, why: 'A tag is a label that moves when someone pushes a new image with it. Production uses tags that pin a version, or a digest for exactly one image.'},
+  {q: 'An app writes uploaded files inside its container. The container is deleted and recreated. What happens to the files?', options: ['They are written back into the image', 'The new container finds them automatically', 'They vanish, because changes made at run time live only in that container', 'They move to the registry'], answer: 2, why: 'The image is read-only, so run-time changes pile up only in that container and disappear with it. Data that must survive goes on a volume outside the container.'},
+  {q: 'Harbor shows no vulnerability results for an image. What can you conclude?', options: ['Nothing yet: with no scanner attached there are no results, which is not the same as 0 vulnerabilities', 'The image has 0 vulnerabilities', 'The image is safe to run in production'], answer: 0, why: 'You only get scan results if a scanner such as Trivy is connected to the registry. "Not scanned" and "0 vulnerabilities" are different states.'},
+]} />
 
 Further reading: [Images (Kubernetes docs)](https://kubernetes.io/docs/concepts/containers/images/) · [Docker Build](https://docs.docker.com/build/) · [Harbor](https://goharbor.io/docs/) · [How a Pod Starts](../k8s/pod-startup.mdx)

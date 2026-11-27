@@ -1,7 +1,7 @@
 ---
 id: managed-kubernetes
 title: Managed Kubernetes — Who Runs What
-sidebar_label: 13 · Managed Kubernetes
+sidebar_label: 17 · Managed Kubernetes
 description: Animated walkthrough of a managed Kubernetes cluster (EKS, GKE, AKS) where the provider runs the control plane and you run the nodes, with kubectl login through cloud IAM, cloud load balancers and disks created from Services and PVCs, node autoscaling, workload identity and version upgrades
 summary: 'The provider runs the control plane, you run the nodes. How IAM, load balancers, disks, autoscaling and upgrades connect to the cloud.'
 icon: cloud
@@ -246,5 +246,11 @@ kubectl get pv -o custom-columns=NAME:.metadata.name,ZONE:.spec.nodeAffinity.req
 kubectl get events -A --field-selector reason=FailedScheduling   # Pending Pods the autoscaler should see
 kubectl version                                      # Client and control-plane versions
 ```
+
+<Quiz questions={[
+  {q: 'On a managed cluster, kubectl get pods returns Forbidden. Which side should you look at first?', options: ['The cloud IAM token helper in kubeconfig', 'Kubernetes RBAC for the user or group your cloud identity maps to', 'The node group size'], answer: 1, why: 'Cloud IAM says who you are, and Kubernetes RBAC says what you may do. Forbidden comes from RBAC, while Unauthorized is usually the IAM side.'},
+  {q: 'A Pod with a PVC is recreated while the node in AZ a is full. A node in AZ b has room, but the Pod stays Pending with a volume node affinity conflict. Why?', options: ['Its zonal disk is in AZ a and cannot attach to a VM in AZ b', 'The provider\'s control plane is down', 'The Pod has no CPU requests'], answer: 0, why: 'A cloud block disk lives in one zone. Keep node capacity in every zone that holds disks, and use WaitForFirstConsumer so disks are created where Pods land.'},
+  {q: 'The shop Pod must write to object storage. What is the safest way to give it that permission?', options: ['Put an access key in a Secret', 'Give the node\'s role broad storage rights', 'Use workload identity to tie its ServiceAccount to one cloud role with least privilege'], answer: 2, why: 'A key in a Secret or a broad node role lets every Pod on the node use the same permission. Workload identity gives only that Pod short-lived credentials for its role.'},
+]} />
 
 Further reading: [Amazon EKS user guide](https://docs.aws.amazon.com/eks/latest/userguide/what-is-eks.html) · [GKE overview](https://cloud.google.com/kubernetes-engine/docs/concepts/kubernetes-engine-overview) · [AKS core concepts](https://learn.microsoft.com/en-us/azure/aks/core-aks-concepts) · [Cloud controller manager](https://kubernetes.io/docs/concepts/architecture/cloud-controller/) · [Version skew policy](https://kubernetes.io/releases/version-skew-policy/) · [Permission Checks (IAM)](../cloud/iam-request.mdx) · [Service Types](../feature/service-types.mdx) · [Auto Scaling Groups](../cloud/auto-scaling-group.mdx)

@@ -1,7 +1,7 @@
 ---
 id: cluster-backup
 title: Backing Up and Restoring a Cluster
-sidebar_label: 09 · Cluster Backup and Restore
+sidebar_label: 11 · Cluster Backup and Restore
 description: Animated walkthrough of what state a Kubernetes cluster holds, an etcd snapshot for whole-cluster recovery, Velero backups of API objects and volume data to object storage, app-consistent hooks, schedules with TTL, and restoring into another cluster
 summary: 'etcd snapshots, Velero backups of objects and volumes, consistent hooks, and a restore into a new cluster.'
 icon: archive
@@ -230,5 +230,11 @@ velero backup logs shop-test | grep -i error
 velero restore create --from-backup shop-test --namespace-mappings shop:shop-restore-test   # Restore beside the original
 velero restore describe <restore-name>            # Skipped and failed items
 ```
+
+<Quiz questions={[
+  {q: 'Someone deleted one Deployment in the shop namespace. Why is an etcd snapshot restore the wrong tool?', options: ['etcd snapshots do not contain Deployments', 'It rewinds every namespace in the cluster to the snapshot time, not just the one Deployment', 'etcd snapshots can only be restored into a new cluster', 'It requires Velero to be installed first'], answer: 1, why: 'An etcd restore is for losing the control plane. It rewinds the whole cluster at once; for one deleted resource, restore that namespace from a Velero backup.'},
+  {q: 'After restoring an etcd snapshot, the database PVC and PV objects are back but the database is empty. What is most likely?', options: ['The volume data was never in etcd, and the disk was lost without a separate data backup', 'The restore skipped PVCs because they already existed', 'The snapshot was taken without a client certificate'], answer: 0, why: 'etcd holds API objects, not the bytes on volumes. Volume data needs its own backup, such as storage snapshots, file-level copies or a database dump.'},
+  {q: 'You back up with Velero and CSI snapshots only. The whole storage system in that region fails. What happens?', options: ['Velero rebuilds the volumes from the object archive', 'Nothing is lost, because CSI snapshots are always copied to the bucket', 'Hooks recreate the data from the pg_dump automatically', 'The volume data is likely lost, because the snapshots stayed in that same storage system'], answer: 3, why: 'CSI snapshots usually stay in the same storage system and region. Use --snapshot-move-data or File System Backup to copy volume data into the bucket.'},
+]} />
 
 Further reading: [Operating etcd clusters: backup and restore](https://kubernetes.io/docs/tasks/administer-cluster/configure-upgrade-etcd/#backing-up-an-etcd-cluster) · [etcd disaster recovery](https://etcd.io/docs/latest/op-guide/recovery/) · [Velero docs](https://velero.io/docs/) · [Velero backup hooks](https://velero.io/docs/main/backup-hooks/) · [Velero File System Backup](https://velero.io/docs/main/file-system-backup/) · [Control Plane HA and etcd Quorum](../advanced/etcd-quorum.mdx) · [Multi-region disaster recovery](../cloud/multi-region-dr.mdx) · [How Object Storage Works](../cloud/object-storage.mdx)

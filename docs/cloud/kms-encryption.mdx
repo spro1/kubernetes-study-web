@@ -1,0 +1,257 @@
+---
+id: kms-encryption
+title: How Cloud KMS Encrypts Your Data (Envelope Encryption)
+sidebar_label: 07 · KMS Envelope Encryption
+description: Animated walkthrough of a cloud KMS such as AWS KMS, from a key that never leaves the HSM to envelope encryption with GenerateDataKey and Decrypt, key policies, audit logs, rotation, scheduled deletion, cross-account use and throttling
+summary: 'A key that never leaves the HSM, data keys wrapped by it, the key policy that guards it, and what rotation and deletion really do.'
+icon: shield
+hide_table_of_contents: true
+---
+
+# How Cloud KMS Encrypts Your Data (Envelope Encryption)
+
+An app must store customer files encrypted, and the key must not sit in its code or config. Follow how a cloud KMS (AWS KMS here; Google Cloud KMS and Azure Key Vault work alike) protects the key, and how **envelope encryption** encrypts the data without the key ever leaving the KMS.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~12 min', level: 'Intermediate'}}
+  groups={[
+    {label: 'Cloud KMS', x: 330, y: 40, w: 180, h: 370, tone: 'mgmt'},
+  ]}
+  nodes={[
+    {id: 'app', label: 'App', sub: 'Account A', icon: 'server', tone: 'app', x: 120, y: 120, show: true},
+    {id: 'disk', label: 'Storage', sub: 'Disk · object store', icon: 'disk', tone: 'store', x: 120, y: 330, show: true},
+    {id: 'kms', label: 'KMS API', sub: 'alias/app-data', icon: 'gate', tone: 'cp', x: 420, y: 120},
+    {id: 'hsm', label: 'HSM', sub: 'Key material inside', icon: 'shield', tone: 'cp', x: 420, y: 330},
+    {id: 'policy', label: 'Key policy', sub: 'On the key itself', icon: 'book', tone: 'store', x: 690, y: 120},
+    {id: 'iam', label: 'IAM policy', sub: 'On the caller', icon: 'shield', tone: 'store', x: 690, y: 250},
+    {id: 'trail', label: 'Audit log', sub: 'CloudTrail', icon: 'chart', tone: 'store', x: 690, y: 380},
+    {id: 'other', label: 'Account B', sub: 'Other team', icon: 'user', tone: 'ext', size: 'sm', x: 900, y: 250},
+  ]}
+  metrics={[
+    {id: 'key', label: 'Data key'},
+    {id: 'access', label: 'Access'},
+    {id: 'audit', label: 'Audit'},
+    {id: 'state', label: 'Key state'},
+  ]}
+  learn={[
+    {text: 'Why a KMS key stays inside the HSM', at: 1},
+    {text: 'Envelope encryption with GenerateDataKey and Decrypt', at: 2},
+    {text: 'Key policy and IAM policy must both allow a call', at: 5},
+    {text: 'Rotation keeps old key material for decrypt', at: 7},
+    {text: 'Scheduled deletion and crypto-shredding', at: 8},
+  ]}
+  steps={[
+    {
+      short: 'Start',
+      kind: '시작',
+      title: 'The data must be encrypted, but where does the key live?',
+      text: [
+        'The app writes customer files to a disk and an object store. They must be encrypted at rest.',
+        'A key in an environment variable or a config file leaks with the code, the image or a backup. The key needs a home that the app can use but cannot copy.',
+      ],
+      flows: [{from: 'app', to: 'disk', label: 'Write file', type: 'request'}],
+      focus: ['app', 'disk'],
+      values: {key: '—', state: 'Enabled'},
+    },
+    {
+      short: 'HSM',
+      kind: '원리',
+      title: 'The KMS key never leaves the HSM',
+      text: [
+        'A KMS key is a name and an ID (here alias/app-data) for key material held in hardware security modules (HSMs). There is no API that returns that key material in plaintext.',
+        'You send data to the key, not the key to the data. The direct Encrypt call takes only a few kilobytes (4 KB in AWS KMS), and every call is a network round trip. So the KMS key is not used for bulk data.',
+      ],
+      keyIdea: 'Think of the KMS key as a lock you can ask to use, never a key you can take home.',
+      flows: [{from: 'kms', to: 'hsm', label: 'Use key', type: 'request'}],
+      focus: ['kms', 'hsm'],
+      badges: {hsm: 'Non-exportable'},
+    },
+    {
+      short: 'Data key',
+      kind: '원리',
+      title: 'GenerateDataKey returns one key in two forms',
+      text: [
+        'The app calls GenerateDataKey on alias/app-data. KMS creates a fresh 256-bit data key and returns it twice: once in plaintext, and once encrypted under the KMS key (the CiphertextBlob).',
+        'This is envelope encryption. The data key encrypts the data, and the KMS key encrypts the data key. Only the small data key ever travels to KMS.',
+      ],
+      flows: [
+        {from: 'app', to: 'kms', label: 'GenerateDataKey', type: 'request'},
+        {from: 'kms', to: 'hsm', label: 'Wrap', type: 'request'},
+        {from: 'kms', to: 'app', label: 'Plain + encrypted', type: 'response'},
+      ],
+      focus: ['app', 'kms'],
+      badges: {hsm: null},
+      values: {key: 'Plaintext + encrypted copy'},
+    },
+    {
+      short: 'Encrypt',
+      kind: '원리',
+      title: 'Encrypt locally, keep the encrypted key next to the data',
+      text: [
+        'The app encrypts the file in its own memory with the plaintext data key, for example with AES-GCM. This is fast and has no size limit.',
+        'Then it erases the plaintext data key and stores the encrypted data key right next to the ciphertext. Storage now holds nothing that can be read without asking KMS.',
+      ],
+      keyIdea: 'Never write the plaintext data key to disk or logs. Keep it in memory only as long as you need it.',
+      flows: [{from: 'app', to: 'disk', label: 'Ciphertext + wrapped key', type: 'request'}],
+      focus: ['app', 'disk'],
+      badges: {disk: 'Encrypted'},
+      values: {key: 'Only the encrypted copy is stored'},
+    },
+    {
+      short: 'Decrypt',
+      kind: '원리',
+      title: 'To read, ask KMS to unwrap the data key',
+      text: [
+        'To read the file, the app sends the encrypted data key to Decrypt. KMS unwraps it inside the HSM and returns the plaintext data key, and the app decrypts the file locally.',
+        'Disk and object storage encryption at rest work the same way. The storage service calls KMS for you: a disk gets its data key unwrapped when it is attached, and an object store asks for a data key per object, or per bucket with a bucket key to cut calls.',
+      ],
+      flows: [
+        {from: 'disk', to: 'app', label: 'Read', type: 'response'},
+        {from: 'app', to: 'kms', label: 'Decrypt', type: 'request'},
+        {from: 'kms', to: 'app', label: 'Plain data key', type: 'response'},
+      ],
+      focus: ['app', 'kms', 'disk'],
+      values: {key: 'Unwrapped in memory'},
+    },
+    {
+      short: 'Two policies',
+      kind: '문제',
+      title: 'IAM allows Decrypt, but KMS still says AccessDenied',
+      text: [
+        'A new role gets kms:Decrypt in its IAM policy, yet the call fails with AccessDeniedException. In AWS KMS, every key has a key policy, and it is the main gate. IAM policies count only if the key policy allows the account to use them.',
+        'The default key policy does allow that, so IAM works for most keys. A hand-written key policy that lists only certain roles shuts out everyone else, even an admin with full IAM rights.',
+      ],
+      keyIdea: 'For a KMS call, both the key policy and the caller\'s IAM policy must allow it. Read the key policy first when access is denied.',
+      flows: [
+        {from: 'app', to: 'kms', label: 'Decrypt', type: 'request'},
+        {from: 'policy', to: 'kms', label: 'Not listed', type: 'watch'},
+        {from: 'iam', to: 'kms', label: 'Allows', type: 'watch'},
+      ],
+      focus: ['policy', 'iam'],
+      status: {policy: 'error', iam: 'ok'},
+      values: {access: {text: 'AccessDeniedException', tone: 'bad'}},
+    },
+    {
+      short: 'Audit',
+      kind: '원리',
+      title: 'Every use of the key is logged',
+      text: [
+        'After the key policy is fixed, the call succeeds. Every GenerateDataKey and Decrypt, including calls a storage service makes for you, is written to the audit trail (CloudTrail in AWS) with the caller, the key and the time.',
+        'An encryption context, a set of key-value pairs such as tenant=acme, can be passed on each call. It must match on Decrypt, and it shows up in the log, so you can see whose data was opened.',
+      ],
+      keyIdea: 'Because data cannot be read without a KMS call, the audit log of the key is also a log of who read the data.',
+      flows: [
+        {from: 'app', to: 'kms', label: 'Decrypt', type: 'request'},
+        {from: 'kms', to: 'trail', label: 'Event', type: 'response'},
+      ],
+      focus: ['kms', 'trail'],
+      status: {policy: 'ok', iam: null},
+      values: {access: {text: 'Allowed', tone: 'good'}, audit: 'Decrypt by app-role'},
+    },
+    {
+      short: 'Rotation',
+      kind: '원리',
+      title: 'Rotation adds new key material and keeps the old',
+      text: [
+        'With automatic rotation on, AWS KMS makes new key material for the same key on a schedule (every 365 days by default). The key ID, alias and policy stay the same.',
+        'New data keys are wrapped with the new material. Old material is kept, so data encrypted years ago still decrypts. Rotation does not re-encrypt existing data or replace data keys.',
+      ],
+      keyIdea: 'Rotation needs no code change. It does not fix a leaked data key: data encrypted with it must be re-encrypted.',
+      flows: [{from: 'kms', to: 'hsm', label: 'New material', type: 'watch'}],
+      focus: ['hsm'],
+      badges: {hsm: 'v1 · v2 kept'},
+      values: {audit: 'RotateKey'},
+    },
+    {
+      short: 'Deletion',
+      kind: '주의',
+      title: 'Deleting a key deletes the data with it',
+      text: [
+        'Deletion is never instant. ScheduleKeyDeletion sets a waiting period of 7 to 30 days (30 by default). The key is then PendingDeletion: it cannot be used, and CancelKeyDeletion brings it back.',
+        'Once the period ends, everything encrypted under the key is gone for good. Teams use this on purpose as crypto-shredding: delete one key per tenant and that tenant\'s data, backups included, can no longer be read.',
+      ],
+      keyIdea: 'Disable a key first and watch for failed calls. Alarm on any use of a key that is pending deletion.',
+      flows: [{from: 'app', to: 'kms', label: 'Decrypt', type: 'request'}],
+      focus: ['kms', 'hsm'],
+      status: {kms: 'warn', hsm: 'off'},
+      badges: {hsm: 'Pending deletion'},
+      values: {state: {text: 'PendingDeletion', tone: 'bad'}, access: {text: 'KMSInvalidStateException', tone: 'bad'}},
+    },
+    {
+      short: 'Sharing',
+      kind: '주의',
+      title: 'Another account, and a rate limit',
+      text: [
+        'The deletion is canceled. Now team B in another account must read the files. The key policy must name account B, and account B\'s own IAM policy must allow its role too. Either one alone is not enough.',
+        'Every KMS call counts toward a per-second quota shared across the account and Region, including calls services make for you. Past it, calls fail with ThrottlingException. Reuse data keys where safe, use bucket keys, and retry with backoff.',
+      ],
+      keyIdea: 'In a cross-account call, the caller\'s account is throttled, not the key owner\'s.',
+      flows: [
+        {from: 'other', to: 'kms', label: 'Decrypt', type: 'request', bend: -60},
+        {from: 'policy', to: 'kms', label: 'Allows B', type: 'watch'},
+      ],
+      focus: ['other', 'policy'],
+      status: {kms: null, hsm: null, policy: 'ok'},
+      badges: {hsm: null, other: 'Own IAM too'},
+      values: {state: {text: 'Enabled', tone: 'good'}, access: {text: 'Allowed · A and B', tone: 'good'}},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'The key stays put, the data key travels, every use is recorded',
+      text: [
+        'The KMS key never leaves the HSM. GenerateDataKey gives a plaintext data key to encrypt with and an encrypted copy to store. Decrypt unwraps that copy when the data is read.',
+        'The key policy and IAM both gate each call, and the audit log records it. Rotation keeps old material for decrypt. Deleting the key, after a 7 to 30 day wait, makes the data unreadable.',
+      ],
+      keyIdea: 'When encrypted data cannot be read, check in order: key state, key policy, IAM policy, encryption context, then throttling.',
+      flows: [
+        {from: 'app', to: 'kms', label: 'Data key', type: 'request'},
+        {from: 'app', to: 'disk', label: 'Ciphertext', type: 'request'},
+        {from: 'kms', to: 'trail', label: 'Logged', type: 'response'},
+      ],
+      focus: ['kms', 'hsm', 'policy'],
+      status: {policy: null},
+      badges: {other: null, disk: null},
+    },
+  ]}
+/>
+
+## When a KMS call fails
+
+| Error (AWS KMS) | Likely cause | Fix |
+|---|---|---|
+| AccessDeniedException | Key policy does not allow the caller or its account, or IAM policy lacks the action | Read the key policy first, then the caller's IAM policy. Cross-account needs both sides |
+| DisabledException | The key is disabled | Enable it, or point the app at the right key |
+| KMSInvalidStateException | The key is pending deletion (or pending import) | `cancel-key-deletion` if it was a mistake, then enable the key |
+| InvalidCiphertextException | Wrong or damaged ciphertext, or the encryption context does not match the one used to encrypt | Pass exactly the same encryption context on Decrypt |
+| ThrottlingException | The account's shared request quota per second in that Region is exceeded | Retry with backoff, reuse data keys, use bucket keys, or ask for a quota increase |
+| NotFoundException | Wrong key ID, alias or Region | Use the full key ARN, especially across accounts |
+
+The same ideas exist elsewhere: Google Cloud KMS calls rotation "key versions", and Azure Key Vault uses soft-delete with a retention period instead of a deletion window.
+
+## Try it yourself
+
+```bash
+aws kms create-key --description "app data"                    # Returns KeyId
+aws kms create-alias --alias-name alias/app-data --target-key-id <key-id>
+aws kms generate-data-key --key-id alias/app-data --key-spec AES_256 \
+  --query CiphertextBlob --output text | base64 --decode > datakey.enc   # Keep only the encrypted copy
+aws kms decrypt --ciphertext-blob fileb://datakey.enc \
+  --query KeyId --output text                                   # KMS finds the key from the ciphertext
+aws kms get-key-policy --key-id alias/app-data --policy-name default --output text   # Who may use the key
+aws kms enable-key-rotation --key-id <key-id>                   # 365 days unless --rotation-period-in-days
+aws kms get-key-rotation-status --key-id <key-id>
+aws cloudtrail lookup-events --lookup-attributes AttributeKey=EventName,AttributeValue=Decrypt --max-results 5   # Who used it
+aws kms schedule-key-deletion --key-id <key-id> --pending-window-in-days 7   # Only on a test key
+aws kms cancel-key-deletion --key-id <key-id>                   # Undo during the waiting period
+```
+
+<Quiz questions={[
+  {q: 'Why does an app use GenerateDataKey instead of sending all its data to the KMS Encrypt call?', options: ['The KMS key can be exported faster with GenerateDataKey', 'Only a small data key travels to KMS; bulk data is encrypted locally while the KMS key stays in the HSM', 'Data keys never need to be decrypted again'], answer: 1, why: 'Encrypt takes only a few kilobytes and costs a network call each time. Envelope encryption sends only the data key to KMS and does the heavy work locally.'},
+  {q: 'Automatic rotation is turned on. What happens to a file encrypted last year?', options: ['It must be re-encrypted before the next rotation', 'It can no longer be decrypted', 'It still decrypts, because KMS keeps the old key material and picks it automatically'], answer: 2, why: 'Rotation adds new material for new encryptions and keeps the old material for decrypt. The key ID stays the same, so no code changes.'},
+  {q: 'A role has kms:Decrypt in its IAM policy, but the key policy neither lists the role nor lets the account use IAM. What happens?', options: ['Denied, because the key policy must allow the call', 'Allowed, because IAM is enough', 'Allowed only from the console'], answer: 0, why: 'In AWS KMS the key policy is the main gate. IAM policies only take effect when the key policy enables them for the account.'},
+]} />
+
+Further reading: [AWS KMS concepts](https://docs.aws.amazon.com/kms/latest/developerguide/overview.html) · [Data keys and envelope encryption (AWS)](https://docs.aws.amazon.com/kms/latest/developerguide/data-keys.html) · [Rotating KMS keys (AWS)](https://docs.aws.amazon.com/kms/latest/developerguide/rotate-keys.html) · [Envelope encryption (Google Cloud KMS)](https://cloud.google.com/kms/docs/envelope-encryption) · [Azure Key Vault overview](https://learn.microsoft.com/en-us/azure/key-vault/general/overview) · [Cryptography a Developer Needs](../basic/crypto-basics.mdx) · [Keeping Secrets Safe](../advanced/secret-management.mdx) · [Permission Checks on One API Request (IAM)](../cloud/iam-request.mdx)

@@ -1,0 +1,252 @@
+---
+id: multi-cluster
+title: 클러스터 여러 개를 한 무리로 운영하기
+sidebar_label: 15 · 멀티 클러스터 운영
+description: 쿠버네티스 클러스터를 여러 개 운영할 때 장애 범위·리전·테넌트·업그레이드로 클러스터를 나누는 이유, Argo CD ApplicationSet 클러스터 제너레이터로 하는 플릿 GitOps, Cluster API로 클러스터를 선언적으로 만드는 법, ServiceExport·ServiceImport·clusterset.local로 하는 클러스터 간 서비스 찾기, 글로벌 로드밸런싱, 멀티 클러스터 메시, 플릿에 쌓이는 설정 차이와 버전 차이를 애니메이션으로 본다
+summary: '클러스터 하나가 여럿이 되는 이유, GitOps와 Cluster API로 플릿을 똑같이 유지하는 법, 클러스터 너머의 서비스를 찾는 법, 설정 차이와 버전 차이가 끼어드는 곳.'
+icon: layers
+hide_table_of_contents: true
+---
+
+# 클러스터 여러 개를 한 무리로 운영하기
+
+클러스터는 언젠가 하나에서 여럿이 된다. 작은 플릿(fleet, 클러스터 무리)이 커 가는 과정을 따라간다. **Git → Argo CD → 클러스터들**, **Cluster API**로 만든 새 클러스터, 클러스터끼리 나눠 쓰는 서비스, 그리고 시간이 지나며 쌓이는 설정 차이와 버전 차이를 본다.
+
+<StepDiagram
+  width={1000}
+  height={470}
+  meta={{duration: '약 14분', level: '심화'}}
+  groups={[
+    {label: '관리 클러스터', x: 180, y: 160, w: 260, h: 290, tone: 'mgmt'},
+    {label: 'prod-a · 서울', x: 480, y: 140, w: 230, h: 150, tone: 'biz'},
+    {label: 'prod-b · 도쿄', x: 740, y: 140, w: 235, h: 150, tone: 'biz'},
+    {label: 'prod-c · 새 클러스터', x: 480, y: 320, w: 230, h: 130, tone: 'biz', from: 3},
+  ]}
+  nodes={[
+    {id: 'user', label: '사용자', sub: '한국과 일본', icon: 'user', tone: 'ext', x: 90, y: 70, show: true},
+    {id: 'glb', label: '글로벌 LB', sub: 'DNS 또는 애니캐스트', icon: 'split', tone: 'ext', x: 300, y: 70},
+    {id: 'git', label: 'Git 저장소', sub: '플릿의 원하는 상태', icon: 'git', tone: 'store', x: 90, y: 260},
+    {id: 'argo', label: 'Argo CD', sub: 'ApplicationSet', icon: 'agent', tone: 'cp', x: 310, y: 230},
+    {id: 'capi', label: 'Cluster API', sub: 'Cluster · Machine', icon: 'hammer', tone: 'cp', x: 310, y: 380},
+    {id: 'appa', label: 'checkout', sub: 'k8s 1.34', icon: 'box', tone: 'app', x: 595, y: 225, show: true},
+    {id: 'appb', label: 'checkout', sub: 'k8s 1.34', icon: 'box', tone: 'app', x: 857, y: 225, show: true},
+    {id: 'appc', label: 'checkout', sub: 'k8s 1.35', icon: 'box', tone: 'app', x: 595, y: 390},
+    {id: 'imp', label: 'ServiceImport', sub: 'clusterset.local', icon: 'target', tone: 'store', x: 857, y: 385},
+  ]}
+  metrics={[
+    {id: 'clusters', label: '클러스터'},
+    {id: 'sync', label: '동기화'},
+    {id: 'dns', label: '클러스터 간 이름'},
+    {id: 'skew', label: '버전'},
+  ]}
+  learn={[
+    {text: '큰 클러스터 하나 대신 여러 개를 두는 이유', at: 0},
+    {text: 'ApplicationSet 하나로 조건에 맞는 모든 클러스터에 배포하기', at: 2},
+    {text: 'Cluster API로 클러스터를 선언적으로 만들기', at: 3},
+    {text: 'ServiceExport·ServiceImport와 clusterset.local 이름', at: 5},
+    {text: '플릿에 생기는 설정 차이와 버전 차이, 그리고 잡아내는 법', at: 8},
+  ]}
+  steps={[
+    {
+      short: '시작',
+      kind: '시작',
+      title: '클러스터 하나가 여럿이 되는 이유',
+      text: [
+        'checkout이 서울의 prod-a와 도쿄의 prod-b에서 돈다. 클러스터를 나누는 이유는 몇 가지다. 잘못된 업그레이드나 고장 난 어드미션 웹훅이 클러스터 하나만 쓰러뜨린다(장애 범위). 사용자는 가까운 리전에 붙고, 데이터는 자기 나라에 머물 수 있다. 테넌트나 규제 구역도 서로 떨어진다.',
+        '클러스터가 따로 있으면 업그레이드도 안전해진다. 하나를 올리고 지켜본 뒤 다음으로 가거나, 새 클러스터를 만들어 트래픽을 옮길 수 있다.',
+      ],
+      keyIdea: '클러스터가 하나 늘 때마다 패치하고 지켜보고 돈 낼 컨트롤 플레인도 하나 는다. 이름 붙일 수 있는 이유가 있을 때 나눈다.',
+      flows: [{from: 'user', to: 'appa', label: '요청', type: 'request'}],
+      focus: ['appa', 'appb'],
+      values: {clusters: '2', sync: '—', dns: '—', skew: '1.34 · 1.34'},
+    },
+    {
+      short: '플릿 Git',
+      kind: '원리',
+      title: 'Git 저장소 하나, 클러스터 여럿',
+      text: [
+        '클러스터를 손으로 하나씩 만들면 아무도 적어 두지 않은 차이가 생긴다. 대신 플릿의 원하는 상태를 Git에 둔다. 모든 클러스터가 받는 기본 구성(네임스페이스, 정책, 모니터링)과 앱이 그 안에 있다.',
+        'Argo CD는 관리 클러스터에서 돈다. 워크로드 클러스터는 argocd.argoproj.io/secret-type: cluster 레이블이 붙은 시크릿으로 등록되고, 그 안에 API 서버 주소와 자격 증명이 있다. 그 시크릿의 env=prod, region=apne2 같은 레이블이 클러스터를 설명한다.',
+      ],
+      flows: [
+        {from: 'git', to: 'argo', label: '가져오기', type: 'watch'},
+      ],
+      focus: ['git', 'argo'],
+    },
+    {
+      short: 'ApplicationSet',
+      kind: '원리',
+      title: '클러스터 제너레이터가 클러스터마다 앱을 하나씩 찍어 낸다',
+      text: [
+        'clusters 제너레이터와 셀렉터 env=prod를 쓴 ApplicationSet은, 그 레이블이 붙은 등록 클러스터마다 Application을 하나씩 만든다. 템플릿의 {{name}}과 {{server}}가 클러스터마다 채워진다.',
+        '그래서 checkout은 한 번만 정의하고 prod-a와 prod-b에 동기화된다. 레플리카 수나 리전 같은 클러스터별 차이는 손 수정이 아니라 클러스터 레이블이나 클러스터별 values 파일에서 온다.',
+      ],
+      keyIdea: 'kubectl get applications -n argocd 로 보면 클러스터마다 Application이 하나씩 있다. 각각 따로 Synced 또는 OutOfSync가 된다.',
+      flows: [
+        {from: 'argo', to: 'appa', label: '동기화', type: 'request'},
+        {from: 'argo', to: 'appb', label: '동기화', type: 'request'},
+      ],
+      focus: ['argo', 'appa', 'appb'],
+      badges: {argo: 'env=prod'},
+      values: {sync: {text: '2 / 2 Synced', tone: 'good'}},
+    },
+    {
+      short: 'Cluster API',
+      kind: '원리',
+      title: 'Cluster API는 YAML로 클러스터를 만든다',
+      text: [
+        '플릿에 세 번째 클러스터가 필요하다. Cluster API에서는 클러스터도 관리 클러스터 안의 자원 묶음이다. Cluster, KubeadmControlPlane 같은 컨트롤 플레인 객체, 워커용 MachineDeployment가 그것이다.',
+        '인프라 프로바이더(AWS, Azure, vSphere 등)가 이를 실제 VM과 네트워크로 바꾼다. Machine은 바뀌지 않는다. 버전이나 크기를 바꾸면, 디플로이먼트가 파드를 바꾸듯 하나씩 새것으로 교체한다.',
+      ],
+      keyIdea: 'Cluster API 매니페스트도 Git에 둔다. 그러면 클러스터 자체가 리뷰되고, 버전이 남고, 다시 만들 수 있다.',
+      flows: [{from: 'capi', to: 'appc', label: '클러스터 생성', type: 'request'}],
+      focus: ['capi'],
+      badges: {capi: 'prod-c'},
+      values: {clusters: '3'},
+    },
+    {
+      short: '등록',
+      kind: '원리',
+      title: '새 클러스터가 기본 구성을 저절로 받는다',
+      text: [
+        'Cluster API는 새 클러스터의 kubeconfig를 관리 클러스터의 시크릿에 쓴다. 작은 스크립트나 컨트롤러가 이를 env=prod 레이블이 붙은 Argo CD 클러스터 시크릿으로 바꾼다.',
+        '클러스터 제너레이터가 새 클러스터를 알아채고 Application을 만든다. prod-c는 손대지 않아도 다른 클러스터와 같은 기본 구성과 같은 checkout을 받는다.',
+      ],
+      flows: [
+        {from: 'capi', to: 'argo', label: 'kubeconfig', type: 'watch'},
+        {from: 'argo', to: 'appc', label: '동기화', type: 'request'},
+      ],
+      focus: ['argo', 'appc'],
+      badges: {capi: null},
+      values: {sync: {text: '3 / 3 Synced', tone: 'good'}},
+    },
+    {
+      short: 'MCS',
+      kind: '원리',
+      title: 'ServiceExport가 서비스를 클러스터 너머로 나눈다',
+      text: [
+        'checkout.shop.svc.cluster.local 같은 서비스 이름은 자기 클러스터 안에서만 통한다. 멀티 클러스터 서비스(MCS) API가 건너갈 길을 더한다. prod-a의 네임스페이스 shop에 checkout이라는 ServiceExport를 만든다.',
+        '그러면 MCS 컨트롤러가 클러스터셋에 속한 모든 클러스터의 shop 네임스페이스에 ServiceImport를 만든다. 클라이언트는 checkout.shop.svc.clusterset.local 로 어느 클러스터에서 내보낸 엔드포인트든 닿는다. 이름이 같은 네임스페이스는 어디서나 같은 네임스페이스로 본다.',
+      ],
+      keyIdea: 'MCS API는 명세다. GKE 멀티 클러스터 서비스, Submariner 같은 구현이 있다. 내 플릿이 어느 것을 쓰는지 확인한다.',
+      flows: [
+        {from: 'appa', to: 'imp', label: 'ServiceExport', type: 'watch'},
+        {from: 'imp', to: 'appb', label: '엔드포인트', type: 'response'},
+      ],
+      focus: ['imp', 'appa'],
+      badges: {imp: 'shop/checkout'},
+      values: {dns: 'checkout.shop.svc.clusterset.local'},
+    },
+    {
+      short: '글로벌 LB',
+      kind: '원리',
+      title: '글로벌 로드밸런서가 사용자를 건강한 클러스터로 보낸다',
+      text: [
+        '사용자에겐 가깝고 건강한 클러스터로 가는 이름 하나가 필요하다. DNS 기반 밸런서는 지연 시간이나 지역에 따라 다른 클러스터의 주소를 답한다. 애니캐스트 로드밸런서는 IP 하나를 주고 클라우드 네트워크 안에서 길을 고른다.',
+        '어느 쪽이든 클러스터별 헬스 체크가 누가 트래픽을 받을지 정한다. DNS라면 클라이언트가 TTL이 끝날 때까지 옛 답을 쥐고 있어, 전환이 즉시 되지는 않는다.',
+      ],
+      flows: [
+        {from: 'user', to: 'glb', label: 'shop.example.com', type: 'request'},
+        {from: 'glb', to: 'appa', label: '한국', type: 'request'},
+        {from: 'glb', to: 'appb', label: '일본', type: 'request'},
+      ],
+      focus: ['glb'],
+    },
+    {
+      short: '메시',
+      kind: '원리',
+      title: '멀티 클러스터 메시는 신뢰의 뿌리를 함께 써야 한다',
+      text: [
+        '서비스 메시도 클러스터를 넘을 수 있다. 예를 들어 Istio 멀티 프라이머리는 클러스터마다 istiod를 두고, 각 istiod가 다른 클러스터의 API 서버도 지켜보며 엔드포인트를 배운다. 네트워크가 다르면 트래픽은 east-west 게이트웨이를 지난다.',
+        '클러스터 사이에서 mTLS가 되려면 모든 클러스터의 인증서가 같은 루트 CA에서 나와야 한다. 그러면 로컬 엔드포인트가 아플 때 메시가 다른 클러스터로 넘길 수도 있다.',
+      ],
+      keyIdea: '첫 클러스터를 붙이기 전에 공용 루트 CA를 정한다. 나중에 바꾸면 모든 워크로드 인증서를 건드린다.',
+      flows: [{from: 'appa', to: 'appb', label: 'mTLS · east-west', type: 'request'}],
+      focus: ['appa', 'appb'],
+    },
+    {
+      short: '설정 차이',
+      kind: '문제',
+      title: '클러스터 하나가 조용히 다른 것들과 어긋난다',
+      text: [
+        '장애 중에 누군가 prod-b에서 kubectl edit으로 메모리 한도를 올린다. 이제 prod-b는 Git과 다르고, 다른 사람은 모른다. Argo CD는 그 Application을 OutOfSync로 표시한다. self-heal을 켰다면 Git 버전으로 되돌린다.',
+        '차이는 Git 안에도 숨는다. 클러스터별 덮어쓰기가 쌓이다 보면 모든 클러스터가 특별해진다. 덮어쓰기는 작고 눈에 보이게 두고, 장애 대응도 Git을 고쳐서 한다.',
+      ],
+      flows: [{from: 'argo', to: 'appb', label: 'OutOfSync', type: 'watch'}],
+      focus: ['appb', 'argo'],
+      status: {appb: 'warn'},
+      badges: {appb: 'kubectl edit'},
+      values: {sync: {text: '2 / 3 Synced', tone: 'bad'}},
+    },
+    {
+      short: '버전 차이',
+      kind: '주의',
+      title: '버전이 다른 클러스터는 다르게 동작한다',
+      text: [
+        'prod-c는 prod-a, prod-b보다 새 쿠버네티스 마이너 버전으로 만들어졌다. 새 릴리스에서 없어진 API 버전을 쓰는 매니페스트는 옛 클러스터에서는 잘 동기화되고 prod-c에서만 실패한다. CNI, 인그레스 컨트롤러, 메시 같은 애드온도 각자 지원 버전 범위가 있다.',
+        '쿠버네티스는 해마다 마이너 릴리스를 세 번쯤 내고, 각 릴리스는 1년쯤 패치를 받는다. 플릿에는 늘 어느 정도 버전 차이가 있으니 물결처럼 나눠 올린다. 테스트 클러스터, 운영 클러스터 하나, 나머지 순이다.',
+      ],
+      keyIdea: '클러스터마다 쿠버네티스와 애드온 버전을 적은 플릿 목록을 두고, 물결마다 없어진 API를 쓰는 매니페스트가 없는지 먼저 본다.',
+      flows: [{from: 'argo', to: 'appc', label: '동기화 실패', type: 'request'}],
+      focus: ['appc'],
+      status: {appb: null, appc: 'error'},
+      badges: {appb: null, appc: 'API 없어짐'},
+      values: {sync: {text: '2 / 3 Synced', tone: 'bad'}, skew: {text: '1.34 · 1.34 · 1.35', tone: 'bad'}},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '클러스터는 가축처럼, Git으로 관리한다',
+      text: [
+        '클러스터를 여럿 두면 장애 범위가 줄고, 사용자가 가까운 리전에 붙고, 테넌트가 떨어진다. Cluster API가 매니페스트로 클러스터를 만들고, ApplicationSet 클러스터 제너레이터가 조건에 맞는 모든 클러스터에 같은 앱을 준다.',
+        'MCS API는 clusterset.local 아래로 서비스를 클러스터 너머에 나누고, 글로벌 로드밸런서는 사용자를 나누며, 멀티 클러스터 메시는 공용 루트 CA가 있어야 한다. 설정 차이는 동기화 상태로, 버전 차이는 플릿 목록과 단계적 업그레이드로 잡는다.',
+      ],
+      keyIdea: '새 클러스터가 손작업 없이 플릿에 들어오지 못한다면, 아직 선언적인 플릿이 아니다.',
+      flows: [
+        {from: 'git', to: 'argo', label: '가져오기', type: 'watch'},
+        {from: 'argo', to: 'appa', label: '동기화', type: 'request'},
+        {from: 'argo', to: 'appb', label: '동기화', type: 'request'},
+        {from: 'argo', to: 'appc', label: '동기화', type: 'request'},
+      ],
+      focus: ['git', 'argo', 'capi'],
+      status: {appc: null},
+      badges: {appc: null, argo: null, imp: null},
+    },
+  ]}
+/>
+
+## 멀티 클러스터 구성 요소
+
+| 필요한 것 | 방법 | 도구 예 | 조심할 점 |
+|---|---|---|---|
+| 모든 클러스터에 같은 앱 | 클러스터별 제너레이터를 쓰는 GitOps | Argo CD ApplicationSet, Flux | 클러스터별 덮어쓰기가 쌓여 모든 클러스터가 특별해지는 것 |
+| 클러스터 만들기와 업그레이드 | 선언적 클러스터 수명 주기 | Cluster API, Terraform, 매니지드 서비스 | 업그레이드 중 Machine 교체에는 여유 용량과 PodDisruptionBudget이 필요하다 |
+| 다른 클러스터의 서비스 찾기 | 멀티 클러스터 서비스 API | GKE 멀티 클러스터 서비스, Submariner | 이름이 같은 네임스페이스는 모든 클러스터에서 주인이 같아야 한다 |
+| 사용자를 건강한 클러스터로 | 글로벌 로드밸런싱 | 헬스 체크를 붙인 DNS, 애니캐스트 로드밸런서 | DNS TTL만큼 전환이 늦다 |
+| 클러스터 사이 mTLS와 장애 전환 | 멀티 클러스터 메시 | Istio 멀티 프라이머리, Linkerd multicluster, Cilium Cluster Mesh | 공용 루트 CA와 클러스터 사이 네트워크 연결 |
+| 어디서 무엇이 도는지 알기 | 플릿 목록 | Argo CD 클러스터 목록, Cluster API 상태, 클라우드 콘솔 | 쿠버네티스와 애드온의 버전 차이 |
+
+## 직접 확인해 보기
+
+```bash
+kubectl config get-contexts                                    # 이 kubeconfig가 아는 클러스터
+argocd cluster list                                            # Argo CD에 등록된 클러스터
+kubectl get secret -n argocd -l argocd.argoproj.io/secret-type=cluster --show-labels   # 제너레이터가 고르는 레이블
+kubectl get applicationset -n argocd                           # 플릿 전체용 앱 정의
+kubectl get applications -n argocd                             # 클러스터마다 하나: SYNC STATUS와 HEALTH
+kubectl get clusters,machinedeployments -A                     # 관리 클러스터에서 (Cluster API)
+clusterctl describe cluster prod-c -n fleet                    # 컨트롤 플레인과 머신 준비 상태
+clusterctl get kubeconfig prod-c -n fleet > prod-c.kubeconfig  # 새 클러스터 접속 정보
+kubectl get serviceexport,serviceimport -n shop                # 멀티 클러스터 서비스 객체
+for ctx in prod-a prod-b prod-c; do                            # 플릿의 버전 차이
+  echo "$ctx $(kubectl --context "$ctx" version -o json | jq -r .serverVersion.gitVersion)"
+done
+```
+
+<Quiz questions={[
+  {q: 'env=prod 레이블이 붙은 새 클러스터를 Argo CD에 등록했다. env=prod를 고르는 clusters 제너레이터를 쓴 ApplicationSet은 무엇을 하나?', options: ['누가 ApplicationSet을 고치기 전까지 아무것도 안 한다', '새 클러스터용 Application을 만들고 같은 앱을 그곳에 동기화한다', '기존 Application을 새 클러스터로 옮긴다'], answer: 1, why: '클러스터 제너레이터는 조건에 맞는 클러스터마다 Application을 하나씩 만든다. 그래서 새로 등록한 클러스터도 앱을 저절로 받는다.'},
+  {q: 'prod-b의 파드가 checkout.shop.svc.cluster.local 대신 checkout.shop.svc.clusterset.local 을 쓰는 이유는?', options: ['cluster.local은 자기 클러스터의 서비스만 찾고, clusterset.local은 클러스터셋 전체로 가져온 서비스를 찾는다', 'clusterset.local이 더 빠르다', 'cluster.local은 곧 없어진다'], answer: 0, why: 'MCS API에서 ServiceExport와 ServiceImport가 서비스를 clusterset.local 도메인 아래로 플릿 전체에서 닿게 한다.'},
+  {q: '같은 매니페스트가 두 클러스터에서는 동기화되는데, 나중에 만든 세 번째 클러스터에서만 실패한다. 가장 그럴듯한 원인은?', options: ['Argo CD가 낡았다', '그 클러스터만 Git 저장소가 다르다', '새 클러스터의 쿠버네티스 버전에서 매니페스트가 쓰는 API가 없어졌다'], answer: 2, why: '플릿의 버전 차이 때문에 없어지거나 바뀐 API는 일부 클러스터에서만 실패한다. 업그레이드 물결마다 버전과 없어진 API를 먼저 확인한다.'},
+]} />
+
+더 읽을거리: [Cluster API 문서](https://cluster-api.sigs.k8s.io/) · [Argo CD 클러스터 제너레이터](https://argo-cd.readthedocs.io/en/stable/operator-manual/applicationset/Generators-Cluster/) · [멀티 클러스터 서비스 API (KEP-1645)](https://github.com/kubernetes/enhancements/tree/master/keps/sig-multicluster/1645-multi-cluster-services-api) · [SIG Multicluster](https://multicluster.sigs.k8s.io/) · [Istio 멀티 클러스터 설치](https://istio.io/latest/docs/setup/install/multicluster/) · [쿠버네티스 버전 차이 정책](https://kubernetes.io/releases/version-skew-policy/) · [Helm과 GitOps](../intermediate/gitops-sync.mdx) · [리전 전체가 멈추면](../cloud/multi-region-dr.mdx)

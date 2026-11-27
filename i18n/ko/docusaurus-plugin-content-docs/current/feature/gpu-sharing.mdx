@@ -192,4 +192,10 @@ kubectl describe node <gpu-node> | grep -i nvidia    # GPU 자원 이름·개수
 kubectl get pods -A -o wide | grep -i gpu            # GPU 파드가 어느 노드에 떴는지
 ```
 
+<Quiz questions={[
+  {q: '두 작업이 서로의 메모리에 영향을 주면 안 되지만 A100 한 장을 나눠 쓰고 싶다. 어떤 방식이 알맞은가?', options: ['replicas 2로 Time-Slicing', 'nvidia.com/gpu: 0.5로 전용 방식', '메모리와 연산이 분리된 하드웨어 칸막이로 GPU를 나누는 MIG'], answer: 2, why: 'MIG의 칸은 하드웨어로 격리되어 한 작업이 바빠도 옆 칸에 영향을 주지 않는다. Time-Slicing은 메모리를 나누지 않기 때문이다.'},
+  {q: 'Time-Slicing을 켠 뒤 대시보드에 GPU 전체 값만 보이고 파드별 GPU 사용량이 보이지 않는다. 무슨 일인가?', options: ['DCGM Exporter가 죽어서 다시 시작해야 한다', '문서에 적힌 Time-Slicing의 제약이다. 지표를 컨테이너와 연결할 수 없다', '프로메테우스가 9400 포트 대상을 잃었다', 'GPU Operator가 전용 방식으로 되돌아갔다'], answer: 1, why: '시간을 쪼개 쓰면 DCGM Exporter가 사용량이 어느 컨테이너의 것인지 구분할 수 없다. 설정으로 고칠 수 있는 버그가 아니기 때문이다.'},
+  {q: 'Time-Slicing ConfigMap을 고쳤는데 노드의 allocatable GPU 수가 바뀌지 않았다. 무엇을 빠뜨렸을 가능성이 큰가?', options: ['장치 플러그인 DaemonSet 재시작. GPU Operator는 그 ConfigMap을 지켜보지 않는다', 'MIG를 켜려고 노드를 재부팅하는 것', 'nvidia.com/mig.config 레이블을 다는 것', 'Helm으로 GPU Operator를 다시 설치하는 것'], answer: 0, why: 'GPU Operator는 Time-Slicing ConfigMap을 지켜보지 않으므로, 장치 플러그인 DaemonSet을 kubectl rollout restart로 다시 시작해야 반영되기 때문이다.'},
+]} />
+
 더 읽을거리: [GPU 스케줄링](https://kubernetes.io/ko/docs/tasks/manage-gpus/scheduling-gpus/) · [장치 플러그인](https://kubernetes.io/ko/docs/concepts/extend-kubernetes/compute-storage-net/device-plugins/) · [NVIDIA GPU Operator](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/index.html) · [GPU Operator와 MIG](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/gpu-operator-mig.html) · [GPU Time-Slicing](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/gpu-sharing.html) · [조건으로 GPU 받기 (DRA)](../k8s/dra.mdx)

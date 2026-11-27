@@ -1,0 +1,276 @@
+---
+id: ssh-keys
+title: How SSH Keys Get You Into a Server
+sidebar_label: 08 · SSH keys
+description: Animated walkthrough of SSH key login, from an ed25519 key pair and authorized_keys to host key checks in known_hosts, ssh-agent, ProxyJump through a bastion, disabling passwords, file mode errors and cloud access without port 22
+summary: 'An ed25519 key pair, authorized_keys and known_hosts, what the host key warning means, ssh-agent, jumping through a bastion, and logging in with no open port 22.'
+icon: shield
+hide_table_of_contents: true
+---
+
+# How SSH Keys Get You Into a Server
+
+Follow one login from your laptop to a server in a private subnet. See which key proves who you are, which key proves the server is real, how a bastion relays the connection, and what replaces port 22 in the cloud.
+
+<StepDiagram
+  width={1000}
+  height={480}
+  meta={{duration: '~13 min', level: 'Beginner'}}
+  groups={[
+    {label: 'Your laptop', x: 20, y: 30, w: 280, h: 430, tone: 'plain'},
+    {label: 'Cloud network (VPC)', x: 340, y: 30, w: 470, h: 430, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'client', label: 'ssh client', sub: 'you', icon: 'user', tone: 'ext', x: 160, y: 100, show: true},
+    {id: 'agent', label: 'ssh-agent', sub: 'holds unlocked key', icon: 'gear', tone: 'cp', x: 160, y: 210, w: 170},
+    {id: 'key', label: 'id_ed25519', sub: 'private key · 600', icon: 'ticket', tone: 'store', x: 160, y: 320, w: 170},
+    {id: 'known', label: 'known_hosts', sub: 'trusted host keys', icon: 'book', tone: 'store', x: 160, y: 420, w: 170},
+    {id: 'bastion', label: 'Bastion host', sub: 'public · port 22', icon: 'gate', tone: 'node', x: 450, y: 120, w: 160},
+    {id: 'fake', label: 'Impostor host', sub: 'different host key', icon: 'alert', tone: 'ext', x: 450, y: 300, w: 160},
+    {id: 'server', label: 'App server', sub: 'private · sshd', icon: 'server', tone: 'node', x: 690, y: 120, w: 170},
+    {id: 'authkeys', label: 'authorized_keys', sub: 'id_ed25519.pub', icon: 'shield', tone: 'store', x: 690, y: 250, w: 170},
+    {id: 'sshdcfg', label: 'sshd_config', sub: 'password login off', icon: 'disk', tone: 'store', x: 690, y: 380, w: 170},
+    {id: 'ssm', label: 'SSM / IAP', sub: 'no open port 22', icon: 'cloud', tone: 'ext', x: 900, y: 250, w: 140},
+  ]}
+  metrics={[
+    {id: 'client', label: 'You prove'},
+    {id: 'host', label: 'Server proves'},
+    {id: 'path', label: 'Path'},
+    {id: 'result', label: 'Result'},
+  ]}
+  learn={[
+    {text: 'A key pair: the private key stays, the public key goes to authorized_keys', at: 1},
+    {text: 'Host key checks and known_hosts, and what the change warning means', at: 3},
+    {text: 'ssh-agent and ProxyJump through a bastion', at: 5},
+    {text: 'Turning off password login and fixing key file permissions', at: 7},
+    {text: 'Session Manager and IAP: access without an open port 22', at: 9},
+  ]}
+  steps={[
+    {
+      short: 'Start',
+      kind: '시작',
+      title: 'Passwords are the weak spot',
+      text: [
+        'Any server with SSH open to the internet sees constant login attempts that guess common users and passwords. A strong password helps, but it can still be guessed, reused or phished.',
+        'Key-based login replaces the password with a key pair. Nothing secret crosses the network, so there is nothing to guess.',
+      ],
+      flows: [{from: 'client', to: 'bastion', label: 'ssh', type: 'request'}],
+      focus: ['client'],
+      values: {client: 'Password?', host: '—', path: 'laptop → server', result: '—'},
+    },
+    {
+      short: 'Key pair',
+      kind: '원리',
+      title: 'ssh-keygen makes a private and a public key',
+      text: [
+        'ssh-keygen -t ed25519 creates two files: ~/.ssh/id_ed25519 (private) and ~/.ssh/id_ed25519.pub (public). Ed25519 keys are short, fast and widely supported by current OpenSSH.',
+        'The private key never leaves your laptop. Give it a passphrase, so a stolen copy of the file is useless without it. The public key is safe to share.',
+      ],
+      keyIdea: 'ssh-keygen -lf ~/.ssh/id_ed25519.pub shows the fingerprint that identifies your key.',
+      flows: [{from: 'client', to: 'key', label: 'ssh-keygen', type: 'request'}],
+      focus: ['key'],
+      badges: {key: 'passphrase'},
+      values: {client: 'ed25519 key'},
+    },
+    {
+      short: 'authorized_keys',
+      kind: '원리',
+      title: 'The server trusts keys listed in authorized_keys',
+      text: [
+        'Put the public key on the server, one line in ~/.ssh/authorized_keys of the user you log in as. ssh-copy-id does this for you, or a cloud provider injects it when the VM starts.',
+        'At login, sshd asks the client to sign data from this session with the private key. sshd checks the signature against the public key in authorized_keys. The private key itself is never sent.',
+      ],
+      keyIdea: 'One line per key. Delete the line to revoke that key.',
+      flows: [
+        {from: 'client', to: 'server', label: 'Signature', type: 'request', bend: -50},
+        {from: 'server', to: 'authkeys', label: 'Check .pub', type: 'watch'},
+      ],
+      focus: ['server', 'authkeys'],
+      badges: {key: null, authkeys: 'match'},
+      values: {result: {text: 'Logged in', tone: 'good'}},
+    },
+    {
+      short: 'Host key',
+      kind: '주의',
+      title: 'The first connect asks you to trust the server',
+      text: [
+        'Authentication goes both ways. The server has its own host key and proves it holds it. On the first connect, ssh does not know that key yet and shows its fingerprint with "Are you sure you want to continue connecting?"',
+        'Answer yes only if the fingerprint matches one you got another way, such as the cloud console or your team. ssh then saves the host key in ~/.ssh/known_hosts and checks it on every later connect.',
+      ],
+      keyIdea: 'Typing yes without checking trusts whoever answered first.',
+      flows: [{from: 'bastion', to: 'client', label: 'Host key', type: 'response'}],
+      focus: ['bastion', 'known'],
+      badges: {authkeys: null, known: '+ bastion'},
+      values: {host: 'Fingerprint SHA256:…', result: '—'},
+    },
+    {
+      short: 'Key changed',
+      kind: '장애',
+      title: 'REMOTE HOST IDENTIFICATION HAS CHANGED',
+      text: [
+        'One day ssh stops with this warning and refuses to connect. The host key it gets no longer matches known_hosts. Someone may be in the middle, answering as the server.',
+        'Often there is a harmless reason: the server was rebuilt, or a new VM got an old IP address. Confirm that with the owner or the console. Only then remove the old entry with ssh-keygen -R host and connect again.',
+      ],
+      keyIdea: 'Never just turn off StrictHostKeyChecking to make the warning go away.',
+      flows: [{from: 'fake', to: 'client', label: 'Other host key', type: 'response'}],
+      focus: ['fake', 'known'],
+      status: {fake: 'error'},
+      badges: {known: 'mismatch'},
+      values: {host: {text: 'Host key changed', tone: 'bad'}, result: {text: 'Refused', tone: 'bad'}},
+    },
+    {
+      short: 'ssh-agent',
+      kind: '원리',
+      title: 'ssh-agent unlocks the key once',
+      text: [
+        'With a passphrase, ssh would ask for it on every connect. ssh-agent keeps the unlocked key in memory. ssh-add loads it once, and ssh asks the agent to sign when needed.',
+        'Agent forwarding (ssh -A) lets a remote host use your agent. Anyone with root on that host can then sign as you while you are connected. Prefer ProxyJump.',
+      ],
+      keyIdea: 'ssh-add -l lists the keys the agent holds.',
+      flows: [
+        {from: 'key', to: 'agent', label: 'ssh-add', type: 'request'},
+        {from: 'client', to: 'agent', label: 'Sign this', type: 'request'},
+      ],
+      focus: ['agent'],
+      status: {fake: 'gone'},
+      badges: {known: null, agent: '1 key'},
+      values: {client: 'ed25519 via agent', host: {text: 'Matches known_hosts', tone: 'good'}, result: '—'},
+    },
+    {
+      short: 'ProxyJump',
+      kind: '원리',
+      title: 'Reach a private server through a bastion',
+      text: [
+        'The app server sits in a private subnet with no public IP. Only the bastion host is reachable from outside, and the server allows port 22 only from the bastion.',
+        'ssh -J bastion app-server opens a connection to the bastion and runs a second, end-to-end encrypted SSH session to the app server through it. Your keys stay on your laptop, and both host keys are checked.',
+      ],
+      keyIdea: 'Put ProxyJump bastion in a Host block of ~/.ssh/config, then plain ssh app-server works.',
+      flows: [
+        {from: 'client', to: 'bastion', label: 'ssh -J', type: 'request'},
+        {from: 'bastion', to: 'server', label: 'Tunnel :22', type: 'request'},
+      ],
+      focus: ['bastion', 'server'],
+      values: {path: 'laptop → bastion → server', result: {text: 'Logged in', tone: 'good'}},
+    },
+    {
+      short: 'No passwords',
+      kind: '원리',
+      title: 'Turn off password login',
+      text: [
+        'Once keys work, close the password door. In /etc/ssh/sshd_config set PasswordAuthentication no and KbdInteractiveAuthentication no. Both are yes by default in OpenSSH. PermitRootLogin defaults to prohibit-password; no is stricter.',
+        'Test the file with sudo sshd -t, then reload the service. Keep your current session open and try a new login before you log out, so a mistake cannot lock you out.',
+      ],
+      keyIdea: 'Some distributions also read files in /etc/ssh/sshd_config.d/. sudo sshd -T shows the settings in effect.',
+      flows: [{from: 'sshdcfg', to: 'server', label: 'Reload', type: 'watch'}],
+      focus: ['sshdcfg', 'server'],
+      badges: {sshdcfg: 'keys only'},
+    },
+    {
+      short: 'File modes',
+      kind: '문제',
+      title: 'Permissions too open: SSH refuses the key',
+      text: [
+        'Client side: if id_ed25519 is readable by others (for example mode 644), ssh prints "UNPROTECTED PRIVATE KEY FILE" and ignores the key. Fix it with chmod 600.',
+        'Server side: with StrictModes (the default), sshd ignores authorized_keys when it or ~/.ssh is writable by others or owned by the wrong user. You only see "Permission denied (publickey)". Use 700 for ~/.ssh and 600 for authorized_keys.',
+      ],
+      keyIdea: 'The real reason is in the server log: journalctl -u ssh (or sshd), or /var/log/auth.log.',
+      flows: [{from: 'server', to: 'authkeys', label: 'Mode too open', type: 'watch'}],
+      focus: ['key', 'authkeys'],
+      status: {key: 'warn', authkeys: 'error'},
+      badges: {sshdcfg: null, key: '644?', authkeys: 'ignored'},
+      values: {result: {text: 'Permission denied (publickey)', tone: 'bad'}},
+    },
+    {
+      short: 'No port 22',
+      kind: '원리',
+      title: 'Cloud access without an open port 22',
+      text: [
+        'AWS Systems Manager Session Manager: an agent on the instance connects out to the service. You start a session with aws ssm start-session. Access is controlled by IAM, sessions can be logged, and no inbound port or bastion is needed.',
+        'Google Cloud IAP TCP forwarding: gcloud compute ssh --tunnel-through-iap goes through Google\'s IAP. The firewall only has to allow port 22 from the IAP range 35.235.240.0/20, and IAM decides who may connect.',
+      ],
+      keyIdea: 'These tools remove the open port and the bastion, and tie access to cloud identities instead of loose keys.',
+      flows: [
+        {from: 'client', to: 'ssm', label: 'IAM + TLS', type: 'request', bend: 90},
+        {from: 'ssm', to: 'server', label: 'Session', type: 'request'},
+      ],
+      focus: ['ssm', 'server'],
+      status: {key: null, authkeys: null, bastion: 'off'},
+      badges: {key: null, authkeys: null},
+      values: {path: 'laptop → SSM/IAP → server', result: {text: 'Session open', tone: 'good'}},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Two keys, two directions',
+      text: [
+        'Your key pair proves who you are: the private key signs, and authorized_keys holds the public key. The host key proves the server is real, and known_hosts remembers it. Each check guards against a different attack.',
+        'Use ed25519 with a passphrase and ssh-agent, jump through a bastion with ProxyJump, turn off passwords and keep file modes at 600 and 700. In the cloud, prefer Session Manager or IAP over an open port 22.',
+      ],
+      keyIdea: 'A host key warning is a stop sign, not a nuisance. Verify first, then fix known_hosts.',
+      flows: [
+        {from: 'client', to: 'bastion', label: 'ssh -J', type: 'request'},
+        {from: 'bastion', to: 'server', label: ':22', type: 'request'},
+      ],
+      focus: ['key', 'known', 'authkeys'],
+      status: {bastion: null},
+    },
+  ]}
+/>
+
+## SSH errors and what they mean
+
+| Message | Cause | Fix |
+|---|---|---|
+| `Are you sure you want to continue connecting (yes/no...)?` | First connect, host key not in `known_hosts` | Compare the fingerprint with one from a trusted source, then yes |
+| `WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!` | Host key differs from `known_hosts`: rebuilt server, reused IP, or a man in the middle | Verify with the owner or console, then `ssh-keygen -R host` |
+| `WARNING: UNPROTECTED PRIVATE KEY FILE!` | Private key readable by others | `chmod 600 ~/.ssh/id_ed25519` |
+| `Permission denied (publickey)` | Wrong user, key not in `authorized_keys`, bad modes on the server, or wrong key offered | Check `ssh -v`, the server log, and modes 700 / 600 |
+| `Connection timed out` | Firewall or security group blocks port 22, or no route to a private IP | Check the rules, go through the bastion, or use SSM / IAP |
+| `Connection refused` | Host is reachable but nothing listens on the port | Is sshd running? Is it on another port? |
+| `Host key verification failed.` | You answered no, or batch mode refused an unknown host | Add the verified key to `known_hosts` first |
+
+## Try it yourself
+
+```bash
+# Make a key pair (with a passphrase) and look at it
+ssh-keygen -t ed25519 -C "you@laptop" -f ~/.ssh/id_ed25519
+ssh-keygen -lf ~/.ssh/id_ed25519.pub         # fingerprint of your key
+ls -l ~/.ssh                                 # private key should be -rw-------
+
+# Load it into the agent once
+eval "$(ssh-agent -s)"
+ssh-add ~/.ssh/id_ed25519
+ssh-add -l
+
+# Install the public key on a server (asks for the password one last time)
+ssh-copy-id -i ~/.ssh/id_ed25519.pub dev@server.example.com
+
+# Jump through a bastion, once or via ~/.ssh/config
+ssh -J dev@bastion.example.com dev@10.0.2.15
+cat >> ~/.ssh/config <<'EOF'
+Host app-server
+  HostName 10.0.2.15
+  User dev
+  ProxyJump dev@bastion.example.com
+EOF
+ssh -v app-server                            # -v shows which key is offered and why it fails
+
+# On the server: keys only
+sudo sshd -t && sudo sshd -T | grep -Ei 'passwordauthentication|kbdinteractive|permitrootlogin'
+chmod 700 ~/.ssh && chmod 600 ~/.ssh/authorized_keys
+
+# Host key changed and verified as legitimate?
+ssh-keygen -R server.example.com
+
+# Cloud, no open port 22
+aws ssm start-session --target i-0123456789abcdef0
+gcloud compute ssh my-vm --zone us-central1-a --tunnel-through-iap
+```
+
+<Quiz questions={[
+  {q: 'During key login, what does the client send to prove who you are?', options: ['A copy of the private key, encrypted', 'A signature made with the private key, which the server checks against authorized_keys', 'The public key fingerprint, which the server compares with known_hosts'], answer: 1, why: 'The private key never leaves the laptop. It signs session data, and the server verifies the signature with the public key. known_hosts is for checking the server, not you.'},
+  {q: 'ssh stops with REMOTE HOST IDENTIFICATION HAS CHANGED. What is the right first move?', options: ['Confirm with the owner or console whether the server was rebuilt, and only then remove the old known_hosts entry', 'Run ssh-keygen -R right away and reconnect', 'Set StrictHostKeyChecking no in ~/.ssh/config'], answer: 0, why: 'A changed host key can mean a man in the middle. Removing the entry or turning off checks without verifying hands your login to whoever answered.'},
+  {q: 'Keys are set up, but login fails with Permission denied (publickey). The server log says the authorized_keys file has bad ownership or modes. Why?', options: ['Ed25519 keys are not supported by the server', 'The client key passphrase was wrong', 'StrictModes makes sshd ignore authorized_keys when it or ~/.ssh is writable by others'], answer: 2, why: 'StrictModes is on by default. Fix it with chmod 700 ~/.ssh and chmod 600 ~/.ssh/authorized_keys, owned by the user.'},
+]} />
+
+Further reading: [ssh(1)](https://man.openbsd.org/ssh) · [sshd_config(5)](https://man.openbsd.org/sshd_config) · [AWS Session Manager](https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager.html) · [IAP TCP forwarding](https://docs.cloud.google.com/iap/docs/using-tcp-forwarding) · [Cryptography a Developer Needs](../basic/crypto-basics.mdx) · [How a Request Travels Inside a VPC](../cloud/vpc-request.mdx)

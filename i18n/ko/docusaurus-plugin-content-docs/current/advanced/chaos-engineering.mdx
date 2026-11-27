@@ -1,0 +1,298 @@
+---
+id: chaos-engineering
+title: '쿠버네티스 카오스 엔지니어링'
+sidebar_label: 14 · 카오스 엔지니어링
+description: '정상 상태 정의, 가설 세우기, 파드 죽이기, 지연 주입, 노드 비우기, 존 잃기, CPU 부하를 Chaos Mesh나 LitmusChaos 같은 도구로 단계별로 실험한다. 폭발 반경은 작게, 중단 조건은 SLO 지표에 묶는다.'
+summary: '정상 상태, 가설, 작은 폭발 반경, SLO 지표에 묶은 중단 조건, 그리고 파드 죽이기·지연·노드 비우기가 드러내는 것.'
+icon: spark
+hide_table_of_contents: true
+---
+
+# 쿠버네티스 카오스 엔지니어링
+
+운영 환경의 장애는 대비하든 안 하든 일어난다. 카오스 엔지니어링은 통제된 방식으로 일부러 망가뜨려서, 빠진 재시도나 PodDisruptionBudget을 사용자보다 먼저 찾는다.
+
+<StepDiagram
+  width={1000}
+  height={460}
+  meta={{duration: '약 13분', level: '심화'}}
+  groups={[
+    {label: '존 a', x: 300, y: 40, w: 310, h: 400, tone: 'biz'},
+    {label: '존 b', x: 650, y: 40, w: 330, h: 400, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'exp', label: '실험', sub: '가설 + 범위', icon: 'bulb', tone: 'ext', x: 100, y: 90, show: true},
+    {id: 'ctrl', label: '카오스 컨트롤러', sub: 'Chaos Mesh / Litmus', icon: 'gear', tone: 'cp', x: 100, y: 230, w: 170},
+    {id: 'prom', label: 'SLO 지표', sub: 'Prometheus', icon: 'chart', tone: 'store', x: 100, y: 370, show: true},
+    {id: 'nodea', label: 'node-a', sub: '워커', icon: 'server', tone: 'node', x: 455, y: 110, show: true},
+    {id: 'cart1', label: 'cart', sub: '파드', icon: 'pod', tone: 'app', size: 'sm', x: 390, y: 230, show: true},
+    {id: 'cart2', label: 'cart', sub: '파드', icon: 'pod', tone: 'app', size: 'sm', x: 520, y: 230, show: true},
+    {id: 'nodeb', label: 'node-b', sub: '워커', icon: 'server', tone: 'node', x: 815, y: 110, show: true},
+    {id: 'cart3', label: 'cart', sub: '파드', icon: 'pod', tone: 'app', size: 'sm', x: 750, y: 230},
+    {id: 'checkout', label: 'checkout', sub: 'cart 호출', icon: 'pod', tone: 'app', size: 'sm', x: 880, y: 230, show: true},
+    {id: 'pdb', label: 'PDB cart', sub: 'minAvailable: 2', icon: 'shield', tone: 'store', x: 455, y: 370},
+    {id: 'sched', label: '스케줄', sub: '배포 뒤마다 반복', icon: 'archive', tone: 'cp', x: 815, y: 370, w: 170},
+  ]}
+  metrics={[
+    {id: 'steady', label: '정상 상태'},
+    {id: 'blast', label: '폭발 반경'},
+    {id: 'result', label: '가설'},
+    {id: 'finding', label: '발견'},
+  ]}
+  learn={[
+    {text: '정상 상태와 반증할 수 있는 가설', at: 1},
+    {text: '폭발 반경과 SLO 지표에 묶은 중단 조건', at: 2},
+    {text: '파드 죽이기·지연·노드 비우기가 드러내는 것', at: 3},
+    {text: '존 잃기와 CPU 부하', at: 6},
+    {text: '게임 데이와 자동으로 반복하는 실험', at: 8},
+  ]}
+  steps={[
+    {
+      short: '정상 상태',
+      kind: '시작',
+      title: '정상이 어떤 모습인지 먼저 정한다',
+      text: [
+        'checkout이 cart 서비스를 부르고, cart는 node-a에서 파드 두 개로 돈다. 무언가를 망가뜨리기 전에 정상 상태를 적는다. 사용자가 느끼는 지표여야 한다. 예를 들면 결제 성공률 99.9% 이상, p99 지연 300ms 미만이다.',
+        'Prometheus에 이미 있는 SLO 지표를 쓴다. CPU와 메모리는 정상 상태가 아니다. 시스템을 설명할 뿐 사용자 경험을 말하지 않는다.',
+      ],
+      keyIdea: '정상을 잴 수 없으면 실험이 무언가를 해쳤는지도 알 수 없다.',
+      flows: [{from: 'checkout', to: 'prom', label: '성공률, p99', type: 'response', bend: 60}],
+      focus: ['prom', 'checkout'],
+      values: {steady: '99.95% · p99 180ms', blast: '—', result: '—', finding: '—'},
+    },
+    {
+      short: '가설',
+      kind: '원리',
+      title: '틀렸다고 증명할 수 있는 가설을 쓴다',
+      text: [
+        '가설은 이렇다. "cart 파드 하나를 죽여도 결제 성공률은 99.9% 이상, p99는 300ms 미만을 유지한다." 실험은 이 가설을 깨려고 한다.',
+        '카오스 엔지니어링 원칙(Principles of Chaos)은 나머지도 말한다. 실제로 일어나는 사건(크래시, 지연, 노드 손실)을 다양하게 주고, 안전한 범위에서 운영 환경에 최대한 가깝게 실행하고, 폭발 반경을 최소로 하고, 실험을 자동화해 계속 돌린다.',
+      ],
+      keyIdea: '가설 없는 실험은 그냥 망가뜨리기다. 가설이 깨지면 성공이다. 약점을 싸게 찾았다.',
+      flows: [{from: 'exp', to: 'ctrl', label: '가설', type: 'request'}],
+      focus: ['exp'],
+      badges: {exp: 'cart 파드 1개 죽이기'},
+    },
+    {
+      short: '폭발 반경',
+      kind: '원리',
+      title: '폭발 반경을 줄이고 중단 조건을 정한다',
+      text: [
+        '스테이징에서 시작해 파드 하나(mode one), 네임스페이스 하나, 짧은 시간만 겨냥한다. 작은 실험이 통과한 뒤에만 범위를 넓힌다.',
+        '언제 멈출지 미리 정한다. Chaos Mesh에서는 Workflow의 StatusCheck가 HTTP 엔드포인트를 확인하다 실패하면 워크플로를 중단할 수 있다. LitmusChaos의 프로브(Prometheus 프로브 포함)는 오류율 같은 확인이 실패하면 장애 주입을 멈출 수 있다.',
+      ],
+      keyIdea: '중단 조건은 가설과 같은 SLO 지표에 묶는다. 사용자가 아프기 시작하면 실험이 저절로 끝난다.',
+      flows: [
+        {from: 'exp', to: 'ctrl', label: '범위', type: 'request'},
+        {from: 'prom', to: 'ctrl', label: '오류 시 중단', type: 'watch'},
+      ],
+      focus: ['ctrl', 'prom'],
+      badges: {exp: null, ctrl: 'mode: one'},
+      values: {blast: '스테이징 · 파드 1개'},
+    },
+    {
+      short: '파드 죽이기',
+      kind: '문제',
+      title: '파드를 죽인다: 복구는 되지만 요청이 실패한다',
+      text: [
+        '컨트롤러가 cart1을 죽인다. ReplicaSet이 대체 파드를 만들고, 서비스는 죽은 파드로 트래픽을 보내지 않는다. 자가 치유는 동작한다.',
+        '그런데 결제 성공률이 몇 초 동안 99.2%로 떨어진다. cart1로 이미 가던 요청이 실패하고, checkout은 그 요청을 다른 파드로 재시도하지 않는다. 가설이 깨졌다.',
+      ],
+      keyIdea: '자가 치유는 파드를 바꿔 줄 뿐 처리 중이던 요청을 살리지 않는다. 호출하는 쪽은 멱등한 호출에 백오프를 둔 재시도가 필요하다.',
+      flows: [
+        {from: 'ctrl', to: 'cart1', label: 'pod-kill', type: 'request'},
+        {from: 'checkout', to: 'cart1', label: '처리 중', type: 'request', bend: -60},
+      ],
+      focus: ['cart1', 'checkout'],
+      status: {cart1: 'error', checkout: 'warn'},
+      badges: {ctrl: null},
+      values: {steady: {text: '99.2%', tone: 'bad'}, result: {text: '깨짐', tone: 'bad'}, finding: '재시도 없음'},
+    },
+    {
+      short: '지연',
+      kind: '문제',
+      title: '지연을 넣는다: 타임아웃이 없으면 느림이 번진다',
+      text: [
+        '재시도를 넣은 뒤 다음 실험은 cart 파드에 500ms 네트워크 지연을 준다. 도구는 앱을 바꾸지 않고 파드 네트워크 네임스페이스 안에서 리눅스 트래픽 제어(tc)로 지연을 넣는다.',
+        'checkout은 cart 호출에 타임아웃이 없다. 작업자가 기다리고, 요청이 쌓이고, checkout p99가 1초를 넘는다. 느린 의존 서비스는 죽은 서비스보다 더 아프다.',
+      ],
+      keyIdea: '모든 네트워크 호출에는 호출하는 쪽의 마감보다 짧은 타임아웃이 필요하다. 패킷 손실 실험도 같은 빈틈을 찾는다.',
+      flows: [
+        {from: 'ctrl', to: 'cart2', label: '지연 500ms', type: 'request'},
+        {from: 'checkout', to: 'cart2', label: '대기', type: 'request', bend: -60},
+      ],
+      focus: ['cart2', 'checkout'],
+      status: {cart1: 'ok', cart2: 'warn', checkout: 'error'},
+      values: {steady: {text: 'p99 1.4s', tone: 'bad'}, finding: '타임아웃 없음'},
+    },
+    {
+      short: '노드 비우기',
+      kind: '문제',
+      title: '노드를 비운다: 복제본이 한곳에 몰려 있었다',
+      text: [
+        '다음은 업그레이드할 때처럼 node-a를 비운다(drain). cart 파드 둘이 모두 여기 있고 PodDisruptionBudget이 없어서, drain이 둘을 한꺼번에 내보낸다. node-b에서 대체 파드가 뜰 때까지 cart에는 준비된 파드가 없다.',
+        '고칠 것은 두 가지다. 대체 파드가 준비될 때까지 퇴출을 기다리게 하는 PDB, 그리고 복제본을 다른 노드와 존에 놓는 토폴로지 분산 제약이다.',
+      ],
+      keyIdea: '계획된 유지보수가 가장 흔한 중단이다. 비우기 실험은 PDB, 분산, 시작 시간을 한꺼번에 확인한다.',
+      flows: [
+        {from: 'ctrl', to: 'nodea', label: 'drain', type: 'request'},
+        {from: 'nodea', to: 'cart3', label: '재배치', type: 'request'},
+      ],
+      focus: ['nodea', 'cart1', 'cart2', 'pdb'],
+      status: {nodea: 'off', cart1: 'gone', cart2: 'gone', cart3: 'warn', checkout: 'error'},
+      values: {steady: {text: '97.0%', tone: 'bad'}, blast: '스테이징 · 노드 1개', finding: 'PDB·분산 없음'},
+    },
+    {
+      short: '존 잃기',
+      kind: '장애',
+      title: '존을 잃는다: 반대쪽에 자리가 있는가',
+      text: [
+        'PDB와 분산을 넣은 뒤, 팀은 존 a를 잃는 상황을 흉내 낸다. 예를 들어 그 존의 네트워크를 끊거나 클라우드 API로 노드를 멈춘다. 존 a의 파드는 존 b에서 돌아야 한다.',
+        '존 b에 남는 용량이 없으면 클러스터 오토스케일러가 노드를 늘리는 동안 대체 파드가 Pending에 머문다. 버틸 수 있다는 것은 남은 존에 여유 용량이 있거나 노드가 충분히 빨리 늘어난다는 뜻이다.',
+      ],
+      keyIdea: '존 분산은 각 존이 잃어버린 존의 부하까지 감당할 수 있을 때만 도움이 된다.',
+      flows: [
+        {from: 'ctrl', to: 'nodea', label: '존 다운', type: 'request'},
+        {from: 'checkout', to: 'cart3', label: '트래픽', type: 'request'},
+      ],
+      focus: ['nodea', 'nodeb', 'cart3'],
+      status: {nodea: 'error', cart1: 'gone', cart2: 'gone', cart3: 'ok', checkout: 'warn'},
+      badges: {pdb: 'minAvailable: 2', nodeb: '여유 용량?'},
+      values: {steady: {text: '99.7%', tone: 'bad'}, blast: '스테이징 · 존 a', finding: '여유 용량'},
+    },
+    {
+      short: 'CPU 부하',
+      kind: '원리',
+      title: 'CPU에 부하를 준다: limit, 스로틀링, 확장',
+      text: [
+        '부하 실험은 cart 파드 안에서 CPU를 태운다. CPU limit이 빡빡하면 노드에 놀고 있는 코어가 있어도 커널이 컨테이너를 스로틀링하고 지연이 오른다.',
+        'HorizontalPodAutoscaler가 제때 복제본을 늘리는지, 알람이 CPU만이 아니라 지연에도 울리는지 확인한다.',
+      ],
+      keyIdea: '자원 실험은 requests, limits, 오토스케일링 설정을 짐작이 아니라 실제 앱으로 시험한다.',
+      flows: [{from: 'ctrl', to: 'cart3', label: 'stress cpu', type: 'request'}],
+      focus: ['cart3'],
+      status: {nodea: 'ok', cart1: 'ok', cart2: 'ok', cart3: 'warn', checkout: 'ok'},
+      badges: {nodeb: null, cart3: '스로틀링'},
+      values: {steady: '99.95% · p99 260ms', finding: 'limit, HPA'},
+    },
+    {
+      short: '게임 데이',
+      kind: '원리',
+      title: '게임 데이는 사람과 런북도 시험한다',
+      text: [
+        '게임 데이는 일정을 잡아 하는 훈련이다. 팀이 다 같이 지켜보면서 더 큰 장애를 일으킨다. 알람이 울리는지, 런북이 맞는지, 당직자가 할 일을 아는지 시험한다.',
+        '미리 알리고, 롤백을 준비하고, 멈출 권한이 있는 사람을 정하고, 배운 것은 포스트모템처럼 적는다.',
+      ],
+      keyIdea: '장애 대응 절차도 시스템의 일부다. 아무 일도 없을 때 연습한다.',
+      flows: [
+        {from: 'exp', to: 'ctrl', label: '게임 데이', type: 'request'},
+        {from: 'prom', to: 'exp', label: '알람 울렸나?', type: 'response'},
+      ],
+      focus: ['exp', 'prom'],
+      status: {cart3: 'ok'},
+      badges: {cart3: null},
+    },
+    {
+      short: '자동화',
+      kind: '원리',
+      title: '실험을 자동화해 계속 반복한다',
+      text: [
+        '고친 것도 다음 배포에서 다시 망가질 수 있다. 통과한 실험은 일정에 올리거나 배포 파이프라인에 넣는다. Chaos Mesh에는 Schedule 리소스가 있고, Litmus는 워크플로를 크론 일정으로 돌릴 수 있다.',
+        '실험마다 중단 조건은 그대로 둔다. 스테이징에서 안정적으로 통과하면 작은 폭발 반경으로 조심스럽게 운영 환경으로 옮겨 간다.',
+      ],
+      keyIdea: '한 번 통과한 실험은 스냅숏일 뿐이다. 반복해야 시스템이 바뀌어도 보장이 유지된다.',
+      flows: [{from: 'sched', to: 'ctrl', label: '매일 밤 실행', type: 'request', bend: 60}],
+      focus: ['sched', 'ctrl'],
+      badges: {pdb: null},
+      values: {result: {text: '유지됨', tone: 'good'}, finding: '재시도·타임아웃·PDB·분산'},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '작고, 재고, 반복하는 장애',
+      text: [
+        'SLO 지표로 정상 상태를 정하고, 가설을 쓰고, 폭발 반경을 작게 두고, SLO 지표가 나빠지면 저절로 멈추게 한다.',
+        '파드 죽이기는 빠진 재시도를, 지연은 빠진 타임아웃을, 노드 비우기는 빠진 PDB와 분산을, 존 잃기는 부족한 여유 용량을 찾고, CPU 부하는 limit과 오토스케일링을 확인한다. 스테이징에서 시작해 자동화한다.',
+      ],
+      keyIdea: '목표는 장애를 일으키는 것이 아니다. 다음 진짜 장애를 지루한 일로 만드는 것이다.',
+      flows: [
+        {from: 'exp', to: 'ctrl', label: '가설', type: 'request'},
+        {from: 'prom', to: 'ctrl', label: '중단', type: 'watch'},
+      ],
+      focus: ['exp', 'ctrl', 'prom'],
+    },
+  ]}
+/>
+
+## 실험별로 흔히 드러나는 것
+
+| 실험 | Chaos Mesh | LitmusChaos 장애 | 흔한 발견 | 고칠 것 |
+|---|---|---|---|---|
+| 파드 죽이기 | PodChaos `pod-kill` | `pod-delete` | 처리 중 요청 실패, 느린 시작 | 백오프 재시도, readiness 프로브, 우아한 종료 |
+| 지연 주입 | NetworkChaos `delay` | `pod-network-latency` | 느림이 호출자에게 번짐 | 타임아웃, 서킷 브레이커 |
+| 패킷 손실 | NetworkChaos `loss` | `pod-network-loss` | 오래 멈춤, 재시도 폭주 | 타임아웃, 재시도 예산 |
+| 노드 비우기 | (`kubectl drain` 사용) | `node-drain` | 복제본이 한 노드에 몰림, 퇴출 공백 | PodDisruptionBudget, 토폴로지 분산 |
+| 존 잃기 | NetworkChaos 분할, 클라우드 카오스 | 클라우드 장애 | 남은 용량 부족 | 존별 여유 용량, 오토스케일러 한도 |
+| CPU 부하 | StressChaos `cpu` | `pod-cpu-hog` | 스로틀링, 늦은 확장 | requests와 limits, HPA 조정 |
+
+## 직접 확인해 보기
+
+```bash
+# Chaos Mesh 설치 (containerd 런타임), 전용 네임스페이스에
+helm repo add chaos-mesh https://charts.chaos-mesh.org
+helm install chaos-mesh chaos-mesh/chaos-mesh -n chaos-mesh --create-namespace \
+  --set chaosDaemon.runtime=containerd \
+  --set chaosDaemon.socketPath=/run/containerd/containerd.sock
+
+# 실험 전: 복제본, 분산, PDB 확인
+kubectl get pods -n staging -l app=cart -o wide
+kubectl get pdb -n staging
+
+# cart 파드 하나 죽이기
+cat <<'EOF' | kubectl apply -f -
+apiVersion: chaos-mesh.org/v1alpha1
+kind: PodChaos
+metadata:
+  name: kill-one-cart
+  namespace: staging
+spec:
+  action: pod-kill
+  mode: one
+  selector:
+    namespaces: [staging]
+    labelSelectors:
+      app: cart
+EOF
+kubectl get pods -n staging -l app=cart -w     # 대체 파드가 뜨는 것을 지켜본다
+
+# cart 파드 하나에 2분 동안 500ms 지연 주기
+cat <<'EOF' | kubectl apply -f -
+apiVersion: chaos-mesh.org/v1alpha1
+kind: NetworkChaos
+metadata:
+  name: cart-delay
+  namespace: staging
+spec:
+  action: delay
+  mode: one
+  selector:
+    namespaces: [staging]
+    labelSelectors:
+      app: cart
+  delay:
+    latency: '500ms'
+  duration: '2m'
+EOF
+
+# 실험을 일찍 멈추기
+kubectl delete podchaos kill-one-cart -n staging
+kubectl delete networkchaos cart-delay -n staging
+```
+
+<Quiz questions={[
+  {q: '카오스 실험의 정상 상태 지표로 가장 좋은 것은?', options: ['cart 파드의 평균 CPU 사용률', '결제 성공률과 p99 지연', '네임스페이스에서 실행 중인 파드 수'], answer: 1, why: '정상 상태는 사용자가 겪는 것을 나타내야 한다. CPU나 파드 수는 사용자가 오류를 보는 동안에도 멀쩡해 보일 수 있다.'},
+  {q: '500ms 지연이 의존 서비스가 죽는 것보다 더 해로운 경우가 많은 이유는?', options: ['타임아웃이 없는 호출자가 계속 기다려 일이 쌓이고 느림이 번진다', '쿠버네티스가 느린 파드를 재시작해 크래시가 늘어난다', '네트워크 지연이 요청을 망가뜨린다'], answer: 0, why: '크래시는 빨리 실패하고 엔드포인트에서 빠진다. 느린 의존 서비스는 계속 트래픽을 받으며, 호출자가 타임아웃하지 않으면 스레드를 붙잡는다.'},
+  {q: '실험 중 결제 오류율이 SLO를 넘기 시작한다. 어떻게 돼야 하나?', options: ['데이터를 다 모으려고 계획한 시간까지 계속한다', '카오스 컨트롤러를 재시작한다', '중단 조건이 실험을 자동으로 멈춘다'], answer: 2, why: 'SLO 지표에 묶은 중단 조건이 폭발 반경을 작게 지킨다. 발견은 이미 분명하고, 계속하면 사용자만 다친다.'},
+]} />
+
+더 읽을거리: [Principles of Chaos Engineering](https://principlesofchaos.org/) · [Chaos Mesh 문서](https://chaos-mesh.org/docs/) · [LitmusChaos](https://litmuschaos.io/) · [LitmusChaos 프로브](https://docs.litmuschaos.io/docs/concepts/probes) · [파드가 죽으면 (자가 치유)](../k8s/self-healing.mdx) · [노드 비우기와 클러스터 업그레이드](../k8s/node-drain.mdx)

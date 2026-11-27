@@ -1,0 +1,256 @@
+---
+id: waf-ddos
+title: Protecting a Public Endpoint (WAF and DDoS)
+sidebar_label: 11 · WAF and DDoS
+description: Animated walkthrough of how a public endpoint is protected, from volumetric L3/L4 DDoS absorbed at the provider edge to a WAF with managed rules, rate-based rules, bot and geo rules, count mode, 403 blocks, origin lock-down and logs
+summary: 'Floods absorbed at the edge, a WAF that reads each HTTP request, rules started in count mode, and an origin that only the WAF can reach.'
+icon: shield
+hide_table_of_contents: true
+---
+
+# Protecting a Public Endpoint (WAF and DDoS)
+
+A shop's public site gets real users, a botnet and an attacker probing for SQL injection, all at once. Follow which layer stops which traffic: the provider's edge for network floods, a **WAF** (web application firewall) for bad HTTP requests, and a locked origin so nobody can go around them.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~12 min', level: 'Intermediate'}}
+  groups={[
+    {label: 'Your VPC', x: 680, y: 160, w: 310, h: 180, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'user', label: 'Users', sub: 'Real shoppers', icon: 'browser', tone: 'ext', x: 110, y: 100, show: true},
+    {id: 'bot', label: 'Botnet', sub: 'Thousands of IPs', icon: 'alert', tone: 'ext', x: 110, y: 250, show: true},
+    {id: 'attacker', label: 'Attacker', sub: 'SQLi probes', icon: 'alert', tone: 'ext', x: 110, y: 390, show: true},
+    {id: 'edge', label: 'Provider edge', sub: 'CDN · anycast', icon: 'cloud', tone: 'cp', x: 340, y: 250},
+    {id: 'waf', label: 'WAF', sub: 'Web ACL rules', icon: 'shield', tone: 'cp', x: 545, y: 250},
+    {id: 'logs', label: 'WAF logs', sub: 'Every decision', icon: 'chart', tone: 'store', x: 545, y: 390},
+    {id: 'lb', label: 'Load balancer', sub: 'Public DNS name', icon: 'split', tone: 'node', x: 770, y: 250},
+    {id: 'origin', label: 'App', sub: 'Origin', icon: 'server', tone: 'app', size: 'sm', x: 930, y: 250},
+  ]}
+  metrics={[
+    {id: 'attack', label: 'Attack'},
+    {id: 'action', label: 'WAF action'},
+    {id: 'resp', label: 'Response'},
+    {id: 'load', label: 'Origin load'},
+  ]}
+  learn={[
+    {text: 'Network floods are absorbed at the edge, HTTP floods are not', at: 1},
+    {text: 'Managed rule sets for SQL injection, XSS and known bad inputs', at: 4},
+    {text: 'Rate-based rules per IP, bot control and geo rules', at: 5},
+    {text: 'Start in count mode to find false positives', at: 6},
+    {text: 'Lock the origin so nobody can bypass the WAF', at: 8},
+  ]}
+  steps={[
+    {
+      short: 'Start',
+      kind: '시작',
+      title: 'One endpoint, three kinds of traffic',
+      text: [
+        'shop.example.com is public. Real users browse it. A botnet wants to knock it offline. An attacker sends crafted inputs, hoping to reach the database.',
+        'No single tool stops all three. Each layer of the path filters a different kind of attack.',
+      ],
+      flows: [
+        {from: 'user', to: 'edge', label: 'HTTPS', type: 'request'},
+        {from: 'bot', to: 'edge', label: 'Flood', type: 'request'},
+        {from: 'attacker', to: 'edge', label: 'Probe', type: 'request'},
+      ],
+      focus: ['user', 'bot', 'attacker'],
+      values: {load: 'Normal'},
+    },
+    {
+      short: 'L3/L4 flood',
+      kind: '원리',
+      title: 'Network floods are absorbed at the provider edge',
+      text: [
+        'First the botnet sends a volumetric attack: SYN floods and UDP reflection, many gigabits of junk packets. These are layer 3/4 attacks. They do not need a valid HTTP request at all.',
+        'Big providers announce their edge addresses by anycast, so the flood spreads over many locations, and filter it there. AWS Shield Standard does this automatically at no extra cost; Azure DDoS Protection and Google Cloud Armor play the same role.',
+      ],
+      keyIdea: 'Put public endpoints behind the provider\'s edge (CDN, global load balancer) so network floods never reach your own network.',
+      flows: [{from: 'bot', to: 'edge', label: 'SYN · UDP flood', type: 'request'}],
+      focus: ['bot', 'edge'],
+      status: {edge: 'ok'},
+      badges: {edge: 'Absorbed'},
+      values: {attack: 'L3/L4 volumetric', load: {text: 'Normal', tone: 'good'}},
+    },
+    {
+      short: 'L7 flood',
+      kind: '문제',
+      title: 'An HTTP flood looks like real users',
+      text: [
+        'The botnet switches to an application-layer (L7) attack. Each bot opens a proper TLS connection and requests /search?q=... again and again. Each request is valid, so network filtering lets it through.',
+        'Searches are expensive. The app\'s CPU and database connections fill up, and real users start getting timeouts and 503s.',
+      ],
+      keyIdea: 'Packet-level protection cannot tell a bad HTTP request from a good one. Something must read the request itself.',
+      flows: [
+        {from: 'bot', to: 'edge', label: 'GET /search', type: 'request'},
+        {from: 'edge', to: 'lb', label: 'Valid HTTPS', type: 'request', bend: -70},
+        {from: 'lb', to: 'origin', label: 'Overload', type: 'request'},
+      ],
+      focus: ['bot', 'origin'],
+      status: {edge: null, origin: 'error'},
+      badges: {edge: null},
+      values: {attack: 'L7 HTTP flood', resp: {text: '503 · timeouts', tone: 'bad'}, load: {text: 'Saturated', tone: 'bad'}},
+    },
+    {
+      short: 'WAF',
+      kind: '원리',
+      title: 'A WAF reads every request before the load balancer',
+      text: [
+        'A WAF is attached to the CDN or the load balancer. Its web ACL is a list of rules checked in priority order. Each rule looks at the IP, headers, path, query string or body, and can Allow, Block or Count the request, or send a CAPTCHA or silent Challenge.',
+        'The first rule that allows or blocks ends the check. If none does, the web ACL\'s default action applies, usually Allow.',
+      ],
+      flows: [
+        {from: 'edge', to: 'waf', label: 'HTTP request', type: 'request'},
+        {from: 'waf', to: 'lb', label: 'Allowed', type: 'request'},
+      ],
+      focus: ['waf'],
+      status: {origin: 'warn'},
+      badges: {waf: 'Default: Allow'},
+    },
+    {
+      short: 'Managed rules',
+      kind: '원리',
+      title: 'Managed rule sets catch common attacks',
+      text: [
+        'Writing rules for every exploit is not practical. Providers sell or include managed rule groups kept up to date by their security teams: a core rule set (cross-site scripting, path traversal and other common patterns), an SQL injection set, known bad inputs (such as Log4j-style payloads) and IP reputation lists.',
+        'The attacker\'s ?id=1\' OR \'1\'=\'1 matches the SQL injection rule, and the request never reaches the app.',
+      ],
+      keyIdea: 'Managed rules are a baseline, not a fix. The app still needs parameterized queries and output escaping.',
+      flows: [{from: 'attacker', to: 'edge', label: 'id=1\' OR \'1\'=\'1', type: 'request'}, {from: 'edge', to: 'waf', label: 'Inspect', type: 'request'}],
+      focus: ['attacker', 'waf'],
+      status: {attacker: 'error'},
+      badges: {waf: 'SQLi rule'},
+      values: {attack: 'SQL injection', action: {text: 'Block', tone: 'good'}},
+    },
+    {
+      short: 'Rate limit',
+      kind: '원리',
+      title: 'Rate-based, bot and geo rules slow the flood',
+      text: [
+        'A rate-based rule counts requests per client IP over a window (in AWS WAF 1, 2, 5 or 10 minutes, 5 by default) and blocks an IP while it is above the limit. Scope it to /search so normal browsing is not counted.',
+        'Bot control rules use signatures and browser challenges to separate scripts from people. Geo match rules can block or challenge countries you do not serve. Together they turn the flood into a trickle.',
+      ],
+      keyIdea: 'Behind a CDN or proxy, count the client IP from the forwarded header the WAF is configured to trust, not the proxy\'s IP. Many users behind one office NAT share an IP, so do not set the limit too low.',
+      flows: [
+        {from: 'bot', to: 'edge', label: 'GET /search', type: 'request'},
+        {from: 'edge', to: 'waf', label: 'Count per IP', type: 'request'},
+        {from: 'waf', to: 'lb', label: 'Under limit only', type: 'request'},
+      ],
+      focus: ['bot', 'waf'],
+      status: {attacker: null, origin: 'ok', bot: 'warn'},
+      badges: {waf: 'Rate per IP'},
+      values: {attack: 'L7 HTTP flood', action: {text: 'Rate limited', tone: 'good'}, resp: '—', load: {text: 'Normal', tone: 'good'}},
+    },
+    {
+      short: 'Count mode',
+      kind: '주의',
+      title: 'Start every new rule in count mode',
+      text: [
+        'A rule turned on in Block mode right away can block real users. A blog editor saving a post about SQL, or a large JSON upload, can match a managed rule. That is a false positive.',
+        'So new rules start with the Count action (for a rule group, override its rules to Count). Requests still pass, but the logs show which rule would have matched. After a few days of real traffic, add exclusions or scope-down statements, then switch to Block.',
+      ],
+      keyIdea: 'Count first, read the logs, then block. Turning on blocking without this is how a WAF causes an outage.',
+      flows: [
+        {from: 'user', to: 'edge', label: 'POST /admin/post', type: 'request'},
+        {from: 'edge', to: 'waf', label: 'Inspect', type: 'request'},
+        {from: 'waf', to: 'logs', label: 'Would block', type: 'response'},
+        {from: 'waf', to: 'lb', label: 'Passed', type: 'request'},
+      ],
+      focus: ['waf', 'logs'],
+      status: {bot: null},
+      badges: {waf: 'Count'},
+      values: {attack: '— (real user)', action: {text: 'Count · logged', tone: 'good'}},
+    },
+    {
+      short: '403',
+      kind: '원리',
+      title: 'A block is a 403, and the log says which rule',
+      text: [
+        'When a rule blocks, the CDN or load balancer answers with HTTP 403 Forbidden by default. You can return a custom body, for example with a support link and a request ID.',
+        'Each log entry shows the action, the terminating rule, the client IP, country and request details. When a user reports a 403, search the logs for their IP or request ID to see exactly which rule fired.',
+      ],
+      keyIdea: 'Send WAF logs to your log store and keep them. They are how you tune rules and prove what was blocked during an incident.',
+      flows: [
+        {from: 'attacker', to: 'edge', label: 'Probe', type: 'request'},
+        {from: 'waf', to: 'attacker', label: '403 Forbidden', type: 'response', bend: 60},
+        {from: 'waf', to: 'logs', label: 'Rule ID', type: 'response'},
+      ],
+      focus: ['waf', 'logs', 'attacker'],
+      status: {attacker: 'error'},
+      badges: {waf: 'Block'},
+      values: {attack: 'SQL injection', action: {text: 'Block', tone: 'good'}, resp: '403'},
+    },
+    {
+      short: 'Bypass',
+      kind: '문제',
+      title: 'The attacker goes around the WAF to the origin',
+      text: [
+        'The WAF sits on the CDN, but the load balancer behind it still has a public DNS name. The attacker finds it in old DNS records or certificate logs and sends the flood straight there. No WAF rule ever sees it.',
+        'Lock the origin. Allow only the CDN\'s address ranges in the load balancer\'s firewall (in AWS, the CloudFront origin-facing managed prefix list), have the CDN add a secret header the origin checks, or make the origin private and reach it only through the provider.',
+      ],
+      keyIdea: 'A WAF protects only traffic that passes through it. Test it: a direct request to the origin must fail.',
+      flows: [{from: 'attacker', to: 'lb', label: 'Direct to origin', type: 'request', bend: 90}],
+      focus: ['attacker', 'lb'],
+      status: {lb: 'error', origin: 'warn'},
+      badges: {lb: 'Bypassed', waf: null},
+      values: {attack: 'Origin bypass', action: '— (not seen)', resp: '200', load: {text: 'Rising', tone: 'bad'}},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Each layer stops what it can see',
+      text: [
+        'The provider edge absorbs network floods. The WAF reads each HTTP request: managed rules for injection and known bad inputs, rate-based rules per IP, bot and geo rules. The origin accepts traffic only from the edge.',
+        'New rules start in count mode, logs show which rule did what, and a blocked request gets a 403.',
+      ],
+      keyIdea: 'Check three things: the origin refuses direct requests, every rule went through count mode, and WAF logs are kept.',
+      flows: [
+        {from: 'user', to: 'edge', label: 'HTTPS', type: 'request'},
+        {from: 'edge', to: 'waf', label: 'Inspect', type: 'request'},
+        {from: 'waf', to: 'lb', label: 'Allowed', type: 'request'},
+        {from: 'lb', to: 'origin', label: 'Forward', type: 'request'},
+      ],
+      focus: ['edge', 'waf', 'lb'],
+      status: {attacker: null, lb: 'ok', origin: 'ok'},
+      badges: {lb: 'Edge only', waf: null},
+      values: {attack: '—', action: '—', resp: '200', load: {text: 'Normal', tone: 'good'}},
+    },
+  ]}
+/>
+
+## Which layer stops which attack
+
+| Attack | Layer | What stops it | Examples |
+|---|---|---|---|
+| SYN flood, UDP reflection, DNS amplification | L3/L4 | Provider edge, anycast and network DDoS protection | AWS Shield, Azure DDoS Protection, Google Cloud Armor, Cloudflare |
+| HTTP flood on a costly page | L7 | WAF rate-based rules, Challenge or CAPTCHA, caching at the CDN | Rate-based rule scoped to `/search` |
+| SQL injection, XSS, path traversal | L7 | Managed rule sets, and safe code in the app | Core rule set, SQL injection rules |
+| Known exploit payloads | L7 | Known bad inputs rule set | Log4j-style headers |
+| Credential stuffing, scraping bots | L7 | Bot control, rate limits on login | Bot control rule group |
+| Traffic from regions you do not serve | L7 | Geo match rule (block or challenge) | Country allow list |
+| Requests sent straight to the origin | Network | Origin locked to the CDN or WAF | CDN prefix list, secret header, private origin |
+
+## Try it yourself
+
+```bash
+aws wafv2 list-web-acls --scope REGIONAL --region us-east-1      # Web ACLs for load balancers (use CLOUDFRONT for CDN)
+aws wafv2 list-available-managed-rule-groups --scope REGIONAL --region us-east-1   # Managed rule sets you can add
+aws wafv2 get-web-acl --name shop-acl --id <acl-id> --scope REGIONAL --region us-east-1 \
+  --query 'WebACL.Rules[].{name:Name,prio:Priority,action:Action,override:OverrideAction}'   # Count or Block per rule
+aws wafv2 get-rate-based-statement-managed-keys --scope REGIONAL --region us-east-1 \
+  --web-acl-name shop-acl --web-acl-id <acl-id> --rule-name search-rate   # IPs currently rate limited
+aws wafv2 get-logging-configuration --resource-arn <acl-arn> --region us-east-1   # Are logs going somewhere?
+curl -s -o /dev/null -w '%{http_code}\n' -G https://shop.example.com/ --data-urlencode "id=1' OR '1'='1"   # Expect 403
+curl -s -o /dev/null -w '%{http_code}\n' --max-time 5 https://<origin-lb-dns-name>/   # Origin lock: expect a timeout or 403
+aws ec2 describe-managed-prefix-lists --filters Name=prefix-list-name,Values=com.amazonaws.global.cloudfront.origin-facing   # CDN ranges for the origin firewall
+```
+
+<Quiz questions={[
+  {q: 'Why does network-level DDoS protection at the edge not stop an HTTP flood?', options: ['Edge protection is turned off for HTTPS', 'HTTP floods use more bandwidth than SYN floods', 'Each request is a valid connection and HTTP request, so telling bad from good needs a look at layer 7'], answer: 2, why: 'L3/L4 protection drops junk packets. An HTTP flood uses real connections and real requests, so it takes a WAF that reads paths, headers and rates.'},
+  {q: 'Why start a new managed rule group in count mode?', options: ['To see in the logs which real requests would be blocked before anyone is blocked', 'Count mode blocks more attacks than Block mode', 'Managed rules only work in count mode'], answer: 0, why: 'Count lets every request pass but logs the matches. You find false positives first, add exclusions, then switch to Block.'},
+  {q: 'The WAF is on the CDN, yet attackers still overload the app. What is the most likely cause?', options: ['The WAF default action is Block', 'The origin load balancer accepts requests from anywhere, so attackers skip the CDN', 'The CDN cache is too large'], answer: 1, why: 'A WAF only filters traffic that passes through it. Allow only the CDN at the origin, or check a secret header, so direct requests fail.'},
+]} />
+
+Further reading: [AWS WAF](https://docs.aws.amazon.com/waf/latest/developerguide/what-is-aws-waf.html) · [AWS Shield](https://docs.aws.amazon.com/waf/latest/developerguide/shield-chapter.html) · [AWS managed rule groups](https://docs.aws.amazon.com/waf/latest/developerguide/aws-managed-rule-groups-list.html) · [Google Cloud Armor overview](https://cloud.google.com/armor/docs/cloud-armor-overview) · [OWASP Top 10](https://owasp.org/www-project-top-ten/) · [How a CDN Serves a Request](../cloud/cdn.mdx) · [Reverse Proxies and Load Balancing](../basic/reverse-proxy.mdx)

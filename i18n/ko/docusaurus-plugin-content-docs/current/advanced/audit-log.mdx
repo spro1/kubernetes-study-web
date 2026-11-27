@@ -181,4 +181,10 @@ sudo grep '"resource":"secrets"' <감사-로그-파일> | grep -c '"level":"Requ
 kubectl auth can-i get secrets -n <네임스페이스> --as=<사용자>   # 그 주체에게 조회 권한이 정말 필요한지
 ```
 
+<Quiz questions={[
+  {q: '감사 정책에 시크릿을 Metadata로 남기는 규칙이 있고, 그 아래에 모든 것을 RequestResponse로 남기는 규칙이 있다. 시크릿 get에는 어느 수준이 적용되는가?', options: ['가장 많이 남기는 RequestResponse', '둘 다 적용되어 두 건이 남는다', '처음 맞는 규칙의 수준인 Metadata'], answer: 2, why: '규칙은 위에서부터 맞춰 보고 처음 맞는 규칙의 수준을 쓰기 때문이다. 그래서 규칙의 순서가 결과를 바꾼다.'},
+  {q: '시크릿 요청을 RequestResponse로 남기면 안 되는 이유는 무엇인가?', options: ['응답 본문, 곧 비밀 값이 감사 로그에 쓰여 로그가 새로운 유출 경로가 된다', 'RequestResponse는 누가 요청했는지 남기지 않는다', '시크릿은 아예 감사할 수 없다', '시크릿에 대한 RBAC가 꺼진다'], answer: 0, why: 'RequestResponse는 응답 본문을 그대로 남기기 때문이다. 시크릿은 누가·언제·무엇을만 남기고 값은 남기지 않는 Metadata로 기록한다.'},
+  {q: '감사 기록을 컨트롤 플레인 노드의 파일에만 남긴다. 무엇이 위험한가?', options: ['API 서버가 느려진다', '노드가 사라지거나 공격자가 지우면 기록도 함께 사라진다', '실패한 요청이 기록되지 않는다'], answer: 1, why: '노드 안에만 둔 기록은 노드와 함께 사라지기 때문이다. 클러스터 밖 로그 보관처로 옮겨 두고 거기서 찾는다.'},
+]} />
+
 더 읽을거리: [감사(Auditing)](https://kubernetes.io/docs/tasks/debug/debug-cluster/audit/) · [RBAC 인가 사용](https://kubernetes.io/docs/reference/access-authn-authz/rbac/)

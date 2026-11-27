@@ -1,0 +1,298 @@
+---
+id: chaos-engineering
+title: 'Chaos Engineering on Kubernetes'
+sidebar_label: 14 · Chaos engineering
+description: 'Run chaos experiments on Kubernetes step by step: define steady state, write a hypothesis, kill Pods, inject latency, drain a node, lose a zone and stress CPU with tools like Chaos Mesh or LitmusChaos, with a small blast radius and abort conditions tied to SLO metrics.'
+summary: 'Steady state, hypothesis, small blast radius, abort on SLO metrics, and what killing Pods, adding latency and draining nodes reveal.'
+icon: spark
+hide_table_of_contents: true
+---
+
+# Chaos Engineering on Kubernetes
+
+Failures will happen in production whether you plan for them or not. Chaos engineering breaks things on purpose, in a controlled way, so you find the missing retry or PodDisruptionBudget before your users do.
+
+<StepDiagram
+  width={1000}
+  height={460}
+  meta={{duration: '~13 min', level: 'Advanced'}}
+  groups={[
+    {label: 'Zone a', x: 300, y: 40, w: 310, h: 400, tone: 'biz'},
+    {label: 'Zone b', x: 650, y: 40, w: 330, h: 400, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'exp', label: 'Experiment', sub: 'hypothesis + scope', icon: 'bulb', tone: 'ext', x: 100, y: 90, show: true},
+    {id: 'ctrl', label: 'Chaos controller', sub: 'Chaos Mesh / Litmus', icon: 'gear', tone: 'cp', x: 100, y: 230, w: 170},
+    {id: 'prom', label: 'SLO metrics', sub: 'Prometheus', icon: 'chart', tone: 'store', x: 100, y: 370, show: true},
+    {id: 'nodea', label: 'node-a', sub: 'worker', icon: 'server', tone: 'node', x: 455, y: 110, show: true},
+    {id: 'cart1', label: 'cart', sub: 'Pod', icon: 'pod', tone: 'app', size: 'sm', x: 390, y: 230, show: true},
+    {id: 'cart2', label: 'cart', sub: 'Pod', icon: 'pod', tone: 'app', size: 'sm', x: 520, y: 230, show: true},
+    {id: 'nodeb', label: 'node-b', sub: 'worker', icon: 'server', tone: 'node', x: 815, y: 110, show: true},
+    {id: 'cart3', label: 'cart', sub: 'Pod', icon: 'pod', tone: 'app', size: 'sm', x: 750, y: 230},
+    {id: 'checkout', label: 'checkout', sub: 'calls cart', icon: 'pod', tone: 'app', size: 'sm', x: 880, y: 230, show: true},
+    {id: 'pdb', label: 'PDB cart', sub: 'minAvailable: 2', icon: 'shield', tone: 'store', x: 455, y: 370},
+    {id: 'sched', label: 'Schedule', sub: 'repeat after deploys', icon: 'archive', tone: 'cp', x: 815, y: 370, w: 170},
+  ]}
+  metrics={[
+    {id: 'steady', label: 'Steady state'},
+    {id: 'blast', label: 'Blast radius'},
+    {id: 'result', label: 'Hypothesis'},
+    {id: 'finding', label: 'Finding'},
+  ]}
+  learn={[
+    {text: 'Steady state and a falsifiable hypothesis', at: 1},
+    {text: 'Blast radius and abort conditions tied to SLO metrics', at: 2},
+    {text: 'What Pod kills, latency and node drains reveal', at: 3},
+    {text: 'Losing a zone and stressing CPU', at: 6},
+    {text: 'Game days and automated, repeated experiments', at: 8},
+  ]}
+  steps={[
+    {
+      short: 'Steady state',
+      kind: '시작',
+      title: 'Define what normal looks like',
+      text: [
+        'checkout calls the cart service, which runs as two Pods on node-a. Before breaking anything, write down the steady state: a metric users feel, such as checkout success rate at or above 99.9% and p99 latency under 300 ms.',
+        'Use the SLO metrics you already have in Prometheus. CPU and memory are not steady state; they describe the system, not the user experience.',
+      ],
+      keyIdea: 'If you cannot measure normal, you cannot tell whether an experiment hurt anything.',
+      flows: [{from: 'checkout', to: 'prom', label: 'Success, p99', type: 'response', bend: 60}],
+      focus: ['prom', 'checkout'],
+      values: {steady: '99.95% · p99 180 ms', blast: '—', result: '—', finding: '—'},
+    },
+    {
+      short: 'Hypothesis',
+      kind: '원리',
+      title: 'Write a hypothesis you could prove wrong',
+      text: [
+        'The hypothesis: "If one cart Pod is killed, checkout success stays at or above 99.9% and p99 stays under 300 ms." The experiment tries to disprove it.',
+        'The Principles of Chaos list the rest: vary real-world events (crashes, latency, lost nodes), run as close to production as you safely can, minimize the blast radius, and automate experiments to run continuously.',
+      ],
+      keyIdea: 'An experiment without a hypothesis is just breaking things. A disproved hypothesis is a success: you found a weakness cheaply.',
+      flows: [{from: 'exp', to: 'ctrl', label: 'Hypothesis', type: 'request'}],
+      focus: ['exp'],
+      badges: {exp: 'kill 1 cart Pod'},
+    },
+    {
+      short: 'Blast radius',
+      kind: '원리',
+      title: 'Limit the blast radius and set an abort condition',
+      text: [
+        'Start in staging, target one Pod (mode one), one namespace and a short duration. Grow the scope only after small experiments pass.',
+        'Decide in advance when to stop. In Chaos Mesh a Workflow can run a StatusCheck against an HTTP endpoint and abort the workflow when it fails. LitmusChaos probes, including a Prometheus probe, can stop the fault when a check such as the error rate fails.',
+      ],
+      keyIdea: 'Tie the abort condition to the same SLO metric as the hypothesis. If users start to hurt, the experiment ends by itself.',
+      flows: [
+        {from: 'exp', to: 'ctrl', label: 'Scope', type: 'request'},
+        {from: 'prom', to: 'ctrl', label: 'Abort if errors', type: 'watch'},
+      ],
+      focus: ['ctrl', 'prom'],
+      badges: {exp: null, ctrl: 'mode: one'},
+      values: {blast: 'staging · 1 Pod'},
+    },
+    {
+      short: 'Kill a Pod',
+      kind: '문제',
+      title: 'Kill a Pod: recovery works, but requests fail',
+      text: [
+        'The controller kills cart1. The ReplicaSet creates a replacement and the Service stops sending traffic to the dead Pod. Self-healing works.',
+        'But checkout success dips to 99.2% for several seconds. Requests already in flight to cart1 fail, and checkout does not retry them on the other Pod. The hypothesis is disproved.',
+      ],
+      keyIdea: 'Self-healing replaces Pods; it does not save in-flight requests. Callers need retries for idempotent calls, with backoff.',
+      flows: [
+        {from: 'ctrl', to: 'cart1', label: 'pod-kill', type: 'request'},
+        {from: 'checkout', to: 'cart1', label: 'In flight', type: 'request', bend: -60},
+      ],
+      focus: ['cart1', 'checkout'],
+      status: {cart1: 'error', checkout: 'warn'},
+      badges: {ctrl: null},
+      values: {steady: {text: '99.2%', tone: 'bad'}, result: {text: 'Disproved', tone: 'bad'}, finding: 'No retries'},
+    },
+    {
+      short: 'Latency',
+      kind: '문제',
+      title: 'Inject latency: a missing timeout spreads the slowness',
+      text: [
+        'After adding retries, the next experiment adds 500 ms of network delay to the cart Pods. Tools inject this with Linux traffic control inside the Pod network namespace, without changing the app.',
+        'checkout has no timeout on cart calls. Its workers wait, requests queue, and checkout p99 jumps past one second. A slow dependency hurts more than a dead one.',
+      ],
+      keyIdea: 'Every network call needs a timeout shorter than the caller\'s own deadline. Packet loss experiments find the same gaps.',
+      flows: [
+        {from: 'ctrl', to: 'cart2', label: 'delay 500 ms', type: 'request'},
+        {from: 'checkout', to: 'cart2', label: 'Waits', type: 'request', bend: -60},
+      ],
+      focus: ['cart2', 'checkout'],
+      status: {cart1: 'ok', cart2: 'warn', checkout: 'error'},
+      values: {steady: {text: 'p99 1.4 s', tone: 'bad'}, finding: 'No timeout'},
+    },
+    {
+      short: 'Drain',
+      kind: '문제',
+      title: 'Drain a node: both replicas were in one place',
+      text: [
+        'Next, drain node-a, as an upgrade would. Both cart Pods run there and there is no PodDisruptionBudget, so the drain evicts both at once. cart has no ready Pods until replacements start on node-b.',
+        'The fixes: a PDB so evictions wait for a ready replacement, and topology spread constraints so replicas land on different nodes and zones.',
+      ],
+      keyIdea: 'Planned maintenance is the most common disruption. A drain experiment checks PDBs, spread and startup time together.',
+      flows: [
+        {from: 'ctrl', to: 'nodea', label: 'drain', type: 'request'},
+        {from: 'nodea', to: 'cart3', label: 'Reschedule', type: 'request'},
+      ],
+      focus: ['nodea', 'cart1', 'cart2', 'pdb'],
+      status: {nodea: 'off', cart1: 'gone', cart2: 'gone', cart3: 'warn', checkout: 'error'},
+      values: {steady: {text: '97.0%', tone: 'bad'}, blast: 'staging · 1 node', finding: 'No PDB, no spread'},
+    },
+    {
+      short: 'Zone',
+      kind: '장애',
+      title: 'Lose a zone: is there room on the other side?',
+      text: [
+        'With a PDB and spread in place, the team simulates losing zone a, for example by cutting its network or stopping its nodes through the cloud API. Pods from zone a must run in zone b.',
+        'If zone b has no spare capacity, replacements stay Pending while the cluster autoscaler adds nodes. Survivable means enough headroom, or fast enough node provisioning, in the remaining zones.',
+      ],
+      keyIdea: 'Spreading across zones only helps if each zone can carry the load of a lost one.',
+      flows: [
+        {from: 'ctrl', to: 'nodea', label: 'Zone down', type: 'request'},
+        {from: 'checkout', to: 'cart3', label: 'Traffic', type: 'request'},
+      ],
+      focus: ['nodea', 'nodeb', 'cart3'],
+      status: {nodea: 'error', cart1: 'gone', cart2: 'gone', cart3: 'ok', checkout: 'warn'},
+      badges: {pdb: 'minAvailable: 2', nodeb: 'headroom?'},
+      values: {steady: {text: '99.7%', tone: 'bad'}, blast: 'staging · zone a', finding: 'Capacity headroom'},
+    },
+    {
+      short: 'CPU stress',
+      kind: '원리',
+      title: 'Stress CPU: limits, throttling and scaling',
+      text: [
+        'A stress experiment burns CPU inside the cart Pods. If the CPU limit is tight, the kernel throttles the container and latency rises even though the node has idle cores.',
+        'This checks whether the HorizontalPodAutoscaler adds replicas in time, and whether alerts fire on latency rather than only on CPU.',
+      ],
+      keyIdea: 'Resource experiments test your requests, limits and autoscaling settings with the real app, not with guesses.',
+      flows: [{from: 'ctrl', to: 'cart3', label: 'stress cpu', type: 'request'}],
+      focus: ['cart3'],
+      status: {nodea: 'ok', cart1: 'ok', cart2: 'ok', cart3: 'warn', checkout: 'ok'},
+      badges: {nodeb: null, cart3: 'throttled'},
+      values: {steady: '99.95% · p99 260 ms', finding: 'Limits, HPA'},
+    },
+    {
+      short: 'Game day',
+      kind: '원리',
+      title: 'Game days test people and runbooks too',
+      text: [
+        'A game day is a scheduled exercise: the team runs a larger failure together, with everyone watching. It tests whether alerts fire, whether runbooks are right and whether on-call knows what to do.',
+        'Announce it, have a rollback ready, name someone who can stop it, and write down what you learn just like a postmortem.',
+      ],
+      keyIdea: 'Your incident response process is part of the system. Practice it when nothing is on fire.',
+      flows: [
+        {from: 'exp', to: 'ctrl', label: 'Game day', type: 'request'},
+        {from: 'prom', to: 'exp', label: 'Alerts fired?', type: 'response'},
+      ],
+      focus: ['exp', 'prom'],
+      status: {cart3: 'ok'},
+      badges: {cart3: null},
+    },
+    {
+      short: 'Automate',
+      kind: '원리',
+      title: 'Automate and run experiments again and again',
+      text: [
+        'A fix can regress with the next deploy. Put passing experiments on a schedule or in the delivery pipeline: Chaos Mesh has a Schedule resource, and Litmus can run workflows on a cron schedule.',
+        'Each experiment keeps its abort condition. Once experiments pass reliably in staging, teams move carefully toward production with a small blast radius.',
+      ],
+      keyIdea: 'One passing experiment is a snapshot. Repeated experiments keep the guarantee true as the system changes.',
+      flows: [{from: 'sched', to: 'ctrl', label: 'Run nightly', type: 'request', bend: 60}],
+      focus: ['sched', 'ctrl'],
+      badges: {pdb: null},
+      values: {result: {text: 'Holds', tone: 'good'}, finding: 'Retries, timeouts, PDB, spread'},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Small, measured, repeated failures',
+      text: [
+        'Define steady state from SLO metrics, write a hypothesis, keep the blast radius small and stop automatically when the SLO metric degrades.',
+        'Pod kills find missing retries, latency finds missing timeouts, drains find missing PDBs and spread, zone loss finds missing headroom, and CPU stress checks limits and autoscaling. Start in staging, then automate.',
+      ],
+      keyIdea: 'The goal is not to cause outages. It is to make the next real failure boring.',
+      flows: [
+        {from: 'exp', to: 'ctrl', label: 'Hypothesis', type: 'request'},
+        {from: 'prom', to: 'ctrl', label: 'Abort', type: 'watch'},
+      ],
+      focus: ['exp', 'ctrl', 'prom'],
+    },
+  ]}
+/>
+
+## Experiments and what they usually find
+
+| Experiment | Chaos Mesh | LitmusChaos fault | Typical finding | Fix |
+|---|---|---|---|---|
+| Kill a Pod | PodChaos `pod-kill` | `pod-delete` | Failed in-flight requests, slow startup | Retries with backoff, readiness probes, graceful shutdown |
+| Inject latency | NetworkChaos `delay` | `pod-network-latency` | Slowness spreads to callers | Timeouts, circuit breakers |
+| Packet loss | NetworkChaos `loss` | `pod-network-loss` | Long hangs, retry storms | Timeouts, retry budgets |
+| Drain a node | (use `kubectl drain`) | `node-drain` | All replicas on one node, eviction gaps | PodDisruptionBudget, topology spread |
+| Lose a zone | NetworkChaos partition, cloud chaos | cloud faults | Not enough capacity left | Headroom per zone, autoscaler limits |
+| Stress CPU | StressChaos `cpu` | `pod-cpu-hog` | Throttling, late autoscaling | Requests and limits, HPA tuning |
+
+## Try it yourself
+
+```bash
+# Install Chaos Mesh (containerd runtime) into its own namespace
+helm repo add chaos-mesh https://charts.chaos-mesh.org
+helm install chaos-mesh chaos-mesh/chaos-mesh -n chaos-mesh --create-namespace \
+  --set chaosDaemon.runtime=containerd \
+  --set chaosDaemon.socketPath=/run/containerd/containerd.sock
+
+# Before: check replicas, spread and PDBs
+kubectl get pods -n staging -l app=cart -o wide
+kubectl get pdb -n staging
+
+# Kill one cart Pod
+cat <<'EOF' | kubectl apply -f -
+apiVersion: chaos-mesh.org/v1alpha1
+kind: PodChaos
+metadata:
+  name: kill-one-cart
+  namespace: staging
+spec:
+  action: pod-kill
+  mode: one
+  selector:
+    namespaces: [staging]
+    labelSelectors:
+      app: cart
+EOF
+kubectl get pods -n staging -l app=cart -w     # watch the replacement
+
+# Add 500 ms latency to one cart Pod for 2 minutes
+cat <<'EOF' | kubectl apply -f -
+apiVersion: chaos-mesh.org/v1alpha1
+kind: NetworkChaos
+metadata:
+  name: cart-delay
+  namespace: staging
+spec:
+  action: delay
+  mode: one
+  selector:
+    namespaces: [staging]
+    labelSelectors:
+      app: cart
+  delay:
+    latency: '500ms'
+  duration: '2m'
+EOF
+
+# Stop the experiments early
+kubectl delete podchaos kill-one-cart -n staging
+kubectl delete networkchaos cart-delay -n staging
+```
+
+<Quiz questions={[
+  {q: 'Which is the best steady-state metric for a chaos experiment?', options: ['Average CPU usage of the cart Pods', 'Checkout success rate and p99 latency', 'Number of running Pods in the namespace'], answer: 1, why: 'Steady state should describe what users experience. CPU and Pod counts can look fine while users see errors.'},
+  {q: 'Why is a 500 ms delay often more damaging than a crashed dependency?', options: ['Callers without timeouts keep waiting, so work piles up and the slowness spreads', 'Kubernetes restarts slow Pods, causing more crashes', 'Network delay corrupts requests'], answer: 0, why: 'A crash fails fast and is removed from the endpoints. A slow dependency stays in rotation and ties up caller threads unless they time out.'},
+  {q: 'An experiment starts pushing the checkout error rate above the SLO. What should happen?', options: ['Keep going until the planned duration ends to get full data', 'Restart the chaos controller', 'The abort condition stops the experiment automatically'], answer: 2, why: 'Abort conditions tied to SLO metrics keep the blast radius small. The finding is already clear; continuing only hurts users.'},
+]} />
+
+Further reading: [Principles of Chaos Engineering](https://principlesofchaos.org/) · [Chaos Mesh docs](https://chaos-mesh.org/docs/) · [LitmusChaos](https://litmuschaos.io/) · [LitmusChaos probes](https://docs.litmuschaos.io/docs/concepts/probes) · [When a Pod Dies (Self-Healing)](../k8s/self-healing.mdx) · [Draining Nodes and Upgrading the Cluster](../k8s/node-drain.mdx)

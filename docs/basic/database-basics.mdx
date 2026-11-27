@@ -1,7 +1,7 @@
 ---
 id: database-basics
 title: What Happens When an App Saves to a Database
-sidebar_label: 03 · Saving to a Database
+sidebar_label: 04 · Saving to a Database
 description: Animated walkthrough of one order saved to a relational database such as PostgreSQL, from the connection pool and the query planner to indexes, transactions and ACID, the write-ahead log, locks and deadlocks, replication to a read replica and replication lag, with a short comparison to NoSQL
 summary: 'Connection pools, query plans and indexes, transactions and the WAL, locks, read replicas and replication lag.'
 icon: db
@@ -235,5 +235,11 @@ SHOW max_connections;
 SELECT pid, state, wait_event_type, query FROM pg_stat_activity;          -- who is connected, who waits
 SELECT client_addr, state, replay_lag FROM pg_stat_replication;           -- on a primary with replicas
 ```
+
+<Quiz questions={[
+  {q: 'After HPA scales the order app from 3 to 5 replicas, new DB connections fail with "sorry, too many clients already". What is the most likely cause?', options: ['A missing index on the orders table', 'Pool size times replica count now exceeds max_connections', 'Replication lag on the read replica', 'A deadlock between two transactions'], answer: 1, why: 'Each replica keeps its own pool, so adding Pods multiplies DB connections. Size the pool per replica, or put a pooler such as PgBouncer in front.'},
+  {q: 'A customer saves an order, but the order history page, which reads from a replica, does not show it. What is going on?', options: ['The order was not committed', 'The WAL was lost in a crash', 'The replica is behind (replication lag), so the order has not arrived there yet'], answer: 2, why: 'Replication is asynchronous by default, so the replica is always slightly behind. Reads that must see the user\'s own write belong on the primary.'},
+  {q: 'Why does COMMIT return only after the WAL record is flushed to disk?', options: ['So that a crash can be recovered by replaying the WAL, making committed changes durable', 'So that table pages never need to be written', 'So that readers are blocked until the change is done'], answer: 0, why: 'Table pages are written later by checkpoints. On restart the database replays the WAL from the last checkpoint and rebuilds every committed change.'},
+]} />
 
 Further reading: [PostgreSQL: Using EXPLAIN](https://www.postgresql.org/docs/current/using-explain.html) · [Indexes](https://www.postgresql.org/docs/current/indexes.html) · [Transactions](https://www.postgresql.org/docs/current/tutorial-transactions.html) · [Write-Ahead Logging](https://www.postgresql.org/docs/current/wal-intro.html) · [Explicit locking and deadlocks](https://www.postgresql.org/docs/current/explicit-locking.html) · [Streaming replication](https://www.postgresql.org/docs/current/warm-standby.html#STREAMING-REPLICATION) · [When One Availability Zone Goes Down](../cloud/az-failover.mdx) · [StatefulSets and databases](../intermediate/statefulset.mdx)

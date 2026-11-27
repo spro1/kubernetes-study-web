@@ -1,0 +1,276 @@
+---
+id: gpu-monitoring
+title: '쿠버네티스에서 GPU 모니터링'
+sidebar_label: 06 · GPU 모니터링
+description: 'DCGM 익스포터와 Prometheus로 쿠버네티스의 NVIDIA GPU를 모니터링한다. GPU 사용률이 오해를 부르는 이유, SM 활동과 텐서 지표, 프레임버퍼 메모리, 전력과 스로틀링, XID·ECC 오류, 행 재매핑, NVLink 오류, 파드별 레이블, 알람 규칙을 본다.'
+summary: 'DCGM 익스포터에서 Prometheus까지, GPU의 실제 일을 보여 주는 지표, 노드를 비워야 하는 XID·ECC 오류.'
+icon: chart
+hide_table_of_contents: true
+---
+
+# 쿠버네티스에서 GPU 모니터링
+
+GPU 노드는 비싸다. 그리고 파드가 모두 Running이어도 GPU는 바쁘거나, 놀거나, 과열되거나, 고장 나 있을 수 있다. GPU 지표를 카드에서 Prometheus까지 따라가고, 어떤 숫자가 실제 일을 보여 주는지, 어떤 오류가 노드를 비워야 한다는 뜻인지 본다.
+
+<StepDiagram
+  width={1000}
+  height={460}
+  meta={{duration: '약 13분', level: '심화'}}
+  groups={[
+    {label: 'GPU 노드 · gpu-node-1', x: 30, y: 40, w: 520, h: 400, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'gpu0', label: 'gpu-0', sub: 'H100', icon: 'disk', tone: 'node', size: 'sm', x: 110, y: 120, show: true},
+    {id: 'gpu1', label: 'gpu-1', sub: 'H100', icon: 'disk', tone: 'node', size: 'sm', x: 110, y: 250, show: true},
+    {id: 'serve', label: 'llm-serve', sub: 'ns chat', icon: 'pod', tone: 'app', size: 'sm', w: 110, x: 270, y: 120, show: true},
+    {id: 'train', label: 'train-b', sub: 'ns ml', icon: 'pod', tone: 'app', size: 'sm', w: 110, x: 270, y: 250, show: true},
+    {id: 'dcgm', label: 'DCGM 익스포터', sub: '데몬셋 · :9400', icon: 'gear', tone: 'node', x: 445, y: 185, w: 170},
+    {id: 'kubelet', label: 'kubelet', sub: 'pod-resources API', icon: 'agent', tone: 'node', x: 445, y: 370, w: 170, show: true},
+    {id: 'prom', label: 'Prometheus', sub: '/metrics 수집', icon: 'chart', tone: 'store', x: 680, y: 185},
+    {id: 'rules', label: '알람 규칙', sub: 'PrometheusRule', icon: 'bell', tone: 'cp', x: 885, y: 185},
+    {id: 'dash', label: '대시보드', sub: '파드별, GPU별', icon: 'chart', tone: 'ext', x: 680, y: 370},
+    {id: 'oncall', label: '당직자', sub: 'cordon과 drain', icon: 'user', tone: 'ext', x: 885, y: 370},
+  ]}
+  metrics={[
+    {id: 'util', label: 'GPU_UTIL'},
+    {id: 'sm', label: 'SM 활동'},
+    {id: 'tensor', label: '텐서 활동'},
+    {id: 'mem', label: 'FB 사용량'},
+    {id: 'health', label: '상태'},
+  ]}
+  learn={[
+    {text: 'DCGM 익스포터가 지표를 Prometheus로 보내는 방법', at: 1},
+    {text: '지표에 파드·네임스페이스 레이블이 붙는 방법', at: 2},
+    {text: 'GPU 사용률이 오해를 부르는 이유와 대신 볼 프로파일링 지표', at: 3},
+    {text: '메모리, 전력, 온도, 스로틀링', at: 5},
+    {text: 'XID·ECC·행 재매핑·NVLink 오류와 알람 규칙', at: 7},
+  ]}
+  steps={[
+    {
+      short: '질문',
+      kind: '시작',
+      title: 'GPU 둘, 파드 둘: 쓸모 있는 일을 하고 있나',
+      text: [
+        'gpu-node-1에 GPU가 두 개 있다. llm-serve가 gpu-0을, 학습 작업 train-b가 gpu-1을 쓴다. 두 파드 모두 Running이지만, 그것만으로는 GPU가 열심히 일하는지, 시간을 버리는지, 고장 나고 있는지 알 수 없다.',
+        '노드마다 nvidia-smi를 돌리는 방식은 규모가 커지면 못 쓴다. GPU 지표를 Prometheus에 모으고, 모든 시계열에 그 GPU를 가진 파드가 붙어 있어야 한다.',
+      ],
+      keyIdea: 'GPU를 할당받는 것(디바이스 플러그인 레슨)과 잘 쓰는 것은 다른 질문이다. 이 레슨은 두 번째를 다룬다.',
+      flows: [
+        {from: 'serve', to: 'gpu0', label: '사용', type: 'request'},
+        {from: 'train', to: 'gpu1', label: '사용', type: 'request'},
+      ],
+      focus: ['gpu0', 'gpu1', 'serve', 'train'],
+      values: {util: '—', sm: '—', tensor: '—', mem: '—', health: '—'},
+    },
+    {
+      short: '익스포터',
+      kind: '원리',
+      title: 'DCGM 익스포터가 GPU 노드마다 돈다',
+      text: [
+        'NVIDIA DCGM(Data Center GPU Manager)은 드라이버에서 텔레메트리를 읽는다. DCGM 익스포터는 GPU 노드에 데몬셋으로 떠서 그 값을 Prometheus 형식으로 내놓는다. 보통 포트는 9400이다. GPU Operator가 대신 설치해 준다.',
+        'Prometheus가 이것을 수집한다. 흔히 ServiceMonitor를 쓴다. 시계열마다 gpu, UUID, modelName, 노드 호스트 이름 같은 레이블이 붙는다. 어떤 필드를 내보낼지는 CSV 파일이 정한다.',
+      ],
+      keyIdea: 'ECC나 NVLink 오류 카운터처럼 쓸모 있는 필드 일부는 기본 CSV에서 주석 처리돼 있다. 목록을 보고 필요한 것을 켠다.',
+      flows: [
+        {from: 'gpu0', to: 'dcgm', label: '텔레메트리', type: 'response'},
+        {from: 'gpu1', to: 'dcgm', label: '텔레메트리', type: 'response'},
+        {from: 'prom', to: 'dcgm', label: '수집', type: 'request'},
+      ],
+      focus: ['dcgm', 'prom'],
+      badges: {dcgm: ':9400/metrics'},
+    },
+    {
+      short: '파드 레이블',
+      kind: '원리',
+      title: 'kubelet이 어떤 파드가 어떤 GPU를 가졌는지 알려 준다',
+      text: [
+        '쿠버네티스 매핑을 켜면 익스포터는 kubelet의 pod-resources API에 어떤 컨테이너가 어떤 장치를 받았는지 묻는다. 그리고 그 GPU의 시계열에 pod, namespace, container 레이블을 붙인다.',
+        '이제 대시보드는 네임스페이스별로 사용량을 더할 수 있고, 알람은 파드 이름을 말할 수 있다. 타임 슬라이싱을 쓰면 파드 여러 개가 GPU 하나를 나눠 쓰므로 GPU 전체 수치를 파드별로 나눌 수 없다.',
+      ],
+      keyIdea: '파드 레이블이 없으면 어느 노드의 어떤 GPU가 바쁘다는 것만 안다. 대시보드를 만들기 전에 레이블이 있는지 확인한다.',
+      flows: [{from: 'kubelet', to: 'dcgm', label: '파드 ↔ GPU', type: 'response'}],
+      focus: ['kubelet', 'dcgm'],
+      badges: {dcgm: 'pod, namespace'},
+    },
+    {
+      short: 'GPU_UTIL',
+      kind: '주의',
+      title: 'GPU 사용률 100%가 GPU가 꽉 찼다는 뜻은 아니다',
+      text: [
+        'DCGM_FI_DEV_GPU_UTIL은 커널이 하나라도 돌고 있던 시간의 비율이다. 수많은 스트리밍 멀티프로세서(SM) 중 몇 개만 쓰는 작은 커널도 100%로 센다.',
+        '두 파드 모두 거의 100%로 나온다. GPU가 놀고 있지 않다는 것은 알 수 있지만, 연산 능력을 얼마나 쓰는지는 모른다. 이 값이 확장 신호로도 나쁜 이유는 오토스케일링 레슨에서 다룬다.',
+      ],
+      keyIdea: 'GPU_UTIL은 "얼마나 찼나"가 아니라 "바쁜가, 노는가"로 읽는다.',
+      flows: [{from: 'dcgm', to: 'dash', label: 'GPU_UTIL', type: 'response'}],
+      focus: ['gpu0', 'gpu1', 'dash'],
+      badges: {dcgm: null},
+      values: {util: {text: '98% · 100%', tone: 'bad'}},
+    },
+    {
+      short: '프로파일링',
+      kind: '원리',
+      title: '프로파일링 지표는 GPU가 얼마나 일하는지 보여 준다',
+      text: [
+        'DCGM 프로파일링 필드는 GPU 안을 들여다본다. DCGM_FI_PROF_SM_ACTIVE는 SM에 워프가 하나 이상 배정된 사이클의 비율을 모든 SM에 걸쳐 평균한 값이다. DCGM_FI_PROF_SM_OCCUPANCY는 최대치 대비 상주한 워프 수다. DCGM_FI_PROF_PIPE_TENSOR_ACTIVE는 텐서 코어가 바쁜 사이클의 비율이다.',
+        'train-b는 SM 활동 0.85, 텐서 활동 0.55다. llm-serve는 SM 활동 0.30, 텐서 활동 0.10이다. 메모리나 작은 배치를 기다리는 중이고, 부하를 더 받을 수 있다.',
+      ],
+      keyIdea: 'SM_ACTIVE와 SM_OCCUPANCY는 기본 CSV에서 주석 처리돼 있고, 텐서와 DRAM 활동은 기본으로 켜져 있다.',
+      flows: [{from: 'dcgm', to: 'prom', label: 'PROF_*', type: 'response'}],
+      focus: ['gpu0', 'gpu1', 'prom'],
+      badges: {gpu0: 'SM 0.30', gpu1: 'SM 0.85'},
+      values: {util: '98% · 100%', sm: '0.30 · 0.85', tensor: '0.10 · 0.55'},
+    },
+    {
+      short: '메모리',
+      kind: '원리',
+      title: '프레임버퍼 메모리: 사용량과 여유',
+      text: [
+        'DCGM_FI_DEV_FB_USED와 DCGM_FI_DEV_FB_FREE는 GPU 메모리를 MiB 단위로 알려 준다. 학습에서는 한계에 가까운 작업이 배치가 커지는 순간 메모리 부족(OOM)으로 실패한다.',
+        'vLLM 같은 추론 엔진은 시작할 때 KV 캐시용으로 메모리 대부분을 미리 잡는다. 이런 엔진에서는 FB 사용량이 꽉 찬 것이 정상이고, 부하에 대해 아무것도 말하지 않는다.',
+      ],
+      keyIdea: '여유 메모리 부족 알람은 미리 잡지 않는 워크로드에만 건다. 서빙 엔진은 엔진 자체의 캐시 지표를 본다.',
+      flows: [{from: 'dcgm', to: 'dash', label: 'FB_USED', type: 'response'}],
+      focus: ['gpu0', 'gpu1', 'dash'],
+      badges: {gpu0: '90% 예약', gpu1: '62 GiB'},
+      values: {mem: '72 GiB · 62 GiB'},
+    },
+    {
+      short: '스로틀링',
+      kind: '주의',
+      title: '전력, 온도, 스로틀링은 조용히 일을 늦춘다',
+      text: [
+        'DCGM_FI_DEV_POWER_USAGE, DCGM_FI_DEV_GPU_TEMP, DCGM_FI_DEV_MEMORY_TEMP가 전력과 열을 보여 준다. GPU가 전력 한도나 온도 한도에 닿으면 클럭을 낮춘다.',
+        '섀시 팬이 고장 나서 gpu-1이 뜨거워진다. DCGM_FI_DEV_SM_CLOCK이 떨어지고, 사용률은 여전히 100%인데 train-b가 느려진다. 익스포터에는 이유를 알려 주는 클럭 이벤트·스로틀 시간 필드도 선택으로 있다.',
+      ],
+      keyIdea: '코드를 안 바꿨는데 작업이 느려지면 모델을 의심하기 전에 SM 클럭, 온도, 전력을 비교한다.',
+      flows: [{from: 'dcgm', to: 'rules', label: 'TEMP, CLOCK', type: 'response', bend: -50}],
+      focus: ['gpu1', 'rules'],
+      status: {gpu1: 'warn'},
+      badges: {gpu0: null, gpu1: '과열 · 클럭 저하'},
+      values: {health: {text: 'gpu-1 스로틀링', tone: 'bad'}},
+    },
+    {
+      short: 'XID 79',
+      kind: '장애',
+      title: 'XID 79: GPU가 버스에서 떨어졌다',
+      text: [
+        'XID 오류는 NVIDIA 드라이버가 GPU 결함을 기록하는 메시지다. DCGM_FI_DEV_XID_ERRORS는 마지막으로 본 XID 값을 담는다. 이제 gpu-1이 79를 보고한다. GPU가 버스에서 떨어져서(fallen off the bus) 드라이버가 더는 GPU와 통신하지 못한다.',
+        'train-b가 실패하고, 디바이스 플러그인은 GPU를 비정상으로 보고한다. 노드는 GPU 리셋이나 재부팅이 필요하므로, 당직자가 먼저 cordon하고 drain한다. 다시 생기면 GPU나 슬롯을 의심한다.',
+      ],
+      keyIdea: '어떤 XID는 애플리케이션 버그에서 나와 노드 조치가 필요 없다. 79와 고칠 수 없는 메모리 오류는 하드웨어다. 호출하고, cordon하고, drain한다.',
+      flows: [
+        {from: 'dcgm', to: 'rules', label: 'XID 79', type: 'response', bend: -50},
+        {from: 'rules', to: 'oncall', label: '호출', type: 'request'},
+      ],
+      focus: ['gpu1', 'train', 'oncall'],
+      status: {gpu1: 'error', train: 'error'},
+      badges: {gpu1: 'XID 79'},
+      values: {health: {text: 'XID 79 · drain', tone: 'bad'}},
+    },
+    {
+      short: 'ECC',
+      kind: '장애',
+      title: 'ECC 오류, 행 재매핑, NVLink 오류',
+      text: [
+        'GPU 메모리에는 ECC가 있다. 1비트 오류는 고쳐진다. 2비트 오류는 고칠 수 없고 XID 48로 나타나며, 그 메모리를 쓰던 작업은 잃는다. A100 이후 GPU는 행 재매핑(row remapping)으로 망가진 메모리 행을 예비 행으로 바꾼다. 이 교체는 GPU를 리셋한 뒤에야 적용된다.',
+        'DCGM_FI_DEV_UNCORRECTABLE_REMAPPED_ROWS를 본다. 늘어나면 비우고 GPU를 리셋한다. DCGM_FI_DEV_ROW_REMAP_FAILURE가 1이면 재매핑에 실패한 것이니 GPU 교체를 준비한다. NVLink CRC·재전송·복구 카운터가 계속 오르면 링크가 나빠 다중 GPU 작업이 느려진다는 뜻이다.',
+      ],
+      keyIdea: 'ECC와 NVLink 오류 카운터는 기본 CSV에서 꺼져 있다. 신경 쓰는 GPU 무리라면 켜 둔다.',
+      flows: [{from: 'oncall', to: 'gpu1', label: 'drain, 리셋', type: 'request', bend: 80}],
+      focus: ['gpu1', 'oncall'],
+      badges: {gpu1: '재매핑 대기'},
+      values: {health: {text: '행 재매핑 → 리셋', tone: 'bad'}},
+    },
+    {
+      short: '알람',
+      kind: '원리',
+      title: '알람 규칙: 상태는 호출로, 낭비는 티켓으로',
+      text: [
+        'GPU에 지금 조치가 필요할 때 호출한다. 79나 48 같은 하드웨어 XID가 새로 생겼을 때, 행 재매핑이 실패했을 때, 고칠 수 없는 오류로 재매핑된 행이 늘 때, 익스포터 대상이 내려가 아무것도 안 보일 때다.',
+        '느린 문제는 티켓으로 연다. 온도가 수십 분 높게 유지될 때, 파드에 할당됐는데 SM 활동이 몇 시간째 낮은 GPU가 있을 때다. pod와 namespace 레이블이 누구의 GPU인지 알려 준다.',
+      ],
+      keyIdea: '상태 알람은 작업을 지키고, 낭비 보고는 예산을 지킨다. 둘 다 파드별 레이블이 필요하다.',
+      flows: [
+        {from: 'prom', to: 'rules', label: '평가', type: 'request'},
+        {from: 'rules', to: 'oncall', label: '호출 / 티켓', type: 'request'},
+      ],
+      focus: ['rules', 'oncall'],
+      status: {gpu1: 'off', train: 'off'},
+      badges: {gpu1: 'cordon됨', rules: '규칙 4개'},
+      values: {health: 'gpu-1 서비스 제외'},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '내보내고, 레이블을 붙이고, 사용률 너머를 보고, 오류에 대응한다',
+      text: [
+        'DCGM 익스포터 데몬셋이 GPU 텔레메트리를 내보내고, kubelet pod-resources API가 파드 레이블을 붙이고, Prometheus가 저장하고 알람을 건다.',
+        'GPU_UTIL은 커널이 돌았다는 것만 말한다. SM 활동, 점유율, 텐서 활동이 실제 일의 양을 보여 준다. 메모리, 클럭, 열을 지켜보고, 하드웨어 XID·고칠 수 없는 ECC 오류·재매핑 실패는 노드를 비울 이유로 본다.',
+      ],
+      keyIdea: '오류 카운터는 필요해지기 전에 켜 둔다. 작업이 실패해서 알게 된 GPU 결함은 이미 늦다.',
+      flows: [
+        {from: 'dcgm', to: 'prom', label: '지표', type: 'response'},
+        {from: 'prom', to: 'dash', label: '조회', type: 'response'},
+      ],
+      focus: ['dcgm', 'prom', 'rules'],
+    },
+  ]}
+/>
+
+## 주요 DCGM 지표
+
+DCGM 익스포터 4.9는 기본 지표 상당수를 DCGM 4.7 이름으로 바꾸고 일부 단위도 바꿨다(예: 퍼센트 → 0~1 비율, MiB → 바이트). 쓰는 익스포터 버전에 맞는 열을 본다.
+
+| 익스포터 4.8까지 | 익스포터 4.9부터 | 알려 주는 것 | 쓰는 곳 |
+|---|---|---|---|
+| `DCGM_FI_DEV_GPU_UTIL` (%) | `DCGM_FI_DEV_GPU_UTIL_RATIO` | 커널이 하나라도 돈 시간 | 바쁜가 노는가, 얼마나 찼는지는 아님 |
+| `DCGM_FI_PROF_SM_ACTIVE` | `DCGM_FI_PROF_SM_UTIL_RATIO` | SM에 일이 있던 사이클 비율 | 실제 연산 사용량 (기본 꺼짐) |
+| `DCGM_FI_PROF_SM_OCCUPANCY` | `DCGM_FI_PROF_SM_OCCUPANCY_RATIO` | 최대 대비 상주 워프 | 커널 튜닝 (기본 꺼짐) |
+| `DCGM_FI_PROF_PIPE_TENSOR_ACTIVE` | `DCGM_FI_PROF_TENSOR_UTIL_RATIO` | 텐서 코어 활동 | 학습·추론의 행렬 연산 |
+| `DCGM_FI_PROF_DRAM_ACTIVE` | `DCGM_FI_PROF_DRAM_UTIL_RATIO` | 메모리 대역폭 활동 | 디코딩처럼 메모리에 묶인 작업 |
+| `DCGM_FI_DEV_FB_USED` / `_FREE` (MiB) | `DCGM_FI_DEV_FB_USED_BYTES` / `_FREE_BYTES` | GPU 메모리 | 학습의 메모리 부족 위험 |
+| `DCGM_FI_DEV_POWER_USAGE` | `DCGM_FI_DEV_BOARD_POWER_WATTS` | 소비 전력 | 전력 한도 스로틀링 |
+| `DCGM_FI_DEV_GPU_TEMP` | `DCGM_FI_DEV_GPU_TEMP_CELSIUS` | GPU 온도 | 냉각 문제 |
+| `DCGM_FI_DEV_SM_CLOCK` (MHz) | `DCGM_FI_DEV_SM_CLOCK_HERTZ` | 현재 SM 클럭 | 느려짐 감지 |
+| `DCGM_FI_DEV_XID_ERRORS` | `DCGM_FI_DEV_XID_ERROR` | 마지막 XID 오류 값 | 하드웨어 결함 알람 |
+| `DCGM_FI_DEV_UNCORRECTABLE_REMAPPED_ROWS` | `DCGM_FI_DEV_ROW_REMAP_UNCORRECTABLE_TOTAL` | 고칠 수 없는 오류로 재매핑된 행 | 비우고 리셋 |
+| `DCGM_FI_DEV_ROW_REMAP_FAILURE` | `DCGM_FI_DEV_ROW_REMAP_FAILED` | 재매핑 실패 | GPU 교체 |
+
+흔한 XID와 보통의 대응(GPU와 드라이버에 맞는 NVIDIA XID 카탈로그를 확인한다):
+
+| XID | 뜻 | 보통의 대응 |
+|---|---|---|
+| 79 | GPU가 버스에서 떨어졌다 | cordon, drain, 리셋이나 재부팅. 반복되면 보고 |
+| 48 | 2비트(고칠 수 없는) ECC 오류 | 영향받은 작업 재시작. 재매핑이 뒤따르면 비우고 리셋 |
+| 13, 31, 43 | 대개 애플리케이션 결함(잘못된 커널, 잘못된 주소) | 먼저 애플리케이션을 본다. GPU가 멀쩡하면 노드 조치는 필요 없다 |
+
+## 직접 확인해 보기
+
+```bash
+# 모든 GPU 노드에 익스포터가 떠 있나?
+kubectl get daemonset -A | grep -i dcgm
+
+# 원시 지표 읽기 (GPU Operator의 서비스 이름. 네임스페이스와 이름은 환경에 맞춘다)
+kubectl -n gpu-operator port-forward svc/nvidia-dcgm-exporter 9400:9400 &
+curl -s localhost:9400/metrics | grep -E '^DCGM_FI_(DEV_GPU_UTIL|PROF_)' | head
+curl -s localhost:9400/metrics | grep -E 'XID|REMAP'       # 오류와 행 재매핑
+
+# 시계열에 pod 레이블이 붙어 있나?
+curl -s localhost:9400/metrics | grep -m3 'pod="'
+
+# 노드에서: 커널 로그의 XID와 GPU 자체 정보
+sudo dmesg | grep -i xid
+nvidia-smi -q -d ECC,ROW_REMAPPER
+
+# 고장 난 GPU 노드를 서비스에서 빼기
+kubectl cordon gpu-node-1
+kubectl drain gpu-node-1 --ignore-daemonsets --delete-emptydir-data
+```
+
+<Quiz questions={[
+  {q: '서빙 파드의 DCGM_FI_DEV_GPU_UTIL은 100% 가까이인데 SM 활동은 0.3이다. 무슨 뜻일 가능성이 가장 큰가?', options: ['GPU가 꽉 차서 복제본을 늘려야 한다', '커널은 늘 돌지만 GPU 일부만 바쁘게 하므로 일을 더 받을 여지가 있다', '익스포터가 틀린 값을 보고하고 있다'], answer: 1, why: 'GPU_UTIL은 커널이 하나라도 돈 시간을 센다. SM 활동은 그 커널이 GPU를 실제로 얼마나 쓰는지 보여 주므로, 0.3이면 연산 능력 대부분이 놀고 있다.'},
+  {q: 'GPU 노드에 XID 79가 기록됐다. 알맞은 대응은?', options: ['노드를 cordon하고 drain한 뒤 GPU를 리셋하거나 재부팅한다', 'GPU를 쓰던 파드만 재시작한다', 'GPU_UTIL이 계속 보고되면 무시한다'], answer: 0, why: 'XID 79는 드라이버가 GPU와 연락이 끊겼다는 뜻이다. GPU를 리셋하거나 노드를 재부팅하기 전까지 워크로드가 쓸 수 없으므로 먼저 작업을 옮긴다.'},
+  {q: 'vLLM 서빙 파드에 "FB 사용량 90% 초과" 알람이 나쁜 이유는?', options: ['vLLM은 GPU 메모리를 쓰지 않는다', '익스포터가 서빙 파드의 메모리는 읽지 못한다', '엔진이 시작할 때 KV 캐시용으로 GPU 메모리 대부분을 잡으므로 높은 사용량이 정상이다'], answer: 2, why: '서빙 엔진은 일부러 메모리를 미리 잡는다. FB 사용량이 높은 것이 정상 상태이니, 엔진 자체의 캐시와 대기열 지표를 본다.'},
+]} />
+
+더 읽을거리: [DCGM 익스포터 지표](https://docs.nvidia.com/datacenter/dcgm/latest/reference/dcgm-exporter-metrics.html) · [GitHub의 DCGM 익스포터](https://github.com/NVIDIA/dcgm-exporter) · [NVIDIA XID 오류](https://docs.nvidia.com/deploy/xid-errors/index.html) · [NVIDIA GPU 디버그 가이드](https://docs.nvidia.com/deploy/gpu-debug-guidelines/) · [GPU·NPU가 노드 자원이 되기까지 (디바이스 플러그인)](../ai/device-plugin.mdx) · [LLM 추론 오토스케일링](../ai/llm-autoscaling.mdx)

@@ -197,4 +197,10 @@ kubectl get pods -n <네임스페이스> -l app=backend --show-labels   # 선택
 kubectl get pods -n kube-system -l k8s-app=cilium    # 정책을 집행하는 CNI(Cilium)가 도는지
 ```
 
+<Quiz questions={[
+  {q: '기본 차단 정책을 건 직후, frontend가 backend를 부르면 응답 없이 기다리다 시간 초과로 실패한다. "거부" 오류가 아니라 시간 초과인 이유는 무엇인가?', options: ['네트워크 플러그인이 패킷을 조용히 버리기 때문이다', '정책을 거는 순간 backend가 죽었기 때문이다', '서비스의 엔드포인트가 사라졌기 때문이다'], answer: 0, why: 'Cilium이 막힌 패킷을 응답 없이 버려 부르는 쪽이 정해 둔 시간까지 기다리기 때문이다. backend와 db 파드는 여전히 Running이다.'},
+  {q: 'Ingress와 Egress를 모두 막은 뒤 모든 외부 호출이 "이름을 찾을 수 없음"으로 실패한다. 무엇을 빠뜨렸는가?', options: ['frontend로 들어오는 통신의 허용 정책', 'DNS(53번 포트)로 나가는 통신 열기', '네임스페이스에 레이블 달기', 'debug 파드를 막는 거부 규칙'], answer: 1, why: '기본 차단이 DNS 조회를 포함한 나가는 통신까지 막기 때문이다. 그래서 보통 allow-dns 정책을 같이 둔다.'},
+  {q: '네트워크 정책을 만들었는데 오류도 없이 아무 효과가 없다. 그럴듯한 원인은 무엇인가?', options: ['정책은 파드가 재시작된 뒤에야 적용된다', '정책 두 개가 같은 파드를 골라 서로 상쇄됐다', '셀렉터와 맞는 파드가 없거나, 네트워크 플러그인이 정책을 지원하지 않는다'], answer: 2, why: '정책은 규칙 문서일 뿐이라 셀렉터에 걸리는 파드가 없거나 CNI가 정책을 집행하지 않으면 아무 일도 하지 않기 때문이다. 여러 정책은 상쇄되지 않고 허용 범위가 더해진다.'},
+]} />
+
 더 읽을거리: [네트워크 정책](https://kubernetes.io/ko/docs/concepts/services-networking/network-policies/) · [Cilium 문서](https://docs.cilium.io/)

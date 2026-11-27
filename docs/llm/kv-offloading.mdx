@@ -185,4 +185,10 @@ kubectl get pod <pod> -o jsonpath='{.status.containerStatuses[*].lastState.termi
 kubectl get events -n <namespace> --field-selector reason=Evicted   # ephemeral-storage evictions
 ```
 
+<Quiz questions={[
+  {q: 'After enabling KV cache offloading to CPU memory, the engine Pod keeps getting OOMKilled. What is most likely?', options: ['The accelerator memory is too small', 'The Pod\'s memory requests and limits do not include the offload size', 'The ephemeral-storage limit is too low', 'Shared storage stopped responding'], answer: 1, why: 'Cache offloaded to CPU memory counts against the Pod\'s memory. If the limits do not include the offload size, the container is OOMKilled.'},
+  {q: 'When does offloading actually help a returning conversation?', options: ['Only when the model is quantized', 'Whenever the KV cache usage is below 50%', 'When loading the cache back is faster than recomputing the conversation', 'When the conversation is very short'], answer: 2, why: 'Offloading only pays off when loading back is faster than recomputing. For long conversations that come back, loading is much faster, so the first token is delayed less.'},
+  {q: 'Your engines offload KV cache to shared storage, and TTFT suddenly spikes across replicas. What should you check first?', options: ['Storage response time next to TTFT, since storage latency shows up directly in the first token', 'The tokenizer version', 'The HPA scale-down window', 'The model\'s attention head count'], answer: 0, why: 'With shared storage, storage latency shows up directly in time to first token, and a stalled store can stall the engines waiting on it.'},
+]} />
+
 Further reading: [GPUDirect Storage](https://docs.nvidia.com/gpudirect-storage/) · [LMCache](https://github.com/LMCache/LMCache) · [Resource Management for Pods and Containers](https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/)

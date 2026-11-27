@@ -211,4 +211,10 @@ sudo openssl x509 -in /var/lib/kubelet/pki/kubelet-client-current.pem -noout -en
 echo | openssl s_client -connect <API-서버>:6443 2>/dev/null | openssl x509 -noout -dates   # 떠 있는 API 서버가 실제로 내미는 인증서(재시작했나)
 ```
 
+<Quiz questions={[
+  {q: '1년 넘게 잘 돌던 클러스터에서 갑자기 kubectl이 certificate has expired (x509) 오류로 실패한다. 미리 아무 경고가 없었던 이유는 무엇인가?', options: ['인증서 만료는 사전 경고나 느려짐 없이 정확히 그 시각에 일어나기 때문이다', '경고가 kubelet 로그로만 갔기 때문이다', 'kubeadm이 기본으로 경고를 끄기 때문이다', '인증서가 지난 한 달 동안 서서히 만료되었기 때문이다'], answer: 0, why: '만료 시각 전까지 클러스터는 완전히 정상이고, 그 시각이 지나면 한꺼번에 접속이 거부된다. 그래서 만료일을 지표와 알림으로 챙겨야 하기 때문이다.'},
+  {q: 'kubeadm certs renew를 실행했는데 kubectl이 여전히 같은 만료 오류를 낸다. 무엇을 빠뜨렸을 가능성이 큰가?', options: ['쿠버네티스를 먼저 업그레이드하는 것', '컨트롤 플레인 구성요소를 재시작하고 새 관리자 kubeconfig를 나눠 주는 것', 'cert-manager를 설치하는 것'], answer: 1, why: '구성요소는 시작할 때 인증서를 읽어 두므로 재시작 전까지 옛 인증서를 쓴다. 갱신과 재시작은 한 묶음의 작업이기 때문이다.'},
+  {q: '다른 곳은 멀쩡한데 특정 노드 하나만 NotReady가 되었다. 어느 인증서를 의심해야 하는가?', options: ['etcd 인증서', 'API 서버 인증서', '그 노드의 kubelet 인증서', '관리자 kubeconfig'], answer: 2, why: 'kubelet 인증서가 만료되면 그 노드가 NotReady가 된다. 노드의 kubelet 로그를 확인하면 된다.'},
+]} />
+
 더 읽을거리: [kubeadm을 사용한 인증서 관리](https://kubernetes.io/docs/tasks/administer-cluster/kubeadm/kubeadm-certs/) · [PKI 인증서와 요구 사항](https://kubernetes.io/docs/setup/best-practices/certificates/) · [cert-manager](https://cert-manager.io/docs/)

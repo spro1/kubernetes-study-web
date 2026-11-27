@@ -212,4 +212,10 @@ kubectl get deploy -l app=web                        # Replicas of blue and gree
 kubectl port-forward deploy/web-green 8080:<port>    # Test green before switching
 ```
 
+<Quiz questions={[
+  {q: 'You changed the web Service selector from version: blue to version: green, and now every request fails. What should you check first?', options: ['Whether the green pod labels exactly match the new selector', 'Whether web-blue was scaled to 0', 'Whether the Deployment rollout history has the green image'], answer: 0, why: 'If the green pod labels do not match the selector, the Service endpoints are empty and requests fail. Check the endpoints, not just the Deployment.'},
+  {q: 'For a mesh-less canary, you run web-blue with 3 replicas and web-green with 1, but the canary gets no requests. What is the likely cause?', options: ['The Service spreads requests only to the oldest pods', 'version is still in the Service selector, so only blue pods match', 'A canary needs at least 2 green replicas', 'Green pods must be tested with port-forward first'], answer: 1, why: 'A canary works only when both Deployments carry the selector labels. With version: blue still in the selector, green pods are never picked.'},
+  {q: 'At the canary stage (blue 3, green 1), errors rise. What is the simplest rollback?', options: ['kubectl rollout undo on web-blue', 'Delete the web Service and recreate it', 'Scale web-green to 0 replicas'], answer: 2, why: 'With green at 0, only blue pods match the selector, so all requests go back to 1.0. The existing Deployment does not need to be changed or rolled back.'},
+]} />
+
 Further reading: [CNCF certification curriculum](https://github.com/cncf/curriculum) · [Deployments](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/) · [Service](https://kubernetes.io/docs/concepts/services-networking/service/) · [Zero-Downtime Deploys (Rolling Update)](../k8s/rolling-update.mdx) · [Service Mesh ② Splitting Traffic](../feature/mesh-traffic.mdx)

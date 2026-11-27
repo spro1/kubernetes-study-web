@@ -1,7 +1,7 @@
 ---
 id: node-troubleshoot
 title: Node NotReady and component failures (CKA)
-sidebar_label: 04 · Node and component failures
+sidebar_label: 05 · Node and component failures
 description: Follow an animation of narrowing down a NotReady node through kubelet status and logs, and of using crictl and fixing the manifest when the API server, running as a static pod, dies and kubectl stops working
 summary: 'Troubleshooting node failures by checking kubelet, the runtime and static Pods in turn.'
 icon: alert
@@ -197,5 +197,11 @@ sudo journalctl -u kubelet -n 50 --no-pager          # Most recent kubelet error
 sudo crictl ps -a --name kube-apiserver              # API server container Exited?
 sudo crictl logs <container-id>                      # Its last error
 ```
+
+<Quiz questions={[
+  {q: 'worker-1 is NotReady and describe shows Kubelet stopped posting node status. Where do you look for the cause?', options: ['kubectl logs on the API server Pod', 'Log in to worker-1 and run systemctl status kubelet, then journalctl -u kubelet', 'The scheduler\'s events'], answer: 1, why: 'NotReady means the kubelet stopped reporting, and the API server cannot see inside the node. You must log in to that node and read the kubelet status and logs.'},
+  {q: 'kubectl get pods ends with connection refused. How do you see whether the kube-apiserver container exited?', options: ['ssh to the control plane node and run crictl ps -a, then crictl logs', 'kubectl describe pod kube-apiserver -n kube-system', 'kubectl get events -A', 'Restart kubectl'], answer: 0, why: 'kubectl works only through the API server. crictl asks the container runtime directly, bypassing the API server.'},
+  {q: 'The API server static Pod has a wrong flag in its manifest. How do you fix it?', options: ['kubectl edit pod kube-apiserver -n kube-system', 'kubectl delete the Pod so it is recreated', 'kubectl apply a corrected YAML', 'Edit /etc/kubernetes/manifests/kube-apiserver.yaml; the kubelet notices and recreates it'], answer: 3, why: 'Static Pods are started by the kubelet from files in /etc/kubernetes/manifests. kubectl cannot fix them; only editing the file makes the kubelet recreate the Pod.'},
+]} />
 
 Further reading: [CNCF certification curriculum](https://github.com/cncf/curriculum) · [Troubleshooting clusters](https://kubernetes.io/docs/tasks/debug/debug-cluster/) · [Debugging nodes with crictl](https://kubernetes.io/docs/tasks/debug/debug-cluster/crictl/) · [When a Pod Dies (Self-Healing)](../k8s/self-healing.mdx) · [Cluster Certificate Expiry](../advanced/cluster-cert.mdx)

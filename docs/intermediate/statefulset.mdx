@@ -1,7 +1,7 @@
 ---
 id: statefulset
 title: StatefulSets and databases
-sidebar_label: 10 · StatefulSets and databases
+sidebar_label: 12 · StatefulSets and databases
 description: Follow an animation of how a StatefulSet creates pods with ordinal names one by one, gives each pod its own PVC and a stable DNS name, and reattaches the same data when a pod comes back
 summary: 'Pods that start in order, stable names, and a volume that follows each Pod.'
 icon: db
@@ -174,5 +174,11 @@ kubectl get svc <service> -o jsonpath='{.spec.clusterIP}'   # None means headles
 kubectl get sts <name> -o jsonpath='{.spec.persistentVolumeClaimRetentionPolicy}'   # What happens to PVCs
 kubectl run dns-test --rm -it --image=busybox:1.36 --restart=Never -- nslookup <pod>.<service>   # Fixed DNS name (removed on exit)
 ```
+
+<Quiz questions={[
+  {q: 'The db-1 pod of a StatefulSet is deleted. What comes back?', options: ['A pod with a new random name and an empty PVC', 'A pod named db-1 that reattaches to data-db-1', 'Nothing, until you scale the StatefulSet again'], answer: 1, why: 'A StatefulSet recreates the pod with the same name, and it reattaches to the same PVC. The IP may change, but the name and data stay.'},
+  {q: 'You create a StatefulSet with 3 replicas, but only db-0 exists and db-1 is never created. What is most likely?', options: ['db-0 never became Ready', 'The headless Service is missing', 'The PVC template name is too long', 'StatefulSets create higher ordinals first'], answer: 0, why: 'Pods are created one at a time from ordinal 0, and the next one waits until the previous one is Ready.'},
+  {q: 'After scaling a StatefulSet from 3 to 2 and later deleting it, storage use stays high. Why?', options: ['The pods are still running in the background', 'The headless Service holds the storage', 'The PVCs remain by default and keep holding space'], answer: 2, why: 'PVCs are kept by default on scale-down and delete to protect data. Check orphaned PVCs with kubectl get pvc and clean them up if not needed.'},
+]} />
 
 Further reading: [StatefulSets](https://kubernetes.io/docs/concepts/workloads/controllers/statefulset/) · [Persistent volumes](https://kubernetes.io/docs/concepts/storage/persistent-volumes/) · [Finding Services by Name (Service·DNS)](../k8s/service-dns.mdx)

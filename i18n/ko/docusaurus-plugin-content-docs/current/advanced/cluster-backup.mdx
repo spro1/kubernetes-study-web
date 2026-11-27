@@ -1,7 +1,7 @@
 ---
 id: cluster-backup
 title: 클러스터 백업과 복구
-sidebar_label: 09 · 클러스터 백업과 복구
+sidebar_label: 11 · 클러스터 백업과 복구
 description: 쿠버네티스 클러스터의 상태가 어디에 있는지, 클러스터 전체를 되살리는 etcd 스냅숏, API 오브젝트와 볼륨 데이터를 오브젝트 스토리지로 보내는 Velero 백업, 일관성을 맞추는 훅, TTL이 있는 스케줄, 다른 클러스터로의 복구를 애니메이션으로 따라간다
 summary: 'etcd 스냅숏, 오브젝트와 볼륨을 함께 담는 Velero 백업, 일관성 훅, 새 클러스터로의 복구.'
 icon: archive
@@ -212,7 +212,7 @@ hide_table_of_contents: true
 | 데이터베이스 덤프·복제 | 없음 | 그 데이터베이스만, 일관성 있게 | 데이터베이스 하나 | 데이터베이스, 특정 시점 복구 |
 | Git(GitOps) | 직접 쓴 매니페스트 | 없음 | 저장소에 있는 것 | 설정 재구성, 데이터는 아님 |
 
-## 직접 해 보기
+## 직접 확인해 보기
 
 ```bash
 # etcd 스냅숏 (kubeadm 경로, 컨트롤 플레인 노드에서 실행)
@@ -230,5 +230,11 @@ velero backup logs shop-test | grep -i error
 velero restore create --from-backup shop-test --namespace-mappings shop:shop-restore-test   # 원본 옆에 복구해 보기
 velero restore describe <restore-name>            # 건너뛴 항목과 실패한 항목
 ```
+
+<Quiz questions={[
+  {q: '누군가 shop 네임스페이스의 Deployment 하나를 지웠다. etcd 스냅숏 복구가 알맞지 않은 이유는 무엇인가?', options: ['etcd 스냅숏에는 Deployment가 들어 있지 않기 때문이다', 'Deployment 하나가 아니라 클러스터의 모든 네임스페이스를 스냅숏 시점으로 되감기 때문이다', 'etcd 스냅숏은 새 클러스터로만 복구할 수 있기 때문이다', 'Velero를 먼저 설치해야 하기 때문이다'], answer: 1, why: 'etcd 복구는 컨트롤 플레인을 잃었을 때 쓰는 것으로, 클러스터 전체를 한꺼번에 되감는다. 지워진 리소스 하나는 Velero 백업에서 그 네임스페이스를 복구하면 되기 때문이다.'},
+  {q: 'etcd 스냅숏을 복구했더니 데이터베이스의 PVC와 PV 오브젝트는 돌아왔지만 데이터베이스가 비어 있다. 가장 그럴듯한 원인은 무엇인가?', options: ['볼륨 데이터는 처음부터 etcd에 없었고, 디스크를 잃었는데 데이터를 따로 백업하지 않았다', 'PVC가 이미 있어서 복구가 건너뛰었다', '클라이언트 인증서 없이 스냅숏을 찍었다'], answer: 0, why: 'etcd에는 API 오브젝트만 있고 볼륨 위의 바이트는 없다. 볼륨 데이터는 스토리지 스냅숏, 파일 단위 복사, 데이터베이스 덤프로 따로 백업해야 하기 때문이다.'},
+  {q: 'Velero와 CSI 스냅숏만으로 백업했다. 그 리전의 스토리지 시스템 전체가 망가졌다. 어떻게 되는가?', options: ['Velero가 오브젝트 압축 파일에서 볼륨을 다시 만든다', 'CSI 스냅숏은 늘 버킷으로 복사되므로 잃는 것이 없다', '훅이 pg_dump에서 데이터를 자동으로 다시 만든다', '스냅숏이 같은 스토리지 시스템에 남아 있었으므로 볼륨 데이터를 잃었을 가능성이 크다'], answer: 3, why: 'CSI 스냅숏은 보통 같은 스토리지 시스템, 같은 리전에 남는다. 볼륨 데이터를 버킷으로 복사하려면 --snapshot-move-data나 파일 시스템 백업을 써야 하기 때문이다.'},
+]} />
 
 더 읽을거리: [etcd 클러스터 운영: 백업과 복구](https://kubernetes.io/docs/tasks/administer-cluster/configure-upgrade-etcd/#backing-up-an-etcd-cluster) · [etcd 재해 복구](https://etcd.io/docs/latest/op-guide/recovery/) · [Velero 문서](https://velero.io/docs/) · [Velero 백업 훅](https://velero.io/docs/main/backup-hooks/) · [Velero 파일 시스템 백업](https://velero.io/docs/main/file-system-backup/) · [컨트롤 플레인 고가용성과 etcd 쿼럼](../advanced/etcd-quorum.mdx) · [멀티 리전 재해 복구](../cloud/multi-region-dr.mdx) · [오브젝트 스토리지는 이렇게 움직인다](../cloud/object-storage.mdx)

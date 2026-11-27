@@ -1,0 +1,250 @@
+---
+id: node-autoscaling
+title: Adding and Removing Nodes (Cluster Autoscaler vs Karpenter)
+sidebar_label: 09 · Node Autoscaling
+description: Animated walkthrough of node autoscaling, from an unschedulable Pod to Cluster Autoscaler raising a node group's size or Karpenter launching a fitting instance from a NodePool, the minutes of provisioning delay, consolidation of underused nodes, what blocks scale-down, and spot interruptions
+summary: 'A Pending Pod asks for a node. How Cluster Autoscaler and Karpenter answer, why it takes minutes, and what keeps a node from going away.'
+icon: cloud
+hide_table_of_contents: true
+---
+
+# Adding and Removing Nodes (Cluster Autoscaler vs Karpenter)
+
+The HPA adds Pods, but someone has to add the machines they run on. Follow one Pending Pod through **Cluster Autoscaler** and **Karpenter**, then watch both remove nodes again, and see what stops them.
+
+<StepDiagram
+  width={1000}
+  height={460}
+  meta={{duration: '~13 min', level: 'Intermediate'}}
+  groups={[
+    {label: 'Kubernetes cluster', x: 20, y: 30, w: 565, h: 420, tone: 'biz'},
+    {label: 'Cloud provider', x: 600, y: 30, w: 380, h: 420, tone: 'plain'},
+  ]}
+  nodes={[
+    {id: 'pod', label: 'Pending Pod', sub: 'web · 2 CPU request', icon: 'pod', tone: 'app', x: 110, y: 100, show: true},
+    {id: 'sched', label: 'kube-scheduler', sub: 'Unschedulable', icon: 'target', tone: 'cp', x: 110, y: 230, show: true},
+    {id: 'pdb', label: 'PDB', sub: 'web minAvailable', icon: 'shield', tone: 'store', x: 320, y: 370},
+    {id: 'ca', label: 'Cluster Autoscaler', sub: 'Node group sizes', icon: 'scale', tone: 'cp', x: 320, y: 100, w: 170},
+    {id: 'karp', label: 'Karpenter', sub: 'Reads Pod needs', icon: 'scale', tone: 'cp', x: 320, y: 230, w: 170},
+    {id: 'npool', label: 'NodePool', sub: '+ EC2NodeClass', icon: 'layers', tone: 'store', x: 110, y: 370, w: 170},
+    {id: 'n1', label: 'node-1', sub: 'Full', icon: 'server', tone: 'node', size: 'sm', x: 510, y: 165, show: true},
+    {id: 'n2', label: 'node-2', sub: 'Mostly idle', icon: 'server', tone: 'node', size: 'sm', x: 510, y: 300, show: true},
+    {id: 'n3', label: 'node-3', sub: 'New VM', icon: 'server', tone: 'node', size: 'sm', x: 510, y: 400},
+    {id: 'asg', label: 'Node group', sub: 'Fixed instance type', icon: 'layers', tone: 'ext', x: 790, y: 100, w: 170},
+    {id: 'api', label: 'Compute API', sub: 'Create / delete VM', icon: 'cloud', tone: 'ext', x: 790, y: 230, w: 170},
+    {id: 'spot', label: 'Spot notice', sub: 'Interruption events', icon: 'alert', tone: 'ext', x: 790, y: 370, w: 170},
+  ]}
+  metrics={[
+    {id: 'pending', label: 'Pending Pods'},
+    {id: 'nodes', label: 'Nodes'},
+    {id: 'action', label: 'Autoscaler'},
+  ]}
+  learn={[
+    {text: 'Node autoscalers react to unschedulable Pods, not to CPU', at: 0},
+    {text: 'Cluster Autoscaler resizes node groups from templates', at: 1},
+    {text: 'Karpenter picks an instance for the Pods from a NodePool', at: 3},
+    {text: 'Why a new node takes minutes', at: 4},
+    {text: 'Scale-down, consolidation, and what blocks it', at: 5},
+    {text: 'Handling spot interruptions', at: 8},
+  ]}
+  steps={[
+    {
+      short: 'Start',
+      kind: '시작',
+      title: 'A Pod is Pending because no node has room',
+      text: [
+        'The HPA raised web to 5 replicas. The new Pod requests 2 CPU, and no node has 2 CPU of unrequested room. The scheduler sets the condition PodScheduled=False with reason Unschedulable.',
+        'That condition is the signal a node autoscaler waits for. It does not look at CPU usage. It looks for Pods the scheduler could not place, and asks whether a new node would fix that.',
+      ],
+      keyIdea: 'A Pod without resource requests never looks too big for a node, so it never triggers a scale-up. Requests drive node autoscaling.',
+      flows: [{from: 'sched', to: 'pod', label: 'Unschedulable', type: 'watch'}],
+      focus: ['pod', 'sched'],
+      status: {pod: 'warn', n1: 'warn'},
+      values: {pending: {text: '1', tone: 'bad'}, nodes: '2', action: 'Watching'},
+    },
+    {
+      short: 'CA simulates',
+      kind: '원리',
+      title: 'Cluster Autoscaler simulates the Pod on each node group',
+      text: [
+        'Cluster Autoscaler works with node groups: an AWS Auto Scaling group, a GKE node pool, an Azure VM scale set. Every node in a group has the same shape. For each group, it builds a template node and simulates: would the Pending Pod fit on one more of these?',
+        'If several groups would work, an expander chooses one (for example least-waste, priority or random). Then Cluster Autoscaler raises that group\'s desired size by the number of nodes needed.',
+      ],
+      keyIdea: 'Cluster Autoscaler never chooses an instance type. It only picks a group and changes its size. To offer more shapes, you create more groups.',
+      flows: [
+        {from: 'ca', to: 'pod', label: 'Watch Pending', type: 'watch'},
+        {from: 'ca', to: 'asg', label: 'desired +1', type: 'request'},
+      ],
+      focus: ['ca', 'asg'],
+      badges: {asg: 'desired 2 → 3'},
+      values: {action: 'CA · scale up group'},
+    },
+    {
+      short: 'Group grows',
+      kind: '원리',
+      title: 'The cloud launches a VM from the group template',
+      text: [
+        'The node group itself calls the compute API and launches a VM with the template\'s instance type, image and zone settings. The VM boots, the kubelet registers a Node, and the scheduler places the Pending Pod.',
+        'If the Pod needs something the template does not show, such as a label set only at boot, the simulation can guess wrong. Cluster Autoscaler then adds a node the Pod still cannot use.',
+      ],
+      flows: [
+        {from: 'asg', to: 'api', label: 'Launch', type: 'request'},
+        {from: 'api', to: 'n3', label: 'VM', type: 'request'},
+      ],
+      focus: ['asg', 'n3'],
+      status: {n3: 'warn'},
+      badges: {asg: null, n3: 'Joining'},
+      values: {nodes: '2 + 1 joining'},
+    },
+    {
+      short: 'Karpenter',
+      kind: '원리',
+      title: 'Karpenter reads the Pod and launches a fitting instance',
+      text: [
+        'Karpenter skips node groups. It reads the Pending Pods\' requests, node selectors, affinity, tolerations and topology spread, then matches them against a NodePool. The NodePool lists allowed requirements (instance families, zones, karpenter.sh/capacity-type spot or on-demand) and limits.',
+        'It picks an instance type that fits the batch of Pods, creates a NodeClaim, and calls the compute API directly. The NodePool points to a NodeClass (EC2NodeClass on AWS) for the image, subnets and security groups.',
+      ],
+      keyIdea: 'One NodePool can cover many instance types. Karpenter sizes the node to the waiting Pods instead of resizing a fixed group.',
+      flows: [
+        {from: 'karp', to: 'pod', label: 'Read needs', type: 'watch'},
+        {from: 'npool', to: 'karp', label: 'Requirements', type: 'watch'},
+        {from: 'karp', to: 'api', label: 'Launch', type: 'request'},
+      ],
+      focus: ['karp', 'npool', 'api'],
+      badges: {n3: null, npool: 'spot, on-demand'},
+      values: {action: 'Karpenter · NodeClaim'},
+    },
+    {
+      short: 'Delay',
+      kind: '주의',
+      title: 'A new node takes minutes, not seconds',
+      text: [
+        'Either way, the Pod waits for the VM to boot, the kubelet to join, the CNI to make the node Ready, and the container image to download. Often that is a few minutes, longer for GPU nodes or big images.',
+        'Cluster Autoscaler gives a node up to max-node-provision-time (15 minutes by default) to register. If it does not, the node is treated as failed and another group may be tried.',
+      ],
+      keyIdea: 'For bursty traffic, keep headroom: scale Pods earlier, or run low-priority placeholder Pods that get preempted so real Pods start at once while a node is added for the placeholders.',
+      focus: ['n3', 'pod'],
+      status: {n3: 'ok', pod: 'ok', n1: null},
+      badges: {n3: 'Boot · join · pull'},
+      values: {pending: {text: '0', tone: 'good'}, nodes: '3'},
+    },
+    {
+      short: 'CA scale-down',
+      kind: '원리',
+      title: 'Cluster Autoscaler removes nodes that are not needed',
+      text: [
+        'Traffic drops. node-2 now runs one small Pod. Cluster Autoscaler marks a node unneeded when the sum of its Pods\' requests is under a threshold (0.5 of allocatable by default) and those Pods fit on other nodes.',
+        'After the node stays unneeded for scale-down-unneeded-time (10 minutes by default), it drains the node, respecting PDBs, and shrinks the group.',
+      ],
+      flows: [
+        {from: 'ca', to: 'n2', label: 'Drain', type: 'request'},
+        {from: 'ca', to: 'asg', label: 'desired -1', type: 'request'},
+      ],
+      focus: ['ca', 'n2'],
+      status: {n2: 'warn'},
+      badges: {npool: null, n3: null, n2: '20% requested'},
+      values: {action: 'CA · scale down'},
+    },
+    {
+      short: 'Consolidate',
+      kind: '원리',
+      title: 'Karpenter consolidates: delete or replace with something cheaper',
+      text: [
+        'Karpenter\'s NodePool has spec.disruption. consolidationPolicy WhenEmptyOrUnderutilized (the default) lets it delete a node whose Pods fit elsewhere, or replace several nodes with one cheaper one. WhenEmpty only removes nodes with no workload Pods. consolidateAfter sets how long to wait.',
+        'Disruption budgets limit how many nodes it may disrupt at once (10% if you set none). expireAfter (720h by default) replaces old nodes so they pick up new images.',
+      ],
+      flows: [
+        {from: 'karp', to: 'n2', label: 'Consolidate', type: 'request'},
+        {from: 'npool', to: 'karp', label: 'disruption', type: 'watch'},
+      ],
+      focus: ['karp', 'npool', 'n2'],
+      badges: {npool: 'WhenEmptyOrUnderutilized'},
+      values: {action: 'Karpenter · consolidate'},
+    },
+    {
+      short: 'Blocked',
+      kind: '문제',
+      title: 'Some Pods keep an idle node alive',
+      text: [
+        'node-2 stays, and keeps costing money. A PDB with no disruptions allowed stops the eviction. Cluster Autoscaler also skips nodes with Pods using local storage (hostPath, or emptyDir not in memory), kube-system Pods without a PDB, Pods with no controller, and Pods annotated cluster-autoscaler.kubernetes.io/safe-to-evict: "false".',
+        'Karpenter skips nodes with a Pod annotated karpenter.sh/do-not-disrupt: "true". It also respects PDBs and its own budgets.',
+      ],
+      keyIdea: 'When a node never goes away, look at its Pods, not the autoscaler. One stuck Pod can hold a whole VM.',
+      flows: [{from: 'pdb', to: 'n2', label: 'No disruptions left', type: 'watch'}],
+      focus: ['pdb', 'n2'],
+      status: {n2: 'error'},
+      badges: {npool: null, n2: 'Cannot drain'},
+      values: {action: {text: 'Scale-down blocked', tone: 'bad'}},
+    },
+    {
+      short: 'Spot',
+      kind: '장애',
+      title: 'A spot node gets an interruption notice',
+      text: [
+        'node-3 is a spot instance. The cloud takes it back with short notice (two minutes on AWS). Karpenter, given an interruption queue that receives these events, taints and drains the node and launches a replacement in parallel.',
+        'Cluster Autoscaler does not watch these notices itself. The provider\'s managed node groups or a handler (such as AWS Node Termination Handler) drain the node, and Cluster Autoscaler adds capacity when Pods go Pending.',
+      ],
+      keyIdea: 'Run spot Pods as several replicas with a PDB, and make them shut down well inside the notice period.',
+      flows: [
+        {from: 'spot', to: 'karp', label: '2 min notice', type: 'watch', bend: 0.2},
+        {from: 'karp', to: 'n3', label: 'Drain', type: 'request'},
+        {from: 'karp', to: 'api', label: 'Replace', type: 'request'},
+      ],
+      focus: ['spot', 'karp', 'n3'],
+      status: {n2: null, n3: 'error'},
+      badges: {n2: null, n3: 'Interrupted'},
+      values: {action: 'Replace spot node'},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Pending Pods add nodes, requests decide when they go',
+      text: [
+        'Both tools add nodes when Pods are unschedulable. Cluster Autoscaler resizes node groups you defined in advance. Karpenter reads the Pods and picks an instance from a NodePool.',
+        'Both remove nodes whose Pods fit elsewhere, and both are stopped by PDBs and do-not-evict annotations. A new node always costs minutes.',
+      ],
+      keyIdea: 'Set accurate requests, keep some headroom for bursts, and check what Pods sit on a node that will not scale down.',
+      focus: ['ca', 'karp'],
+      status: {n3: null, pod: null, n2: null},
+      badges: {n3: null},
+    },
+  ]}
+/>
+
+## Cluster Autoscaler vs Karpenter
+
+| | Cluster Autoscaler | Karpenter |
+|---|---|---|
+| Unit it manages | Node groups (ASG, node pool, VM scale set) | NodeClaims from a NodePool |
+| Instance type | Fixed per group | Chosen per batch of Pods from allowed requirements |
+| How it scales up | Simulates the Pod on each group's template, raises desired size | Calls the compute API directly |
+| Scale-down | Node under utilization threshold and Pods fit elsewhere, for 10 min by default | Consolidation: delete, or replace with cheaper (`consolidationPolicy`, `consolidateAfter`) |
+| Stop a Pod's node from going away | `cluster-autoscaler.kubernetes.io/safe-to-evict: "false"` | `karpenter.sh/do-not-disrupt: "true"` |
+| Stop a node from going away | Node annotation `cluster-autoscaler.kubernetes.io/scale-down-disabled: "true"` | Node annotation `karpenter.sh/do-not-disrupt: "true"`, or a budget of `nodes: "0"` |
+| Spot interruptions | Left to the provider or a separate handler | Built in, with an interruption queue |
+| Where it runs | Many clouds | AWS, Azure, and other providers with a Karpenter integration |
+
+## Try it yourself
+
+```bash
+kubectl get pods -A --field-selector=status.phase=Pending      # Who is waiting for a node
+kubectl describe pod <pod>                                     # Events: TriggeredScaleUp / NotTriggerScaleUp, or Karpenter's
+kubectl get nodes -L node.kubernetes.io/instance-type,topology.kubernetes.io/zone
+
+# Cluster Autoscaler
+kubectl -n kube-system get configmap cluster-autoscaler-status -o yaml   # Scale-up / scale-down state per group
+
+# Karpenter
+kubectl get nodepools                                          # Pools, readiness, used resources
+kubectl get nodeclaims                                         # One per launched node: type, zone, capacity type
+kubectl get ec2nodeclasses                                     # AWS: image, subnets, security groups
+kubectl annotate pod <pod> karpenter.sh/do-not-disrupt=true    # Protect a Pod's node from consolidation
+```
+
+<Quiz questions={[
+  {q: 'Every node is at 30% CPU usage, yet a new Pod stays Pending and a node is added. Why?', options: ['The autoscaler adds nodes when average CPU usage crosses a threshold', 'The scheduler and the autoscaler count requests, and the Pod\'s request does not fit in the unrequested room', 'Pending Pods are always placed on new nodes'], answer: 1, why: 'Scheduling and node autoscaling both work on resource requests. Low usage does not help if requests already fill the nodes.'},
+  {q: 'Pods need a GPU type that no existing node group offers. What does Cluster Autoscaler do?', options: ['Nothing useful: it only resizes existing groups, so no template fits and the Pod stays Pending', 'It launches the right GPU instance directly', 'It changes the instance type of the closest group'], answer: 0, why: 'Cluster Autoscaler simulates the Pod on the templates of existing groups. If none fits, you must create a group. Karpenter would pick a matching type if its NodePool allows it.'},
+  {q: 'A mostly idle node is never removed. Which is the most likely cause?', options: ['The node is too new', 'The node runs a Pod that cannot be evicted, such as one blocked by a PDB or marked do-not-disrupt', 'Scale-down only happens at night'], answer: 1, why: 'Both tools drain a node before deleting it. A Pod that cannot be evicted keeps the node alive.'},
+]} />
+
+Further reading: [Cluster Autoscaler FAQ](https://github.com/kubernetes/autoscaler/blob/master/cluster-autoscaler/FAQ.md) · [Karpenter NodePools](https://karpenter.sh/docs/concepts/nodepools/) · [Karpenter disruption](https://karpenter.sh/docs/concepts/disruption/) · [Node autoscaling on kubernetes.io](https://kubernetes.io/docs/concepts/cluster-administration/node-autoscaling/) · [Scaling with Load (HPA)](../k8s/autoscaling.mdx) · [Managed Kubernetes — Who Runs What](../cloud/managed-kubernetes.mdx) · [Draining Nodes and Upgrading the Cluster](../k8s/node-drain.mdx)

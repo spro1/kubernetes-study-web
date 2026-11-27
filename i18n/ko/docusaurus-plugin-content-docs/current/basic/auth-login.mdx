@@ -1,7 +1,7 @@
 ---
 id: auth-login
 title: 로그인은 이렇게 동작한다 (세션, JWT, OIDC)
-sidebar_label: 02 · 로그인은 이렇게 동작한다
+sidebar_label: 03 · 로그인은 이렇게 동작한다
 description: 비밀번호 해시와 세션 쿠키부터 상태 없는 JWT, OAuth 2.0 인가 코드 흐름과 PKCE·OpenID Connect로 하는 "Google로 로그인", ID·액세스·리프레시 토큰, 401과 403의 차이까지 웹 앱 로그인을 애니메이션으로 따라간다
 summary: '비밀번호 해시, 세션 쿠키와 JWT, PKCE를 쓰는 OIDC 인가 코드 흐름, 세 가지 토큰, 401과 403.'
 icon: ticket
@@ -215,5 +215,11 @@ echo "$TOKEN" | cut -d. -f2 | tr '_-' '/+' | base64 -d; echo   # payload: iss, s
 curl -i -H "Authorization: Bearer $TOKEN" https://api.example.com/me   # 200, 401(+ WWW-Authenticate), 403 중 무엇인지 본다
 date -r 1767225600                                                     # exp 값을 시각으로 바꾼다 (macOS. GNU는 date -d @1767225600)
 ```
+
+<Quiz questions={[
+  {q: 'alice는 유효한 새 액세스 토큰을 갖고 있는데, 관리자 엔드포인트를 부르자 403이 온다. 어떻게 해야 하는가?', options: ['리프레시 토큰으로 새 액세스 토큰을 받는다', '다시 로그인한다', '신원은 확인됐지만 그 동작이 허용되지 않은 것이니 권한을 더 부여받는다'], answer: 2, why: '403은 "누군지는 알지만 안 된다"는 뜻이라 새 토큰을 받아도 소용없기 때문이다. 자격 증명이 없거나 틀렸거나 만료됐을 때가 401이다.'},
+  {q: '사용자의 JWT를 도난당했다. 도난당한 세션 쿠키보다 막기 어려운 이유는 무엇인가?', options: ['서명된 JWT는 차단 목록 같은 장치가 없으면 exp까지 유효하지만, 세션은 기록만 지우면 무효가 되기 때문이다', 'JWT는 암호화되어 서버가 읽을 수 없기 때문이다', 'JWT에는 만료 시각을 넣을 수 없기 때문이다', '세션 쿠키는 네트워크로 보내지지 않기 때문이다'], answer: 0, why: '키를 가진 서버는 서명이 맞는 JWT를 조회 없이 받아들인다. 세션은 저장소 기록을 지우면 바로 막히므로 JWT는 수명을 짧게 두기 때문이다.'},
+  {q: '인가 코드 흐름에서 공격자가 리디렉션에 실린 일회용 코드를 훔쳤다. 그 코드로 토큰을 받지 못하는 이유는 무엇인가?', options: ['코드가 사용자 비밀번호로 암호화돼 있기 때문이다', '코드를 토큰으로 바꾸려면 challenge를 만든 클라이언트만 아는 PKCE code_verifier도 필요하기 때문이다', 'ID 제공자가 Google 도메인에서 온 코드만 받기 때문이다'], answer: 1, why: '앱은 코드와 code_verifier를 함께 토큰 엔드포인트로 보낸다. verifier가 없으면 코드만 훔쳐서는 쓸 수 없기 때문이다.'},
+]} />
 
 더 읽을거리: [OAuth 2.0 (RFC 6749)](https://datatracker.ietf.org/doc/html/rfc6749) · [PKCE (RFC 7636)](https://datatracker.ietf.org/doc/html/rfc7636) · [OAuth 2.0 보안 모범 사례 (RFC 9700)](https://datatracker.ietf.org/doc/html/rfc9700) · [JWT (RFC 7519)](https://datatracker.ietf.org/doc/html/rfc7519) · [OpenID Connect Core](https://openid.net/specs/openid-connect-core-1_0.html) · [OWASP 비밀번호 저장 치트 시트](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html) · [OWASP 세션 관리 치트 시트](https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html) · [쿠버네티스 OIDC 인증](https://kubernetes.io/docs/reference/access-authn-authz/authentication/#openid-connect-tokens) · [API 요청 하나의 권한 검사 (IAM)](../cloud/iam-request.mdx) · [누가 무엇을 할 수 있나 (RBAC)](../k8s/rbac.mdx)

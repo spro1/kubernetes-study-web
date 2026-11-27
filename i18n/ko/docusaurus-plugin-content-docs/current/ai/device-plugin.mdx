@@ -216,4 +216,10 @@ kubectl get events -A --field-selector reason=FailedScheduling   # Insufficient 
 kubectl exec <파드> -- nvidia-smi -L                  # 예: NVIDIA. 컨테이너에 GPU 하나만 보인다 (8단계)
 ```
 
+<Quiz questions={[
+  {q: '노드에 NVIDIA 드라이버는 깔렸는데 kubectl describe node에 nvidia.com/gpu가 보이지 않는다. 무엇이 빠졌을 가능성이 큰가?', options: ['kubelet에 등록하는 디바이스 플러그인이 돌고 있지 않다', '스케줄러 설정에 GPU 항목이 없다', '노드용 ResourceClaim이 없다', 'limits에 nvidia.com/gpu: 1을 적은 파드가 없다'], answer: 0, why: '드라이버만 있으면 운영체제는 장치를 알지만 쿠버네티스는 모른다. 디바이스 플러그인이 kubelet에 등록해야 kubelet이 capacity와 allocatable에 개수를 올리기 때문이다.'},
+  {q: '사용자가 GPU를 나눠 쓰려고 nvidia.com/gpu: 0.5를 요청했다. 어떻게 되는가?', options: ['파드가 GPU 메모리의 절반을 받는다', '확장 자원은 정수로만 요청하므로 거절된다', '스케줄러가 1로 올려 준다'], answer: 1, why: '확장 자원은 정수로만 요청하고 오버커밋이 없다. 나눠 쓰려면 MIG, Time-Slicing 같은 노드 쪽 공유 설정이 필요하기 때문이다.'},
+  {q: 'GPU 두 장인 노드에서 쉬고 있던 한 장이 고장 났다. 노드 상태에서 무엇이 바뀌는가?', options: ['capacity와 allocatable이 모두 1로 준다', 'kubelet이 재시작할 때까지 아무것도 바뀌지 않는다', 'capacity는 2로 두고 allocatable만 1로 준다', '노드가 NotReady가 된다'], answer: 2, why: '플러그인이 ListAndWatch로 그 장치를 Unhealthy로 알리면 kubelet은 capacity를 두고 allocatable만 줄인다. 그래서 둘의 차이를 지켜봐야 하기 때문이다.'},
+]} />
+
 더 읽을거리: [장치 플러그인](https://kubernetes.io/ko/docs/concepts/extend-kubernetes/compute-storage-net/device-plugins/) · [GPU 스케줄링](https://kubernetes.io/ko/docs/tasks/manage-gpus/scheduling-gpus/) · [NVIDIA GPU Operator 개요](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/overview.html)

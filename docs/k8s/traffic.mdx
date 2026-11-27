@@ -1,7 +1,7 @@
 ---
 id: traffic
 title: How a Request Reaches a Pod
-sidebar_label: 05 · How a Request Reaches a Pod
+sidebar_label: 07 · How a Request Reaches a Pod
 description: Follow, step by step, the path a browser request takes through a load balancer, Ingress, Service, and EndpointSlice to a pod, and how unready pods are removed from the targets
 summary: 'The traffic path from load balancer → Ingress → Service → Pod, and how unready Pods are taken out.'
 icon: route
@@ -171,5 +171,11 @@ kubectl get svc <service> -o wide                    # SELECTOR and ports
 kubectl get endpointslices -l kubernetes.io/service-name=<service> -o yaml   # conditions.ready per Pod
 kubectl get pods -o wide                             # READY column per Pod
 ```
+
+<Quiz questions={[
+  {q: 'The readiness probe of shop-c fails, but its container is still alive. What happens to traffic?', options: ['shop-c is killed and restarted right away', 'shop-c is removed from the endpoint list, new requests go only to shop-a and shop-b, and it returns when the probe passes', 'The Service stops sending requests to every pod'], answer: 1, why: 'A readiness probe asks whether a pod can take requests now, not whether it is alive. Only Ready pods stay in the EndpointSlice list.'},
+  {q: 'The labels in a Service\'s selector do not match any pod. What happens to requests sent to that Service?', options: ['The Service has 0 target pods, so requests reach no pod', 'The Ingress controller rejects the rule', 'The node networking picks a random pod anyway'], answer: 0, why: 'A Service picks target pods by label. A label mismatch leaves the endpoint list empty.'},
+  {q: 'Users cannot connect. The domain points to the load balancer, and the Ingress host and path are correct. What should you check next?', options: ['Restart every pod', 'Look up the DNS record again', 'Whether the Service labels and ports match the pods'], answer: 2, why: 'A request goes load balancer, Ingress, Service, Ready pod. After the first two, the next place to look is the Service, then whether any pod is Ready.'},
+]} />
 
 Further reading: [Ingress](https://kubernetes.io/docs/concepts/services-networking/ingress/) · [Service](https://kubernetes.io/docs/concepts/services-networking/service/) · [EndpointSlices](https://kubernetes.io/docs/concepts/services-networking/endpoint-slices/)

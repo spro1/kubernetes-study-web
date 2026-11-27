@@ -194,4 +194,10 @@ aws ec2 describe-security-groups --group-ids <sg-id> --query 'SecurityGroups[].I
 aws ec2 describe-nat-gateways --filter Name=vpc-id,Values=<vpc-id>   # NAT gateway for the way out
 ```
 
+<Quiz questions={[
+  {q: 'What makes a subnet "public" rather than "private"?', options: ['Its route table sends internet traffic to the internet gateway', 'It has a security group attached', 'It holds a database', 'It uses a larger IP range'], answer: 0, why: 'If the subnet\'s route table says "the way to the internet = the internet gateway", it is public. Otherwise it is private.'},
+  {q: 'A web server in a private subnet must download OS security patches. How does it reach the internet?', options: ['Through the load balancer in the public subnet', 'By opening port 22 in its security group', 'Through the NAT gateway, which lets out connections started from inside but accepts none started from outside'], answer: 2, why: 'A private subnet cannot go straight out the internet gateway. The NAT gateway goes out for it, and the server stays hidden from inbound connections.'},
+  {q: 'The web server\'s security group allows only inbound 443 from the load balancer and has no outbound rule for responses. Do the responses get back to users?', options: ['No, you must add an outbound rule for every response', 'Yes, because security groups are stateful and let responses on an allowed connection go out', 'Only if a network ACL also allows it inbound'], answer: 1, why: 'Security groups remember state, so responses go out automatically. A network ACL does not remember state, so with an ACL both directions must be opened.'},
+]} />
+
 Further reading: [What is Amazon VPC? (AWS)](https://docs.aws.amazon.com/vpc/latest/userguide/what-is-amazon-vpc.html) · [Security groups (AWS)](https://docs.aws.amazon.com/vpc/latest/userguide/vpc-security-groups.html) · [Service (Kubernetes docs)](https://kubernetes.io/docs/concepts/services-networking/service/) · [When You Type an Address](../basic/web-request.mdx)

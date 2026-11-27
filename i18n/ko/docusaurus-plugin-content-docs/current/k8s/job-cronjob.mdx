@@ -1,7 +1,7 @@
 ---
 id: job-cronjob
 title: 한 번 돌고 끝나는 일 (Job·CronJob)
-sidebar_label: 09 · 한 번 돌고 끝나는 일
+sidebar_label: 11 · 한 번 돌고 끝나는 일
 description: Job이 파드를 만들어 완료까지 지켜보고 실패하면 다시 시도하는 과정, CronJob이 일정마다 Job을 만들고 겹치는 실행과 기록을 다루는 방식을 애니메이션으로 따라간다
 summary: '끝까지 실행되고 멈추는 작업, 실패했을 때의 재시도, 일정마다 도는 작업.'
 icon: spark
@@ -170,5 +170,11 @@ kubectl get job try-job                              # COMPLETIONS가 1/1이 된
 kubectl logs job/try-job                             # 로그는 Job이 만든 파드에 있다
 kubectl delete job try-job                           # 정리(파드도 함께 지워진다)
 ```
+
+<Quiz questions={[
+  {q: 'Job의 backoffLimit은 3이고, 첫 파드가 오류로 끝났다. 다음에 무슨 일이 일어나는가?', options: ['Job이 곧바로 실패(Failed)로 끝난다', 'Job이 새 파드를 만들어 다시 시도하고, 실패한 파드는 로그를 볼 수 있게 남는다', 'Job이 실패한 파드와 로그를 지운다'], answer: 1, why: 'Job은 실패가 backoffLimit을 넘을 때까지 기다리는 시간을 조금씩 늘리며 새 파드로 다시 시도하기 때문이다. 실패한 파드는 원인을 보도록 남는다.'},
+  {q: '매일 02:00 CronJob이 가끔 다음 날 02:00까지 끝나지 않고, 두 실행이 같은 데이터를 함께 고치면 안 된다. 무엇을 해야 하는가?', options: ['기본값 Allow는 둘을 함께 돌리므로 concurrencyPolicy를 Forbid(또는 Replace)로 정한다', 'CronJob은 기본으로 겹치는 실행을 건너뛰므로 할 일이 없다', '첫 실행이 빨리 끝나도록 backoffLimit을 늘린다'], answer: 0, why: 'Allow가 기본값이라 돌고 있는 Job 옆에 Job을 하나 더 만들기 때문이다. Forbid는 새 실행을 건너뛰고, Replace는 돌던 Job을 새 Job으로 바꾼다.'},
+  {q: 'Job이 끝난 뒤 그 파드가 Completed로 보이고 다시 시작하지 않는다. 문제가 있는가?', options: ['있다. Deployment의 파드처럼 다시 시작해야 한다', '있다. Completed는 재시도를 다 썼다는 뜻이다', '없다. Job은 성공적으로 끝나는 것이 목표라서 종료가 정상이다'], answer: 2, why: 'Deployment는 계속 떠 있는 것이, Job은 끝나는 것이 목표이기 때문이다. 끝난 파드는 Completed로 남고 자원을 더 쓰지 않는다.'},
+]} />
 
 더 읽을거리: [잡](https://kubernetes.io/ko/docs/concepts/workloads/controllers/job/) · [크론잡](https://kubernetes.io/ko/docs/concepts/workloads/controllers/cron-jobs/)

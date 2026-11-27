@@ -194,4 +194,10 @@ kubectl edit virtualservice api              # Roll the weights back to 100 : 0
 istioctl proxy-config routes deploy/web      # Actual rules the web-side proxy received
 ```
 
+<Quiz questions={[
+  {q: 'You start one v2 pod next to one v1 pod behind the api Service, with no DestinationRule or VirtualService. Where do requests go?', options: ['All to v1, until a rule sends some to v2', 'About half to v2, because the proxy spreads requests evenly across the pods', 'All to v2, because it is the newest'], answer: 1, why: 'The Service groups pods by label and does not tell v1 from v2. Without split rules, requests spread across pods, so about half reach the untested v2.'},
+  {q: 'A VirtualService sends 10% to subset v2, and there is only one v2 pod next to nine v1 pods. What share does v2 get?', options: ['10%, as set', 'It depends on pod count, so about 10% only by coincidence', '50%, one subset each', 'None until v2 has as many pods as v1'], answer: 0, why: 'Weights do not depend on pod count. The sending-side proxy picks a destination for each request by the weights you set.'},
+  {q: 'Errors rise on v2 during a 90 : 10 canary. What is the mesh way to roll back?', options: ['Delete the v2 pods and redeploy v1', 'Run kubectl rollout undo on the api Deployment', 'Change the VirtualService weights to 100 : 0'], answer: 2, why: 'A mesh rollback only changes the weight numbers. Once the rule reaches the proxy, new requests go to v1, and the v2 pods stay for investigation.'},
+]} />
+
 Further reading: [Istio traffic management](https://istio.io/latest/docs/concepts/traffic-management/) · [VirtualService reference](https://istio.io/latest/docs/reference/config/networking/virtual-service/) · [DestinationRule reference](https://istio.io/latest/docs/reference/config/networking/destination-rule/) · [Zero-Downtime Deploys (Rolling Update)](../k8s/rolling-update.mdx)

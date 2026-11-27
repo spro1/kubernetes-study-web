@@ -187,4 +187,10 @@ kubectl get inferencepools -n <namespace>            # Pool the EPP picks from (
 curl -s http://<engine>:8000/metrics | grep -E 'vllm:(time_to_first_token_seconds|inter_token_latency_seconds)_sum'   # e.g. vLLM: TTFT and TPOT side by side
 ```
 
+<Quiz questions={[
+  {q: 'What problem does P/D disaggregation mainly solve?', options: ['Models that do not fit in one GPU', 'Slow API key checks at the gateway', 'Prefills for new requests interrupting ongoing decodes under heavy concurrency', 'Cold start time of new replicas'], answer: 2, why: 'Under load, prefills keep cutting in and ongoing answers stall. Running prefill and decode on different replicas keeps the decode side\'s token pace even.'},
+  {q: 'After switching to disaggregated serving, TTFT got much worse. What should you check first?', options: ['Whether the KV transfer fell back from RDMA to TCP', 'The number of attention heads', 'The decode replica\'s max_tokens', 'Whether the client uses a new address'], answer: 0, why: 'The transfer path makes or breaks disaggregated serving. If it falls back to ordinary networking, transfers slow down a lot and the first response is delayed. Engine logs show which path is used.'},
+  {q: 'On a long-output workload, TPOT is growing while TTFT is fine. Which side do you scale?', options: ['The prefill replicas', 'Neither, switch back to single serving', 'The gateway replicas', 'The decode replicas'], answer: 3, why: 'Each side scales on its own. Long-output workloads stress decode, so a growing TPOT calls for more decode replicas; growing TTFT on long inputs calls for more prefill replicas.'},
+]} />
+
 Further reading: [Gateway API Inference Extension](https://gateway-api-inference-extension.sigs.k8s.io/) · [llm-d](https://llm-d.ai/) · [NIXL](https://github.com/ai-dynamo/nixl)

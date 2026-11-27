@@ -1,7 +1,7 @@
 ---
 id: gitops-sync
 title: Helm과 GitOps
-sidebar_label: 07 · Helm과 GitOps
+sidebar_label: 08 · Helm과 GitOps
 description: Helm 차트와 values가 릴리스와 리비전이 되는 과정, Git을 정본으로 두고 동기화 도구가 클러스터를 맞추며 드리프트를 되돌리는 원리를 애니메이션으로 따라간다
 summary: '차트와 릴리스, Git을 정본으로 클러스터를 맞추는 동기화와 드리프트.'
 icon: git
@@ -188,5 +188,11 @@ argocd app get <앱>                                  # Argo CD: Synced인지 Ou
 argocd app diff <앱>                                 # Git과 클러스터의 어긋남
 flux get kustomizations -A                           # Flux: 준비 상태와 적용된 리비전
 ```
+
+<Quiz questions={[
+  {q: '리비전 2인 Helm 릴리스를 리비전 1로 롤백했다. 그 뒤 helm history에는 무엇이 보이는가?', options: ['리비전 2가 지워지고 릴리스가 다시 리비전 1이 된다', '롤백을 기록한 새 리비전 3이 생긴다', '롤백은 기록되지 않으므로 아무 변화가 없다'], answer: 1, why: '롤백도 새 리비전으로 기록된다. 리비전 2에서 리비전 1로 되돌리면 리비전 3이 생긴다.'},
+  {q: 'GitOps 환경에서 운영자가 kubectl로 Deployment를 파드 3개에서 5개로 늘렸다. 가장 그럴듯한 결과는 무엇인가?', options: ['다음 CI 파이프라인 실행 전까지 5개가 유지된다', 'GitOps 도구가 replicas: 5를 Git에 다시 커밋한다', '도구가 드리프트를 감지해 OutOfSync로 표시하고, 설정에 따라 3개로 되돌린다', 'API 서버가 수정을 거부한다'], answer: 2, why: 'GitOps 도구는 실제 상태를 Git과 계속 비교한다. 직접 고친 내용은 드리프트로 감지되고 Git 상태로 되돌려질 수 있다.'},
+  {q: '1.4.2에 버그가 있고 클러스터는 Argo CD로 관리된다. GitOps 방식의 롤백은 무엇인가?', options: ['Git을 이전 커밋으로 되돌리고 도구가 클러스터를 1.4.1로 맞추게 한다', '클러스터에 helm rollback을 직접 실행한다', 'kubectl set image로 Deployment 이미지를 고친다'], answer: 0, why: 'GitOps에서는 Git이 정본이다. 커밋을 되돌리면 원하는 상태가 바뀌고 도구가 그대로 따라가며, 롤백 기록도 Git 이력에 남는다.'},
+]} />
 
 더 읽을거리: [Helm 문서](https://helm.sh/docs/) · [OpenGitOps 원칙](https://opengitops.dev/) · [Argo CD 문서](https://argo-cd.readthedocs.io/en/stable/) · [Flux 문서](https://fluxcd.io/flux/)

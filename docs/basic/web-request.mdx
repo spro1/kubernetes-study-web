@@ -187,4 +187,10 @@ curl -v -o /dev/null https://<domain>/               # Connect, certificate, req
 curl -s -o /dev/null -w '%{http_code} %{time_total}s\n' https://<domain>/   # Status code and response time
 ```
 
+<Quiz questions={[
+  {q: 'The page loads, but the list on it is empty. Which step most likely failed?', options: ['The DNS lookup for the domain', 'The data request (API) the page makes after it loads', 'The certificate check during the HTTPS connection'], answer: 1, why: 'The page files arrived, so DNS, the connection and the certificate worked. The list comes from a separate API request, so check its status code in the browser developer tools.'},
+  {q: 'A request returns 504. What should you keep in mind before retrying it?', options: ['The request never reached any server', 'The user is not logged in', 'The wait timed out, so the work may still be running or already done on the server', 'The page does not exist'], answer: 2, why: '504 means the wait for the backend timed out. The request may actually have been processed, so check backend response time and health first.'},
+  {q: 'Web server 1 stops. Why can users keep using the same address?', options: ['The load balancer drops the stopped server and sends requests to the others', 'DNS automatically changes the domain to a new IP address', 'The browser retries on port 80 instead of 443'], answer: 0, why: 'The load balancer is one front address for several servers. It stops sending requests to the stopped server, so users do not notice which one stopped.'},
+]} />
+
 Further reading: [An overview of HTTP (MDN)](https://developer.mozilla.org/en-US/docs/Web/HTTP/Overview) · [HTTP response status codes (MDN)](https://developer.mozilla.org/en-US/docs/Web/HTTP/Status) · [Service (Kubernetes docs)](https://kubernetes.io/docs/concepts/services-networking/service/) · [DNS for Services and Pods](https://kubernetes.io/docs/concepts/services-networking/dns-pod-service/)

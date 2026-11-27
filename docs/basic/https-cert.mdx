@@ -1,7 +1,7 @@
 ---
 id: https-cert
 title: HTTPS and Certificates
-sidebar_label: 04 · HTTPS and Certificates
+sidebar_label: 05 · HTTPS and Certificates
 description: Follow step by step how a browser and a server verify each other with certificates, how private certificates and trust stores work, and what happens when a certificate expires
 summary: 'How certificates verify the other side, private certificates and the chain of trust, and what happens when they expire.'
 icon: shield
@@ -194,5 +194,11 @@ curl -v -o /dev/null https://<domain>/               # Does the trust check pass
 kubectl get secret -A --field-selector type=kubernetes.io/tls   # TLS certificates stored in the cluster
 kubectl get certificate -A                           # Renewal status (if cert-manager is installed)
 ```
+
+<Quiz questions={[
+  {q: 'The first visit to an internal system shows "Not secure", and its certificate was issued by the company\'s private CA. What is going on?', options: ['The traffic is not encrypted at all', 'The private CA is not in the browser trust store, so the issuer could not be verified', 'The certificate has expired'], answer: 1, why: 'Encryption is still there. The browser trusts the authority that vouches for a certificate, and a private CA is not in its trust store by default.'},
+  {q: 'Pods fail because a node cannot pull images from Harbor, which uses a private certificate. What is the fix?', options: ['Click through the warning on the node', 'Connect to Harbor by IP address instead of its domain', 'Restart the node', 'Add the private certificate or its issuing CA to the node trust store'], answer: 3, why: 'Servers have no warning dialog, so an untrusted issuer just means a refused connection. Registering the private CA in the node trust store lets the node trust Harbor.'},
+  {q: 'A system that ran fine for a year suddenly refuses all HTTPS connections, with no config change. What should you suspect first?', options: ['The certificate passed its expiry date', 'The browser removed public CAs from its trust store', 'The domain no longer matches the certificate'], answer: 0, why: 'Expiry is the classic outage that hits a long-stable system out of nowhere. Monitor expiry dates and automate renewal, for example with cert-manager.'},
+]} />
 
 Further reading: [Ingress TLS (Kubernetes docs)](https://kubernetes.io/docs/concepts/services-networking/ingress/#tls) · [Certificate management with kubeadm](https://kubernetes.io/docs/tasks/administer-cluster/kubeadm/kubeadm-certs/) · [cert-manager](https://cert-manager.io/docs/)

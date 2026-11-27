@@ -1,7 +1,7 @@
 ---
 id: llm-autoscaling
 title: LLM 추론 오토스케일링
-sidebar_label: 11 · LLM 추론 오토스케일링
+sidebar_label: 13 · LLM 추론 오토스케일링
 description: CPU·GPU 사용률이 LLM 오토스케일러를 속이는 이유, 대기 요청·KV 캐시 사용률·TTFT가 엔진에서 Prometheus와 KEDA 또는 Prometheus Adapter를 거쳐 HPA로 가는 길, 콜드 스타트·GPU 노드 추가·축소·0까지 줄이기가 결과를 어떻게 바꾸는지 단계별 애니메이션으로 따라간다
 summary: 'GPU 사용률이 아니라 대기 요청과 KV 캐시 사용률로 LLM 레플리카를 늘리고, 콜드 스타트와 GPU 노드 지연을 감안하는 법.'
 icon: scale
@@ -262,5 +262,11 @@ spec:
         query: sum(vllm:num_requests_waiting{model_name="chat"})
         threshold: "5"         # 레플리카당 대기 요청 목표
 ```
+
+<Quiz questions={[
+  {q: 'GPU 사용률로 건 HPA가 LLM Deployment를 늘린 뒤 다시 줄이지 않는다. 왜 그런가?', options: ['GPU 사용률은 커널이 돈 시간의 비율이라 부하가 적어도 많아도 100% 가까이에 머문다', 'HPA는 GPU 지표를 전혀 읽지 못한다', '축소 안정화 창이 기본으로 무한대다', 'GPU 사용률은 콜드 스타트 중에만 오른다'], answer: 0, why: '요청 하나만 디코드 중이어도 엔진은 단계마다 커널을 띄운다. 이 지표는 GPU가 쓰이고 있다는 것만 알려 줄 뿐 얼마나 더 받을 수 있는지는 말해 주지 않기 때문이다.'},
+  {q: 'kubectl describe hpa에 대기 요청 지표 값이 unknown으로 나온다. 어디가 문제인가?', options: ['목표 값을 너무 높게 잡았다', '쿼리나 metrics API(KEDA 또는 Prometheus Adapter)가 고장 났다', 'Deployment가 maxReplicaCount에 닿았다', '새 레플리카가 아직 가중치를 올리는 중이다'], answer: 1, why: 'HPA는 Prometheus를 직접 읽지 못한다. 현재 값이 unknown이면 확장 규칙이 아니라 쿼리나 metrics API가 고장 난 것이기 때문이다.'},
+  {q: '축소로 레플리카가 내려갈 때 일부 사용자의 답변이 문장 중간에서 멈춘다. 무엇으로 고치는가?', options: ['대기 요청 대신 CPU로 늘린다', 'minReplicaCount를 0으로 둔다', '대기 요청 기준을 낮춘다', '먼저 새 요청을 끊고, terminationGracePeriodSeconds와 preStop 대기가 가장 긴 생성 시간을 덮게 한다'], answer: 3, why: '내려갈 레플리카가 아직 긴 답변을 스트리밍 중일 수 있다. 라우터가 새 요청을 먼저 끊고, 유예 시간이 기본 30초가 아니라 가장 긴 생성 시간을 덮어야 하기 때문이다.'},
+]} />
 
 더 읽을거리: [vLLM 지표](https://docs.vllm.ai/en/latest/design/metrics.html) · [KEDA Prometheus 스케일러](https://keda.sh/docs/latest/scalers/prometheus/) · [Horizontal Pod Autoscaling](https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/) · [Karpenter](https://karpenter.sh/) · [부하에 맞춰 늘어나기 (HPA)](../k8s/autoscaling.mdx) · [모델이 처음 뜨기까지 (콜드 스타트)](../ai/cold-start.mdx) · [요청을 어느 레플리카로 보낼까 (추론 라우팅)](../ai/inference-routing.mdx) · [정상 종료 — 요청을 잃지 않고 내려가기](../intermediate/graceful-shutdown.mdx)

@@ -178,4 +178,10 @@ kubectl get events -n team-a | grep -i quota
 kubectl auth can-i create resourcequotas -n team-a
 ```
 
+<Quiz questions={[
+  {q: 'team-a와 team-b는 네임스페이스가 다르고 쿼터는 없다. team-a가 파드를 잔뜩 늘리자 team-b의 새 파드가 Pending으로 남는다. 이유는 무엇인가?', options: ['네임스페이스가 기본으로 다른 팀의 파드를 막는다', 'RBAC가 team-b의 파드 생성을 거절한다', '네임스페이스는 이름과 권한만 나눌 뿐, CPU와 메모리는 같은 클러스터에서 나온다'], answer: 2, why: '네임스페이스는 서버를 떼어 놓지 않는다. 자원 사용량은 쿼터를 걸어야 비로소 나뉘기 때문이다.'},
+  {q: 'team-a의 쿼터는 CPU 요청 4코어이고 지금 3코어를 쓴다. 디플로이먼트가 CPU 2코어를 요청하는 파드를 늘리려 하지만 파드 수가 늘지 않는다. 이유는 어디서 보는가?', options: ['레플리카셋 이벤트의 exceeded quota와 kubectl describe quota의 Used·Hard', '새 파드의 로그', '자리를 만들려고 멈춘 기존 파드', '노드 kubelet 로그의 OOMKilled'], answer: 0, why: '3 + 2가 4를 넘으므로 API 서버가 만드는 순간 파드를 거절한다. 디플로이먼트로 배포했다면 그 이유가 레플리카셋 이벤트에 exceeded quota로 남기 때문이다.'},
+  {q: '쿼터에 CPU·메모리 항목이 걸린 구획에서 요청값을 안 적은 파드가 거절된다. 이 문제를 줄이는 것은 무엇인가?', options: ['쿼터 상한을 올린다', '기본 requests·limits를 채워 주는 리밋 레인지를 둔다', '팀에 ClusterRoleBinding을 준다'], answer: 1, why: '쿼터는 합계를 세는 장치라 값이 비어 있으면 셀 수 없다. 리밋 레인지가 값을 빠뜨린 파드에 기본값을 채워 주기 때문이다.'},
+]} />
+
 더 읽을거리: [네임스페이스](https://kubernetes.io/ko/docs/concepts/overview/working-with-objects/namespaces/) · [리소스 쿼터](https://kubernetes.io/ko/docs/concepts/policy/resource-quotas/) · [리밋 레인지](https://kubernetes.io/ko/docs/concepts/policy/limit-range/) · [RBAC 인가 사용하기](https://kubernetes.io/docs/reference/access-authn-authz/rbac/)

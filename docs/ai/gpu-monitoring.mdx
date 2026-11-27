@@ -1,0 +1,276 @@
+---
+id: gpu-monitoring
+title: 'Monitoring GPUs on Kubernetes'
+sidebar_label: 06 · GPU monitoring
+description: 'Monitor NVIDIA GPUs on Kubernetes with the DCGM exporter and Prometheus: why GPU utilization misleads, SM activity and tensor metrics, framebuffer memory, power and throttling, XID and ECC errors, row remapping, NVLink errors, per-Pod labels and alert rules.'
+summary: 'DCGM exporter to Prometheus, metrics that show real GPU work, and the XID and ECC errors that mean a node must be drained.'
+icon: chart
+hide_table_of_contents: true
+---
+
+# Monitoring GPUs on Kubernetes
+
+A GPU node is expensive, and it can be busy, idle, overheating or broken while every Pod still looks Running. Follow GPU metrics from the card to Prometheus, learn which numbers show real work, and see which errors mean the node must be drained.
+
+<StepDiagram
+  width={1000}
+  height={460}
+  meta={{duration: '~13 min', level: 'Advanced'}}
+  groups={[
+    {label: 'GPU node · gpu-node-1', x: 30, y: 40, w: 520, h: 400, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'gpu0', label: 'gpu-0', sub: 'H100', icon: 'disk', tone: 'node', size: 'sm', x: 110, y: 120, show: true},
+    {id: 'gpu1', label: 'gpu-1', sub: 'H100', icon: 'disk', tone: 'node', size: 'sm', x: 110, y: 250, show: true},
+    {id: 'serve', label: 'llm-serve', sub: 'ns chat', icon: 'pod', tone: 'app', size: 'sm', w: 110, x: 270, y: 120, show: true},
+    {id: 'train', label: 'train-b', sub: 'ns ml', icon: 'pod', tone: 'app', size: 'sm', w: 110, x: 270, y: 250, show: true},
+    {id: 'dcgm', label: 'DCGM exporter', sub: 'DaemonSet · :9400', icon: 'gear', tone: 'node', x: 445, y: 185, w: 170},
+    {id: 'kubelet', label: 'kubelet', sub: 'pod-resources API', icon: 'agent', tone: 'node', x: 445, y: 370, w: 170, show: true},
+    {id: 'prom', label: 'Prometheus', sub: 'scrapes /metrics', icon: 'chart', tone: 'store', x: 680, y: 185},
+    {id: 'rules', label: 'Alert rules', sub: 'PrometheusRule', icon: 'bell', tone: 'cp', x: 885, y: 185},
+    {id: 'dash', label: 'Dashboard', sub: 'per Pod, per GPU', icon: 'chart', tone: 'ext', x: 680, y: 370},
+    {id: 'oncall', label: 'On-call', sub: 'cordon and drain', icon: 'user', tone: 'ext', x: 885, y: 370},
+  ]}
+  metrics={[
+    {id: 'util', label: 'GPU_UTIL'},
+    {id: 'sm', label: 'SM active'},
+    {id: 'tensor', label: 'Tensor active'},
+    {id: 'mem', label: 'FB used'},
+    {id: 'health', label: 'Health'},
+  ]}
+  learn={[
+    {text: 'How the DCGM exporter gets metrics into Prometheus', at: 1},
+    {text: 'How metrics get pod and namespace labels', at: 2},
+    {text: 'Why GPU utilization misleads, and the profiling metrics to use', at: 3},
+    {text: 'Memory, power, temperature and throttling', at: 5},
+    {text: 'XID, ECC, row remapping and NVLink errors, and alert rules', at: 7},
+  ]}
+  steps={[
+    {
+      short: 'Question',
+      kind: '시작',
+      title: 'Two GPUs, two Pods: are they doing useful work?',
+      text: [
+        'gpu-node-1 has two GPUs. llm-serve uses gpu-0 and the training job train-b uses gpu-1. Both Pods are Running, which says nothing about whether the GPUs are working hard, wasting time or failing.',
+        'Running nvidia-smi on each node does not scale. You want GPU metrics in Prometheus, with the Pod that owns each GPU on every series.',
+      ],
+      keyIdea: 'Allocating a GPU (the device plugin lesson) and using it well are different questions. This lesson is about the second.',
+      flows: [
+        {from: 'serve', to: 'gpu0', label: 'uses', type: 'request'},
+        {from: 'train', to: 'gpu1', label: 'uses', type: 'request'},
+      ],
+      focus: ['gpu0', 'gpu1', 'serve', 'train'],
+      values: {util: '—', sm: '—', tensor: '—', mem: '—', health: '—'},
+    },
+    {
+      short: 'Exporter',
+      kind: '원리',
+      title: 'The DCGM exporter runs on every GPU node',
+      text: [
+        'NVIDIA DCGM (Data Center GPU Manager) reads telemetry from the driver. The DCGM exporter runs as a DaemonSet on GPU nodes and serves those values in Prometheus format, usually on port 9400. The GPU Operator installs it for you.',
+        'Prometheus scrapes it, often through a ServiceMonitor. Each series has labels such as gpu, UUID, modelName and the node hostname. A CSV file chooses which fields are exported.',
+      ],
+      keyIdea: 'Some useful fields, such as ECC and NVLink error counters, are commented out in the default CSV. Check the list and enable what you need.',
+      flows: [
+        {from: 'gpu0', to: 'dcgm', label: 'telemetry', type: 'response'},
+        {from: 'gpu1', to: 'dcgm', label: 'telemetry', type: 'response'},
+        {from: 'prom', to: 'dcgm', label: 'scrape', type: 'request'},
+      ],
+      focus: ['dcgm', 'prom'],
+      badges: {dcgm: ':9400/metrics'},
+    },
+    {
+      short: 'Pod labels',
+      kind: '원리',
+      title: 'The kubelet tells the exporter which Pod owns each GPU',
+      text: [
+        'With Kubernetes mapping on, the exporter asks the kubelet pod-resources API which container was given which device. It adds pod, namespace and container labels to that GPU\'s series.',
+        'Now a dashboard can sum usage by namespace, and an alert can name the Pod. With time-slicing, several Pods share one GPU and whole-GPU numbers cannot be split between them.',
+      ],
+      keyIdea: 'Without pod labels you only know that some GPU on some node is busy. Check that the labels are present before building dashboards.',
+      flows: [{from: 'kubelet', to: 'dcgm', label: 'pod ↔ GPU', type: 'response'}],
+      focus: ['kubelet', 'dcgm'],
+      badges: {dcgm: 'pod, namespace'},
+    },
+    {
+      short: 'GPU_UTIL',
+      kind: '주의',
+      title: 'GPU utilization 100% does not mean the GPU is full',
+      text: [
+        'DCGM_FI_DEV_GPU_UTIL is the share of time at least one kernel was running. A small kernel that uses a few of the many streaming multiprocessors (SMs) still counts as 100%.',
+        'Both Pods show close to 100%. That tells you the GPUs are not idle, not how much of their compute is in use. The autoscaling lesson explains why this also makes a poor scaling signal.',
+      ],
+      keyIdea: 'Treat GPU_UTIL as "busy or idle", not as "how full".',
+      flows: [{from: 'dcgm', to: 'dash', label: 'GPU_UTIL', type: 'response'}],
+      focus: ['gpu0', 'gpu1', 'dash'],
+      badges: {dcgm: null},
+      values: {util: {text: '98% · 100%', tone: 'bad'}},
+    },
+    {
+      short: 'Profiling',
+      kind: '원리',
+      title: 'Profiling metrics show how much of the GPU works',
+      text: [
+        'DCGM profiling fields look inside the GPU. DCGM_FI_PROF_SM_ACTIVE is the share of cycles an SM has at least one warp assigned, averaged over all SMs. DCGM_FI_PROF_SM_OCCUPANCY is how many warps are resident relative to the maximum. DCGM_FI_PROF_PIPE_TENSOR_ACTIVE is the share of cycles the tensor cores are busy.',
+        'train-b shows SM active 0.85 and tensor active 0.55. llm-serve shows SM active 0.30 and tensor active 0.10: it is waiting on memory or on small batches, and could take more load.',
+      ],
+      keyIdea: 'SM_ACTIVE and SM_OCCUPANCY are commented out in the default CSV; tensor and DRAM activity are on by default.',
+      flows: [{from: 'dcgm', to: 'prom', label: 'PROF_*', type: 'response'}],
+      focus: ['gpu0', 'gpu1', 'prom'],
+      badges: {gpu0: 'SM 0.30', gpu1: 'SM 0.85'},
+      values: {util: '98% · 100%', sm: '0.30 · 0.85', tensor: '0.10 · 0.55'},
+    },
+    {
+      short: 'Memory',
+      kind: '원리',
+      title: 'Framebuffer memory: used and free',
+      text: [
+        'DCGM_FI_DEV_FB_USED and DCGM_FI_DEV_FB_FREE report GPU memory in MiB. For training, a job close to the limit will fail with an out-of-memory error when a batch grows.',
+        'Inference engines such as vLLM reserve most of the memory at start for the KV cache. For them, FB used near full is normal and says nothing about load.',
+      ],
+      keyIdea: 'Alert on low free memory only for workloads that do not preallocate. For serving engines, watch the engine\'s own cache metrics instead.',
+      flows: [{from: 'dcgm', to: 'dash', label: 'FB_USED', type: 'response'}],
+      focus: ['gpu0', 'gpu1', 'dash'],
+      badges: {gpu0: '90% reserved', gpu1: '62 GiB'},
+      values: {mem: '72 GiB · 62 GiB'},
+    },
+    {
+      short: 'Throttling',
+      kind: '주의',
+      title: 'Power, temperature and throttling slow work silently',
+      text: [
+        'DCGM_FI_DEV_POWER_USAGE, DCGM_FI_DEV_GPU_TEMP and DCGM_FI_DEV_MEMORY_TEMP show power and heat. When a GPU hits its power or thermal limit, it lowers its clocks.',
+        'gpu-1 runs hot after a fan failure in the chassis. DCGM_FI_DEV_SM_CLOCK drops, and train-b gets slower while utilization still says 100%. The exporter also offers optional clock-event and throttle-time fields that say why.',
+      ],
+      keyIdea: 'If a job slows down with no code change, compare SM clock, temperature and power before blaming the model.',
+      flows: [{from: 'dcgm', to: 'rules', label: 'TEMP, CLOCK', type: 'response', bend: -50}],
+      focus: ['gpu1', 'rules'],
+      status: {gpu1: 'warn'},
+      badges: {gpu0: null, gpu1: 'hot · clocks down'},
+      values: {health: {text: 'gpu-1 throttling', tone: 'bad'}},
+    },
+    {
+      short: 'XID 79',
+      kind: '장애',
+      title: 'XID 79: the GPU fell off the bus',
+      text: [
+        'XID errors are messages the NVIDIA driver logs for GPU faults. DCGM_FI_DEV_XID_ERRORS holds the value of the last XID seen. Now gpu-1 reports 79: the GPU has fallen off the bus, and the driver can no longer talk to it.',
+        'train-b fails, and the device plugin reports the GPU unhealthy. The node needs a GPU reset or a reboot, so on-call cordons and drains it first. If it repeats, the GPU or its slot is suspect.',
+      ],
+      keyIdea: 'Some XIDs come from application bugs and need no node action. 79 and uncorrectable memory errors are hardware: page, cordon and drain.',
+      flows: [
+        {from: 'dcgm', to: 'rules', label: 'XID 79', type: 'response', bend: -50},
+        {from: 'rules', to: 'oncall', label: 'Page', type: 'request'},
+      ],
+      focus: ['gpu1', 'train', 'oncall'],
+      status: {gpu1: 'error', train: 'error'},
+      badges: {gpu1: 'XID 79'},
+      values: {health: {text: 'XID 79 · drain', tone: 'bad'}},
+    },
+    {
+      short: 'ECC',
+      kind: '장애',
+      title: 'ECC errors, row remapping and NVLink errors',
+      text: [
+        'GPU memory has ECC. Single-bit errors are corrected. A double-bit error is uncorrectable and shows as XID 48, and the work using that memory is lost. On A100 and newer GPUs, row remapping swaps a bad memory row for a spare; the swap takes effect only after a GPU reset.',
+        'Watch DCGM_FI_DEV_UNCORRECTABLE_REMAPPED_ROWS: when it rises, drain and reset the GPU. DCGM_FI_DEV_ROW_REMAP_FAILURE = 1 means remapping failed; plan to replace the GPU. NVLink CRC, replay and recovery counters that keep climbing point to a bad link that slows multi-GPU jobs.',
+      ],
+      keyIdea: 'The ECC and NVLink error counters are off in the default CSV. Turn them on for any fleet you care about.',
+      flows: [{from: 'oncall', to: 'gpu1', label: 'drain, reset', type: 'request', bend: 80}],
+      focus: ['gpu1', 'oncall'],
+      badges: {gpu1: 'remap pending'},
+      values: {health: {text: 'row remap → reset', tone: 'bad'}},
+    },
+    {
+      short: 'Alerts',
+      kind: '원리',
+      title: 'Alert rules: page for health, ticket for waste',
+      text: [
+        'Page when a GPU needs action now: a new hardware XID such as 79 or 48, a row remap failure, uncorrectable remapped rows rising, or the exporter target down so you are blind.',
+        'Open a ticket for slow problems: temperature high for many minutes, and GPUs that are allocated to a Pod but show low SM activity for hours. The pod and namespace labels say whose GPU it is.',
+      ],
+      keyIdea: 'Health alerts protect jobs. Waste reports protect the budget. Both need per-Pod labels.',
+      flows: [
+        {from: 'prom', to: 'rules', label: 'evaluate', type: 'request'},
+        {from: 'rules', to: 'oncall', label: 'Page / ticket', type: 'request'},
+      ],
+      focus: ['rules', 'oncall'],
+      status: {gpu1: 'off', train: 'off'},
+      badges: {gpu1: 'cordoned', rules: '4 rules'},
+      values: {health: 'gpu-1 out of service'},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Export, label, look deeper than utilization, act on errors',
+      text: [
+        'The DCGM exporter DaemonSet exports GPU telemetry, the kubelet pod-resources API adds Pod labels, and Prometheus stores and alerts.',
+        'GPU_UTIL only says a kernel was running; SM active, occupancy and tensor activity show how much work is done. Watch memory, clocks and heat, and treat hardware XIDs, uncorrectable ECC errors and remap failures as a reason to drain the node.',
+      ],
+      keyIdea: 'Enable the error counters before you need them. A GPU fault found by a failed job is found too late.',
+      flows: [
+        {from: 'dcgm', to: 'prom', label: 'metrics', type: 'response'},
+        {from: 'prom', to: 'dash', label: 'query', type: 'response'},
+      ],
+      focus: ['dcgm', 'prom', 'rules'],
+    },
+  ]}
+/>
+
+## Key DCGM metrics
+
+DCGM exporter 4.9 renamed many default metrics to DCGM 4.7 names and changed some units (for example percent to a 0–1 ratio, MiB to bytes). Use the column that matches your exporter version.
+
+| Up to exporter 4.8 | Exporter 4.9 and later | What it tells you | Use it for |
+|---|---|---|---|
+| `DCGM_FI_DEV_GPU_UTIL` (%) | `DCGM_FI_DEV_GPU_UTIL_RATIO` | Time at least one kernel ran | Busy or idle, not how full |
+| `DCGM_FI_PROF_SM_ACTIVE` | `DCGM_FI_PROF_SM_UTIL_RATIO` | Share of cycles SMs have work | Real compute usage (off by default) |
+| `DCGM_FI_PROF_SM_OCCUPANCY` | `DCGM_FI_PROF_SM_OCCUPANCY_RATIO` | Resident warps versus maximum | Kernel tuning (off by default) |
+| `DCGM_FI_PROF_PIPE_TENSOR_ACTIVE` | `DCGM_FI_PROF_TENSOR_UTIL_RATIO` | Tensor core activity | Matrix work in training and inference |
+| `DCGM_FI_PROF_DRAM_ACTIVE` | `DCGM_FI_PROF_DRAM_UTIL_RATIO` | Memory bandwidth activity | Memory-bound workloads such as decoding |
+| `DCGM_FI_DEV_FB_USED` / `_FREE` (MiB) | `DCGM_FI_DEV_FB_USED_BYTES` / `_FREE_BYTES` | GPU memory | Out-of-memory risk for training |
+| `DCGM_FI_DEV_POWER_USAGE` | `DCGM_FI_DEV_BOARD_POWER_WATTS` | Power draw | Power-limit throttling |
+| `DCGM_FI_DEV_GPU_TEMP` | `DCGM_FI_DEV_GPU_TEMP_CELSIUS` | GPU temperature | Cooling problems |
+| `DCGM_FI_DEV_SM_CLOCK` (MHz) | `DCGM_FI_DEV_SM_CLOCK_HERTZ` | Current SM clock | Detecting slowdowns |
+| `DCGM_FI_DEV_XID_ERRORS` | `DCGM_FI_DEV_XID_ERROR` | Last XID error value | Hardware fault alerts |
+| `DCGM_FI_DEV_UNCORRECTABLE_REMAPPED_ROWS` | `DCGM_FI_DEV_ROW_REMAP_UNCORRECTABLE_TOTAL` | Rows remapped after uncorrectable errors | Drain and reset |
+| `DCGM_FI_DEV_ROW_REMAP_FAILURE` | `DCGM_FI_DEV_ROW_REMAP_FAILED` | Remapping failed | Replace the GPU |
+
+Common XIDs and the usual response (check NVIDIA's XID catalog for your GPU and driver):
+
+| XID | Meaning | Usual response |
+|---|---|---|
+| 79 | GPU has fallen off the bus | Cordon, drain, reset or reboot; report if it repeats |
+| 48 | Double-bit (uncorrectable) ECC error | Restart the affected work; drain and reset if remapping follows |
+| 13, 31, 43 | Often application faults (bad kernel, illegal address) | Look at the application first; no node action if the GPU is otherwise healthy |
+
+## Try it yourself
+
+```bash
+# Is the exporter running on every GPU node?
+kubectl get daemonset -A | grep -i dcgm
+
+# Read raw metrics (GPU Operator Service name; adjust namespace and name)
+kubectl -n gpu-operator port-forward svc/nvidia-dcgm-exporter 9400:9400 &
+curl -s localhost:9400/metrics | grep -E '^DCGM_FI_(DEV_GPU_UTIL|PROF_)' | head
+curl -s localhost:9400/metrics | grep -E 'XID|REMAP'       # errors and row remapping
+
+# Do the series carry pod labels?
+curl -s localhost:9400/metrics | grep -m3 'pod="'
+
+# On the node: kernel log XIDs and the GPU's own view
+sudo dmesg | grep -i xid
+nvidia-smi -q -d ECC,ROW_REMAPPER
+
+# Take a faulty GPU node out of service
+kubectl cordon gpu-node-1
+kubectl drain gpu-node-1 --ignore-daemonsets --delete-emptydir-data
+```
+
+<Quiz questions={[
+  {q: 'A serving Pod shows DCGM_FI_DEV_GPU_UTIL near 100% but SM active of 0.3. What does this most likely mean?', options: ['The GPU is fully loaded and needs more replicas', 'Kernels are always running, but they keep only part of the GPU busy, so there is room for more work', 'The exporter is reporting wrong values'], answer: 1, why: 'GPU_UTIL counts time any kernel ran. SM active shows how much of the GPU those kernels actually use, so 0.3 means most of the compute is idle.'},
+  {q: 'A GPU node logs XID 79. What is the right response?', options: ['Cordon and drain the node, then reset the GPU or reboot', 'Restart only the Pod that was using the GPU', 'Ignore it if GPU_UTIL is still being reported'], answer: 0, why: 'XID 79 means the driver lost contact with the GPU. Workloads cannot use it until the GPU is reset or the node rebooted, so move work away first.'},
+  {q: 'Why is "FB used above 90%" a poor alert for a vLLM serving Pod?', options: ['vLLM does not use GPU memory', 'The exporter cannot read memory for serving Pods', 'The engine reserves most GPU memory at start for its KV cache, so high usage is normal'], answer: 2, why: 'Serving engines preallocate memory on purpose. High FB used is their normal state; watch the engine\'s own cache and queue metrics instead.'},
+]} />
+
+Further reading: [DCGM exporter metrics](https://docs.nvidia.com/datacenter/dcgm/latest/reference/dcgm-exporter-metrics.html) · [DCGM exporter on GitHub](https://github.com/NVIDIA/dcgm-exporter) · [NVIDIA XID errors](https://docs.nvidia.com/deploy/xid-errors/index.html) · [NVIDIA GPU debug guidelines](https://docs.nvidia.com/deploy/gpu-debug-guidelines/) · [How GPUs and NPUs become node resources (device plugins)](../ai/device-plugin.mdx) · [Autoscaling LLM Inference](../ai/llm-autoscaling.mdx)

@@ -198,4 +198,10 @@ kubectl get namespace <namespace> -o jsonpath='{.status.conditions}'   # Why the
 kubectl api-resources --verbs=list --namespaced -o name | xargs -n 1 kubectl get --show-kind --ignore-not-found -n <namespace>   # What is left inside
 ```
 
+<Quiz questions={[
+  {q: 'You delete a PVC and it stays Terminating for an hour. What is the most likely reason?', options: ['The API server is still erasing the volume\'s bytes', 'A Pod still mounts it, so the pvc-protection finalizer is waiting', 'The garbage collector has not run yet', 'The PVC has no owner reference'], answer: 1, why: 'While a finalizer remains, only deletionTimestamp is set. pvc-protection waits until no Pod uses the PVC, so a long Terminating usually means waiting, not deleting.'},
+  {q: 'You delete a Deployment with the default policy. Who removes its ReplicaSet and Pods?', options: ['The garbage collector, following owner references, after the Deployment is deleted', 'The Deployment controller, before the Deployment is deleted', 'Nobody; they are kept as orphans'], answer: 0, why: 'With background deletion the owner is deleted at once, and the garbage collector then cleans up dependents through ownerReferences.'},
+  {q: 'A backup operator was removed, then its namespace. The namespace is stuck in Terminating. What should you check first?', options: ['Whether the namespace has enough quota left', 'Whether the API server needs a restart', 'Whether kube-proxy is running on every node', 'The finalizers on objects left inside, such as the Backup CR, whose controller is gone'], answer: 3, why: 'The namespace waits for every object inside, and the Backup object\'s finalizer can never be cleared because its controller is gone. Force-removing it skips the tool\'s cleanup.'},
+]} />
+
 Further reading: [Finalizers](https://kubernetes.io/docs/concepts/overview/working-with-objects/finalizers/) · [Garbage collection](https://kubernetes.io/docs/concepts/architecture/garbage-collection/) · [Owners and dependents](https://kubernetes.io/docs/concepts/overview/working-with-objects/owners-dependents/)

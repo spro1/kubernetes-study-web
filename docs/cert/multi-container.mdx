@@ -210,4 +210,10 @@ kubectl logs web -c init-2                           # Why the init container fa
 kubectl logs web -c log-agent                        # Sidecar logs
 ```
 
+<Quiz questions={[
+  {q: 'The web pod shows Init:CrashLoopBackOff, and kubectl logs web -c web returns nothing. Why, and where should you look?', options: ['The app crashed before logging; check the node\'s kubelet logs', 'The app container never started because an init container keeps failing; check that init container\'s logs', 'The sidecar is blocking the app; delete the sidecar'], answer: 1, why: 'Init containers must each succeed before the app starts, so web has no logs yet. Name the failed init container, as in kubectl logs web -c init-2.'},
+  {q: 'A log-collecting sidecar must start before the app. Where do you declare it?', options: ['In containers, listed before the app', 'In containers, with a startup probe', 'In initContainers, without restartPolicy', 'In initContainers, with restartPolicy: Always'], answer: 3, why: 'An entry in initContainers with restartPolicy: Always is a native sidecar: it starts before the app and keeps running. In containers, start order is not guaranteed, and without restartPolicy it would be a regular init that must exit.'},
+  {q: 'web writes log files to an emptyDir, but log-agent sees no files. What is the most likely cause?', options: ['The volume is mounted with volumeMounts in only one of the containers', 'emptyDir files are deleted whenever a container restarts', 'Containers in one pod cannot share files'], answer: 0, why: 'Volumes are declared per pod but attached per container with volumeMounts. Mount it on only one side and the files are not visible to the other.'},
+]} />
+
 Further reading: [CNCF certification curriculum](https://github.com/cncf/curriculum) · [Init containers](https://kubernetes.io/docs/concepts/workloads/pods/init-containers/) · [Sidecar containers](https://kubernetes.io/docs/concepts/workloads/pods/sidecar-containers/) · [Volumes](https://kubernetes.io/docs/concepts/storage/volumes/) · [Service Mesh ① Sidecars and Mutual Authentication](../feature/mesh-sidecar.mdx)

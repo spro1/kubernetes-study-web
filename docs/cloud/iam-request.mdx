@@ -190,4 +190,10 @@ aws sts assume-role --role-arn <role-arn> --role-session-name demo   # Temporary
 aws cloudtrail lookup-events --lookup-attributes AttributeKey=AccessKeyId,AttributeValue=<key-id> --max-results 10   # Audit log for one key
 ```
 
+<Quiz questions={[
+  {q: 'A request passes authentication, but no policy attached to the caller allows the action and no policy denies it. What happens?', options: ['It is allowed, because the caller was authenticated', 'It is denied, because without an allow the default is deny', 'It is allowed only for read actions'], answer: 1, why: 'Authentication only answers who is asking. If no gathered policy allows the action, policy evaluation falls back to default deny.'},
+  {q: 'A broad admin policy allows deleting the production DB, but an organization-wide policy explicitly denies it. What is the result?', options: ['Allowed, because the admin policy is more specific', 'It depends on which policy was attached first', 'Denied, because an explicit deny always wins over an allow', 'Allowed if the caller has MFA turned on'], answer: 2, why: 'Evaluation order is explicit deny, then explicit allow, then default deny. That is why organization guardrails are written as deny policies.'},
+  {q: 'An old long-term access key leaked to a public repository and an attacker used it. Which setup would have limited the damage most?', options: ['Using roles with temporary credentials and only the permissions the job needs', 'Keeping the long-term key but rotating it once a year', 'Turning on MFA for the human admin accounts only'], answer: 0, why: 'Temporary credentials expire soon, and least privilege keeps a leaked credential inside a narrow scope. A real long-term key passes authentication no matter who holds it.'},
+]} />
+
 Further reading: [What is IAM? (AWS)](https://docs.aws.amazon.com/IAM/latest/UserGuide/introduction.html) · [Policy evaluation logic (AWS)](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_evaluation-logic.html) · [Who Can Do What (RBAC)](../k8s/rbac.mdx)

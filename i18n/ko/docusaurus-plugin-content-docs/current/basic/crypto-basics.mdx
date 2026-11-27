@@ -1,0 +1,272 @@
+---
+id: crypto-basics
+title: 개발자에게 필요한 암호 기초
+sidebar_label: 04 · 암호 기초
+description: 해시, HMAC, AES-GCM, 공개키와 개인키, 전자서명, ECDHE 키 교환, 비밀번호 해싱을 애니메이션으로 따라가고, TLS·JWT·이미지 서명·SSH·KMS 어디에 쓰이는지와 흔한 실수를 본다
+summary: '해시, HMAC, 대칭키와 비대칭키, 서명, 키 교환이 각각 무엇을 보장하는지, 어디서 만나는지, 어떻게 쓰면 깨지는지.'
+icon: shield
+hide_table_of_contents: true
+---
+
+# 개발자에게 필요한 암호 기초
+
+암호 코드를 직접 짤 일은 드물지만 설정은 매일 한다. TLS, JWT, SSH 키, 서명된 이미지, KMS에 든 비밀값이 다 그렇다. 보내는 쪽에서 받는 쪽으로 가는 메시지 하나를 따라가며 어떤 도구가 무엇을 지키는지, 잘못 쓰면 어떻게 깨지는지 본다.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '약 12분', level: '기초'}}
+  nodes={[
+    {id: 'sender', label: '보내는 쪽', sub: '메시지를 가짐', icon: 'user', tone: 'app', x: 110, y: 230, show: true},
+    {id: 'net', label: '네트워크', sub: '공격자가 볼 수 있음', icon: 'alert', tone: 'ext', x: 500, y: 230, show: true},
+    {id: 'receiver', label: '받는 쪽', sub: '믿어도 되는지 확인', icon: 'server', tone: 'app', x: 890, y: 230, show: true},
+    {id: 'hash', label: 'SHA-256', sub: '해시 · 키 없음', icon: 'layers', tone: 'store', x: 310, y: 80},
+    {id: 'hmac', label: 'HMAC', sub: '해시 + 공유 키', icon: 'ticket', tone: 'store', x: 500, y: 80},
+    {id: 'aes', label: 'AES-GCM', sub: '키 하나로 양방향', icon: 'box', tone: 'store', x: 690, y: 80},
+    {id: 'priv', label: '개인키', sub: '주인 밖으로 안 나감', icon: 'shield', tone: 'cp', x: 310, y: 380},
+    {id: 'kex', label: 'ECDHE', sub: '키 교환', icon: 'split', tone: 'cp', x: 500, y: 380},
+    {id: 'pub', label: '공개키', sub: '누구에게나 공개', icon: 'gate', tone: 'cp', x: 690, y: 380},
+    {id: 'pwdb', label: '비밀번호 DB', sub: '느린 해시만 저장', icon: 'db', tone: 'store', x: 110, y: 390},
+  ]}
+  metrics={[
+    {id: 'tool', label: '도구'},
+    {id: 'gives', label: '보장'},
+    {id: 'key', label: '키'},
+    {id: 'where', label: '만나는 곳'},
+  ]}
+  learn={[
+    {text: '해시는 무결성을 확인하지만 누구나 다시 계산할 수 있다는 것', at: 1},
+    {text: 'HMAC과 AES-GCM: 공유 키 하나로 무결성과 기밀성', at: 2},
+    {text: 'ECB 모드, 논스 재사용, MD5와 SHA-1', at: 4},
+    {text: '서명: 개인키로 서명하고 공개키로 검증한다', at: 7},
+    {text: '비밀번호는 암호화하지 않고 느리게 해시하는 이유', at: 9},
+  ]}
+  steps={[
+    {
+      short: '시작',
+      kind: '시작',
+      title: '메시지 하나에 던지는 질문 넷',
+      text: [
+        '보내는 쪽이 메시지를 보낸다. 가는 길의 네트워크에서는 공격자가 바이트를 읽고 바꿀 수 있다. 받는 쪽은 네 가지를 알고 싶다.',
+        '바뀌지 않았나(무결성), 남이 읽을 수 없나(기밀성), 정말 그 사람이 보냈나(인증), 만난 적 없는 두 쪽이 어떻게 같은 키를 갖나(키 교환). 암호 도구는 저마다 이 중 일부만 답한다. 전부 답하는 도구는 없다.',
+      ],
+      flows: [
+        {from: 'sender', to: 'net', label: '메시지', type: 'request'},
+        {from: 'net', to: 'receiver', label: '바뀌었을지도', type: 'request'},
+      ],
+      focus: ['sender', 'net', 'receiver'],
+      status: {net: 'warn'},
+    },
+    {
+      short: '해시',
+      kind: '원리',
+      title: '해시는 한 방향으로만 가는 지문이다',
+      text: [
+        'SHA-256은 어떤 입력이든 256비트 고정 길이 다이제스트로 바꾼다. 입력이 한 비트만 달라도 다이제스트는 전혀 다르게 나온다. 다이제스트로 입력을 되살릴 수 없고, 다이제스트가 같은 두 입력을 찾는 것도 사실상 불가능하다.',
+        '그래서 무결성 확인에 좋다. 파일을 받아 해시하고 공개된 다이제스트와 비교한다. 컨테이너 이미지 다이제스트(sha256:…)도 같은 원리다. 하지만 해시에는 키가 없다. 메시지를 바꾼 공격자는 해시도 새로 계산하면 그만이다.',
+      ],
+      keyIdea: '해시는 실수로 생긴 변경을 잡는다. 공격자를 막으려면 다이제스트 자체를 믿을 수 있는 곳에서 받아야 한다.',
+      flows: [
+        {from: 'sender', to: 'hash', label: '데이터', type: 'request'},
+        {from: 'hash', to: 'receiver', label: '다이제스트', type: 'response'},
+      ],
+      focus: ['hash'],
+      values: {tool: 'SHA-256', gives: '무결성(키 없음)', key: '없음', where: '이미지 다이제스트, 체크섬'},
+    },
+    {
+      short: 'HMAC',
+      kind: '원리',
+      title: 'HMAC은 공유한 비밀 키를 섞는다',
+      text: [
+        'HMAC은 메시지와 양쪽이 함께 가진 비밀 키를 섞어 해시를 만든다. 키가 없는 공격자는 바꾼 메시지에 맞는 태그를 만들 수 없다.',
+        '웹훅이 이 방식을 쓴다. 제공자가 본문의 HMAC-SHA256을 헤더에 담아 보내면, 받는 쪽이 공유 비밀로 다시 계산해 비교한다. HS256으로 서명한 JWT도 HMAC이다. 태그는 == 가 아니라 상수 시간 비교 함수로 비교한다. 그래야 몇 바이트까지 맞았는지가 응답 시간으로 새지 않는다.',
+      ],
+      flows: [
+        {from: 'hmac', to: 'sender', label: '공유 키', type: 'watch'},
+        {from: 'hmac', to: 'receiver', label: '공유 키', type: 'watch'},
+        {from: 'sender', to: 'net', label: '본문 + 태그', type: 'request'},
+        {from: 'net', to: 'receiver', label: '다시 계산', type: 'request'},
+      ],
+      focus: ['hmac'],
+      status: {net: null},
+      values: {tool: 'HMAC-SHA256', gives: '무결성 + 보낸 이(공유)', key: '공유 비밀 하나', where: '웹훅, JWT HS256'},
+    },
+    {
+      short: 'AES-GCM',
+      kind: '원리',
+      title: '대칭 암호화: 키 하나로 잠그고 연다',
+      text: [
+        'AES는 대칭 암호다. 같은 키로 암호화하고 복호화하며 아주 빠르다. GCM은 여기에 인증 태그를 붙이는 모드다. 누가 암호문을 바꾸면 엉뚱한 평문이 나오는 대신 복호화가 실패한다.',
+        '기밀성과 무결성을 함께 주는 암호를 AEAD(인증 암호화)라고 한다. TLS에서 보는 것은 AES-GCM과 ChaCha20-Poly1305다. 메시지마다 논스(nonce)도 필요하다. 같은 키로는 절대 반복하면 안 되는 값이다.',
+      ],
+      keyIdea: 'AEAD 모드를 고른다. 인증 없는 암호화는 공격자가 비트를 뒤집어도 알아챌 수 없다.',
+      flows: [
+        {from: 'aes', to: 'sender', label: '키', type: 'watch'},
+        {from: 'aes', to: 'receiver', label: '같은 키', type: 'watch'},
+        {from: 'sender', to: 'net', label: '암호문 + 태그', type: 'request'},
+        {from: 'net', to: 'receiver', label: '복호화 + 검사', type: 'request'},
+      ],
+      focus: ['aes'],
+      status: {net: 'ok'},
+      badges: {net: '읽을 수 없음'},
+      values: {tool: 'AES-256-GCM', gives: '기밀성 + 무결성', key: '공유 비밀 하나', where: 'TLS 데이터, 디스크, KMS'},
+    },
+    {
+      short: 'ECB · 논스',
+      kind: '주의',
+      title: '암호는 맞고 모드가 틀렸다: ECB와 반복된 논스',
+      text: [
+        'ECB 모드는 16바이트 블록을 하나씩 따로 암호화한다. 같은 평문 블록은 같은 암호문 블록이 되어 데이터의 무늬가 암호화 뒤에도 그대로 보인다. 아직 이것이 기본값인 라이브러리도 있다. 절대 쓰지 않는다.',
+        'GCM에서 같은 키로 논스를 다시 쓰면 큰일이 난다. 두 평문의 XOR이 드러나고 공격자가 태그를 위조할 수 있게 된다. 메시지마다 라이브러리가 96비트 무작위 논스를 만들게 하거나 카운터를 쓰고, 반복될 수 있는 시점보다 훨씬 먼저 키를 바꾼다.',
+      ],
+      flows: [{from: 'net', to: 'receiver', label: '같은 논스 두 번', type: 'request'}],
+      focus: ['aes', 'net'],
+      status: {aes: 'error', net: 'error'},
+      badges: {net: '샌다', aes: '논스 재사용'},
+    },
+    {
+      short: 'MD5 · SHA-1',
+      kind: '문제',
+      title: 'MD5와 SHA-1은 보안용으로는 깨졌다',
+      text: [
+        'MD5와 SHA-1은 실제로 충돌을 만들 수 있다. 다이제스트가 같은 서로 다른 파일 두 개를 연구자가 만들어 낸다. 공격자는 한쪽으로 서명이나 승인을 받은 뒤 다른 쪽으로 바꿔치기할 수 있다.',
+        '보안과 상관없는 체크섬으로는 아직 쓸 만하다. 이미 믿는 곳에서 받은 파일이 깨졌는지 보는 정도다. 서명, 인증서, 새로 설계하는 HMAC, 공격자가 입력에 손댈 수 있는 모든 곳에는 SHA-256 이상을 쓴다.',
+      ],
+      flows: [{from: 'sender', to: 'hash', label: 'MD5?', type: 'request'}],
+      focus: ['hash'],
+      status: {aes: null, net: null, hash: 'error'},
+      badges: {aes: null, net: null, hash: '충돌 가능'},
+      values: {tool: 'MD5 / SHA-1', gives: {text: '충돌 안전성 없음', tone: 'bad'}, key: '없음', where: '레거시뿐'},
+    },
+    {
+      short: '키 쌍',
+      kind: '원리',
+      title: '비대칭 키: 하나는 비밀, 하나는 공개',
+      text: [
+        '대칭 키에는 숙제가 남는다. 양쪽이 같은 비밀을 어떻게 나눠 갖나? 비대칭 암호는 키 쌍을 쓴다. 개인키는 주인만 갖고, 공개키는 누구에게 줘도 된다. 공개키로 개인키를 알아낼 수 없기 때문이다.',
+        'RSA가 가장 오래된 방식이다. ECDSA와 Ed25519는 타원곡선을 써서 같은 강도에 키와 서명이 훨씬 작다. 실제로 키 쌍은 큰 데이터를 암호화하는 데가 아니라 서명과 키 합의에 쓴다.',
+      ],
+      flows: [{from: 'priv', to: 'pub', label: '유도', type: 'watch'}],
+      focus: ['priv', 'pub'],
+      status: {hash: null},
+      badges: {hash: null, priv: '비밀', pub: '공개'},
+      values: {tool: 'RSA · ECDSA · Ed25519', gives: '기본 재료', key: '개인키 + 공개키', where: 'SSH, TLS, JWT, 서명'},
+    },
+    {
+      short: '서명',
+      kind: '원리',
+      title: '개인키로 서명하고 공개키로 검증한다',
+      text: [
+        '보내는 쪽이 메시지를 해시하고 개인키로 서명한다. 공개키를 가진 누구나 서명을 검증할 수 있지만, 서명을 만들 수 있는 것은 개인키 주인뿐이다. HMAC과 달리 검증하는 쪽이 위조할 수 없다.',
+        '이것은 어디에나 있다. RS256·ES256·EdDSA로 서명한 JWT는 발급자가 공개한 키(JWKS)로 확인한다. cosign 같은 이미지 서명 도구는 이미지 다이제스트에 서명한다. SSH는 도전 값에 서명해 신원을 증명한다. 인증서는 공개키와 이름을 묶은 CA의 서명이다.',
+      ],
+      keyIdea: '서명은 공개키를 믿는 모두에게 "누가 보냈나"를 답한다. 믿을 만한 공개키를 손에 넣는 일은 인증서와 키 배포가 맡는다.',
+      flows: [
+        {from: 'priv', to: 'sender', label: '서명', type: 'watch'},
+        {from: 'sender', to: 'net', label: '메시지 + 서명', type: 'request'},
+        {from: 'net', to: 'receiver', label: '검증', type: 'request'},
+        {from: 'pub', to: 'receiver', label: '공개키', type: 'watch'},
+      ],
+      focus: ['priv', 'pub', 'receiver'],
+      status: {receiver: 'ok'},
+      badges: {receiver: '검증됨'},
+      values: {tool: 'Ed25519 / ECDSA / RSA', gives: '무결성 + 보낸 이(누구나 확인)', key: '개인키 서명, 공개키 검증', where: 'JWT RS256, cosign, SSH'},
+    },
+    {
+      short: 'ECDHE',
+      kind: '원리',
+      title: '키 교환: 보내지 않은 비밀에 합의한다',
+      text: [
+        'ECDHE에서는 양쪽이 쓰고 버릴 새 키 쌍을 만들고 공개 절반만 보낸다. 각자 자기 개인 절반과 상대의 공개 절반을 섞으면 같은 공유 비밀이 나온다. 도청자는 공개 절반 둘을 다 보고도 그 비밀을 계산하지 못한다.',
+        'TLS 1.3은 모든 전체 핸드셰이크에서 임시 키 교환을 쓰고, 그 비밀에서 뽑은 AEAD 키로 데이터를 암호화한다. 서버는 핸드셰이크에 서명해 중간의 공격자와 키를 나누는 게 아님을 보인다. 임시 키는 지워지므로 나중에 서버 키를 훔쳐도 녹화해 둔 트래픽은 풀 수 없다. 이것을 전방 비밀성(forward secrecy)이라고 한다.',
+      ],
+      flows: [
+        {from: 'sender', to: 'kex', label: '공개 절반', type: 'request'},
+        {from: 'receiver', to: 'kex', label: '공개 절반', type: 'request'},
+        {from: 'kex', to: 'aes', label: '세션 키', type: 'watch'},
+      ],
+      focus: ['kex', 'aes'],
+      status: {receiver: null},
+      badges: {receiver: null, priv: null, pub: null, kex: '임시 키'},
+      values: {tool: 'ECDHE (X25519)', gives: '공유 키 + 전방 비밀성', key: '쓰고 버리는 키 쌍', where: 'TLS 1.3, SSH'},
+    },
+    {
+      short: '비밀번호',
+      kind: '주의',
+      title: '비밀번호는 암호화하지 않고 느리게 해시한다',
+      text: [
+        '암호화한 비밀번호는 복호화할 수 있다. 키를 손에 넣은 사람이 모든 비밀번호를 얻는다. 그냥 SHA-256도 낫지 않다. 유출된 해시에 GPU가 초당 수십억 번씩 추측을 넣어 본다.',
+        '비밀번호는 느리고 솔트를 쓰는 비밀번호 해시 함수로 저장한다. Argon2id, scrypt, bcrypt가 그렇다. 사용자마다 다른 솔트가 미리 계산한 표를 막고, 조절 가능한 비용이 추측 한 번을 비싸게 만든다. 로그인할 때는 입력한 비밀번호를 같은 방식으로 해시해 비교한다.',
+      ],
+      keyIdea: '다시 읽어야 하는 데이터는 암호화한다. 맞는지 확인만 하면 되는 데이터는 느리게 해시한다.',
+      flows: [{from: 'sender', to: 'pwdb', label: 'Argon2id + 솔트', type: 'request'}],
+      focus: ['pwdb'],
+      badges: {kex: null, pwdb: 'Argon2id'},
+      values: {tool: 'Argon2id · bcrypt', gives: '추측이 느림', key: '사용자별 솔트', where: '로그인 시스템'},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '질문에 맞는 도구를 고르고, 검증된 라이브러리를 쓴다',
+      text: [
+        '키 없이 무결성만 볼 때는 해시. 양쪽이 키를 나눠 가졌으면 HMAC. 데이터를 숨기고 변조도 막으려면 AES-GCM. 검증은 여럿이 하고 서명은 하나만 해야 하면 서명. 전방 비밀성이 있는 세션 키가 필요하면 ECDHE. 비밀번호는 Argon2id나 bcrypt.',
+        'TLS는 핸드셰이크 한 번에 이것을 거의 다 쓴다. KMS는 마스터 키를 관리형 하드웨어 안에 두고 데이터 키를 감싼다(봉투 암호화). 나만의 방식을 만들거나 기본 재료를 손으로 조합하지 않는다. 충분히 검토된 라이브러리의 고수준 API를 쓴다.',
+      ],
+      keyIdea: '암호 사고는 대부분 수학이 아니라 잘못 쓴 데서 난다. 틀린 모드, 다시 쓴 논스, 약한 해시, 직접 만든 프로토콜. 기본값은 라이브러리와 플랫폼이 정한 것을 따른다.',
+      flows: [
+        {from: 'sender', to: 'net', label: 'TLS', type: 'request'},
+        {from: 'net', to: 'receiver', type: 'request'},
+      ],
+      focus: ['hash', 'hmac', 'aes', 'priv', 'kex', 'pub'],
+      status: {net: 'ok'},
+      badges: {pwdb: null, net: '보호됨'},
+      values: {tool: '—', gives: '—', key: '—', where: '—'},
+    },
+  ]}
+/>
+
+## 어떤 도구가 어떤 질문에 답하나
+
+| 도구 | 무결성 | 기밀성 | 보낸 이 | 키 | 만나는 곳 |
+|---|---|---|---|---|---|
+| 해시(SHA-256) | 다이제스트를 믿을 수 있으면 예 | 아니오 | 아니오 | 없음 | 이미지 다이제스트, 파일 체크섬 |
+| HMAC | 예 | 아니오 | 공유 키를 가진 누군가 | 공유 비밀 하나 | 웹훅 서명, JWT HS256, API 요청 서명 |
+| AEAD(AES-GCM, ChaCha20-Poly1305) | 예 | 예 | 공유 키를 가진 누군가 | 공유 비밀 하나 | TLS 레코드, 디스크·DB 암호화, KMS 데이터 키 |
+| 서명(Ed25519, ECDSA, RSA) | 예 | 아니오 | 개인키 주인, 누구나 확인 가능 | 개인키 서명, 공개키 검증 | JWT RS256/ES256, cosign, SSH, 인증서 |
+| 키 교환(ECDHE) | — | 공유 키를 만든다 | 서명을 더해야 확인 | 쓰고 버리는 키 쌍 | TLS 1.3, SSH |
+| 비밀번호 해시(Argon2id, scrypt, bcrypt) | 추측이 맞는지 확인 | — | — | 사용자별 솔트, 비용 설정 | 사용자 로그인 DB |
+
+| 실수 | 무엇이 잘못되나 | 대신 할 것 |
+|---|---|---|
+| 직접 만든 방식이나 프로토콜 | 테스트로는 안 잡히는 미묘한 구멍 | 검증된 라이브러리의 고수준 API, 전송에는 TLS |
+| ECB 모드 | 같은 블록이 같은 암호문이 되어 무늬가 샌다 | AEAD 모드(GCM) |
+| GCM 논스 재사용 | 평문 XOR이 새고 태그를 위조할 수 있다 | 메시지마다 96비트 무작위 논스나 카운터, 키 교체 |
+| 보안에 MD5나 SHA-1 | 충돌로 내용을 바꿔치기할 수 있다 | SHA-256 이상 |
+| 비밀번호를 암호화하거나 빠른 해시로 저장 | 키가 새거나 GPU가 되살린다 | 솔트와 함께 Argon2id, scrypt, bcrypt |
+| MAC을 `==`로 비교 | 몇 바이트 맞았는지 시간으로 샌다 | 상수 시간 비교 |
+
+## 직접 확인해 보기
+
+```bash
+echo -n 'hello' | openssl dgst -sha256                    # 해시: 입력이 같으면 다이제스트도 같다
+echo -n 'hello!' | openssl dgst -sha256                   # 한 글자만 바꿔도 전부 바뀐다
+echo -n 'payload' | openssl dgst -sha256 -hmac 'secret'   # 공유 키로 HMAC
+
+openssl genpkey -algorithm ed25519 -out key.pem           # 개인키
+openssl pkey -in key.pem -pubout -out pub.pem             # 개인키에서 뽑은 공개키
+echo 'release v1' > msg.txt
+openssl pkeyutl -sign -inkey key.pem -rawin -in msg.txt -out msg.sig                  # 개인키로 서명
+openssl pkeyutl -verify -pubin -inkey pub.pem -rawin -in msg.txt -sigfile msg.sig     # 공개키로 검증
+
+openssl s_client -connect example.com:443 -tls1_3 </dev/null 2>/dev/null | grep -iE 'cipher|temp key|group'   # AEAD 암호와 키 교환 그룹(X25519, 또는 하이브리드 X25519MLKEM768)
+ssh-keygen -t ed25519 -f ./demo_key -N '' && ssh-keygen -lf ./demo_key.pub   # SSH 키 쌍과 SHA256 지문
+htpasswd -nbBC 12 alice 'correct horse'                  # bcrypt 해시, 비용 12 ($2y$12$...)
+```
+
+<Quiz questions={[
+  {q: '파일과 그 SHA-256 다이제스트가 같은 서버에 올라 있다. 그 서버를 공격자가 장악했다. 다이제스트는 무엇을 막아 주나?', options: ['공격자의 변조. SHA-256은 되돌릴 수 없으니까', '실수로 생긴 손상뿐. 공격자는 파일과 다이제스트를 함께 바꿀 수 있으니까', '아무것도 못 막는다. SHA-256에는 알려진 충돌이 있으니까'], answer: 1, why: '해시에는 키가 없다. 파일을 바꿀 수 있는 사람은 다이제스트도 새로 계산한다. 공격자를 막으려면 다이제스트를 믿을 수 있는 다른 곳에서 받거나 파일에 서명해야 한다.'},
+  {q: '여러 API가 쓰는 JWT에 HS256 대신 RS256이나 ES256을 쓰는 이유는?', options: ['모든 API가 공개키로 토큰을 검증할 수 있고, 새 토큰을 만들 수는 없기 때문', '서명이 페이로드를 암호화해 아무도 클레임을 못 읽게 하기 때문', 'HMAC은 깨져서 절대 쓰면 안 되기 때문'], answer: 0, why: 'HS256이면 검증하는 쪽 모두가 같은 비밀을 갖고, 그래서 토큰을 위조할 수도 있다. 서명 방식이면 개인키는 발급자만 갖고 검증하는 쪽은 JWKS에서 공개키를 받는다. 페이로드는 어느 쪽이든 읽을 수 있다.'},
+  {q: '공격자가 오늘 TLS 1.3 트래픽을 녹화해 두고 내년에 서버 개인키를 훔쳤다. 무엇을 복호화할 수 있나?', options: ['녹화한 모든 세션. 개인키가 있으니까', 'AES-GCM을 쓴 세션만', '녹화한 세션은 하나도 못 푼다. 세션 키는 쓰고 버린 ECDHE 키에서 나왔으니까'], answer: 2, why: 'TLS 1.3에서 서버 키는 핸드셰이크에 서명만 한다. 세션 키는 임시 키 교환에서 나오고 지워지므로, 훔친 키로는 되살릴 수 없다. 이것이 전방 비밀성이다.'},
+]} />
+
+더 읽을거리: [OWASP 암호화 저장 치트시트](https://cheatsheetseries.owasp.org/cheatsheets/Cryptographic_Storage_Cheat_Sheet.html) · [OWASP 비밀번호 저장 치트시트](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html) · [RFC 8446: TLS 1.3](https://datatracker.ietf.org/doc/html/rfc8446) · [저장된 시크릿 데이터 암호화(쿠버네티스)](https://kubernetes.io/docs/tasks/administer-cluster/encrypt-data/) · [HTTPS와 인증서](../basic/https-cert.mdx) · [로그인은 이렇게 동작한다 (세션, JWT, OIDC)](../basic/auth-login.mdx)

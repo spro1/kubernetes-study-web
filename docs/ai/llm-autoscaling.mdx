@@ -1,7 +1,7 @@
 ---
 id: llm-autoscaling
 title: Autoscaling LLM Inference
-sidebar_label: 11 · Autoscaling LLM Inference
+sidebar_label: 13 · Autoscaling LLM Inference
 description: Animated walkthrough of why CPU and GPU utilization mislead an LLM autoscaler, how waiting requests, KV cache usage and TTFT flow from the engine through Prometheus and KEDA or the Prometheus Adapter to the HPA, and how cold starts, GPU node provisioning, scale-down and scale-to-zero shape the result
 summary: 'Scale LLM replicas on waiting requests and KV cache use, not GPU utilization, and plan around cold starts and GPU node delays.'
 icon: scale
@@ -262,5 +262,11 @@ spec:
         query: sum(vllm:num_requests_waiting{model_name="chat"})
         threshold: "5"         # Target waiting requests per replica
 ```
+
+<Quiz questions={[
+  {q: 'An HPA on GPU utilization scaled an LLM Deployment out and never scaled it back in. Why?', options: ['GPU utilization counts time any kernel ran, so it sits near 100% at light and heavy load alike', 'The HPA cannot read GPU metrics at all', 'The scale-down stabilization window is infinite by default', 'GPU utilization only rises during cold starts'], answer: 0, why: 'While even one request is decoding, the engine launches a kernel every step. The metric shows the GPU is in use, not how much more it can take.'},
+  {q: 'kubectl describe hpa shows the waiting-requests metric as unknown. Where is the problem?', options: ['The target value is set too high', 'The query or the metrics API (KEDA or the Prometheus Adapter) is broken', 'The Deployment has reached maxReplicaCount', 'The new replica is still loading weights'], answer: 1, why: 'The HPA cannot read Prometheus itself. If the current value is unknown, the query or the metrics API is broken, not the scaling rule.'},
+  {q: 'When a replica is removed during scale-in, some users see their answer stop mid-sentence. What fixes this?', options: ['Scale on CPU instead of waiting requests', 'Set minReplicaCount to 0', 'Lower the waiting-request threshold', 'Stop routing new requests to it first, and set terminationGracePeriodSeconds plus preStop to cover the longest generation'], answer: 3, why: 'A removed replica may still be streaming long answers. The router must stop sending it new requests, and the grace period must cover the longest generation, not the 30 s default.'},
+]} />
 
 Further reading: [vLLM metrics](https://docs.vllm.ai/en/latest/design/metrics.html) · [KEDA Prometheus scaler](https://keda.sh/docs/latest/scalers/prometheus/) · [Horizontal Pod Autoscaling](https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/) · [Karpenter](https://karpenter.sh/) · [Scaling with Load (HPA)](../k8s/autoscaling.mdx) · [Until a Model First Starts (Cold Start)](../ai/cold-start.mdx) · [Which Replica Gets the Request](../ai/inference-routing.mdx) · [Graceful shutdown](../intermediate/graceful-shutdown.mdx)

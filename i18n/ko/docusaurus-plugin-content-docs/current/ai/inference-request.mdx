@@ -1,7 +1,7 @@
 ---
 id: inference-request
 title: 추론 API 요청이 응답을 받기까지
-sidebar_label: 09 · 추론 API 요청이 응답을 받기까지
+sidebar_label: 10 · 추론 API 요청이 응답을 받기까지
 description: 클라이언트가 API 키로 보낸 요청이 API 게이트웨이의 인증·사용 한도 확인을 거쳐 vLLM 레플리카에 닿고 스트리밍으로 돌아오기까지, 거부되는 요청과 함께 애니메이션으로 따라간다
 summary: 'API 키 확인, 게이트웨이, 레플리카, 스트리밍 응답까지 추론 요청 한 건의 경로와 막히는 곳.'
 icon: route
@@ -200,5 +200,11 @@ curl -sN http://<게이트웨이>/v1/completions -H "Authorization: Bearer $API_
 kubectl get networkpolicy -n <네임스페이스>             # 모델 파드에는 게이트웨이만 닿는지 (4단계)
 curl -s http://<엔진>:8000/metrics | grep -E 'vllm:(num_requests_waiting|time_to_first_token_seconds)'   # 레플리카 대기열과 TTFT
 ```
+
+<Quiz questions={[
+  {q: '키 없는 요청은 게이트웨이에서 401을 받는데, 클러스터 안의 누군가가 키 없이 모델을 부르고 있다. 가장 그럴듯한 원인은 무엇인가?', options: ['인증 서비스 캐시가 오래됐다', '키 관리 서비스가 멈췄다', '모델 Service에 직접 닿을 수 있고, 게이트웨이에서 오는 트래픽만 허용하는 NetworkPolicy가 없다', 'vLLM이 Authorization 헤더를 무시한다'], answer: 2, why: '게이트웨이 인증은 게이트웨이를 거치는 요청만 지킨다. NetworkPolicy가 없으면 키 확인을 건너뛰고 레플리카에 바로 요청할 수 있기 때문이다.'},
+  {q: 'API 키를 폐기했는데 잠시 동안 그 키가 계속 통한다. 왜 그런가?', options: ['인증 서비스가 키 목록을 캐시하므로 캐시가 갱신된 뒤에 막힌다', '폐기는 새로 발급한 키에만 적용된다', '키 관리 서비스가 요청 경로에 있어서 느리다', '게이트웨이가 연결의 첫 요청에서만 키를 확인한다'], answer: 0, why: '인증 서비스는 보통 키 목록을 캐시해 둔다. 그래서 폐기한 키가 캐시 갱신 주기만큼 더 통할 수 있기 때문이다.'},
+  {q: '어떤 키의 실제 토큰 사용량이 분당 토큰 한도를 조금 넘었다. 왜 이런 일이 생길 수 있는가?', options: ['게이트웨이가 입력 토큰만 센다', '출력 토큰 수는 생성이 끝나야 알 수 있어서 응답이 끝난 뒤에 차감한다', '한도는 게이트웨이가 아니라 모델 서버가 적용한다', '스트리밍 응답은 세지 않는다'], answer: 1, why: '출력 토큰 수는 생성이 끝나야 알 수 있으므로 게이트웨이는 응답 뒤에 사용량을 차감한다. 그래서 한도 직전의 요청이 그대로 통과해 한도를 조금 넘을 수 있기 때문이다.'},
+]} />
 
 더 읽을거리: [네트워크 정책](https://kubernetes.io/ko/docs/concepts/services-networking/network-policies/) · [Gateway API](https://gateway-api.sigs.k8s.io/) · [Gateway API Inference Extension](https://gateway-api-inference-extension.sigs.k8s.io/)

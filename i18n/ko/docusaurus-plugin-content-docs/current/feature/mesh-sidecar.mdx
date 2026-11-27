@@ -184,4 +184,10 @@ kubectl get pods -n shop                               # READY 2/2 이면 프록
 kubectl get peerauthentication -A                      # mTLS 모드(PERMISSIVE·STRICT)
 ```
 
+<Quiz questions={[
+  {q: 'shop 네임스페이스에 istio-injection=enabled 레이블을 달았는데, 돌고 있던 파드는 여전히 READY 1/1이다. 왜 그런가?', options: ['주입은 레이블 이후 만들어지는 파드에만 적용되므로 기존 파드는 다시 만들어야 한다', 'istiod는 가상 서비스가 있어야 프록시를 주입한다', '레이블은 네임스페이스가 아니라 디플로이먼트마다 달아야 한다'], answer: 0, why: '주입 설정은 새로 만들어지는 파드에만 적용되기 때문이다. kubectl rollout restart 등으로 파드를 다시 만들면 프록시가 붙어 2/2가 된다.'},
+  {q: 'Istio의 역할 분담과 맞는 설명은 무엇인가?', options: ['istiod가 파드 사이의 모든 요청을 나른다', '앱 코드가 istiod의 인증서로 통신을 암호화한다', 'istiod는 규칙과 인증서를 나눠 주고, 사이드카 프록시가 요청을 나르며 mTLS를 한다', 'Kiali가 통신 규칙을 집행한다'], answer: 2, why: 'istiod는 규칙과 인증서를 나눠 줄 뿐 요청을 나르지 않는 컨트롤 플레인이기 때문이다. 요청을 나르고 mTLS로 서로 확인하며 지표를 남기는 것은 데이터 플레인인 프록시다.'},
+  {q: '주입 레이블이 없는 네임스페이스의 파드가 메시 안을 부른다. 기본으로는 어떻게 되고, STRICT로 바꾸면 무엇이 달라지는가?', options: ['기본이든 STRICT든 항상 거절된다', '기본(PERMISSIVE)에서는 평문 요청을 받아 주고, STRICT에서는 거절한다', '인증서가 자동으로 발급되어 두 모드 모두 받아 준다'], answer: 1, why: '프록시가 없으면 인증서가 없어 평문으로 보내기 때문이다. PERMISSIVE는 평문과 mTLS를 모두 받고 STRICT는 평문을 거절하므로, 바꾸기 전에 평문으로 부르는 파드가 남았는지 확인한다.'},
+]} />
+
 더 읽을거리: [Istio 개념](https://istio.io/latest/docs/concepts/) · [Istio 보안(mTLS)](https://istio.io/latest/docs/concepts/security/) · [Istio 관측](https://istio.io/latest/docs/concepts/observability/) · [Kiali](https://kiali.io/) · [통신 막고 열기 (네트워크 정책)](../k8s/network-policy.mdx)
