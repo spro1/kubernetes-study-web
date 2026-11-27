@@ -1,0 +1,234 @@
+---
+id: local-dev-loop
+title: 쿠버네티스에서 개발 루프 돌리기
+sidebar_label: 13 · 로컬 개발 루프
+description: Skaffold·Tilt로 빌드와 배포를 자동화하고, 실행 중인 컨테이너에 파일을 동기화하며, 레지스트리 없이 kind에 이미지를 넣고, port-forward와 로그, 운영과 같은 매니페스트, Telepresence·mirrord 원격 개발, devcontainer까지 쿠버네티스의 안쪽 개발 루프를 애니메이션으로 본다
+summary: '파일을 저장하면 몇 초 뒤 클러스터에서 돌아간다. 감시·빌드·배포 도구, 파일 동기화, kind에는 레지스트리 없이, 운영과 같은 매니페스트.'
+icon: wheel
+hide_table_of_contents: true
+---
+
+# 쿠버네티스에서 개발 루프 돌리기
+
+안쪽 루프는 하루에도 수십 번 되풀이하는 일이다. 코드를 고치고, 돌아가는 것을 본다. 쿠버네티스에서 이걸 손으로 하면 빌드, 푸시, 배포, 기다리기가 된다. 파일 저장 한 번을 따라가며 도구가 이 루프를 어떻게 줄이는지 본다.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '약 11분', level: '기초'}}
+  groups={[
+    {label: 'kind 클러스터 (노트북)', x: 540, y: 30, w: 230, h: 290, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'dev', label: '내 에디터', sub: '파일 저장', icon: 'user', tone: 'ext', x: 110, y: 110, show: true},
+    {id: 'devc', label: 'Devcontainer', sub: '모두 같은 도구', icon: 'box', tone: 'ext', x: 110, y: 300},
+    {id: 'tool', label: '개발 도구', sub: 'skaffold dev · tilt up', icon: 'wheel', tone: 'cp', x: 350, y: 110},
+    {id: 'build', label: '이미지 빌드', sub: '로컬 BuildKit', icon: 'hammer', tone: 'node', x: 350, y: 250},
+    {id: 'manif', label: '매니페스트', sub: 'Helm 또는 Kustomize', icon: 'book', tone: 'store', x: 350, y: 390},
+    {id: 'pod', label: '앱 파드', sub: '컨테이너 실행 중', icon: 'pod', tone: 'app', x: 655, y: 110},
+    {id: 'knode', label: 'kind 노드', sub: 'containerd 이미지', icon: 'server', tone: 'node', x: 655, y: 245},
+    {id: 'reg', label: '레지스트리', sub: '원격 클러스터용', icon: 'registry', tone: 'store', x: 655, y: 390},
+    {id: 'shared', label: '공유 클러스터', sub: '스테이징, 내 네임스페이스', icon: 'cloud', tone: 'cp', x: 885, y: 245},
+  ]}
+  metrics={[
+    {id: 'change', label: '변경'},
+    {id: 'path', label: '경로'},
+    {id: 'manual', label: '손으로 친 명령'},
+  ]}
+  learn={[
+    {text: 'Skaffold·Tilt가 자동화하는 것: 감시, 빌드, 배포, 로그', at: 1},
+    {text: '레지스트리에 푸시하지 않고 kind에 이미지 넣기', at: 2},
+    {text: '실행 중인 컨테이너로 파일 동기화, 그리고 다시 빌드로 넘어가는 경우', at: 3},
+    {text: '운영과 같은 Helm·Kustomize 매니페스트 쓰기', at: 6},
+    {text: '공유 클러스터 원격 개발과 devcontainer', at: 7},
+  ]}
+  steps={[
+    {
+      short: '시작',
+      kind: '시작',
+      title: '고치고, 빌드하고, 푸시하고, 배포하기를 손으로',
+      text: [
+        '핸들러 한 줄을 고친다. 클러스터에서 보려면 docker build, docker push, 매니페스트의 이미지 태그 수정, kubectl apply, 롤아웃 기다리기, 그리고 kubectl logs까지 해야 한다.',
+        '하나하나는 금방이지만 합치면 1초짜리 수정이 몇 분이 된다. 하루 종일 이러다 보면 아예 클러스터에서 확인하지 않게 된다.',
+      ],
+      flows: [
+        {from: 'dev', to: 'build', label: 'docker build', type: 'request'},
+        {from: 'build', to: 'reg', label: 'docker push', type: 'request', bend: 30},
+        {from: 'reg', to: 'knode', label: 'pull', type: 'request'},
+      ],
+      focus: ['dev', 'build', 'reg'],
+      values: {change: '한 줄', path: {text: '빌드 → 푸시 → 풀', tone: 'bad'}, manual: {text: '5개 이상', tone: 'bad'}},
+    },
+    {
+      short: '감시',
+      kind: '원리',
+      title: '개발 도구가 파일을 지켜보며 루프를 돌린다',
+      text: [
+        'skaffold dev(skaffold.yaml 사용)나 tilt up(Tiltfile 사용)은 소스를 지켜본다. 저장하면 이미지를 빌드하고, 겹치지 않는 태그를 붙이고, 그 태그로 매니페스트를 렌더링해 배포하고, 롤아웃을 기다린다.',
+        '단계는 손으로 하던 것과 같다. 도구가 저장할 때마다 이어서 돌려 줄 뿐이고, Ctrl+C를 누르면 멈춘다.',
+      ],
+      keyIdea: 'skaffold init은 Dockerfile과 매니페스트를 보고 첫 skaffold.yaml을 만들어 준다.',
+      flows: [
+        {from: 'dev', to: 'tool', label: '파일 저장', type: 'watch'},
+        {from: 'tool', to: 'build', label: '빌드', type: 'request'},
+        {from: 'tool', to: 'pod', label: '배포', type: 'request'},
+      ],
+      focus: ['tool'],
+      values: {manual: {text: '0, 저장만', tone: 'good'}},
+    },
+    {
+      short: '레지스트리 없이',
+      kind: '원리',
+      title: 'kind라면 이미지가 레지스트리를 건너뛴다',
+      text: [
+        '로컬 클러스터에는 레지스트리가 필요 없다. Skaffold는 kubectl 컨텍스트 이름이 kind-<이름>이면 로컬로 보고, 푸시 대신 이미지를 노드에 넣는다. Tilt는 kind에 연결된 로컬 레지스트리가 있으면 거기로 푸시하고, 없으면 더 느린 kind load로 넘어간다.',
+        '어느 쪽이든 이미지는 실습 클러스터 레슨에서 본 것처럼 각 kind 노드의 containerd 저장소로 바로 들어간다. 레지스트리는 원격 클러스터에만 필요하다.',
+      ],
+      keyIdea: '시작하기 전에 kubectl config current-context를 확인한다. 원격 컨텍스트라면 같은 명령이 거기로 푸시하고 배포한다.',
+      flows: [
+        {from: 'build', to: 'knode', label: 'kind load', type: 'request'},
+        {from: 'knode', to: 'pod', label: '시작', type: 'request'},
+      ],
+      focus: ['build', 'knode'],
+      status: {reg: 'off'},
+      values: {path: {text: '빌드 → kind 노드', tone: 'good'}},
+    },
+    {
+      short: '파일 동기화',
+      kind: '원리',
+      title: '파일 동기화는 바뀐 파일을 실행 중인 컨테이너에 넣는다',
+      text: [
+        '인터프리터 언어 코드, 템플릿, 정적 파일이라면 다시 빌드할 필요가 없다. Skaffold의 sync 규칙과 Tilt의 live_update는 바뀐 파일을 실행 중인 컨테이너에 바로 복사한다. 핫 리로드 서버라면 곧바로 반영된다.',
+        'Skaffold는 파일을 tar 묶음으로 보내므로 컨테이너에 tar가 있어야 한다. Tilt는 동기화 뒤에 명령을 돌릴 수도 있다. 예를 들어 잠금 파일이 바뀌면 의존성을 다시 설치한다.',
+      ],
+      flows: [{from: 'tool', to: 'pod', label: '파일 동기화', type: 'request'}],
+      focus: ['tool', 'pod'],
+      status: {pod: 'ok'},
+      values: {change: 'template.html', path: {text: '동기화, 빌드 없음', tone: 'good'}},
+    },
+    {
+      short: '다시 빌드',
+      kind: '주의',
+      title: '어떤 변경은 여전히 전체 빌드가 필요하다',
+      text: [
+        '컴파일한 바이너리, 새 의존성, Dockerfile 수정은 동기화할 수 없다. Skaffold는 어느 sync 규칙에도 맞지 않는 변경이면 다시 빌드한다. Tilt에서는 그런 파일을 fall_back_on에 적어 두면 바뀔 때 다시 빌드한다.',
+        '동기화를 오래 하면 실행 중인 컨테이너가 이미지와 달라진다. 결과를 믿기 전에 깨끗하게 한 번 빌드한다. 운영용 distroless 이미지에는 보통 tar가 없어서, 많은 팀이 개발용 빌드 타깃에만 동기화한다.',
+      ],
+      keyIdea: '동기화는 속도를 위한 것이고, 전체 빌드가 진짜다. 푸시하기 전에 실제 이미지로 돌려 본다.',
+      flows: [
+        {from: 'tool', to: 'build', label: '다시 빌드', type: 'request'},
+        {from: 'build', to: 'knode', label: 'kind load', type: 'request'},
+      ],
+      focus: ['tool', 'build'],
+      status: {pod: 'warn'},
+      values: {change: 'go.mod', path: {text: '전체 빌드', tone: 'bad'}},
+    },
+    {
+      short: '확인',
+      kind: '원리',
+      title: '같은 터미널에서 포트 포워딩과 로그 보기',
+      text: [
+        'skaffold dev는 배포한 파드의 로그를 이어서 보여 주고, skaffold dev --port-forward는 서비스 포트를 localhost로 넘긴다. tilt up은 리소스마다 로그와 상태를 웹 UI에 보여 준다.',
+        '속은 kubectl port-forward와 kubectl logs -f다. 인그레스나 로드밸런서 없이 localhost:8080을 열어 새 코드를 본다.',
+      ],
+      flows: [
+        {from: 'pod', to: 'tool', label: '로그', type: 'response'},
+        {from: 'tool', to: 'dev', label: 'localhost:8080', type: 'response'},
+      ],
+      focus: ['pod', 'dev'],
+      status: {pod: 'ok'},
+      values: {change: 'handler.py', path: '동기화 → 로그'},
+    },
+    {
+      short: '같은 매니페스트',
+      kind: '원리',
+      title: '운영이 쓰는 매니페스트로 배포한다',
+      text: [
+        '개발용으로 따로 쓴 YAML은 운영과 점점 달라진다. 대신 개발 도구가 실제 차트나 Kustomize base를 쓰게 한다. Helm에 values-dev.yaml을 주거나, 레플리카와 리소스를 줄이는 개발용 Kustomize 오버레이를 둔다.',
+        '그러면 잘못된 프로브, 빠진 ConfigMap 키, 틀린 포트가 스테이징이 아니라 노트북에서 드러난다. Skaffold와 Tilt 모두 Helm 차트와 Kustomize 디렉터리를 렌더링할 수 있다.',
+      ],
+      flows: [
+        {from: 'manif', to: 'tool', label: 'dev 렌더링', type: 'request'},
+        {from: 'tool', to: 'pod', label: 'apply', type: 'request'},
+      ],
+      focus: ['manif', 'tool'],
+      badges: {manif: 'overlay dev'},
+    },
+    {
+      short: '원격 개발',
+      kind: '주의',
+      title: '앱이 진짜 클러스터 환경을 필요로 할 때',
+      text: [
+        '어떤 서비스는 데이터베이스, 큐, 다른 서비스 여럿에 기대고 있어 노트북에 다 올릴 수 없다. Telepresence나 mirrord 같은 도구는 프로세스를 로컬에서 돌리면서 공유 클러스터에 끼워 넣는다. 클러스터 DNS 이름에 닿고, 파드의 환경 변수를 받고, 파드로 갈 트래픽을 받을 수도 있다.',
+        '공유 클러스터에서 서비스의 트래픽을 통째로 가로채면 모두가 영향을 받는다. 내 네임스페이스를 쓰거나, 내 헤더가 붙은 요청만 골라 받는다.',
+      ],
+      keyIdea: '원격 개발은 격리를 내주고 현실감을 얻는다. 네임스페이스와 트래픽 규칙을 팀과 먼저 맞춘다.',
+      flows: [{from: 'dev', to: 'shared', label: '가로채기', type: 'request', bend: -60}],
+      focus: ['dev', 'shared'],
+      status: {shared: 'warn'},
+      badges: {manif: null},
+    },
+    {
+      short: 'Devcontainer',
+      kind: '원리',
+      title: 'devcontainer는 모두에게 같은 도구 상자를 준다',
+      text: [
+        '루프에는 버전이 맞는 도구가 많이 필요하다. 컨테이너 런타임, kind, kubectl, Helm, Skaffold나 Tilt, 언어 런타임. devcontainer.json은 이것을 모두 담은 컨테이너 이미지를 정의한다.',
+        'Dev Container 스펙을 지원하는 에디터와 클라우드 IDE는 프로젝트를 그 컨테이너 안에서 연다. 새 팀원은 긴 설치 문서 없이 바로 루프를 돌린다.',
+      ],
+      flows: [{from: 'devc', to: 'tool', label: '고정된 도구', type: 'request'}],
+      focus: ['devc'],
+      status: {shared: null},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '저장하고, 보고, 치운다',
+      text: [
+        '개발 도구가 파일을 지켜보며 빌드와 배포를 대신한다. kind라면 레지스트리를 건너뛴다. 작은 변경은 파일 동기화로 처리하고, 필요하면 다시 빌드로 넘어간다. 로그와 포트 포워딩은 같은 터미널로 돌아온다.',
+        '운영 매니페스트에 개발용 오버레이를 얹어 쓴다. 노트북으로 부족할 때만 공유 클러스터를 쓰고, 도구 상자는 devcontainer로 고정한다.',
+      ],
+      keyIdea: 'skaffold dev에서 Ctrl+C를 누르면 배포한 것을 지운다. Tilt는 tilt down을 돌린다.',
+      flows: [
+        {from: 'dev', to: 'tool', label: '저장', type: 'watch'},
+        {from: 'tool', to: 'pod', label: '동기화 또는 배포', type: 'request'},
+        {from: 'pod', to: 'tool', label: '로그', type: 'response'},
+      ],
+      focus: ['dev', 'tool', 'pod'],
+      status: {pod: null, reg: null},
+    },
+  ]}
+/>
+
+## 루프의 어느 부분에 어떤 도구를 쓰나
+
+| 필요 | 도구 예 | 하는 일 | 주의 |
+|---|---|---|---|
+| 저장하면 감시·빌드·배포 | Skaffold(`skaffold dev`), Tilt(`tilt up`) | 빌드, 태그, 렌더링, 배포, 로그를 잇는다 | kubectl 컨텍스트부터 확인 |
+| 작은 수정은 빌드 생략 | Skaffold `sync`, Tilt `live_update` | 실행 중인 컨테이너에 파일 복사 | Skaffold는 컨테이너에 `tar` 필요, 이미지와 어긋남 |
+| 로컬에선 레지스트리 없이 | `kind load`, kind에 연결한 로컬 레지스트리 | 이미지를 노드에 바로 넣는다 | 로컬 클러스터에서만 |
+| 앱 확인 | `kubectl port-forward`, `kubectl logs -f`, 도구 UI | 포트와 로그를 터미널로 가져온다 | 맨 kubectl은 파드가 재시작되면 포워딩이 끊긴다 |
+| 운영과 비슷한 설정 | Helm 값 파일, Kustomize 오버레이 | 운영과 같은 템플릿, 개발용 설정 | 개발용 차이는 작게 |
+| 진짜 의존 서비스 | Telepresence, mirrord | 로컬 프로세스가 공유 클러스터에 붙는다 | 남의 트래픽을 가져갈 수 있다 |
+| 모두 같은 도구 | Dev Containers(`devcontainer.json`) | 툴체인을 컨테이너에 고정 | kind를 쓰려면 컨테이너 안 Docker 설정 |
+
+## 직접 확인해 보기
+
+```bash
+kubectl config current-context            # kind-lab이면 Skaffold가 로컬로 본다(푸시 없음)
+skaffold init                             # Dockerfile과 매니페스트로 skaffold.yaml 만들기
+skaffold dev --port-forward               # 감시, 빌드, 배포, 로그; Ctrl+C로 정리
+skaffold render -p dev                    # dev 프로필이 적용할 매니페스트 출력
+tilt up                                   # Tiltfile 읽기; UI는 http://localhost:10350
+tilt down                                 # tilt up이 배포한 것 지우기
+kubectl port-forward svc/my-app 8080:80   # 도구가 속에서 하는 일
+kubectl logs -f deploy/my-app             # 디플로이먼트의 파드 하나에서 로그 보기
+```
+
+<Quiz questions={[
+  {q: '컨텍스트가 kind-lab일 때 skaffold dev가 이미지를 빌드한다. 왜 레지스트리가 필요 없나?', options: ['Skaffold가 클러스터 안에 자기 레지스트리를 띄운다', 'Skaffold가 kind 컨텍스트를 로컬로 보고 이미지를 노드에 넣는다', 'kind 노드가 Docker Hub 캐시에서 받는다', '이미지를 파드 안에서 빌드한다'], answer: 1, why: 'kind-*라는 이름의 컨텍스트는 로컬 클러스터로 취급되어, 푸시 대신 각 노드에 이미지를 넣는다. 원격 컨텍스트라면 같은 명령이 푸시한다.'},
+  {q: '파일 동기화를 설정했는데 go.mod를 고친 뒤 동기화로는 반영되지 않는다. 어떻게 돼야 하나?', options: ['전체 빌드. 의존성 변경은 실행 중인 컨테이너에 동기화할 수 없다', '아무 일도 없다. 동기화는 새 파일만 다룬다', '파드를 손으로 지워야 한다'], answer: 0, why: '의존성과 컴파일 변경은 새 이미지가 필요하다. Skaffold는 sync 규칙에 맞지 않으면 다시 빌드하고, Tilt에서는 그런 파일을 fall_back_on에 적는다.'},
+  {q: '개발 루프에서 운영용 Helm 차트나 Kustomize base에 개발용 오버레이를 쓰는 이유는?', options: ['빌드가 빨라진다', '그렇지 않으면 운영 매니페스트를 kind에 적용할 수 없다', '매니페스트 버그가 스테이징이 아니라 노트북에서 드러난다', '개발용 오버레이는 프로브를 자동으로 끈다'], answer: 2, why: '따로 쓴 개발용 YAML은 운영과 달라진다. 같은 템플릿을 쓰면 틀린 포트, 빠진 키, 고장 난 프로브를 일찍 잡는다.'},
+]} />
+
+더 읽을거리: [Skaffold 문서](https://skaffold.dev/docs/) · [Tilt 문서](https://docs.tilt.dev/) · [kind: 이미지 넣기](https://kind.sigs.k8s.io/docs/user/quick-start/#loading-an-image-into-your-cluster) · [Dev Containers](https://containers.dev/) · [노트북에 실습 클러스터 만들기](../basic/lab-cluster.mdx) · [Kustomize로 환경별 배포 (CKA·CKAD)](../cert/kustomize.mdx) · [헬름 릴리스의 설치·업그레이드·롤백](../k8s/helm-release.mdx)

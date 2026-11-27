@@ -1,0 +1,255 @@
+---
+id: egress-traffic
+title: 클러스터 밖으로 나가는 트래픽 (이그레스)
+sidebar_label: 05 · 이그레스 트래픽
+description: 파드 트래픽이 클러스터를 떠나는 과정, SNAT 때문에 외부 허용 목록에 노드나 NAT IP가 보이는 이유, 이그레스 네트워크 정책·FQDN 규칙·이그레스 게이트웨이로 통제하는 법, 예상하지 못한 이그레스를 찾는 법을 애니메이션으로 본다
+summary: '바깥에서 보이는 출발지 IP가 무엇인지, 정책으로 이그레스를 막는 법, 이그레스 게이트웨이로 고정 IP를 주는 법.'
+icon: shield
+hide_table_of_contents: true
+---
+
+# 클러스터 밖으로 나가는 트래픽 (이그레스)
+
+결제 파드가 알려진 출발지 IP만 받는 파트너 API를 부른다. 패킷이 클러스터를 나가는 길을 따라간다. **파드 → 노드 SNAT → NAT 게이트웨이 → 파트너** 순서다. 그다음 정책으로 이그레스를 막고, 트래픽에 고정 출발지 IP를 준다.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '약 12분', level: '중급'}}
+  groups={[
+    {label: '쿠버네티스 클러스터', x: 20, y: 30, w: 560, h: 400, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'pod', label: 'payments 파드', sub: '파드 IP 10.244.1.7', icon: 'pod', tone: 'app', x: 110, y: 120, show: true},
+    {id: 'node', label: '노드', sub: 'SNAT · 10.0.1.20', icon: 'server', tone: 'node', x: 300, y: 120},
+    {id: 'pol', label: '네트워크 정책', sub: '이그레스 규칙', icon: 'book', tone: 'store', x: 110, y: 300},
+    {id: 'dns', label: 'kube-dns', sub: 'UDP/TCP 53', icon: 'target', tone: 'cp', x: 300, y: 380},
+    {id: 'egw', label: '이그레스 게이트웨이', sub: '고정 출발지 IP', icon: 'gate', tone: 'node', x: 470, y: 250, w: 160},
+    {id: 'nat', label: '클라우드 NAT GW', sub: '공인 203.0.113.10', icon: 'route', tone: 'cp', x: 690, y: 120, w: 160},
+    {id: 'api', label: '파트너 API', sub: 'IP 허용 목록', icon: 'server', tone: 'ext', x: 890, y: 120},
+    {id: 'evil', label: '모르는 호스트', sub: '예상 밖 이그레스', icon: 'alert', tone: 'ext', x: 890, y: 330},
+    {id: 'mon', label: '흐름 로그', sub: '예: Hubble · VPC 로그', icon: 'chart', tone: 'store', x: 690, y: 380, w: 170},
+  ]}
+  metrics={[
+    {id: 'src', label: '파트너가 보는 출발지 IP'},
+    {id: 'policy', label: '이그레스 정책'},
+    {id: 'dest', label: '허용된 목적지'},
+  ]}
+  learn={[
+    {text: '바깥에서 파드 IP가 아니라 노드·NAT IP가 보이는 이유', at: 1},
+    {text: '이그레스 기본 차단 뒤 DNS와 특정 CIDR만 여는 법', at: 4},
+    {text: '네트워크 정책으로 호스트 이름을 허용할 수 없는 이유와 CNI가 더하는 기능', at: 6},
+    {text: '이그레스 게이트웨이가 고정 출발지 IP를 주는 방식', at: 8},
+    {text: '예상하지 못한 이그레스를 지켜보는 법', at: 9},
+  ]}
+  steps={[
+    {
+      short: '시작',
+      kind: '시작',
+      title: '출발지 IP를 검사하는 API를 파드가 부른다',
+      text: [
+        'payments 파드가 파트너 API로 HTTPS를 보낸다. 파트너는 허용 목록에 있는 IP에서 온 연결만 받는다. 그래서 어떤 IP를 허용할지 알려 줘야 한다.',
+        '파드 IP는 10.244.1.7이지만 이 주소는 클러스터 안에서만 쓰인다. 이 레슨의 질문은 실제로 파트너에 도착하는 주소가 무엇이냐다.',
+      ],
+      flows: [{from: 'pod', to: 'node', label: 'HTTPS', type: 'request'}],
+      focus: ['pod'],
+      values: {src: '?', policy: '없음 (모두 열림)', dest: '어디든'},
+    },
+    {
+      short: '노드 SNAT',
+      kind: '원리',
+      title: '노드가 파드 IP를 자기 IP로 바꾼다',
+      text: [
+        '패킷이 클러스터 밖 목적지로 나갈 때 대부분의 CNI 구성은 마스커레이드를 한다. 출발지 NAT(SNAT)가 파드 IP를 노드 IP로 바꾼다. 응답은 노드로 돌아오고, 노드가 주소를 되돌린다.',
+        '파드 IP는 다른 네트워크가 돌아갈 길을 모르는 오버레이 대역인 경우가 많다. SNAT가 있어야 응답이 돌아온다. 정확한 규칙은 CNI와 클라우드에 따라 다르다(예: ip-masq-agent, 클라우드 CNI 설정).',
+      ],
+      keyIdea: '클러스터 안에서는 파드끼리 진짜 파드 IP를 본다. 밖에서는 보통 노드 IP가 보인다.',
+      flows: [{from: 'node', to: 'nat', label: 'src 10.0.1.20', type: 'request'}],
+      focus: ['node'],
+      badges: {node: 'SNAT'},
+      values: {src: '노드 10.0.1.20'},
+    },
+    {
+      short: 'NAT GW',
+      kind: '원리',
+      title: '사설 노드는 클라우드 NAT 게이트웨이로 나간다',
+      text: [
+        '사설 서브넷의 노드에는 공인 IP가 없다. 인터넷으로 가는 경로는 NAT 게이트웨이를 지나고, 여기서 출발지가 한 번 더 바뀐다. 이번에는 NAT 게이트웨이의 공인 IP다.',
+        '그래서 파트너에는 NAT 게이트웨이 주소인 203.0.113.10이 보인다. 허용 목록에 넣어 달라고 할 IP가 바로 이것이다.',
+      ],
+      keyIdea: '파트너에는 NAT 게이트웨이의 공인 IP를 알려 주고, 그 IP는 고정(예약 IP·탄력적 IP)해 두어야 허용 목록이 깨지지 않는다.',
+      flows: [
+        {from: 'node', to: 'nat', label: 'src 10.0.1.20', type: 'request'},
+        {from: 'nat', to: 'api', label: 'src 203.0.113.10', type: 'request'},
+      ],
+      focus: ['nat', 'api'],
+      badges: {node: null, nat: 'SNAT'},
+      status: {api: 'ok'},
+      values: {src: {text: 'NAT 203.0.113.10', tone: 'good'}},
+    },
+    {
+      short: '공유 IP',
+      kind: '문제',
+      title: '모든 워크로드가 같은 출발지 IP를 쓴다',
+      text: [
+        '모든 노드의 모든 파드, 그리고 VPC 안의 다른 VM까지 같은 NAT 게이트웨이로 나가는 경우가 많다. 파트너 눈에는 다른 네임스페이스의 침해된 파드도 payments와 똑같아 보인다.',
+        'NAT 게이트웨이가 없으면 더 나쁘다. 노드가 공인 IP를 가지면, 오토스케일러가 노드를 늘리거나 바꿀 때마다 출발지가 달라지고 허용 목록이 낡는다.',
+      ],
+      keyIdea: '상대편의 IP 허용 목록은 클러스터 전체를 믿는다. 어떤 파드가 실제로 나갈 수 있는지는 우리 쪽 통제가 정한다.',
+      flows: [
+        {from: 'pod', to: 'node', type: 'request'},
+        {from: 'nat', to: 'evil', label: '이것도 허용', type: 'request'},
+      ],
+      focus: ['nat', 'evil'],
+      status: {evil: 'warn'},
+      values: {src: {text: '모든 파드가 공유', tone: 'bad'}},
+    },
+    {
+      short: '이그레스 차단',
+      kind: '원리',
+      title: '이그레스 기본 차단에서 시작한다',
+      text: [
+        'podSelector가 비어 있고 policyTypes: [Egress]이며 egress 규칙이 없는 네트워크 정책은 네임스페이스의 모든 파드에서 나가는 트래픽을 전부 막는다.',
+        'CNI는 이 정책을 파드 쪽에서, SNAT보다 먼저 적용한다. 그래서 정책은 진짜 파드 IP를 본다. 적용하는 순간 DNS 조회까지 실패한다.',
+      ],
+      keyIdea: '이그레스 기본 차단은 다음 단계의 허용 규칙과 함께 적용한다. 아니면 이름 해석이 바로 멈춘다.',
+      flows: [{from: 'pol', to: 'pod', label: '이그레스 모두 차단', type: 'watch'}],
+      focus: ['pol', 'pod'],
+      status: {pod: 'error', evil: null, api: 'error'},
+      badges: {pol: 'default-deny'},
+      values: {policy: 'Egress: 모두 차단', dest: {text: '없음, DNS도 안 됨', tone: 'bad'}},
+    },
+    {
+      short: 'DNS 허용',
+      kind: '원리',
+      title: 'kube-dns의 53번 포트를 연다',
+      text: [
+        '네임스페이스 kube-system(namespaceSelector kubernetes.io/metadata.name: kube-system)에서 k8s-app=kube-dns 레이블이 붙은 파드로 가는 이그레스 규칙을 더한다. 포트 53을 UDP와 TCP 둘 다 연다. 큰 응답은 TCP로 넘어가기 때문이다.',
+        '클러스터에 노드 로컬 DNS 캐시가 있으면 파드는 노드의 링크 로컬 주소로 묻는다. 그 주소도 열어야 한다. 아니면 조회는 계속 타임아웃 난다.',
+      ],
+      flows: [{from: 'pod', to: 'dns', label: ':53 허용', type: 'request'}],
+      focus: ['pod', 'dns'],
+      status: {pod: 'warn', dns: 'ok'},
+      badges: {pol: '+ allow-dns'},
+      values: {policy: '차단 + DNS', dest: 'kube-dns :53'},
+    },
+    {
+      short: 'CIDR 허용',
+      kind: '주의',
+      title: '파트너는 CIDR로 연다, 네트워크 정책에는 그것뿐이다',
+      text: [
+        'ipBlock cidr 198.51.100.0/24, TCP 443으로 이그레스 규칙을 더한다. 이제 payments는 파트너에 닿고, 클러스터 밖의 다른 곳에는 닿지 않는다.',
+        '네트워크 정책은 파드, 네임스페이스, IP 블록만 고른다. 호스트 이름을 적는 필드가 없다. api.partner.example이 IP가 바뀌는 CDN 뒤에 있으면 CIDR 규칙은 깨지거나 지나치게 넓어진다.',
+      ],
+      keyIdea: '절대 나가면 안 되는 대역은 ipBlock.except로 뺀다. 예를 들어 클라우드 메타데이터 주소 169.254.169.254가 있다.',
+      flows: [
+        {from: 'pod', to: 'node', label: ':443 허용', type: 'request'},
+        {from: 'nat', to: 'api', type: 'request'},
+      ],
+      focus: ['pol', 'api'],
+      status: {pod: 'ok', api: 'ok'},
+      badges: {pol: '+ ipBlock /24'},
+      values: {policy: '차단 + DNS + CIDR', dest: {text: 'kube-dns · 198.51.100.0/24', tone: 'good'}},
+    },
+    {
+      short: 'FQDN 규칙',
+      kind: '원리',
+      title: '호스트 이름으로 허용하려면 CNI 확장이 필요하다',
+      text: [
+        '어떤 CNI는 이름으로 허용하는 정책 종류를 따로 더한다. Cilium에서는 CiliumNetworkPolicy의 toFQDNs matchName: api.partner.example이 그 이름이 해석된 IP만 허용한다.',
+        '이 방식은 DNS 응답을 지켜보며 동작한다. 정책은 DNS를 Cilium DNS 프록시로 보내는 규칙(포트 53의 dns 규칙)도 함께 가져야 한다. 그래야 에이전트가 이름에 속한 IP를 알아내고 그 파드에 열어 준다.',
+      ],
+      keyIdea: 'FQDN 규칙은 쿠버네티스 API가 아니다. CNI마다 자기 CRD가 있고, 파드가 클러스터 DNS 경로로 이름을 물어야만 동작한다.',
+      flows: [
+        {from: 'pod', to: 'dns', label: '조회를 관찰', type: 'request'},
+        {from: 'pol', to: 'pod', label: 'toFQDNs', type: 'watch'},
+      ],
+      focus: ['pol', 'dns'],
+      badges: {pol: 'toFQDNs'},
+      values: {dest: {text: 'kube-dns · api.partner.example', tone: 'good'}},
+    },
+    {
+      short: '이그레스 GW',
+      kind: '원리',
+      title: '이그레스 게이트웨이가 고른 파드에 고정 출발지 IP를 준다',
+      text: [
+        '이그레스 게이트웨이는 고른 파드의 트래픽을 지정한 게이트웨이 노드로 보낸다. Cilium에서는 CiliumEgressGatewayPolicy가 파드와 목적지 CIDR을 고르고, 게이트웨이 노드가 전용 이그레스 IP로 SNAT한다. BPF 마스커레이드와 kube-proxy 대체 기능이 켜져 있어야 한다.',
+        '메시는 L7에서 같은 일을 한다. Istio의 outboundTrafficPolicy를 REGISTRY_ONLY로 두면 사이드카는 ServiceEntry에 선언한 호스트에만 닿는다. 이를 이그레스 게이트웨이로 보내면 지켜볼 출구가 하나로 모인다.',
+      ],
+      keyIdea: '이제 파트너는 클러스터 전체가 아니라 payments 출구 IP만 허용하면 된다. 사이드카는 우회될 수 있으니 메시 이그레스 규칙에는 네트워크 정책을 짝으로 둔다.',
+      flows: [
+        {from: 'pod', to: 'egw', label: 'payments만', type: 'request'},
+        {from: 'egw', to: 'api', label: '고정 이그레스 IP', type: 'request', bend: -40},
+      ],
+      focus: ['egw', 'api'],
+      badges: {pol: null, egw: 'payments'},
+      values: {src: {text: 'payments 전용 이그레스 IP', tone: 'good'}},
+    },
+    {
+      short: '감시',
+      kind: '주의',
+      title: '계획에 없던 이그레스를 지켜본다',
+      text: [
+        '막힌 이그레스 시도는 조용히 버려진다. 앱에는 타임아웃으로만 보인다. 파드가 갑자기 모르는 호스트를 부른다면 설정 실수이거나 침해된 컨테이너일 수 있다.',
+        '흐름 로그가 둘 다 보여 준다. Hubble 같은 CNI 도구는 파드별로 버려진 흐름과 허용된 흐름을 보여 주고, NAT 게이트웨이나 VPC 흐름 로그는 네트워크 밖으로 나간 것을 보여 준다.',
+      ],
+      keyIdea: '이그레스 드롭과 새 외부 목적지에 알림을 건다. 나가는 호출이 타임아웃 나기 시작하면 이 로그부터 본다.',
+      flows: [
+        {from: 'pod', to: 'evil', label: '드롭', type: 'request', bend: 60},
+        {from: 'egw', to: 'mon', label: '흐름', type: 'watch'},
+      ],
+      focus: ['mon', 'evil'],
+      status: {evil: 'error'},
+      badges: {evil: '드롭'},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '출구 IP를 알고, 나가야 할 것만 허용한다',
+      text: [
+        '기본값에서 파드 트래픽은 노드 IP로, 그다음 NAT 게이트웨이 IP로 나간다. 바깥의 허용 목록이 보는 것은 이 공유 주소다.',
+        '우리 쪽에서 잠근다. 이그레스 기본 차단, DNS 허용, 특정 CIDR 허용, 또는 CNI 확장으로 호스트 이름 허용이다. 파트너가 한 워크로드만의 고정 IP를 원하면 이그레스 게이트웨이를 쓴다.',
+      ],
+      keyIdea: '파드에서 curl https://ifconfig.me 를 실행하면 바깥에 실제로 보이는 출발지 IP를 알 수 있다.',
+      flows: [
+        {from: 'pod', to: 'egw', type: 'request'},
+        {from: 'egw', to: 'api', type: 'request', bend: -40},
+      ],
+      focus: ['pod', 'pol', 'egw'],
+      status: {evil: null, pod: null, api: null, dns: null},
+      badges: {evil: null},
+    },
+  ]}
+/>
+
+## 이그레스를 통제하는 방법
+
+| 필요 | 도구 | 고르는 기준 | 한계 |
+| --- | --- | --- | --- |
+| 모두 막고 몇 길만 열기 | 네트워크 정책 이그레스 | 파드·네임스페이스 레이블, ipBlock CIDR, 포트 | 호스트 이름 없음. CNI가 정책을 지원해야 적용됨 |
+| 호스트 이름으로 허용 | CNI 확장, 예: Cilium `toFQDNs` | DNS 응답에서 알아낸 이름 | CNI 전용 CRD. 파드가 클러스터 DNS 경로로 이름을 물어야 함 |
+| 일부 파드에 고정 출발지 IP | 이그레스 게이트웨이, 예: Cilium Egress Gateway | 고른 파드와 목적지 CIDR | 게이트웨이 노드에 의존. 특정 CNI 기능 필요 |
+| 선언한 외부 호스트만, L7 가시성 | 서비스 메시, 예: Istio `REGISTRY_ONLY` + ServiceEntry + 이그레스 게이트웨이 | 호스트 이름, 포트, 프로토콜 | 사이드카·프록시는 우회 가능. 네트워크 정책과 함께 씀 |
+| VPC 전체에 공인 IP 하나 | 클라우드 NAT 게이트웨이 | 라우팅 테이블 | 모든 워크로드가 IP를 공유 |
+
+## 직접 확인해 보기
+
+```bash
+# 바깥에서는 어떤 출발지 IP가 보이나?
+kubectl run egress-test --rm -it --image=curlimages/curl --restart=Never -- curl -s https://ifconfig.me
+kubectl get networkpolicy -n <namespace>                      # 어떤 정책이 있고 POD-SELECTOR는 무엇인지
+kubectl describe networkpolicy <name> -n <namespace>          # 허용된 이그레스: 포트와 ipBlock
+kubectl get pods -n kube-system -l k8s-app=kube-dns --show-labels   # DNS 규칙이 골라야 할 레이블
+kubectl get ciliumnetworkpolicy -A                            # Cilium: toFQDNs 규칙
+kubectl get ciliumegressgatewaypolicy                         # Cilium: 이그레스 게이트웨이 정책 (클러스터 범위)
+hubble observe --verdict DROPPED --traffic-direction egress   # Cilium Hubble: 막힌 나가는 흐름
+kubectl get serviceentry -A                                   # Istio: 선언된 외부 호스트
+```
+
+<Quiz questions={[
+  {q: '파트너가 우리 NAT 게이트웨이 IP를 허용 목록에 넣었다. 그런데 이것으로 우리 파드 중 누가 부를 수 있는지는 제한되지 않는다. 왜인가?', options: ['NAT 게이트웨이는 한 네임스페이스의 트래픽만 바꾼다', '모든 파드가 같은 SNAT와 NAT를 거쳐 나가므로 그 출발지 IP를 함께 쓴다', '파트너는 각 파드의 IP를 보고 허용 목록을 무시한다'], answer: 1, why: '노드가 파드 트래픽을 노드 IP로 SNAT하고, NAT 게이트웨이가 다시 공인 IP로 바꾼다. 그 뒤의 모든 워크로드가 똑같아 보이므로 우리 쪽에서 이그레스를 제한해야 한다.'},
+  {q: '이그레스 기본 차단을 적용하고 198.51.100.0/24의 443번 포트를 열었다. 그래도 api.partner.example 호출이 실패한다. 가장 그럴듯한 원인은?', options: ['네트워크 정책은 443번 포트를 고를 수 없다', 'ipBlock에 NAT 게이트웨이 IP도 넣어야 한다', 'kube-dns로 가는 53번 포트가 여전히 막혀 이름이 해석되지 않는다', '이그레스 정책은 파드가 재시작된 뒤에만 적용된다'], answer: 2, why: '이그레스 기본 차단은 DNS도 막는다. kube-dns 파드로 가는 UDP·TCP 53을 열어야 파드가 호스트 이름을 IP로 바꿀 수 있다.'},
+  {q: '파트너 API가 IP가 바뀌는 CDN 뒤에 있어서 이름으로 허용하고 싶다. 무엇이 필요한가?', options: ['Cilium toFQDNs 같은 CNI 확장. 네트워크 정책은 파드·네임스페이스·CIDR만 알기 때문이다', '표준 네트워크 정책 이그레스 규칙의 호스트 이름 필드', 'cidr 0.0.0.0/0인 ipBlock'], answer: 0, why: '쿠버네티스 네트워크 정책 API에는 호스트 이름 매칭이 없다. FQDN 규칙은 DNS 응답에서 IP를 알아내는 CNI 전용 정책이 제공한다. 0.0.0.0/0은 모든 곳을 연다.'},
+]} />
+
+더 읽을거리: [네트워크 정책](https://kubernetes.io/docs/concepts/services-networking/network-policies/) · [Cilium 이그레스 게이트웨이](https://docs.cilium.io/en/stable/network/egress-gateway/egress-gateway/) · [Cilium DNS 기반 정책](https://docs.cilium.io/en/stable/security/dns/) · [Istio 이그레스 게이트웨이](https://istio.io/latest/docs/tasks/traffic-management/egress/egress-gateway/) · [통신 막고 열기 (네트워크 정책)](../k8s/network-policy.mdx) · [VPC 안에서 요청이 가는 길](../cloud/vpc-request.mdx)

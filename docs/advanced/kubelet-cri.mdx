@@ -1,0 +1,240 @@
+---
+id: kubelet-cri
+title: Inside the Node - kubelet, CRI and containerd
+sidebar_label: 08 · kubelet and CRI
+description: Animated walkthrough of what the kubelet does after a Pod is bound to its node, from the sync loop and CRI gRPC calls (RunPodSandbox, PullImage, CreateContainer, StartContainer) to containerd shims, runc, PLEG relisting, crictl and what happens when containerd dies
+summary: 'How the kubelet drives containerd over the CRI socket, how shims and runc start the process, how PLEG notices changes, and why Pods survive a containerd crash.'
+icon: box
+hide_table_of_contents: true
+---
+
+# Inside the Node: kubelet, CRI and containerd
+
+The scheduler has bound a Pod to node-1. Now everything happens on that node: the kubelet talks to the container runtime over a gRPC socket, the runtime asks runc to start a process, and the kubelet keeps checking what is really running.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~12 min', level: 'Advanced'}}
+  groups={[
+    {label: 'Worker node · node-1', x: 200, y: 30, w: 660, h: 410, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'api', label: 'API server', sub: 'Pod bound to node-1', icon: 'gate', tone: 'cp', x: 95, y: 150, show: true},
+    {id: 'admin', label: 'Admin', sub: 'ssh · crictl', icon: 'user', tone: 'ext', x: 95, y: 360},
+    {id: 'kubelet', label: 'kubelet', sub: 'sync loop', icon: 'agent', tone: 'node', x: 320, y: 120, show: true},
+    {id: 'pleg', label: 'PLEG', sub: 'relists containers', icon: 'heart', tone: 'node', x: 320, y: 330},
+    {id: 'containerd', label: 'containerd', sub: 'CRI gRPC server', icon: 'box', tone: 'node', x: 530, y: 120},
+    {id: 'cni', label: 'CNI plugin', sub: 'Pod network', icon: 'route', tone: 'ext', x: 530, y: 330},
+    {id: 'shim', label: 'containerd-shim', sub: 'runc-v2 · per Pod', icon: 'gear', tone: 'node', x: 760, y: 110, w: 160},
+    {id: 'sandbox', label: 'pause', sub: 'sandbox · netns', icon: 'layers', tone: 'app', x: 760, y: 230},
+    {id: 'ctr', label: 'web', sub: 'app container', icon: 'pod', tone: 'app', x: 760, y: 350},
+    {id: 'registry', label: 'Registry', sub: 'image', icon: 'registry', tone: 'ext', size: 'sm', x: 930, y: 230},
+  ]}
+  metrics={[
+    {id: 'call', label: 'CRI call'},
+    {id: 'pod', label: 'Pod status'},
+    {id: 'ready', label: 'Node Ready'},
+  ]}
+  learn={[
+    {text: 'The kubelet only speaks CRI, a gRPC API on a local socket', at: 1},
+    {text: 'RunPodSandbox, the pause container and CNI', at: 2},
+    {text: 'Shims and runc: who is the parent of your process', at: 4},
+    {text: 'How PLEG turns runtime state into Pod status', at: 5},
+    {text: 'Why Pods keep running when containerd dies', at: 8},
+  ]}
+  steps={[
+    {
+      short: 'Bound',
+      kind: '시작',
+      title: 'The kubelet sees a Pod bound to its node',
+      text: [
+        'The kubelet on node-1 watches the API server for Pods whose spec.nodeName is node-1. A new Pod named web shows up.',
+        'From here the control plane is not involved in starting anything. The kubelet and the container runtime on this node do the work.',
+      ],
+      flows: [{from: 'api', to: 'kubelet', label: 'Pod web', type: 'watch'}],
+      focus: ['api', 'kubelet'],
+      values: {pod: 'Pending', ready: {text: 'True', tone: 'good'}},
+    },
+    {
+      short: 'Sync loop',
+      kind: '원리',
+      title: 'The sync loop compares spec with reality and talks CRI',
+      text: [
+        'The kubelet runs a sync loop per Pod. It compares what the spec asks for with what the runtime reports, then works out the actions: create a sandbox, start a container, kill one.',
+        'It never runs containers itself. It calls the Container Runtime Interface (CRI), a gRPC API served on a local Unix socket, for example /run/containerd/containerd.sock for containerd or the CRI-O socket.',
+      ],
+      keyIdea: 'Any runtime that implements CRI works with the kubelet. That is why containerd and CRI-O are interchangeable from the kubelet point of view.',
+      flows: [{from: 'kubelet', to: 'containerd', label: 'gRPC · CRI', type: 'request'}],
+      focus: ['kubelet', 'containerd'],
+      badges: {containerd: 'containerd.sock'},
+    },
+    {
+      short: 'Sandbox',
+      kind: '원리',
+      title: 'RunPodSandbox creates the pause container and the network',
+      text: [
+        'The first call is RunPodSandbox. The runtime starts a tiny pause container that holds the Pod namespaces, above all the network namespace, which every container in the Pod will share.',
+        'Then the runtime calls the CNI plugin with ADD for that namespace. The plugin creates the interface, assigns the Pod IP and sets up routes. If CNI fails, the Pod is stuck in ContainerCreating with a sandbox error in its events.',
+      ],
+      keyIdea: 'The Pod IP belongs to the sandbox, not to an app container. Containers can restart and keep the same IP.',
+      flows: [
+        {from: 'kubelet', to: 'containerd', label: 'RunPodSandbox', type: 'request'},
+        {from: 'containerd', to: 'cni', label: 'CNI ADD', type: 'request'},
+        {from: 'containerd', to: 'sandbox', label: 'pause', type: 'request'},
+      ],
+      focus: ['sandbox', 'cni'],
+      badges: {containerd: null, sandbox: '10.244.1.7'},
+      values: {call: 'RunPodSandbox', pod: 'ContainerCreating'},
+    },
+    {
+      short: 'Pull',
+      kind: '원리',
+      title: 'PullImage goes through the image service',
+      text: [
+        'CRI has two services: RuntimeService for sandboxes and containers, and ImageService for images. The kubelet asks ImageService for the image status and, if needed and the pull policy allows it, calls PullImage.',
+        'containerd fetches the layers from the registry and unpacks them into a snapshot. Image pull errors are covered in the Pod startup lesson.',
+      ],
+      flows: [
+        {from: 'kubelet', to: 'containerd', label: 'PullImage', type: 'request'},
+        {from: 'containerd', to: 'registry', label: 'layers', type: 'request'},
+      ],
+      focus: ['containerd', 'registry'],
+      values: {call: 'PullImage'},
+    },
+    {
+      short: 'Create · Start',
+      kind: '원리',
+      title: 'CreateContainer and StartContainer: shim and runc make the process',
+      text: [
+        'CreateContainer prepares the container inside the sandbox, with the image rootfs, mounts, env and cgroup limits. StartContainer starts it.',
+        'containerd does not fork your process. It uses a shim (containerd-shim-runc-v2). The shim calls runc, runc sets up namespaces and cgroups, starts the process and exits. The shim stays behind as its parent, holds stdio and reports the exit code.',
+      ],
+      keyIdea: 'The shim, not containerd, is the parent of the container process. That design lets containerd restart without killing containers.',
+      flows: [
+        {from: 'kubelet', to: 'containerd', label: 'Create · Start', type: 'request'},
+        {from: 'containerd', to: 'shim', label: 'start shim', type: 'request'},
+        {from: 'shim', to: 'ctr', label: 'runc', type: 'request', bend: 0.3},
+      ],
+      focus: ['shim', 'ctr'],
+      status: {ctr: 'ok'},
+      badges: {ctr: 'running'},
+      values: {call: 'CreateContainer · StartContainer'},
+    },
+    {
+      short: 'PLEG',
+      kind: '원리',
+      title: 'PLEG relists the runtime and wakes the sync loop',
+      text: [
+        'The kubelet does not trust that a start succeeded forever. The Pod Lifecycle Event Generator (PLEG) relists sandboxes and containers through CRI about once a second and compares the result with the previous list.',
+        'Each difference becomes an event such as ContainerStarted or ContainerDied, which triggers a sync of that Pod. An event-based PLEG exists behind the EventedPLEG feature gate, but it is off by default.',
+      ],
+      keyIdea: 'If a relist takes too long (by default more than 3 minutes), the kubelet logs PLEG is not healthy and the node goes NotReady. A slow or stuck runtime shows up exactly here.',
+      flows: [
+        {from: 'pleg', to: 'containerd', label: 'relist', type: 'request'},
+        {from: 'pleg', to: 'kubelet', label: 'ContainerStarted', type: 'response'},
+      ],
+      focus: ['pleg'],
+      values: {call: 'ListPodSandbox · ListContainers'},
+    },
+    {
+      short: 'Report',
+      kind: '원리',
+      title: 'The kubelet writes the Pod status back',
+      text: [
+        'The status manager in the kubelet patches the Pod status in the API server: phase, podIP, containerStatuses with container IDs, restart counts and conditions.',
+        'Once the readiness probe passes, Ready turns True and the Pod IP is added to the matching EndpointSlices.',
+      ],
+      flows: [{from: 'kubelet', to: 'api', label: 'status patch', type: 'response'}],
+      focus: ['kubelet', 'api'],
+      values: {pod: {text: 'Running', tone: 'good'}, call: '—'},
+    },
+    {
+      short: 'crictl',
+      kind: '원리',
+      title: 'crictl talks to CRI directly, like the kubelet does',
+      text: [
+        'On the node, crictl calls the same CRI socket. crictl pods lists sandboxes, crictl ps lists containers, crictl inspect shows the process ID and mounts, crictl logs reads the container log files.',
+        'The IDs match what kubectl shows: containerStatuses[].containerID is the CRI container ID. Containers created by Kubernetes live in the containerd namespace k8s.io, which is why plain docker or nerdctl without that namespace do not see them.',
+      ],
+      keyIdea: 'Use crictl when the question is about this node: is the sandbox there, did the container exit, what did it print before it died.',
+      flows: [{from: 'admin', to: 'containerd', label: 'crictl ps', type: 'request'}],
+      focus: ['admin', 'containerd'],
+      badges: {sandbox: null},
+    },
+    {
+      short: 'containerd dies',
+      kind: '장애',
+      title: 'containerd crashes: the Pods keep running, the node goes NotReady',
+      text: [
+        'containerd stops. The web process keeps running, because its parent is the shim. Traffic to the Pod IP still works.',
+        'But the kubelet cannot reach CRI. New Pods cannot start, kubectl logs and exec fail, PLEG cannot relist. The kubelet reports the runtime as down and the node turns NotReady. If it stays that way, the node lifecycle controller eventually adds a taint and evicts the Pods.',
+      ],
+      keyIdea: 'Restart the runtime first (systemctl restart containerd). It reconnects to the running shims, and the kubelet catches up without restarting containers.',
+      flows: [
+        {from: 'kubelet', to: 'containerd', label: 'connection refused', type: 'request'},
+        {from: 'kubelet', to: 'api', label: 'runtime down', type: 'response'},
+      ],
+      focus: ['containerd', 'ctr'],
+      status: {containerd: 'error', pleg: 'warn'},
+      badges: {containerd: 'down'},
+      values: {ready: {text: 'False', tone: 'bad'}, pod: 'Running (still)'},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'kubelet decides, CRI carries the calls, the shim keeps the process',
+      text: [
+        'The kubelet turns a Pod spec into CRI calls: RunPodSandbox (pause plus CNI), PullImage, CreateContainer, StartContainer. containerd hands each container to a shim, and runc starts the process.',
+        'PLEG relists to notice what changed, and the kubelet reports it as Pod status. When the runtime dies, containers live on, but the node can no longer change anything.',
+      ],
+      keyIdea: 'ContainerCreating for long: check the sandbox and CNI. NotReady with PLEG errors: check the runtime. kubectl is down: use crictl on the node.',
+      flows: [
+        {from: 'kubelet', to: 'containerd', label: 'CRI', type: 'request'},
+        {from: 'containerd', to: 'shim', type: 'request'},
+        {from: 'kubelet', to: 'api', label: 'status', type: 'response'},
+      ],
+      focus: ['kubelet', 'containerd', 'shim'],
+      status: {containerd: null, pleg: null},
+      badges: {containerd: null, ctr: null},
+      values: {ready: {text: 'True', tone: 'good'}, pod: {text: 'Running', tone: 'good'}},
+    },
+  ]}
+/>
+
+## Which layer to look at
+
+| Symptom | Layer | Where to look |
+|---|---|---|
+| Stuck in ContainerCreating, event says failed to create pod sandbox | Sandbox or CNI | `kubectl describe pod` events, CNI plugin Pods and logs, `crictl pods` |
+| Stuck in ContainerCreating after the sandbox exists | Image or mounts | `crictl images`, events for pull or volume errors |
+| Container exits right after start | The app or its config | `crictl ps -a`, `crictl logs <id>`, `kubectl logs --previous` |
+| Node NotReady, kubelet logs PLEG is not healthy | Runtime is slow or stuck | `crictl info`, `systemctl status containerd`, `journalctl -u containerd` |
+| Node NotReady, container runtime is down | Runtime stopped | `systemctl restart containerd`, then check the kubelet |
+| kubectl logs and exec fail on one node only | kubelet or runtime on that node | `systemctl status kubelet containerd` |
+
+The process tree on a node looks like `containerd-shim-runc-v2` → `pause` and your app processes, not containerd → app.
+
+## Try it yourself
+
+```bash
+kubectl get pod web -o wide                          # Which node, which IP
+kubectl get pod web -o jsonpath='{.status.containerStatuses[0].containerID}{"\n"}'  # containerd://<id>
+
+# On that node
+sudo crictl info | head -40                          # RuntimeReady and NetworkReady conditions
+sudo crictl pods --name web                          # The sandbox (pause) for this Pod
+sudo crictl ps -a --pod <pod-id>                     # Containers in that sandbox, including exited ones
+sudo crictl inspect <container-id> | grep -m1 '"pid"'   # Host PID of the app process
+sudo crictl logs --tail 20 <container-id>            # Same log file kubectl logs reads
+ps -ef | grep [c]ontainerd-shim                      # One shim per Pod, parent of the processes
+sudo journalctl -u kubelet --since -10m | grep -i pleg   # PLEG health messages
+```
+
+<Quiz questions={[
+  {q: 'containerd crashes on a node. What happens to the Pods already running there?', options: ['They are killed immediately, because containerd is their parent', 'They keep running, but the node can go NotReady and nothing new can start', 'They are moved to another node within a second'], answer: 1, why: 'Each container process has a shim as its parent, not containerd. The kubelet loses CRI, so it cannot start, stop or relist containers, and reports the runtime as down.'},
+  {q: 'Why does an app container keep the same Pod IP after it restarts?', options: ['The kubelet caches the IP', 'The CNI plugin reserves it forever', 'kube-proxy pins it', 'The IP belongs to the sandbox network namespace, which the pause container holds'], answer: 3, why: 'RunPodSandbox creates the network namespace and CNI assigns the IP to it. App containers join that namespace, so restarting one does not touch the IP.'},
+  {q: 'The kubelet logs PLEG is not healthy and the node turns NotReady. What is the most likely cause?', options: ['The container runtime is too slow to answer relist calls', 'The scheduler is overloaded', 'A readiness probe is failing'], answer: 0, why: 'PLEG relists containers through CRI. If a relist does not finish within the threshold, the runtime is slow or stuck, and the kubelet marks itself unhealthy.'},
+]} />
+
+Further reading: [Container Runtime Interface](https://kubernetes.io/docs/concepts/architecture/cri/) · [Debugging nodes with crictl](https://kubernetes.io/docs/tasks/debug/debug-cluster/crictl/) · [Container runtimes](https://kubernetes.io/docs/setup/production-environment/container-runtimes/) · [How a Pod Starts](../k8s/pod-startup.mdx) · [Node NotReady and component failures (CKA)](../cert/node-troubleshoot.mdx)

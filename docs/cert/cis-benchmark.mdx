@@ -1,0 +1,266 @@
+---
+id: cis-benchmark
+title: CIS Kubernetes Benchmark and kube-bench (CKS)
+sidebar_label: 10 · CIS Benchmark
+description: Follow an animation of running kube-bench as a Job against the CIS Kubernetes Benchmark, reading PASS, FAIL and WARN with remediation, fixing typical findings in a static Pod manifest and the kubelet config, the limits on managed clusters, and rerunning to verify
+summary: 'What the CIS Benchmark checks, how to run kube-bench and read its report, and how to fix and verify the usual findings.'
+icon: shield
+hide_table_of_contents: true
+---
+
+# CIS Kubernetes Benchmark and kube-bench (CKS)
+
+This covers "Use CIS benchmark to review the security configuration of Kubernetes components" in the CKS Cluster Setup domain. We run kube-bench on a kubeadm cluster, read what fails, fix it in the right file and run it again.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~12 min', level: 'Advanced'}}
+  groups={[
+    {label: 'Control plane node', x: 255, y: 40, w: 460, h: 400, tone: 'mgmt'},
+    {label: 'Worker node', x: 755, y: 40, w: 220, h: 270, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'cis', label: 'CIS Benchmark', sub: 'consensus checklist', icon: 'book', tone: 'store', x: 105, y: 100, w: 170, show: true},
+    {id: 'admin', label: 'Operator', sub: 'kubectl · ssh', icon: 'user', tone: 'ext', x: 105, y: 230, show: true},
+    {id: 'managed', label: 'Managed cluster', sub: 'e.g. EKS, GKE, AKS', icon: 'cloud', tone: 'ext', x: 105, y: 370, w: 170},
+    {id: 'kb', label: 'kube-bench Job', sub: 'hostPID · hostPath', icon: 'chart', tone: 'app', x: 370, y: 100, w: 160},
+    {id: 'api', label: 'kube-apiserver', sub: 'static Pod', icon: 'wheel', tone: 'cp', x: 370, y: 230, w: 160},
+    {id: 'mf', label: 'manifests/', sub: '/etc/kubernetes', icon: 'disk', tone: 'store', x: 370, y: 360},
+    {id: 'report', label: 'Job logs', sub: 'PASS · FAIL · WARN', icon: 'alert', tone: 'ext', x: 600, y: 100},
+    {id: 'etcd', label: 'etcd', sub: 'static Pod', icon: 'db', tone: 'store', x: 600, y: 230},
+    {id: 'audit', label: 'Audit log', sub: '--audit-log-path', icon: 'archive', tone: 'store', x: 600, y: 360},
+    {id: 'wkb', label: 'kube-bench', sub: 'node checks', icon: 'chart', tone: 'app', size: 'sm', x: 865, y: 100},
+    {id: 'kubelet', label: 'kubelet', sub: 'config.yaml', icon: 'agent', tone: 'node', x: 865, y: 230},
+  ]}
+  metrics={[
+    {id: 'target', label: 'Checking'},
+    {id: 'fail', label: 'FAIL'},
+    {id: 'fix', label: 'Fix'},
+  ]}
+  learn={[
+    {text: 'What the CIS Kubernetes Benchmark is and how its sections are laid out', at: 0},
+    {text: 'Running kube-bench as a Job and reading PASS, FAIL, WARN and remediation', at: 1},
+    {text: 'Fixing API server findings in the static Pod manifest', at: 5},
+    {text: 'Fixing kubelet findings in /var/lib/kubelet/config.yaml', at: 7},
+    {text: 'What you can and cannot check on a managed cluster', at: 8},
+  ]}
+  steps={[
+    {
+      short: 'Start',
+      kind: '시작',
+      title: 'A checklist agreed on by the community',
+      text: [
+        'The Center for Internet Security (CIS) publishes the CIS Kubernetes Benchmark: a free, consensus-based list of secure settings, with a new version for newer Kubernetes releases.',
+        'It is split by component: control plane components and their files, etcd, control plane configuration (authentication, logging), worker nodes (kubelet, kube-proxy) and policies (RBAC, Pod security, network policies, secrets). Each check is marked Automated or Manual and comes with audit and remediation steps.',
+      ],
+      keyIdea: 'The benchmark is a baseline, not a guarantee. Some checks do not fit every cluster, so understand each one before you change it.',
+      flows: [{from: 'cis', to: 'admin', label: 'checklist', type: 'response'}],
+      focus: ['cis'],
+      values: {target: '—', fail: '—', fix: '—'},
+    },
+    {
+      short: 'Run',
+      kind: '원리',
+      title: 'Run kube-bench as a Job on the node you want to check',
+      text: [
+        'kube-bench (by Aqua Security) runs the benchmark checks. It needs hostPID: true to see the running processes and their flags, and read-only hostPath mounts of /etc/kubernetes, /var/lib/kubelet, /var/lib/etcd and similar paths to check files.',
+        'It picks the benchmark version from the Kubernetes version and the checks from the components it finds. The repository has job-master.yaml (nodeSelector and tolerations to land on a control plane node) and job-node.yaml for workers.',
+      ],
+      keyIdea: 'A Pod sees only the node it runs on. To check the control plane, the Job must be scheduled there.',
+      flows: [
+        {from: 'admin', to: 'kb', label: 'kubectl apply', type: 'request'},
+        {from: 'kb', to: 'api', label: 'ps flags', type: 'watch'},
+        {from: 'kb', to: 'mf', label: 'stat files', type: 'watch', bend: -40},
+      ],
+      focus: ['kb'],
+      values: {target: 'control plane'},
+    },
+    {
+      short: 'Report',
+      kind: '원리',
+      title: 'The report: PASS, FAIL, WARN and a remediation for each',
+      text: [
+        'The results are in the Pod logs. [PASS] means the check ran and passed. [FAIL] means it ran and failed. [WARN] needs your attention, usually a Manual check that kube-bench cannot decide. [INFO] needs no action.',
+        'After the results comes a Remediations section, keyed by check ID, and totals per section. The remediation text names the file and the exact change.',
+      ],
+      keyIdea: 'Use the ID to find the check: kube-bench --check 1.2.15 reruns just that one. WARN is not FAIL, but still read it.',
+      flows: [{from: 'kb', to: 'report', label: 'logs', type: 'response'}],
+      focus: ['report'],
+      status: {report: 'warn'},
+      badges: {report: 'FAIL · WARN'},
+      values: {fail: {text: '1.1.1 · 1.2.6 · 1.2.15 · 1.2.16', tone: 'bad'}},
+    },
+    {
+      short: 'Files',
+      kind: '문제',
+      title: 'FAIL 1.1.1: the manifest file is too open',
+      text: [
+        'Check 1.1.1 wants /etc/kubernetes/manifests/kube-apiserver.yaml to be 600 or stricter and owned by root:root. Here someone made it 644, so any local user can read the API server flags.',
+        'The fix is chmod 600 on the file. Related checks cover the other manifests, the kubeconfig files in /etc/kubernetes and the PKI directory.',
+      ],
+      flows: [{from: 'kb', to: 'mf', label: 'permissions=644', type: 'watch', bend: -40}],
+      focus: ['mf'],
+      status: {mf: 'error'},
+      badges: {mf: '644'},
+      values: {fix: 'chmod 600'},
+    },
+    {
+      short: 'Flags',
+      kind: '문제',
+      title: 'FAIL 1.2.6 and 1.2.15: risky API server flags',
+      text: [
+        '1.2.15 fails because --profiling is not set to false. The default is true, which exposes profiling data through the API server. The same check exists for the controller manager and the scheduler.',
+        '1.2.6 fails because --authorization-mode includes AlwaysAllow, which lets every authenticated request do anything. It should be Node,RBAC as kubeadm sets it.',
+      ],
+      flows: [{from: 'kb', to: 'api', label: 'ps flags', type: 'watch'}],
+      focus: ['api'],
+      status: {mf: 'ok', api: 'error'},
+      badges: {mf: '600', api: 'AlwaysAllow · profiling'},
+      values: {fix: '--authorization-mode=Node,RBAC · --profiling=false'},
+    },
+    {
+      short: 'Edit manifest',
+      kind: '원리',
+      title: 'Fix it in the static Pod manifest and let the kubelet restart it',
+      text: [
+        'The API server is a static Pod, so kubectl edit does not change it. Edit /etc/kubernetes/manifests/kube-apiserver.yaml: set --authorization-mode=Node,RBAC and add --profiling=false.',
+        'The kubelet sees the file change and recreates the Pod. For a short time the API does not answer. Watch with crictl ps or kubectl get pods -n kube-system until it is back.',
+      ],
+      keyIdea: 'Keep backups outside the manifests directory: the kubelet tries to run files it finds there. If the API server does not come back, read its container logs with crictl logs.',
+      changes: ['~ --authorization-mode=Node,RBAC', '+ --profiling=false'],
+      flows: [
+        {from: 'admin', to: 'mf', label: 'vi', type: 'request'},
+        {from: 'mf', to: 'api', label: 'kubelet recreates', type: 'request'},
+      ],
+      focus: ['mf', 'api'],
+      status: {api: 'ok'},
+      badges: {api: null},
+    },
+    {
+      short: 'Audit',
+      kind: '문제',
+      title: 'FAIL 1.2.16: no audit log',
+      text: [
+        'kubeadm does not turn on audit logging, so --audit-log-path is missing and 1.2.16 fails. Its neighbors check log retention (--audit-log-maxage, maxbackup, maxsize).',
+        'The fix needs three parts in the same manifest: --audit-policy-file pointing at a policy, --audit-log-path, and hostPath volumes with volumeMounts for both, or the API server cannot read the policy or write the log.',
+      ],
+      keyIdea: 'Forgetting the volume is the usual reason the API server does not start after this change. Which events to record is covered in Audit Logs.',
+      flows: [{from: 'api', to: 'audit', label: 'events', type: 'request'}],
+      focus: ['audit'],
+      status: {audit: 'ok'},
+      values: {fail: {text: '1.2.16 → fixed', tone: 'good'}, fix: '--audit-policy-file · --audit-log-path · volumes'},
+    },
+    {
+      short: 'kubelet',
+      kind: '문제',
+      title: 'FAIL 4.2.1 on a worker: the kubelet allows anonymous requests',
+      text: [
+        'The node Job on the worker reports 4.2.1: anonymous auth is on, so anyone who reaches port 10250 is treated as an anonymous user. 4.2.2 checks that authorization mode is not AlwaysAllow.',
+        'kube-bench reads both the flags and /var/lib/kubelet/config.yaml. Set authentication.anonymous.enabled: false and authorization.mode: Webhook in the config, then systemctl restart kubelet. A command-line flag overrides the file, so check the kubelet unit flags too.',
+      ],
+      changes: ['~ authentication.anonymous.enabled: false', '~ authorization.mode: Webhook'],
+      flows: [
+        {from: 'wkb', to: 'kubelet', label: 'flags + config', type: 'watch'},
+      ],
+      focus: ['kubelet', 'wkb'],
+      status: {kubelet: 'ok'},
+      badges: {kubelet: 'restarted'},
+      values: {target: 'worker node', fix: 'config.yaml · restart kubelet'},
+    },
+    {
+      short: 'Managed',
+      kind: '주의',
+      title: 'On a managed cluster, you only check your half',
+      text: [
+        'On EKS, GKE or AKS the provider runs the control plane. You cannot schedule a Pod on it or read its files, so control plane checks cannot be run there.',
+        'CIS publishes provider benchmarks (for example the CIS Amazon EKS Benchmark) that cover only what you manage: worker nodes, policies and some provider settings. kube-bench has job files and configs for them, such as job-eks.yaml.',
+      ],
+      keyIdea: 'Run the provider benchmark, not the generic one. The control plane part is the provider\'s side of shared responsibility.',
+      flows: [{from: 'managed', to: 'kubelet', label: 'node checks only', type: 'watch', bend: 40}],
+      focus: ['managed'],
+      status: {managed: 'warn'},
+    },
+    {
+      short: 'Rerun',
+      kind: '원리',
+      title: 'Run it again to prove the fix',
+      text: [
+        'A Job does not rerun by itself. Delete it and apply it again, then read the new logs. The checks you fixed now show [PASS].',
+        'To save time, run only the checks you touched with --check, or one section with run --targets. In a real cluster, run kube-bench on a schedule so new drift shows up.',
+      ],
+      flows: [
+        {from: 'admin', to: 'kb', label: 'delete + apply', type: 'request'},
+        {from: 'kb', to: 'report', label: 'logs', type: 'response'},
+      ],
+      focus: ['kb', 'report'],
+      status: {report: 'ok', managed: null},
+      badges: {report: 'PASS'},
+      values: {fail: {text: 'none of the fixed checks', tone: 'good'}, target: 'control plane + worker'},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Scan, read the remediation, fix the right file, scan again',
+      text: [
+        'The CIS Benchmark lists secure settings per component. kube-bench checks them on the node it runs on and prints PASS, FAIL or WARN with a remediation.',
+        'Control plane fixes go in /etc/kubernetes/manifests, file fixes are chmod and chown, and kubelet fixes go in /var/lib/kubelet/config.yaml followed by a kubelet restart. On managed clusters use the provider benchmark.',
+      ],
+      keyIdea: 'Under time pressure: read the remediation for the failing ID, edit one flag, wait for the Pod to come back, rerun that check with --check.',
+      flows: [{from: 'kb', to: 'report', label: 'PASS', type: 'response'}],
+      focus: ['kb', 'mf', 'kubelet'],
+      status: {mf: null, api: null, audit: null, kubelet: null, report: null},
+      badges: {mf: null, kubelet: null, report: null},
+    },
+  ]}
+/>
+
+## Common findings on a kubeadm cluster
+
+Check IDs below are from kube-bench's `cis-2.0` config. Numbers can shift between benchmark versions, so match on the text too.
+
+| ID | Check | Where to fix | Fix |
+|---|---|---|---|
+| 1.1.1 | API server manifest permissions 600 or stricter | `/etc/kubernetes/manifests/kube-apiserver.yaml` | `chmod 600` |
+| 1.2.6 | `--authorization-mode` not `AlwaysAllow` | API server manifest | `--authorization-mode=Node,RBAC` |
+| 1.2.15 | `--profiling=false` | API server manifest | Add `--profiling=false` (also 1.3.2 controller manager, 1.4.1 scheduler) |
+| 1.2.16 | `--audit-log-path` is set | API server manifest | Policy file, log path, plus hostPath volumes and mounts |
+| 4.2.1 | kubelet anonymous auth off | `/var/lib/kubelet/config.yaml` | `authentication.anonymous.enabled: false`, restart kubelet |
+| 4.2.2 | kubelet authorization not `AlwaysAllow` | `/var/lib/kubelet/config.yaml` | `authorization.mode: Webhook`, restart kubelet |
+
+| Result | Meaning | What to do |
+|---|---|---|
+| `[PASS]` | Check ran and passed | Nothing |
+| `[FAIL]` | Check ran and failed (or a scored check could not run) | Apply the remediation, rerun |
+| `[WARN]` | Needs attention, usually a manual check | Read the remediation, decide yourself |
+| `[INFO]` | Informational, or a skipped check | Nothing |
+
+## Try it yourself
+
+```bash
+# Control plane checks (Job pinned to a control plane node)
+kubectl apply -f https://raw.githubusercontent.com/aquasecurity/kube-bench/main/job-master.yaml
+kubectl wait --for=condition=complete job/kube-bench-master --timeout=120s
+kubectl logs job/kube-bench-master | grep '^\[FAIL\]'                 # failing checks
+kubectl logs job/kube-bench-master | grep -A4 '^== Summary'            # PASS/FAIL/WARN/INFO counts
+
+# Worker checks
+kubectl apply -f https://raw.githubusercontent.com/aquasecurity/kube-bench/main/job-node.yaml
+kubectl logs job/kube-bench-node | grep -A3 '4.2.1'
+
+# Fix on the control plane node
+sudo cp /etc/kubernetes/manifests/kube-apiserver.yaml /root/kube-apiserver.yaml.bak   # backup OUTSIDE manifests/
+sudo vi /etc/kubernetes/manifests/kube-apiserver.yaml                                 # e.g. add --profiling=false
+sudo crictl ps --name kube-apiserver                                                  # wait for the new container
+
+# Rerun
+kubectl delete job kube-bench-master && kubectl apply -f https://raw.githubusercontent.com/aquasecurity/kube-bench/main/job-master.yaml
+```
+
+<Quiz questions={[
+  {q: 'kube-bench reports FAIL 1.2.15 (--profiling). Where do you make the change on a kubeadm cluster?', options: ['kubectl edit pod kube-apiserver -n kube-system', 'The kubeadm-config ConfigMap only', '/var/lib/kubelet/config.yaml on the control plane', '/etc/kubernetes/manifests/kube-apiserver.yaml'], answer: 3, why: 'The API server is a static Pod. The kubelet runs it from the manifest file and recreates it when the file changes. Editing the mirror Pod through the API does not change it.'},
+  {q: 'You run kube-bench as a Job on a managed cluster such as EKS, and the control plane section is missing. Why?', options: ['The provider runs the control plane, and no Pod can reach its nodes or files', 'kube-bench needs a newer version', 'The Job needs more RBAC permissions'], answer: 0, why: 'kube-bench checks only the node it runs on. On a managed cluster you cannot schedule onto the control plane, so you use the provider benchmark, which covers worker nodes and policies.'},
+  {q: 'After adding --audit-log-path and --audit-policy-file to the manifest, the API server does not come back. What is the most likely cause?', options: ['The audit log needs a CRD', 'The hostPath volumes and volumeMounts for the policy and log are missing', 'Profiling is still enabled', 'The kubelet must be reinstalled'], answer: 1, why: 'The API server runs in a container. Without volumes it cannot read the policy file or write the log path, so it fails to start.'},
+]} />
+
+Further reading: [CIS Kubernetes Benchmark](https://www.cisecurity.org/benchmark/kubernetes) · [kube-bench](https://github.com/aquasecurity/kube-bench) · [Running kube-bench](https://github.com/aquasecurity/kube-bench/blob/main/docs/running.md) · [Kubelet authentication and authorization](https://kubernetes.io/docs/reference/access-authn-authz/kubelet-authn-authz/) · [Audit Logs](../advanced/audit-log.mdx) · [Building a cluster with kubeadm (CKA)](./kubeadm-install.mdx) · [Viewing the cluster through the 4Cs and a threat model (KCSA·KCNA)](./threat-model.mdx)

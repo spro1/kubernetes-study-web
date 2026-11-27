@@ -1,0 +1,280 @@
+---
+id: api-design
+title: Designing HTTP APIs
+sidebar_label: 02 · API design
+description: Animated walkthrough of HTTP API design, from resources and method semantics, status codes and idempotency keys to cursor pagination, RFC 9457 problem details, backward-compatible versioning, OpenAPI, and when to pick gRPC or GraphQL
+summary: 'Resources and methods, status codes that mean something, idempotency keys for payments, cursor pagination, one error format, versioning without breaking clients, and REST vs gRPC vs GraphQL.'
+icon: book
+hide_table_of_contents: true
+---
+
+# Designing HTTP APIs
+
+An API is a promise to every client that calls it. Follow an orders API as it grows from one endpoint to a public contract, and see which choices keep clients working when things go wrong or change.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~13 min', level: 'Beginner'}}
+  groups={[
+    {label: 'Server side', x: 300, y: 30, w: 675, h: 410, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'client', label: 'Client app', sub: 'web · mobile', icon: 'browser', tone: 'ext', x: 140, y: 170, show: true},
+    {id: 'old', label: 'Old client', sub: 'built for v1', icon: 'box', tone: 'ext', x: 140, y: 340},
+    {id: 'spec', label: 'OpenAPI spec', sub: 'the written contract', icon: 'book', tone: 'store', x: 420, y: 90, w: 160},
+    {id: 'api', label: 'Orders API', sub: '/v1/orders', icon: 'server', tone: 'app', x: 420, y: 230, show: true},
+    {id: 'keys', label: 'Idempotency keys', sub: 'key → saved response', icon: 'ticket', tone: 'store', x: 420, y: 370, w: 170},
+    {id: 'db', label: 'orders DB', sub: 'rows', icon: 'db', tone: 'store', x: 680, y: 300, show: true},
+    {id: 'inv', label: 'inventory', sub: 'gRPC · protobuf', icon: 'server', tone: 'app', x: 860, y: 140, w: 160},
+  ]}
+  metrics={[
+    {id: 'req', label: 'Request'},
+    {id: 'status', label: 'Status'},
+    {id: 'note', label: 'Contract'},
+  ]}
+  learn={[
+    {text: 'Resources as nouns, methods as verbs, and what safe and idempotent mean', at: 1},
+    {text: 'Status codes that let a client decide what to do next', at: 2},
+    {text: 'Idempotency keys so a retried payment is charged once', at: 4},
+    {text: 'Cursor pagination and one consistent error body', at: 5},
+    {text: 'Changing an API without breaking old clients, and REST vs gRPC vs GraphQL', at: 7},
+  ]}
+  steps={[
+    {
+      short: 'Start',
+      kind: '시작',
+      title: 'Paths name things, methods say what to do',
+      text: [
+        'The API exposes resources: the collection /v1/orders and one order /v1/orders/42. Paths are nouns. The HTTP method is the verb, so there is no /getOrder or /deleteOrder.',
+        'The client sends GET /v1/orders/42 and gets the order as JSON with 200 OK. The same few methods work the same way on every resource, which makes the API easy to guess.',
+      ],
+      flows: [
+        {from: 'client', to: 'api', label: 'GET /v1/orders/42', type: 'request'},
+        {from: 'api', to: 'db', label: 'Read', type: 'request'},
+        {from: 'api', to: 'client', label: '200 + JSON', type: 'response', bend: 40},
+      ],
+      focus: ['client', 'api'],
+      values: {req: 'GET /v1/orders/42', status: {text: '200 OK', tone: 'good'}, note: '—'},
+    },
+    {
+      short: 'Methods',
+      kind: '원리',
+      title: 'Safe and idempotent are promises about repeating a request',
+      text: [
+        'GET and HEAD are safe: they only read. PUT replaces the whole resource and DELETE removes it. Both are idempotent: sending them twice leaves the same state as sending them once.',
+        'POST /v1/orders creates a new order each time, so it is neither safe nor idempotent. PATCH changes part of a resource and is not idempotent in general. Proxies, clients and retry logic rely on these meanings.',
+      ],
+      keyIdea: 'If a request is not idempotent, assume something will send it twice, and design for that.',
+      flows: [
+        {from: 'client', to: 'api', label: 'PUT · PATCH · DELETE', type: 'request'},
+        {from: 'api', to: 'db', label: 'Write', type: 'request'},
+      ],
+      focus: ['api'],
+      values: {req: 'PATCH /v1/orders/42', status: '200 OK'},
+    },
+    {
+      short: 'Status',
+      kind: '원리',
+      title: 'The status code tells the client what to do next',
+      text: [
+        'POST /v1/orders answers 201 Created with a Location header for the new order. DELETE answers 204 No Content. A bad JSON body is 400, an unknown order is 404, a valid body that breaks a rule (quantity 0) is 422, and an order that changed since you read it is 409.',
+        '4xx means the client must change the request. 5xx means the server failed, and the same request may work later. Never answer 200 with an error message in the body: clients, proxies and dashboards all read the code first.',
+      ],
+      flows: [
+        {from: 'client', to: 'api', label: 'POST /v1/orders', type: 'request'},
+        {from: 'api', to: 'client', label: '201 · Location', type: 'response', bend: 40},
+      ],
+      focus: ['client', 'api'],
+      values: {req: 'POST /v1/orders', status: {text: '201 Created', tone: 'good'}},
+    },
+    {
+      short: 'Double charge',
+      kind: '문제',
+      title: 'A retried POST pays twice',
+      text: [
+        'The client sends POST /v1/payments for order 42. The server charges the card, but the response is lost on a mobile network and the client times out.',
+        'The client cannot tell "failed" from "worked but I did not hear". It retries, the server sees a new POST, and the customer is charged twice.',
+      ],
+      flows: [
+        {from: 'client', to: 'api', label: 'POST /v1/payments ×2', type: 'request'},
+        {from: 'api', to: 'db', label: '2 charges', type: 'request'},
+      ],
+      focus: ['client', 'api', 'db'],
+      status: {db: 'error'},
+      badges: {db: 'Charged twice'},
+      values: {req: 'POST /v1/payments', status: {text: 'timeout → retry', tone: 'bad'}},
+    },
+    {
+      short: 'Idempotency key',
+      kind: '원리',
+      title: 'An idempotency key makes the retry safe',
+      text: [
+        'The client creates a unique key, such as a UUID, once per payment and sends it as Idempotency-Key. It sends the same key on every retry. The server saves the key with the result of the first request.',
+        'A retry with that key gets the saved response, with no second charge. The IETF draft suggests 422 if the same key comes with a different body, 409 while the first request is still running, and keys that expire after a published time.',
+      ],
+      keyIdea: 'Any POST that moves money or sends something should accept an idempotency key. Then clients and proxies can retry it safely.',
+      flows: [
+        {from: 'client', to: 'api', label: 'Idempotency-Key: 7f3c…', type: 'request'},
+        {from: 'api', to: 'keys', label: 'Seen? replay', type: 'request'},
+        {from: 'api', to: 'client', label: 'Same 201', type: 'response', bend: 40},
+      ],
+      focus: ['api', 'keys'],
+      status: {db: 'ok'},
+      badges: {db: null, keys: 'Replayed'},
+      values: {status: {text: '201 (replayed)', tone: 'good'}, note: 'charged once'},
+    },
+    {
+      short: 'Pagination',
+      kind: '원리',
+      title: 'Big lists come in pages, and cursors stay correct',
+      text: [
+        'GET /v1/orders?offset=40&limit=20 is easy to build. But the database still walks past the first 40 rows, which gets slow deep into a list, and when new orders arrive between pages, rows shift and the client sees duplicates or misses some.',
+        'A cursor fixes both. The response carries an opaque token for "after this item", and the next call sends ?limit=20&cursor=… . The Kubernetes API works this way with limit and continue, and an expired continue token gets 410 Gone.',
+      ],
+      flows: [
+        {from: 'client', to: 'api', label: '?limit=20&cursor=…', type: 'request'},
+        {from: 'api', to: 'client', label: 'items + next cursor', type: 'response', bend: 40},
+      ],
+      focus: ['client', 'api'],
+      badges: {keys: null},
+      values: {req: 'GET /v1/orders?limit=20', status: '200 OK', note: 'cursor, not offset'},
+    },
+    {
+      short: 'Errors',
+      kind: '원리',
+      title: 'Every error uses the same body',
+      text: [
+        'RFC 9457 problem details give errors one shape, with content type application/problem+json: type (a URI for the kind of error), title, status, detail and instance, plus your own fields such as a list of invalid fields.',
+        'Clients write one error parser for the whole API. Logs and support tickets can quote type and instance. Never put stack traces or internal hostnames in detail.',
+      ],
+      flows: [
+        {from: 'client', to: 'api', label: 'POST quantity: 0', type: 'request'},
+        {from: 'api', to: 'client', label: '422 problem+json', type: 'response', bend: 40},
+      ],
+      focus: ['api'],
+      values: {req: 'POST /v1/orders', status: {text: '422', tone: 'bad'}, note: 'type · title · detail'},
+    },
+    {
+      short: 'Compatibility',
+      kind: '주의',
+      title: 'Add fields freely, rename only in a new version',
+      text: [
+        'Adding an optional request field, a response field or a new endpoint is backward compatible, as long as clients ignore fields they do not know. Removing or renaming a field, changing its type, or making an optional field required breaks old clients.',
+        'The team renames total to amount in place. The old mobile app, which users have not updated, reads total, finds nothing and shows 0. For a breaking change, publish /v2 (or a version header) next to /v1 and announce the end of v1 with the Deprecation and Sunset headers.',
+      ],
+      keyIdea: 'You do not control when clients update. Keep the old version running until its traffic is gone.',
+      flows: [
+        {from: 'old', to: 'api', label: 'GET /v1/orders/42', type: 'request'},
+        {from: 'api', to: 'old', label: 'total missing', type: 'response', bend: 40},
+      ],
+      focus: ['old', 'api'],
+      status: {old: 'error'},
+      badges: {old: 'Shows 0', api: 'v1 + v2'},
+      values: {req: 'GET /v1/orders/42', status: '200 OK', note: {text: 'breaking rename', tone: 'bad'}},
+    },
+    {
+      short: 'OpenAPI',
+      kind: '원리',
+      title: 'Write the contract down in OpenAPI',
+      text: [
+        'An OpenAPI document describes every path, parameter, request body, response and error schema in YAML or JSON. From it, tools render docs, generate client libraries and server stubs, and test that the server matches.',
+        'Keep the spec in the repository and compare it in CI. A diff that removes a field or adds a required parameter is a breaking change you can catch before release. The Kubernetes API server publishes its own spec at /openapi/v3.',
+      ],
+      flows: [
+        {from: 'spec', to: 'api', label: 'Contract', type: 'watch'},
+        {from: 'spec', to: 'client', label: 'Generated SDK', type: 'watch'},
+      ],
+      focus: ['spec', 'api'],
+      status: {old: 'ok'},
+      badges: {old: null, spec: 'v1 · v2'},
+      values: {note: {text: 'spec checked in CI', tone: 'good'}},
+    },
+    {
+      short: 'gRPC · GraphQL',
+      kind: '원리',
+      title: 'REST, gRPC and GraphQL fit different callers',
+      text: [
+        'For the internal call to inventory, the team uses gRPC. A .proto file is the contract, messages are compact protobuf, and calls run on HTTP/2 as unary calls or streams in either direction. Its long-lived connections need an L7 load balancer to spread requests.',
+        'GraphQL puts one endpoint in front of many data sources and lets the client ask for exactly the fields it needs. That suits varied front ends, but HTTP caching and per-request rate limits get harder. Plain REST stays the easiest for public APIs.',
+      ],
+      flows: [
+        {from: 'api', to: 'inv', label: 'gRPC · HTTP/2', type: 'request'},
+        {from: 'inv', to: 'api', label: 'protobuf', type: 'response', bend: 40},
+      ],
+      focus: ['api', 'inv'],
+      badges: {spec: null},
+      values: {req: 'inventory.Reserve()', status: 'OK', note: '.proto contract'},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'A good API is predictable, safe to retry and slow to break',
+      text: [
+        'Resources are nouns and methods are verbs with fixed meanings. Status codes and one problem-details body tell clients what to do. Idempotency keys make POST safe to retry, and cursors keep pages correct.',
+        'Grow the API by adding, not renaming. Put breaking changes in a new version, write the contract in OpenAPI, and choose gRPC or GraphQL where their strengths matter.',
+      ],
+      keyIdea: 'Before you ship an endpoint, answer: what if it is called twice, what does each error look like, and how will it change without breaking old clients?',
+      flows: [
+        {from: 'client', to: 'api', label: 'REST /v1', type: 'request'},
+        {from: 'spec', to: 'api', label: 'Contract', type: 'watch'},
+        {from: 'api', to: 'inv', label: 'gRPC', type: 'request'},
+      ],
+      focus: ['client', 'api', 'spec'],
+      badges: {api: null},
+    },
+  ]}
+/>
+
+## Methods and status codes at a glance
+
+| Method | Use | Safe | Idempotent | Typical success |
+|---|---|---|---|---|
+| GET | Read a resource or list | Yes | Yes | 200 |
+| POST | Create in a collection, or run an action | No | No (use an idempotency key) | 201 with `Location`, or 200 / 202 |
+| PUT | Replace the whole resource | No | Yes | 200 or 204 |
+| PATCH | Change part of a resource | No | Not guaranteed | 200 or 204 |
+| DELETE | Remove a resource | No | Yes | 204 |
+
+| Status | Means | Client should |
+|---|---|---|
+| 400 Bad Request | Malformed request: bad JSON, wrong type | Fix the request, do not retry as is |
+| 404 Not Found | No such resource | Stop, or check the id |
+| 409 Conflict | Conflicts with current state, such as a stale version | Re-read, then retry the change |
+| 422 Unprocessable Content | Well formed but breaks a rule | Show the field errors to the user |
+| 429 Too Many Requests | Rate limit hit | Wait for `Retry-After`, then retry |
+| 500 / 502 / 503 / 504 | Server or upstream failed | Retry idempotent requests with backoff |
+
+| | REST + JSON | gRPC | GraphQL |
+|---|---|---|---|
+| Contract | OpenAPI (optional) | `.proto` file (required) | Schema (required) |
+| Wire format | JSON text | Protobuf binary | JSON |
+| Transport | HTTP/1.1, 2 or 3 | HTTP/2 | Usually HTTP POST to one endpoint |
+| Streaming | Server-sent events, WebSocket on the side | Built in, both directions | Subscriptions |
+| Best for | Public APIs, browsers, caching | Service-to-service, low latency | Varied front ends that need different fields |
+
+## Try it yourself
+
+The Kubernetes API is itself a well-designed HTTP API. Look at it directly:
+
+```bash
+kubectl proxy --port=8001 &                                   # local, authenticated tunnel to the API server
+
+curl -s localhost:8001/apis/apps | jq '.versions'             # versions side by side in the path
+curl -i localhost:8001/api/v1/namespaces/default/pods/nope    # 404 with a Status object as the error body
+
+# Pagination with limit and continue (a cursor)
+curl -s 'localhost:8001/api/v1/pods?limit=2' | jq -r '.metadata.continue'
+
+curl -s localhost:8001/openapi/v3 | jq '.paths | keys | .[:5]'   # the published OpenAPI spec
+kubectl get pods -A -v=6 2>&1 | grep -E 'GET|200'             # kubectl asks in chunks: ?limit=500
+kill %1                                                        # stop the proxy
+```
+
+<Quiz questions={[
+  {q: 'A client retries PUT /v1/orders/42 with the same full body after a timeout. Why is that safe, while retrying POST /v1/payments is not?', options: ['PUT is faster than POST', 'PUT is idempotent: a second copy leaves the same state, while each POST may create a new charge', 'Servers ignore duplicate PUT requests automatically', 'POST requests are never retried by HTTP clients'], answer: 1, why: 'Idempotent means the effect of N identical requests equals the effect of one. PUT replaces the resource with the same body again. POST creates something new each time unless an idempotency key ties the retries together.'},
+  {q: 'An orders list uses ?offset=40&limit=20. New orders arrive while a user pages through. What goes wrong, and what fixes it?', options: ['Nothing, offsets are stable', 'The server returns 410 Gone, so use a larger limit', 'Rows shift, so items repeat or get skipped. A cursor that means "after this item" fixes it'], answer: 2, why: 'Offsets count positions, and new rows move every position. A cursor points at a specific item, so the next page starts right after it no matter what was inserted.'},
+  {q: 'The team wants to rename the response field total to amount. Which approach keeps old mobile apps working?', options: ['Serve the new field in /v2 (or add amount and keep total in v1), and sunset v1 later', 'Rename it in /v1 and ask users to update', 'Return 400 to old clients so they update', 'Change the field type at the same time so the error is obvious'], answer: 0, why: 'Renaming a field is a breaking change. Adding a field is compatible. Keep what old clients read until their traffic is gone, and put breaking changes in a new version.'},
+]} />
+
+Further reading: [HTTP Semantics (RFC 9110)](https://www.rfc-editor.org/rfc/rfc9110) · [Problem Details for HTTP APIs (RFC 9457)](https://www.rfc-editor.org/rfc/rfc9457) · [Idempotency-Key header (IETF draft)](https://datatracker.ietf.org/doc/draft-ietf-httpapi-idempotency-key-header/) · [OpenAPI Specification](https://spec.openapis.org/oas/latest.html) · [gRPC core concepts](https://grpc.io/docs/what-is-grpc/core-concepts/) · [Kubernetes API concepts](https://kubernetes.io/docs/reference/using-api/api-concepts/) · [HTTP/1.1, HTTP/2 and HTTP/3](../basic/http-versions.mdx) · [When You Type an Address](../basic/web-request.mdx) · [Making Service Calls Survive Failures](../basic/resilience-patterns.mdx)

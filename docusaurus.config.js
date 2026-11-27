@@ -86,8 +86,18 @@ const config = {
         items: [
           {type: 'docSidebar', sidebarId: 'lessons', label: 'Lessons', position: 'left'},
           {to: FIRST_LESSON, label: 'Start learning', position: 'left'},
-          {to: '/roadmap', label: 'Roadmap', position: 'left'},
-          {to: '/glossary', label: 'Glossary', position: 'left'},
+          {
+            type: 'dropdown',
+            label: 'Study',
+            position: 'left',
+            items: [
+              {to: '/roadmap', label: 'Roadmap'},
+              {to: '/labs', label: 'Labs'},
+              {to: '/exams', label: 'Practice exams'},
+              {to: '/cheatsheet', label: 'Cheat sheet'},
+              {to: '/glossary', label: 'Glossary'},
+            ],
+          },
           {type: 'localeDropdown', position: 'right'},
           {href: REPO_URL, label: '⭐ GitHub', position: 'right'},
         ],

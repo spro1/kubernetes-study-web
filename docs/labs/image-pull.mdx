@@ -1,0 +1,187 @@
+---
+id: image-pull
+title: 'Lab 03 · An image that never arrives'
+sidebar_label: '03 · Image pull'
+sidebar_position: 3
+description: 'Break-fix lab: two Deployments stuck in ErrImagePull and ImagePullBackOff, one from a tag typo and one from an unreachable private registry. Read the pull error to tell a wrong name from a credential or network problem.'
+hide_table_of_contents: false
+---
+
+# Lab 03 · An image that never arrives
+
+This lab runs on the kind cluster from [Build a Lab Cluster on Your Laptop](../basic/lab-cluster.mdx). The nodes need internet access to pull from Docker Hub. Check `kubectl config current-context` first: it should say `kind-lab`.
+
+## Goal
+
+Two Deployments, `web` and `api`, never start a container. Read the pull errors, tell the two causes apart, and get both running.
+
+## Setup
+
+```bash
+kubectl apply -f - <<'EOF'
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: lab-03
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  namespace: lab-03
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.27-alpnie
+---
+# The team's private mirror of nginx
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  namespace: lab-03
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: api
+  template:
+    metadata:
+      labels:
+        app: api
+    spec:
+      containers:
+        - name: api
+          image: registry.lab.invalid/mirror/nginx:1.27
+EOF
+```
+
+## Symptoms
+
+```bash
+kubectl -n lab-03 get pods
+```
+
+```text
+NAME                   READY   STATUS             RESTARTS   AGE
+api-5f7d9b8c6-wq4lz    0/1     ImagePullBackOff   0          50s
+web-6c8f7d5b9-h2kxn    0/1     ErrImagePull       0          50s
+```
+
+Run it a few times. Each Pod switches between `ErrImagePull` (a pull just failed) and `ImagePullBackOff` (the kubelet is waiting before the next try, with a longer wait each time).
+
+## Investigate
+
+```bash
+kubectl -n lab-03 describe pod -l app=web     # Events: the full pull error
+kubectl -n lab-03 describe pod -l app=api
+kubectl -n lab-03 get events --sort-by=.lastTimestamp
+kubectl -n lab-03 get deploy -o wide          # The IMAGES column
+```
+
+The status is the same for both Pods. The difference is in the last words of the `Failed to pull image` event.
+
+## Hints
+
+<details>
+<summary>Hint 1</summary>
+
+Pull errors fall into three groups. **not found**: the registry answered, but that name or tag does not exist. **unauthorized / access denied**: the registry wants credentials. **no such host / timeout**: the node cannot reach the registry at all. Which group is each Pod in?
+
+</details>
+
+<details>
+<summary>Hint 2</summary>
+
+For `web`, read the tag letter by letter. The official nginx image has `-alpine` tags. A short name like `nginx` expands to `docker.io/library/nginx`.
+
+</details>
+
+<details>
+<summary>Hint 3</summary>
+
+For `api`, the error ends with `no such host`. Would an image pull Secret change that? Credentials only matter once the node can connect to the registry.
+
+</details>
+
+## Solution
+
+<details>
+<summary>Solution</summary>
+
+**Problem 1: a tag typo.** The `web` event says the reference cannot be resolved and ends with `not found`, for example:
+
+```text
+Warning  Failed  ...  Failed to pull image "nginx:1.27-alpnie": ... docker.io/library/nginx:1.27-alpnie: not found
+```
+
+The registry was reachable, but `1.27-alpnie` is not a tag. Use the real one:
+
+```bash
+kubectl -n lab-03 set image deployment/web nginx=nginx:1.27-alpine
+```
+
+**Problem 2: a private registry the node cannot use.** The `api` event ends with a DNS error, `... lookup registry.lab.invalid ...: no such host`. The `.invalid` domain never resolves, which stands in for a private registry that is misspelled or only reachable from another network.
+
+With a real private registry that the node can reach, the usual error is an authorization error (`401 Unauthorized`, `authorization failed` or `access denied`). The fix for that is a pull Secret referenced from the Pod spec:
+
+```bash
+# For a real private registry (not needed to finish this lab)
+kubectl -n lab-03 create secret docker-registry regcred \
+  --docker-server=registry.example.com --docker-username=<user> --docker-password=<token>
+kubectl -n lab-03 patch deployment api \
+  -p '{"spec":{"template":{"spec":{"imagePullSecrets":[{"name":"regcred"}]}}}}'
+```
+
+Here a Secret would not help, because the node never got as far as the login. The mirror is gone, so point `api` back at the public image:
+
+```bash
+kubectl -n lab-03 set image deployment/api api=nginx:1.27
+```
+
+Careful: Docker Hub answers a pull of a repository that does not exist with an authorization error, not `not found`. So an "unauthorized" error can also mean a misspelled image name.
+
+</details>
+
+## Verify
+
+```bash
+kubectl -n lab-03 rollout status deployment web
+kubectl -n lab-03 rollout status deployment api
+kubectl -n lab-03 get pods
+```
+
+```text
+NAME                   READY   STATUS    RESTARTS   AGE
+api-7b9c5d6f8-p8vjs    1/1     Running   0          25s
+web-58d7c4f9b6-xr5tm   1/1     Running   0          40s
+```
+
+Both Pods are `Running` and `1/1`. The `describe` events now show `Pulled` and `Started`.
+
+## Clean up
+
+```bash
+kubectl delete ns lab-03
+```
+
+<Quiz questions={[
+  {q: 'The pull error for docker.io/library/nginx:1.27-alpnie ends with "not found". What is the fix?', options: ['Add imagePullSecrets to the Pod', 'Correct the image tag', 'Restart the kubelet on the node'], answer: 1, why: 'The registry answered, so the network and login worked. The tag itself does not exist.'},
+  {q: 'The pull error ends with "no such host". Will adding an imagePullSecret fix it?', options: ['Yes, a Secret always fixes pull errors', 'Only if the tag is :latest', 'No. The node cannot even resolve the registry name, so fix the name or the DNS first'], answer: 2, why: 'Credentials are sent only after the node connects to the registry. A DNS failure happens before that.'},
+]} />
+
+## Related lessons
+
+- [Reading status in three layers and the troubleshooting order](../intermediate/troubleshoot-status.mdx)
+- [Pulling Images from a Private Registry](../k8s/private-registry.mdx)
+- [How an Image Is Built and Run](../basic/container-image.mdx)
+- [How a Pod Starts](../k8s/pod-startup.mdx)

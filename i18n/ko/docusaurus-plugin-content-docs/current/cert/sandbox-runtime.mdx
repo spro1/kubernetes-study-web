@@ -1,0 +1,282 @@
+---
+id: sandbox-runtime
+title: 샌드박스 컨테이너 런타임 — gVisor, Kata, RuntimeClass (CKS)
+sidebar_label: 11 · 샌드박스 런타임
+description: 커널 취약점이 일반 컨테이너를 빠져나가는 이유, gVisor(runsc)와 Kata Containers가 파드와 호스트 사이에 커널을 하나 더 두는 방식, RuntimeClass 핸들러·runtimeClassName·스케줄링·오버헤드로 파드마다 런타임을 고르는 법을 애니메이션으로 본다
+summary: '공유 커널이 약점인 이유, gVisor와 Kata가 커널을 하나 더 두는 방식, RuntimeClass로 파드마다 런타임을 고르는 법.'
+icon: shield
+hide_table_of_contents: true
+---
+
+# 샌드박스 컨테이너 런타임 — gVisor, Kata, RuntimeClass (CKS)
+
+CKS의 Minimize Microservice Vulnerabilities 영역 중 "격리 기법 이해와 적용(멀티 테넌시, 샌드박스 컨테이너 등)"에 해당한다. 믿을 수 없는 파드 하나를 일반 런타임에서 돌려 왜 위험한지 보고, RuntimeClass로 샌드박스에 옮긴다.
+
+네임스페이스와 cgroup이 컨테이너를 격리하는 방식은 [리눅스는 컨테이너를 어떻게 격리하나](../basic/linux-isolation.mdx)에, seccomp·AppArmor·Falco는 [런타임 보안 — 이상 행동 잡기 (CKS)](./runtime-security.mdx)에 있다. 여기서는 커널 자체를 더는 공유하지 않을 때 무엇이 달라지는지 본다.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '약 12분', level: '심화'}}
+  groups={[
+    {label: '노드 · containerd', x: 240, y: 40, w: 740, h: 390, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'rc', label: 'RuntimeClass', sub: 'gvisor → runsc', icon: 'ticket', tone: 'store', x: 110, y: 110, w: 160},
+    {id: 'sched', label: '스케줄러', sub: 'nodeSelector', icon: 'target', tone: 'cp', x: 110, y: 250},
+    {id: 'dev', label: '개발자', sub: 'runtimeClassName', icon: 'user', tone: 'ext', x: 110, y: 380, show: true},
+    {id: 'pod', label: '파드 (runc)', sub: '믿을 수 없는 코드', icon: 'pod', tone: 'app', x: 340, y: 110, show: true},
+    {id: 'gpod', label: '파드 (gVisor)', sub: 'runtimeClassName', icon: 'pod', tone: 'app', x: 580, y: 110},
+    {id: 'kpod', label: '파드 (Kata)', sub: 'runtimeClassName', icon: 'pod', tone: 'app', x: 830, y: 110},
+    {id: 'runc', label: 'runc', sub: '기본 핸들러', icon: 'box', tone: 'node', x: 340, y: 240, show: true},
+    {id: 'sentry', label: 'gVisor Sentry', sub: '사용자 공간 커널', icon: 'shield', tone: 'node', x: 580, y: 240, w: 160},
+    {id: 'vm', label: 'Kata VM', sub: '게스트 커널', icon: 'layers', tone: 'node', x: 830, y: 240, w: 160},
+    {id: 'ctrd', label: 'containerd', sub: '런타임 핸들러', icon: 'gear', tone: 'cp', x: 340, y: 370},
+    {id: 'kernel', label: '호스트 커널', sub: '노드마다 하나', icon: 'server', tone: 'node', x: 690, y: 370, w: 420, show: true},
+  ]}
+  metrics={[
+    {id: 'runtime', label: '런타임'},
+    {id: 'boundary', label: '호스트까지의 경계'},
+    {id: 'pod', label: '파드'},
+  ]}
+  learn={[
+    {text: '커널 취약점이 일반 컨테이너를 빠져나가는 이유', at: 1},
+    {text: 'gVisor와 Kata가 호스트 앞에 커널을 하나 더 두는 방식', at: 2},
+    {text: 'containerd 핸들러, RuntimeClass, runtimeClassName', at: 4},
+    {text: '노드에 핸들러가 없을 때 생기는 일과 스케줄링으로 피하는 법', at: 6},
+    {text: '오버헤드와 샌드박스의 득실', at: 8},
+  ]}
+  steps={[
+    {
+      short: '시작',
+      kind: '시작',
+      title: '컨테이너는 공유 커널 위의 프로세스다',
+      text: [
+        '한 팀이 사용자가 올린 코드를 파드에서 돌린다. 기본 런타임 runc로 돌리면 컨테이너는 평범한 호스트 프로세스다. 네임스페이스는 보이는 것을, cgroup은 쓸 수 있는 양을 제한한다.',
+        '컨테이너가 하는 시스템 콜은 모두 곧장 호스트 커널로 간다. 그 커널은 노드의 모든 파드와 노드 자신이 함께 쓴다.',
+      ],
+      flows: [
+        {from: 'pod', to: 'runc', label: '실행', type: 'watch'},
+        {from: 'pod', to: 'kernel', label: '시스템 콜', type: 'request', bend: -60},
+      ],
+      focus: ['pod', 'kernel'],
+      values: {runtime: 'runc', boundary: '네임스페이스 · cgroup', pod: 'Running'},
+    },
+    {
+      short: '커널 버그',
+      kind: '문제',
+      title: '커널 버그 하나면 컨테이너를 빠져나간다',
+      text: [
+        '코드가 알려진 커널 취약점이 있는 시스템 콜을 부른다. 익스플로잇은 호스트 커널 안에서 돌기 때문에 네임스페이스는 더 이상 소용이 없다. 공격자는 호스트 권한을 얻고 노드의 다른 파드에도 닿는다.',
+        'seccomp와 AppArmor는 컨테이너가 부를 수 있는 것을 줄여 이런 공격을 많이 막는다. 하지만 허용된 호출은 여전히 같은 호스트 커널로 간다.',
+      ],
+      keyIdea: '경계는 공유 커널이다. 믿을 수 없는 코드라면 코드와 호스트 사이에 커널이 하나 더 있어야 한다.',
+      flows: [{from: 'pod', to: 'kernel', label: '익스플로잇', type: 'request', bend: -60}],
+      focus: ['pod', 'kernel'],
+      status: {pod: 'error', kernel: 'error'},
+      badges: {kernel: '탈출'},
+      values: {boundary: {text: '호스트 커널뿐', tone: 'bad'}},
+    },
+    {
+      short: 'gVisor',
+      kind: '원리',
+      title: 'gVisor: 사용자 공간에서 도는 커널',
+      text: [
+        'gVisor는 runsc라는 런타임으로 컨테이너를 돌린다. 그 안의 Sentry는 리눅스 시스템 콜을 사용자 공간에서 구현한 애플리케이션 커널이다. 앱의 시스템 콜은 호스트가 아니라 Sentry로 간다.',
+        'Sentry 자신은 걸러 낸 적은 수의 호스트 시스템 콜만 쓴다. 앱이 보는 커널의 버그는 Sentry의 버그가 되므로 호스트 커널에 닿기가 훨씬 어렵다.',
+      ],
+      flows: [
+        {from: 'gpod', to: 'sentry', label: '시스템 콜', type: 'request'},
+        {from: 'sentry', to: 'kernel', label: '적게, 걸러서', type: 'request'},
+      ],
+      focus: ['gpod', 'sentry'],
+      status: {pod: null, kernel: null, sentry: 'ok'},
+      badges: {kernel: null, sentry: 'runsc'},
+      values: {runtime: 'runsc', boundary: {text: 'Sentry, 그다음 호스트', tone: 'good'}},
+    },
+    {
+      short: 'Kata',
+      kind: '원리',
+      title: 'Kata Containers: 파드마다 가벼운 VM',
+      text: [
+        'Kata Containers는 파드마다 작은 가상 머신을 띄우고, 그 안에 자기 게스트 커널을 둔다. 컨테이너는 그 안에서 돌고, 하드웨어 가상화가 호스트와 갈라 놓는다.',
+        '이제 익스플로잇은 게스트 커널에 닿고 VM 안에 머문다. 노드에 가상화 지원이 있어야 하므로, 클라우드 VM이라면 보통 중첩 가상화나 베어메탈 노드가 필요하다.',
+      ],
+      flows: [
+        {from: 'kpod', to: 'vm', label: '시스템 콜', type: 'request'},
+        {from: 'vm', to: 'kernel', label: '하이퍼바이저', type: 'request'},
+      ],
+      focus: ['kpod', 'vm'],
+      status: {vm: 'ok'},
+      badges: {vm: 'kata'},
+      values: {runtime: 'kata', boundary: {text: '게스트 커널 + VM', tone: 'good'}},
+    },
+    {
+      short: '핸들러',
+      kind: '원리',
+      title: 'containerd는 런타임을 핸들러 이름으로 안다',
+      text: [
+        '노드에서 런타임은 /etc/containerd/config.toml의 CRI runtimes 절 아래 항목 하나다. 예를 들어 runtimes.runsc는 runtime_type io.containerd.runsc.v1, runtimes.kata는 io.containerd.kata.v2다. 기본은 runc다.',
+        '항목 이름, 여기서는 runsc나 kata가 핸들러다. 유효한 DNS 레이블이어야 하고, 쿠버네티스와 그 노드의 런타임을 잇는 유일한 연결이다.',
+      ],
+      changes: ['+ runtimes.runsc', '+ runtimes.kata', '~ containerd 재시작'],
+      flows: [
+        {from: 'ctrd', to: 'runc', label: 'runc', type: 'request'},
+        {from: 'ctrd', to: 'sentry', label: 'runsc', type: 'request'},
+        {from: 'ctrd', to: 'vm', label: 'kata', type: 'request', bend: 40},
+      ],
+      focus: ['ctrd'],
+      badges: {ctrd: 'runc · runsc · kata'},
+    },
+    {
+      short: 'RuntimeClass',
+      kind: '원리',
+      title: 'RuntimeClass는 이름을 핸들러에 잇고, 파드가 그것을 고른다',
+      text: [
+        'RuntimeClass는 node.k8s.io/v1의 클러스터 범위 오브젝트로, 이름(gvisor)과 핸들러(runsc)를 가진다. 만들고 바꾸는 권한은 클러스터 관리자만 가져야 한다.',
+        '개발자는 파드에 spec.runtimeClassName: gvisor를 적는다. kubelet이 핸들러 runsc를 containerd에 넘기고, containerd는 runsc로 파드 샌드박스를 띄운다. runtimeClassName이 없는 파드는 기본 런타임 그대로다.',
+      ],
+      flows: [
+        {from: 'dev', to: 'rc', label: 'runtimeClassName', type: 'request'},
+        {from: 'rc', to: 'gpod', label: '핸들러 runsc', type: 'request', bend: -30},
+      ],
+      focus: ['rc', 'gpod'],
+      values: {pod: 'gVisor에서 Running'},
+    },
+    {
+      short: '핸들러 없음',
+      kind: '장애',
+      title: '핸들러가 없는 노드에서는 파드가 끝내 돌지 않는다',
+      text: [
+        'runsc는 일부 노드에만 깔려 있다. gvisor 파드가 runsc가 없는 노드에 놓인다. containerd는 핸들러를 찾지 못하고, 파드 이벤트에 FailedCreatePodSandBox와 no runtime for "runsc" is configured 같은 메시지가 뜬다.',
+        '없는 RuntimeClass를 가리키는 runtimeClassName은 더 일찍 막힌다. API 서버가 파드를 거부한다. 어느 쪽이든 오류 문구나 파드 이벤트가 무엇인지 알려 준다.',
+      ],
+      keyIdea: 'RuntimeClass는 따로 말하지 않으면 모든 노드가 그 핸들러를 지원한다고 가정한다. 노드가 섞여 있으면 스케줄러에 알려야 한다.',
+      flows: [{from: 'ctrd', to: 'sentry', label: '여기엔 runsc 없음', type: 'request'}],
+      focus: ['gpod', 'ctrd'],
+      status: {gpod: 'error', sentry: 'off'},
+      badges: {gpod: 'FailedCreatePodSandBox'},
+      values: {pod: {text: 'no runtime for runsc', tone: 'bad'}},
+    },
+    {
+      short: '스케줄링',
+      kind: '원리',
+      title: 'scheduling.nodeSelector가 핸들러 있는 노드로 보낸다',
+      text: [
+        'runsc가 있는 노드에 레이블(예: sandbox=gvisor)을 달고 RuntimeClass에 scheduling.nodeSelector를 적는다. 어드미션 때 파드 자신의 nodeSelector와 합쳐진다. 둘이 충돌하면 파드는 거부된다.',
+        '다른 파드를 막으려고 그 노드에 테인트를 걸었다면 RuntimeClass에 scheduling.tolerations를 넣는다. 그것을 쓰는 모든 파드에 더해지므로 개발자는 runtimeClassName만 적으면 된다.',
+      ],
+      flows: [
+        {from: 'rc', to: 'sched', label: 'nodeSelector', type: 'watch'},
+        {from: 'sched', to: 'gpod', label: 'sandbox=gvisor', type: 'request', bend: 30},
+      ],
+      focus: ['sched', 'rc'],
+      status: {gpod: 'ok', sentry: 'ok'},
+      badges: {gpod: null, rc: 'sandbox=gvisor'},
+      values: {pod: {text: 'gVisor 노드에서 Running', tone: 'good'}},
+    },
+    {
+      short: '오버헤드',
+      kind: '원리',
+      title: 'overhead는 샌드박스 자체가 쓰는 몫을 센다',
+      text: [
+        'Sentry나 VM은 컨테이너 요청량 밖의 CPU와 메모리를 쓴다. RuntimeClass의 overhead.podFixed에 그 양을 적는다. 예를 들어 파드마다 메모리와 CPU를 조금씩이다.',
+        '어드미션 때 그 값이 파드의 spec.overhead에 들어간다. 스케줄러는 노드를 고를 때 컨테이너 요청량에 더하고, ResourceQuota와 파드 cgroup에도 반영된다.',
+      ],
+      keyIdea: 'overhead가 없으면 서류상으로는 노드에 샌드박스 파드가 다 들어가는데, 실제 메모리는 바닥난다.',
+      flows: [{from: 'rc', to: 'sched', label: '요청량 + 오버헤드', type: 'watch'}],
+      focus: ['rc', 'sched'],
+      badges: {rc: 'overhead.podFixed'},
+    },
+    {
+      short: '득실',
+      kind: '주의',
+      title: '격리를 강하게 하면 값을 치른다',
+      text: [
+        'gVisor는 리눅스의 대부분을 구현하지만 전부는 아니다. 일부 시스템 콜, /proc·/sys의 세부, 커널 기능이 다르게 동작하니 앱을 먼저 시험한다. 시스템 콜과 I/O가 많은 일은 느려진다.',
+        'Kata는 파드마다 VM 시작 시간과 메모리가 더 들고, 노드에 가상화가 필요하다. GPU는 따로 지원이 필요하고(예: 일부 NVIDIA GPU용 gVisor nvproxy, Kata의 장치 패스스루), 모든 구성이 되는 것은 아니다.',
+      ],
+      keyIdea: '코드를 믿을 수 없거나 테넌트가 노드를 함께 쓰는 곳에 샌드박스를 쓴다. CI 잡, 사용자 코드, 플러그인이 그렇다. 믿을 수 있고 성능이 중요한 파드는 runc에 둔다.',
+      flows: [
+        {from: 'sentry', to: 'kernel', label: '느린 시스템 콜', type: 'request'},
+        {from: 'vm', to: 'kernel', label: '파드마다 VM', type: 'request'},
+      ],
+      focus: ['sentry', 'vm'],
+      status: {sentry: 'warn', vm: 'warn'},
+      badges: {rc: null, ctrd: null},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: 'RuntimeClass로 파드마다 경계를 고른다',
+      text: [
+        'runc에서는 커널을 공유하므로 커널 익스플로잇이 호스트에 닿는다. gVisor는 사이에 사용자 공간 커널을, Kata는 자기 커널을 가진 VM을 둔다.',
+        'containerd는 런타임마다 핸들러 이름을 붙인다. RuntimeClass는 이름을 그 핸들러에 잇고 스케줄링 규칙과 오버헤드를 더하며, 파드는 runtimeClassName으로 그것을 고른다.',
+      ],
+      keyIdea: '샌드박스 파드가 뜨지 않으면 차례로 본다. RuntimeClass가 있는가, 핸들러가 그 노드의 containerd 설정과 맞는가, scheduling.nodeSelector가 그 노드로 보내는가.',
+      flows: [
+        {from: 'gpod', to: 'sentry', label: '시스템 콜', type: 'request'},
+        {from: 'kpod', to: 'vm', label: '시스템 콜', type: 'request'},
+        {from: 'pod', to: 'runc', label: '믿을 수 있음', type: 'watch'},
+      ],
+      focus: ['rc', 'sentry', 'vm'],
+      status: {sentry: null, vm: null, gpod: null},
+      badges: {sentry: null, vm: null},
+    },
+  ]}
+/>
+
+## runc, gVisor, Kata 비교
+
+| | runc (기본) | gVisor (runsc) | Kata Containers |
+|---|---|---|---|
+| 앱이 이야기하는 커널 | 호스트 커널 | 사용자 공간 커널 Sentry | VM 안의 게스트 커널 |
+| 호스트와 가르는 것 | 네임스페이스, cgroup, seccomp, AppArmor | Sentry와 걸러 낸 적은 수의 호스트 시스템 콜 | 하드웨어 가상화 |
+| 흔한 containerd `runtime_type` | `io.containerd.runc.v2` | `io.containerd.runsc.v1` | `io.containerd.kata.v2` |
+| 노드에 필요한 것 | 따로 없음 | runsc 설치 | 가상화 지원(KVM, 중첩 또는 베어메탈) |
+| 비용 | 가장 적음 | 느린 시스템 콜과 I/O, 지원 안 되는 시스템 콜 | 파드마다 VM 시작 시간과 메모리 |
+| 어울리는 곳 | 믿을 수 있는 워크로드 | I/O가 많지 않은 믿을 수 없는 코드 | 온전한 리눅스 동작이 필요한 믿을 수 없는·멀티 테넌트 워크로드 |
+
+| 증상 | 원인 | 고치는 법 |
+|---|---|---|
+| `FailedCreatePodSandBox`: no runtime for "runsc" is configured | 노드에 그 이름의 핸들러가 없다 | 런타임을 깔고 설정하거나 `scheduling.nodeSelector`를 쓴다 |
+| 만들 때 파드가 거부됨(conflict) | RuntimeClass의 nodeSelector와 파드의 nodeSelector가 충돌 | 레이블을 맞춘다 |
+| 파드 거부: RuntimeClass not found | `runtimeClassName`이 틀렸다 | `kubectl get runtimeclass`로 이름을 고친다 |
+| 샌드박스 파드가 많아지면 노드 메모리가 바닥 | `overhead`를 안 적었다 | RuntimeClass에 `overhead.podFixed`를 적는다 |
+| 샌드박스에서만 앱 오류 | 지원 안 되는 시스템 콜이나 커널 기능 | 샌드박스에서 시험하거나 그 앱은 runc에 둔다 |
+
+## 직접 확인해 보기
+
+```bash
+# 노드에서: 핸들러가 설정돼 있는가?
+grep -n 'runtimes.runsc\|runtimes.kata' /etc/containerd/config.toml
+
+# 레이블 단 노드에만 가는 RuntimeClass
+kubectl label node worker-1 sandbox=gvisor
+cat <<EOF | kubectl apply -f -
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: gvisor
+handler: runsc
+scheduling:
+  nodeSelector:
+    sandbox: gvisor
+EOF
+kubectl get runtimeclass
+
+# 그것을 쓰는 파드
+kubectl run sandboxed --image=busybox:1.36 --restart=Never \
+  --overrides='{"spec":{"runtimeClassName":"gvisor"}}' -- sleep 3600
+kubectl get pod sandboxed -o wide                     # NODE가 worker-1이어야 한다
+kubectl exec sandboxed -- dmesg                       # gVisor는 자기 부팅 메시지를 보여 준다
+kubectl describe pod sandboxed | grep -A5 Events      # 핸들러가 없으면 FailedCreatePodSandBox
+```
+
+<Quiz questions={[
+  {q: 'seccomp RuntimeDefault와 AppArmor로 다진 파드가 여전히 runc에서 돈다. 허용된 시스템 콜을 통한 커널 익스플로잇이 왜 아직 호스트에 닿을 수 있는가?', options: ['seccomp는 root 컨테이너에만 적용된다', '컨테이너가 같은 호스트 커널을 쓰므로, 버그를 건드린 허용된 호출이 그 커널에서 돈다', 'seccomp를 켜면 AppArmor가 꺼진다'], answer: 1, why: 'seccomp와 AppArmor는 컨테이너가 할 수 있는 일을 줄일 뿐, 허용된 것은 여전히 공유 호스트 커널에서 돌기 때문이다. gVisor나 Kata는 그 사이에 별도의 커널을 둔다.'},
+  {q: 'runtimeClassName: gvisor 파드에 FailedCreatePodSandBox: no runtime for "runsc" is configured가 뜬다. 일부 노드에만 gVisor가 있는 클러스터에서 가장 좋은 해결책은?', options: ['RuntimeClass 이름을 runsc로 바꾼다', '파드에서 runtimeClassName을 지운다', '스케줄러를 재시작한다', 'gVisor 노드에 레이블을 달고 RuntimeClass에 scheduling.nodeSelector를 적는다'], answer: 3, why: 'scheduling이 없으면 RuntimeClass는 모든 노드에 핸들러가 있다고 가정하기 때문이다. RuntimeClass의 nodeSelector는 그것을 쓰는 파드마다 합쳐져 runsc가 있는 노드에만 놓이게 한다.'},
+  {q: '요청량으로는 Kata 파드가 노드에 많이 들어가는데 노드 메모리가 바닥난다. 무엇이 빠졌는가?', options: ['RuntimeClass의 overhead.podFixed', '더 긴 핸들러 이름', '네임스페이스의 ResourceQuota', 'PodDisruptionBudget'], answer: 0, why: 'VM마다 컨테이너 요청량 밖의 메모리를 쓰기 때문이다. overhead.podFixed가 그 양을 파드에 더해 스케줄러와 쿼터가 세게 한다.'},
+]} />
+
+더 읽을거리: [Runtime Class](https://kubernetes.io/docs/concepts/containers/runtime-class/) · [Pod Overhead](https://kubernetes.io/docs/concepts/scheduling-eviction/pod-overhead/) · [gVisor](https://gvisor.dev/docs/) · [Kata Containers](https://katacontainers.io/) · [리눅스는 컨테이너를 어떻게 격리하나](../basic/linux-isolation.mdx) · [런타임 보안 — 이상 행동 잡기 (CKS)](./runtime-security.mdx) · [파드 보안 기준과 securityContext](../advanced/pod-security.mdx)

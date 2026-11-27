@@ -1,0 +1,266 @@
+---
+id: cis-benchmark
+title: CIS 쿠버네티스 벤치마크와 kube-bench (CKS)
+sidebar_label: 10 · CIS 벤치마크
+description: kube-bench를 잡으로 돌려 CIS 쿠버네티스 벤치마크를 점검하고, PASS·FAIL·WARN과 조치 방법을 읽고, 흔한 지적 사항을 정적 파드 매니페스트와 kubelet 설정에서 고치고, 관리형 클러스터의 한계를 알고, 다시 돌려 확인하는 과정을 애니메이션으로 본다
+summary: 'CIS 벤치마크가 점검하는 것, kube-bench를 돌리고 결과를 읽는 법, 흔한 지적 사항을 고치고 확인하는 법.'
+icon: shield
+hide_table_of_contents: true
+---
+
+# CIS 쿠버네티스 벤치마크와 kube-bench (CKS)
+
+CKS의 Cluster Setup 영역 중 "CIS 벤치마크로 쿠버네티스 구성요소의 보안 설정 점검"에 해당한다. kubeadm 클러스터에서 kube-bench를 돌리고, 무엇이 실패했는지 읽고, 알맞은 파일에서 고친 뒤 다시 돌린다.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '약 12분', level: '심화'}}
+  groups={[
+    {label: '컨트롤 플레인 노드', x: 255, y: 40, w: 460, h: 400, tone: 'mgmt'},
+    {label: '워커 노드', x: 755, y: 40, w: 220, h: 270, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'cis', label: 'CIS 벤치마크', sub: '합의로 만든 점검표', icon: 'book', tone: 'store', x: 105, y: 100, w: 170, show: true},
+    {id: 'admin', label: '운영자', sub: 'kubectl · ssh', icon: 'user', tone: 'ext', x: 105, y: 230, show: true},
+    {id: 'managed', label: '관리형 클러스터', sub: '예: EKS, GKE, AKS', icon: 'cloud', tone: 'ext', x: 105, y: 370, w: 170},
+    {id: 'kb', label: 'kube-bench 잡', sub: 'hostPID · hostPath', icon: 'chart', tone: 'app', x: 370, y: 100, w: 160},
+    {id: 'api', label: 'kube-apiserver', sub: '정적 파드', icon: 'wheel', tone: 'cp', x: 370, y: 230, w: 160},
+    {id: 'mf', label: 'manifests/', sub: '/etc/kubernetes', icon: 'disk', tone: 'store', x: 370, y: 360},
+    {id: 'report', label: '잡 로그', sub: 'PASS · FAIL · WARN', icon: 'alert', tone: 'ext', x: 600, y: 100},
+    {id: 'etcd', label: 'etcd', sub: '정적 파드', icon: 'db', tone: 'store', x: 600, y: 230},
+    {id: 'audit', label: '감사 로그', sub: '--audit-log-path', icon: 'archive', tone: 'store', x: 600, y: 360},
+    {id: 'wkb', label: 'kube-bench', sub: '노드 점검', icon: 'chart', tone: 'app', size: 'sm', x: 865, y: 100},
+    {id: 'kubelet', label: 'kubelet', sub: 'config.yaml', icon: 'agent', tone: 'node', x: 865, y: 230},
+  ]}
+  metrics={[
+    {id: 'target', label: '점검 대상'},
+    {id: 'fail', label: 'FAIL'},
+    {id: 'fix', label: '조치'},
+  ]}
+  learn={[
+    {text: 'CIS 쿠버네티스 벤치마크가 무엇이고 어떤 절로 나뉘는지', at: 0},
+    {text: 'kube-bench를 잡으로 돌리고 PASS·FAIL·WARN과 조치 방법 읽기', at: 1},
+    {text: 'API 서버 지적 사항을 정적 파드 매니페스트에서 고치기', at: 5},
+    {text: 'kubelet 지적 사항을 /var/lib/kubelet/config.yaml에서 고치기', at: 7},
+    {text: '관리형 클러스터에서 점검할 수 있는 것과 없는 것', at: 8},
+  ]}
+  steps={[
+    {
+      short: '시작',
+      kind: '시작',
+      title: '커뮤니티가 합의한 점검표',
+      text: [
+        'CIS(Center for Internet Security)는 CIS 쿠버네티스 벤치마크를 낸다. 안전한 설정을 합의로 정리한 무료 목록이고, 쿠버네티스가 새로 나오면 새 버전이 나온다.',
+        '구성요소별로 나뉜다. 컨트롤 플레인 구성요소와 그 파일, etcd, 컨트롤 플레인 설정(인증, 로깅), 워커 노드(kubelet, kube-proxy), 정책(RBAC, 파드 보안, 네트워크 정책, 시크릿)이다. 항목마다 Automated나 Manual 표시와 점검·조치 방법이 붙어 있다.',
+      ],
+      keyIdea: '벤치마크는 출발선이지 보증이 아니다. 모든 클러스터에 맞는 항목은 아니니, 바꾸기 전에 항목마다 뜻을 이해한다.',
+      flows: [{from: 'cis', to: 'admin', label: '점검표', type: 'response'}],
+      focus: ['cis'],
+      values: {target: '—', fail: '—', fix: '—'},
+    },
+    {
+      short: '실행',
+      kind: '원리',
+      title: '점검할 노드에서 kube-bench를 잡으로 돌린다',
+      text: [
+        'kube-bench(Aqua Security)가 벤치마크 항목을 점검한다. 실행 중인 프로세스와 플래그를 보려고 hostPID: true가 필요하고, 파일을 보려고 /etc/kubernetes, /var/lib/kubelet, /var/lib/etcd 같은 경로를 읽기 전용 hostPath로 마운트한다.',
+        '쿠버네티스 버전으로 벤치마크 버전을, 찾아낸 구성요소로 점검 항목을 고른다. 저장소에는 컨트롤 플레인 노드에 올라가도록 nodeSelector와 톨러레이션을 넣은 job-master.yaml과 워커용 job-node.yaml이 있다.',
+      ],
+      keyIdea: '파드는 자기가 도는 노드만 본다. 컨트롤 플레인을 점검하려면 잡이 그 노드에 스케줄돼야 한다.',
+      flows: [
+        {from: 'admin', to: 'kb', label: 'kubectl apply', type: 'request'},
+        {from: 'kb', to: 'api', label: 'ps 플래그', type: 'watch'},
+        {from: 'kb', to: 'mf', label: '파일 stat', type: 'watch', bend: -40},
+      ],
+      focus: ['kb'],
+      values: {target: '컨트롤 플레인'},
+    },
+    {
+      short: '결과',
+      kind: '원리',
+      title: '결과: PASS, FAIL, WARN과 항목별 조치 방법',
+      text: [
+        '결과는 파드 로그에 있다. [PASS]는 점검이 돌았고 통과했다는 뜻이다. [FAIL]은 돌았고 실패했다는 뜻이다. [WARN]은 살펴봐야 한다는 뜻으로, 보통 kube-bench가 판단할 수 없는 Manual 항목이다. [INFO]는 할 일이 없다.',
+        '결과 뒤에는 항목 ID별 Remediations 절과 절마다의 합계가 나온다. 조치 문구에는 고칠 파일과 바꿀 내용이 정확히 적혀 있다.',
+      ],
+      keyIdea: 'ID로 항목을 찾는다. kube-bench --check 1.2.15는 그 항목만 다시 돈다. WARN은 FAIL이 아니지만 그래도 읽는다.',
+      flows: [{from: 'kb', to: 'report', label: '로그', type: 'response'}],
+      focus: ['report'],
+      status: {report: 'warn'},
+      badges: {report: 'FAIL · WARN'},
+      values: {fail: {text: '1.1.1 · 1.2.6 · 1.2.15 · 1.2.16', tone: 'bad'}},
+    },
+    {
+      short: '파일',
+      kind: '문제',
+      title: 'FAIL 1.1.1: 매니페스트 파일이 너무 열려 있다',
+      text: [
+        '1.1.1은 /etc/kubernetes/manifests/kube-apiserver.yaml이 600 이하 권한이고 root:root 소유이기를 요구한다. 누군가 644로 바꿔 두어서 로컬 사용자 누구나 API 서버 플래그를 읽을 수 있다.',
+        '조치는 그 파일에 chmod 600이다. 비슷한 항목이 다른 매니페스트, /etc/kubernetes의 kubeconfig 파일, PKI 디렉터리를 점검한다.',
+      ],
+      flows: [{from: 'kb', to: 'mf', label: 'permissions=644', type: 'watch', bend: -40}],
+      focus: ['mf'],
+      status: {mf: 'error'},
+      badges: {mf: '644'},
+      values: {fix: 'chmod 600'},
+    },
+    {
+      short: '플래그',
+      kind: '문제',
+      title: 'FAIL 1.2.6과 1.2.15: 위험한 API 서버 플래그',
+      text: [
+        '1.2.15는 --profiling이 false가 아니어서 실패한다. 기본값은 true이고, API 서버를 통해 프로파일링 데이터가 드러난다. 컨트롤러 매니저와 스케줄러에도 같은 항목이 있다.',
+        '1.2.6은 --authorization-mode에 AlwaysAllow가 들어 있어서 실패한다. 인증만 되면 무엇이든 하게 둔다는 뜻이다. kubeadm이 설정하는 대로 Node,RBAC여야 한다.',
+      ],
+      flows: [{from: 'kb', to: 'api', label: 'ps 플래그', type: 'watch'}],
+      focus: ['api'],
+      status: {mf: 'ok', api: 'error'},
+      badges: {mf: '600', api: 'AlwaysAllow · profiling'},
+      values: {fix: '--authorization-mode=Node,RBAC · --profiling=false'},
+    },
+    {
+      short: '매니페스트 수정',
+      kind: '원리',
+      title: '정적 파드 매니페스트를 고치고 kubelet이 다시 띄우게 한다',
+      text: [
+        'API 서버는 정적 파드라 kubectl edit로는 바뀌지 않는다. /etc/kubernetes/manifests/kube-apiserver.yaml을 고친다. --authorization-mode=Node,RBAC로 바꾸고 --profiling=false를 넣는다.',
+        'kubelet이 파일 변경을 보고 파드를 다시 만든다. 잠시 API가 응답하지 않는다. crictl ps나 kubectl get pods -n kube-system으로 돌아올 때까지 지켜본다.',
+      ],
+      keyIdea: '백업은 manifests 디렉터리 밖에 둔다. kubelet은 그 안에서 찾은 파일을 띄우려 한다. API 서버가 돌아오지 않으면 crictl logs로 컨테이너 로그를 읽는다.',
+      changes: ['~ --authorization-mode=Node,RBAC', '+ --profiling=false'],
+      flows: [
+        {from: 'admin', to: 'mf', label: 'vi', type: 'request'},
+        {from: 'mf', to: 'api', label: 'kubelet이 재생성', type: 'request'},
+      ],
+      focus: ['mf', 'api'],
+      status: {api: 'ok'},
+      badges: {api: null},
+    },
+    {
+      short: '감사',
+      kind: '문제',
+      title: 'FAIL 1.2.16: 감사 로그가 없다',
+      text: [
+        'kubeadm은 감사 로그를 켜지 않는다. 그래서 --audit-log-path가 없고 1.2.16이 실패한다. 바로 옆 항목들은 로그 보존(--audit-log-maxage, maxbackup, maxsize)을 본다.',
+        '같은 매니페스트에 세 가지가 필요하다. 정책을 가리키는 --audit-policy-file, --audit-log-path, 그리고 둘을 위한 hostPath 볼륨과 volumeMounts다. 볼륨이 없으면 API 서버가 정책을 읽거나 로그를 쓸 수 없다.',
+      ],
+      keyIdea: '이 변경 뒤 API 서버가 뜨지 않는 흔한 이유는 볼륨을 빠뜨린 것이다. 어떤 이벤트를 남길지는 감사 로그 레슨에서 다룬다.',
+      flows: [{from: 'api', to: 'audit', label: '이벤트', type: 'request'}],
+      focus: ['audit'],
+      status: {audit: 'ok'},
+      values: {fail: {text: '1.2.16 → 해결', tone: 'good'}, fix: '--audit-policy-file · --audit-log-path · 볼륨'},
+    },
+    {
+      short: 'kubelet',
+      kind: '문제',
+      title: '워커에서 FAIL 4.2.1: kubelet이 익명 요청을 받는다',
+      text: [
+        '워커의 노드 잡이 4.2.1을 보고한다. 익명 인증이 켜져 있어서 10250 포트에 닿는 누구나 익명 사용자로 대접받는다. 4.2.2는 인가 모드가 AlwaysAllow가 아닌지 본다.',
+        'kube-bench는 플래그와 /var/lib/kubelet/config.yaml을 모두 읽는다. 설정에 authentication.anonymous.enabled: false와 authorization.mode: Webhook을 넣고 systemctl restart kubelet을 한다. 명령줄 플래그가 파일보다 우선하니 kubelet 유닛의 플래그도 확인한다.',
+      ],
+      changes: ['~ authentication.anonymous.enabled: false', '~ authorization.mode: Webhook'],
+      flows: [
+        {from: 'wkb', to: 'kubelet', label: '플래그 + 설정', type: 'watch'},
+      ],
+      focus: ['kubelet', 'wkb'],
+      status: {kubelet: 'ok'},
+      badges: {kubelet: '재시작함'},
+      values: {target: '워커 노드', fix: 'config.yaml · kubelet 재시작'},
+    },
+    {
+      short: '관리형',
+      kind: '주의',
+      title: '관리형 클러스터에서는 내 몫만 점검한다',
+      text: [
+        'EKS, GKE, AKS에서는 제공자가 컨트롤 플레인을 운영한다. 거기에 파드를 올리거나 파일을 읽을 수 없으니 컨트롤 플레인 항목은 돌릴 수 없다.',
+        'CIS는 내가 관리하는 부분만 다루는 제공자별 벤치마크(예: CIS Amazon EKS Benchmark)를 낸다. 워커 노드, 정책, 일부 제공자 설정이다. kube-bench에도 job-eks.yaml 같은 잡 파일과 설정이 있다.',
+      ],
+      keyIdea: '일반 벤치마크 말고 제공자 벤치마크를 돌린다. 컨트롤 플레인은 공동 책임 모델에서 제공자 쪽 몫이다.',
+      flows: [{from: 'managed', to: 'kubelet', label: '노드 점검만', type: 'watch', bend: 40}],
+      focus: ['managed'],
+      status: {managed: 'warn'},
+    },
+    {
+      short: '재실행',
+      kind: '원리',
+      title: '다시 돌려 고쳤음을 증명한다',
+      text: [
+        '잡은 저절로 다시 돌지 않는다. 지우고 다시 apply한 뒤 새 로그를 읽는다. 고친 항목은 이제 [PASS]로 나온다.',
+        '시간을 아끼려면 --check로 손댄 항목만, run --targets로 한 절만 돌린다. 실제 클러스터라면 kube-bench를 주기적으로 돌려 새로 어긋난 설정을 잡는다.',
+      ],
+      flows: [
+        {from: 'admin', to: 'kb', label: 'delete + apply', type: 'request'},
+        {from: 'kb', to: 'report', label: '로그', type: 'response'},
+      ],
+      focus: ['kb', 'report'],
+      status: {report: 'ok', managed: null},
+      badges: {report: 'PASS'},
+      values: {fail: {text: '고친 항목은 모두 통과', tone: 'good'}, target: '컨트롤 플레인 + 워커'},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '점검하고, 조치를 읽고, 맞는 파일을 고치고, 다시 점검한다',
+      text: [
+        'CIS 벤치마크는 구성요소별 안전한 설정을 나열한다. kube-bench는 자기가 도는 노드에서 그것을 점검하고 PASS, FAIL, WARN을 조치 방법과 함께 출력한다.',
+        '컨트롤 플레인 조치는 /etc/kubernetes/manifests에서, 파일 조치는 chmod와 chown으로, kubelet 조치는 /var/lib/kubelet/config.yaml을 고치고 kubelet을 재시작해서 한다. 관리형 클러스터에서는 제공자 벤치마크를 쓴다.',
+      ],
+      keyIdea: '시간이 없을 때: 실패한 ID의 조치를 읽고, 플래그 하나를 고치고, 파드가 돌아오길 기다린 뒤 --check로 그 항목만 다시 돌린다.',
+      flows: [{from: 'kb', to: 'report', label: 'PASS', type: 'response'}],
+      focus: ['kb', 'mf', 'kubelet'],
+      status: {mf: null, api: null, audit: null, kubelet: null, report: null},
+      badges: {mf: null, kubelet: null, report: null},
+    },
+  ]}
+/>
+
+## kubeadm 클러스터에서 흔한 지적 사항
+
+아래 ID는 kube-bench의 `cis-2.0` 설정 기준이다. 벤치마크 버전에 따라 번호가 바뀔 수 있으니 문구로도 맞춰 본다.
+
+| ID | 항목 | 고칠 곳 | 조치 |
+|---|---|---|---|
+| 1.1.1 | API 서버 매니페스트 권한 600 이하 | `/etc/kubernetes/manifests/kube-apiserver.yaml` | `chmod 600` |
+| 1.2.6 | `--authorization-mode`가 `AlwaysAllow`가 아님 | API 서버 매니페스트 | `--authorization-mode=Node,RBAC` |
+| 1.2.15 | `--profiling=false` | API 서버 매니페스트 | `--profiling=false` 추가 (컨트롤러 매니저 1.3.2, 스케줄러 1.4.1도) |
+| 1.2.16 | `--audit-log-path` 설정 | API 서버 매니페스트 | 정책 파일, 로그 경로, hostPath 볼륨과 마운트 |
+| 4.2.1 | kubelet 익명 인증 끔 | `/var/lib/kubelet/config.yaml` | `authentication.anonymous.enabled: false`, kubelet 재시작 |
+| 4.2.2 | kubelet 인가가 `AlwaysAllow`가 아님 | `/var/lib/kubelet/config.yaml` | `authorization.mode: Webhook`, kubelet 재시작 |
+
+| 결과 | 뜻 | 할 일 |
+|---|---|---|
+| `[PASS]` | 점검이 돌았고 통과 | 없음 |
+| `[FAIL]` | 점검이 돌았고 실패(또는 Scored 항목을 돌리지 못함) | 조치를 적용하고 다시 돌린다 |
+| `[WARN]` | 살펴봐야 함, 보통 수동 항목 | 조치 문구를 읽고 직접 판단한다 |
+| `[INFO]` | 참고용이거나 건너뛴 항목 | 없음 |
+
+## 직접 확인해 보기
+
+```bash
+# 컨트롤 플레인 점검 (컨트롤 플레인 노드에 고정된 잡)
+kubectl apply -f https://raw.githubusercontent.com/aquasecurity/kube-bench/main/job-master.yaml
+kubectl wait --for=condition=complete job/kube-bench-master --timeout=120s
+kubectl logs job/kube-bench-master | grep '^\[FAIL\]'                 # 실패한 항목
+kubectl logs job/kube-bench-master | grep -A4 '^== Summary'            # PASS/FAIL/WARN/INFO 개수
+
+# 워커 점검
+kubectl apply -f https://raw.githubusercontent.com/aquasecurity/kube-bench/main/job-node.yaml
+kubectl logs job/kube-bench-node | grep -A3 '4.2.1'
+
+# 컨트롤 플레인 노드에서 고치기
+sudo cp /etc/kubernetes/manifests/kube-apiserver.yaml /root/kube-apiserver.yaml.bak   # 백업은 manifests/ 밖에
+sudo vi /etc/kubernetes/manifests/kube-apiserver.yaml                                 # 예: --profiling=false 추가
+sudo crictl ps --name kube-apiserver                                                  # 새 컨테이너가 뜰 때까지 기다린다
+
+# 다시 돌리기
+kubectl delete job kube-bench-master && kubectl apply -f https://raw.githubusercontent.com/aquasecurity/kube-bench/main/job-master.yaml
+```
+
+<Quiz questions={[
+  {q: 'kube-bench가 FAIL 1.2.15(--profiling)를 보고한다. kubeadm 클러스터에서 어디를 고치는가?', options: ['kubectl edit pod kube-apiserver -n kube-system', 'kubeadm-config 컨피그맵만', '컨트롤 플레인의 /var/lib/kubelet/config.yaml', '/etc/kubernetes/manifests/kube-apiserver.yaml'], answer: 3, why: 'API 서버는 정적 파드이기 때문이다. kubelet이 매니페스트 파일로 띄우고 파일이 바뀌면 다시 만든다. API로 미러 파드를 고쳐도 바뀌지 않는다.'},
+  {q: 'EKS 같은 관리형 클러스터에서 kube-bench 잡을 돌렸더니 컨트롤 플레인 절이 없다. 왜인가?', options: ['제공자가 컨트롤 플레인을 운영해서 어떤 파드도 그 노드와 파일에 닿을 수 없다', 'kube-bench를 더 새 버전으로 올려야 한다', '잡에 RBAC 권한이 더 필요하다'], answer: 0, why: 'kube-bench는 자기가 도는 노드만 점검하기 때문이다. 관리형 클러스터에서는 컨트롤 플레인에 스케줄할 수 없으니, 워커 노드와 정책을 다루는 제공자 벤치마크를 쓴다.'},
+  {q: '매니페스트에 --audit-log-path와 --audit-policy-file을 넣었더니 API 서버가 돌아오지 않는다. 가장 그럴듯한 원인은?', options: ['감사 로그에는 CRD가 필요하다', '정책과 로그를 위한 hostPath 볼륨과 volumeMounts가 빠졌다', '프로파일링이 아직 켜져 있다', 'kubelet을 다시 깔아야 한다'], answer: 1, why: 'API 서버는 컨테이너 안에서 돌기 때문이다. 볼륨이 없으면 정책 파일을 읽지도, 로그 경로에 쓰지도 못해 시작에 실패한다.'},
+]} />
+
+더 읽을거리: [CIS 쿠버네티스 벤치마크](https://www.cisecurity.org/benchmark/kubernetes) · [kube-bench](https://github.com/aquasecurity/kube-bench) · [kube-bench 실행하기](https://github.com/aquasecurity/kube-bench/blob/main/docs/running.md) · [kubelet 인증과 인가](https://kubernetes.io/docs/reference/access-authn-authz/kubelet-authn-authz/) · [감사 로그](../advanced/audit-log.mdx) · [kubeadm으로 클러스터 만들기 (CKA)](./kubeadm-install.mdx) · [4C와 위협 모델로 클러스터 보기 (KCSA·KCNA)](./threat-model.mdx)

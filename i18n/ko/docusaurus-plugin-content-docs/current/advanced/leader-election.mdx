@@ -1,0 +1,252 @@
+---
+id: leader-election
+title: Lease로 하는 리더 선출
+sidebar_label: 05 · 리더 선출
+description: 쿠버네티스의 Lease 기반 리더 선출을 holderIdentity, leaseDurationSeconds, renewTime에서 갱신 기한, 재시도 주기, 장애 조치, 멈춤과 시계 속도 차이로 생기는 스플릿 브레인, 펜싱, kube-node-lease의 노드 하트비트, 조정된 리더 선출까지 애니메이션으로 따라간다
+summary: '컨트롤러 복제본 중 하나만 일해야 하는 이유, Lease가 리더를 정하고 갱신하는 방식, 장애 조치, 멈췄다 깨어난 리더에게 펜싱이 필요한 이유.'
+icon: ticket
+hide_table_of_contents: true
+---
+
+# Lease로 하는 리더 선출
+
+kube-controller-manager, kube-scheduler, 그리고 대부분의 오퍼레이터는 가용성을 위해 복제본을 여럿 돌리지만, 한 번에 하나만 일해야 한다. 누가 그 하나인지는 API 서버의 작은 Lease 객체로 합의한다. Lease를 잡고, 갱신하고, 잃고, 넘겨받는 과정을 따라간다.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '약 12분', level: '심화'}}
+  groups={[
+    {label: '오퍼레이터 · 복제본 3개', x: 40, y: 30, w: 200, h: 400, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'a', label: '복제본 A', sub: '후보', icon: 'agent', tone: 'app', x: 140, y: 80, show: true},
+    {id: 'b', label: '복제본 B', sub: '후보', icon: 'agent', tone: 'app', x: 140, y: 225, show: true},
+    {id: 'c', label: '복제본 C', sub: '후보', icon: 'agent', tone: 'app', x: 140, y: 370, show: true},
+    {id: 'api', label: 'API 서버', sub: 'Lease 저장', icon: 'gate', tone: 'cp', x: 480, y: 225, show: true},
+    {id: 'lease', label: 'Lease', sub: 'coordination.k8s.io', icon: 'ticket', tone: 'store', x: 480, y: 80},
+    {id: 'nodeLease', label: '노드 Lease', sub: 'kube-node-lease', icon: 'heart', tone: 'store', x: 480, y: 370, w: 160},
+    {id: 'managed', label: '관리 대상 객체', sub: 'Deployment · CR', icon: 'layers', tone: 'app', x: 820, y: 150, w: 170},
+    {id: 'cand', label: 'LeaseCandidate', sub: '조정된 선출', icon: 'scale', tone: 'store', x: 820, y: 260, w: 170},
+    {id: 'kubelet', label: 'kubelet', sub: '노드 하트비트', icon: 'server', tone: 'node', x: 820, y: 370},
+  ]}
+  metrics={[
+    {id: 'holder', label: 'holderIdentity'},
+    {id: 'renew', label: 'renewTime'},
+    {id: 'trans', label: 'leaseTransitions'},
+  ]}
+  learn={[
+    {text: '컨트롤러 둘이 동시에 일하면 같은 객체를 두고 싸우는 이유', at: 0},
+    {text: 'Lease의 holderIdentity, leaseDurationSeconds, renewTime', at: 1},
+    {text: 'leaseDuration, renewDeadline, retryPeriod와 장애 조치가 일어나는 방식', at: 3},
+    {text: '멈췄던 리더가 여전히 일할 수 있는 이유와 펜싱의 뜻', at: 6},
+    {text: '노드 하트비트와 조정된 리더 선출도 Lease를 쓴다는 것', at: 8},
+  ]}
+  steps={[
+    {
+      short: '왜',
+      kind: '시작',
+      title: '복제본은 셋, 조정은 하나만',
+      text: [
+        '오퍼레이터가 노드 장애를 견디려고 복제본 셋을 돌린다. 셋이 동시에 조정(reconcile)하면 같은 하위 객체를 두 번 만들고, 서로 덮어쓰고, 충돌 재시도를 끝없이 한다.',
+        '그래서 복제본들은 리더를 뽑는다. 리더만 컨트롤러를 돌린다. 나머지는 준비된 채로 넘겨받을 때를 기다린다.',
+      ],
+      flows: [
+        {from: 'a', to: 'api', type: 'request'},
+        {from: 'b', to: 'api', type: 'request'},
+        {from: 'c', to: 'api', type: 'request'},
+      ],
+      focus: ['a', 'b', 'c'],
+      values: {holder: '—', renew: '—', trans: '—'},
+    },
+    {
+      short: 'Lease',
+      kind: '원리',
+      title: 'Lease 객체가 잠금을 쥔 쪽을 기록한다',
+      text: [
+        '잠금은 API 그룹 coordination.k8s.io/v1의 Lease다. spec.holderIdentity는 현재 리더, spec.leaseDurationSeconds는 주장이 유효한 시간, spec.renewTime은 리더가 마지막으로 갱신한 시각이다.',
+        'spec.acquireTime과 spec.leaseTransitions는 리더가 언제, 몇 번 바뀌었는지 남긴다. kube-controller-manager와 kube-scheduler는 자기 Lease를 kube-system에 둔다.',
+      ],
+      flows: [{from: 'api', to: 'lease', label: '저장', type: 'request'}],
+      focus: ['lease'],
+      badges: {lease: 'kube-system/my-op'},
+    },
+    {
+      short: '획득',
+      kind: '원리',
+      title: '모두가 잡으려 하고, 쓰기 하나만 이긴다',
+      text: [
+        '복제본마다 자신을 holder로 적어 Lease를 만들거나 고치려 한다. API 서버는 낙관적 동시성 제어를 쓴다. 수정에는 읽었던 resourceVersion이 실려야 한다. 첫 쓰기가 성공하고 나머지는 충돌을 받는다.',
+        '복제본 A가 이긴다. 클라이언트가 컨트롤러를 띄운다(client-go라면 OnStartedLeading 콜백이 돈다). B와 C는 Lease를 읽고 유효한 holder가 있음을 보고 계속 지켜본다.',
+      ],
+      keyIdea: '리더 선출에 별도 시스템은 필요 없다. API 서버의 모든 객체를 지키는 바로 그 비교 후 교체(compare-and-swap) 위에 서 있다.',
+      flows: [
+        {from: 'a', to: 'api', label: '수정 · 성공', type: 'request'},
+        {from: 'b', to: 'api', label: '충돌', type: 'request'},
+        {from: 'api', to: 'lease', type: 'request'},
+      ],
+      focus: ['a', 'lease'],
+      status: {a: 'ok'},
+      badges: {a: '리더'},
+      values: {holder: 'replica-a', renew: '10:00:00', trans: '0'},
+    },
+    {
+      short: '갱신',
+      kind: '원리',
+      title: '리더는 갱신하고, 팔로워는 다시 시도한다',
+      text: [
+        '시간 값 셋이 움직인다. 리더는 retryPeriod마다 renewTime을 고친다. renewDeadline 안에 갱신하지 못하면 리더 자리를 내려놓는다. 팔로워는 retryPeriod마다 획득을 시도하지만, 갱신 없이 leaseDuration이 지난 뒤에야 성공한다.',
+        'kube-controller-manager의 기본값은 리스 기간 15초, 갱신 기한 10초, 재시도 주기 2초다. controller-runtime으로 만든 오퍼레이터도 비슷한 기본값을 쓴다.',
+      ],
+      keyIdea: 'leaseDuration은 renewDeadline보다 길어야 한다. 그 차이가 옛 리더가 이미 멈춘 뒤에야 다른 쪽이 시작하게 하는 안전 여유다.',
+      flows: [
+        {from: 'a', to: 'api', label: '갱신', type: 'request'},
+        {from: 'api', to: 'b', label: '아직 점유', type: 'watch'},
+        {from: 'api', to: 'c', label: '아직 점유', type: 'watch'},
+      ],
+      focus: ['a', 'lease'],
+      values: {renew: '10:00:02, 10:00:04, …'},
+    },
+    {
+      short: '장애 조치',
+      kind: '장애',
+      title: '리더가 죽고 팔로워가 넘겨받는다',
+      text: [
+        '복제본 A가 돌던 노드가 죽는다. renewTime이 멈춘다. 팔로워는 A와 시계를 비교하지 않는다. 각자 자기 시계로 Lease가 마지막으로 바뀐 것을 본 시각을 적어 두고, 거기서 leaseDuration을 기다린다.',
+        '그다음 B가 Lease를 자기로 고친다. leaseTransitions가 하나 오르고, B가 컨트롤러를 띄워 API 서버의 현재 상태에서 다시 시작한다. 조정은 대략 리스 기간 하나만큼 멈춘다.',
+      ],
+      flows: [
+        {from: 'b', to: 'api', label: '넘겨받기', type: 'request'},
+        {from: 'api', to: 'lease', type: 'request'},
+        {from: 'b', to: 'managed', label: '조정', type: 'request'},
+      ],
+      focus: ['a', 'b', 'lease'],
+      status: {a: 'gone', b: 'ok'},
+      badges: {a: null, b: '리더'},
+      values: {holder: 'replica-b', renew: '10:00:21', trans: '1'},
+    },
+    {
+      short: '반납',
+      kind: '주의',
+      title: '깔끔하게 내려갈 때는 Lease를 넘겨줘야 한다',
+      text: [
+        '롤링 업데이트에서는 옛 리더를 일부러 멈춘다. 그냥 끝나 버리면 다음 리더는 리스 기간을 꽉 채워 기다린다. 종료할 때 Lease를 반납하면(client-go의 ReleaseOnCancel) 팔로워가 바로 잡을 수 있다.',
+        '컨트롤러가 정말 멈춘 뒤에 반납한다. 먼저 반납하고 나중에 멈추면 쓰는 쪽이 둘인 순간이 생긴다.',
+      ],
+      focus: ['lease'],
+    },
+    {
+      short: '스플릿 브레인',
+      kind: '문제',
+      title: '멈췄던 리더가 깨어나 아직 자기가 리더라고 믿는다',
+      text: [
+        '이번에는 B가 30초 동안 얼어붙는다. 긴 가비지 컬렉션 멈춤, 얼어붙은 VM, 막힌 네트워크 때문이다. Lease가 만료되고 C가 넘겨받는다. B가 깨어나면, 이미 내가 리더인지 확인을 마친 코드가 그대로 이어져 관리 대상 객체에 쓴다.',
+        '시계 문제는 이를 더 키운다. client-go는 시각이 서로 다른 시계는 견디지만, 흐르는 속도가 다른 시계는 견디지 못한다. 리더의 시계가 느리게 가면 팔로워가 만료로 보는 시점 뒤에도 리스가 유효하다고 믿는다.',
+      ],
+      keyIdea: 'client-go 문서도 분명히 말한다. 리더 선출은 오직 하나의 클라이언트만 리더로 일한다고 보장하지 않는다. 그 보장에는 펜싱이 필요하다.',
+      flows: [
+        {from: 'c', to: 'managed', label: '조정', type: 'request', bend: 0.2},
+        {from: 'b', to: 'managed', label: '낡은 쓰기', type: 'request'},
+      ],
+      focus: ['b', 'c', 'managed'],
+      status: {b: 'warn', c: 'ok', managed: 'error'},
+      badges: {b: '리더라고 믿음', c: '리더'},
+      values: {holder: 'replica-c', trans: '2'},
+    },
+    {
+      short: '펜싱',
+      kind: '원리',
+      title: '펜싱이 낡은 리더를 무해하게 만든다',
+      text: [
+        '펜싱은 쓰기를 받는 쪽이 더 이상 현재가 아닌 작성자를 거절하는 것이다. 쿠버네티스 안에서는 resourceVersion을 실은 수정이 이미 그 일부를 한다. 오래된 읽기에 기반한 쓰기는 충돌을 받는다.',
+        '조정은 멱등으로 만들고, 갱신이 실패하면 즉시 멈춘다. kube-controller-manager는 아예 프로세스를 끝낸다. 데이터베이스 같은 외부 시스템에는 리더가 바뀔 때마다 커지는 토큰(예: leaseTransitions)을 함께 보내고, 더 작은 토큰은 거절하게 한다.',
+      ],
+      flows: [
+        {from: 'b', to: 'managed', label: '충돌', type: 'request'},
+        {from: 'c', to: 'managed', label: '조정', type: 'request', bend: 0.2},
+      ],
+      focus: ['managed'],
+      status: {b: 'off', managed: 'ok'},
+      badges: {b: '물러남'},
+    },
+    {
+      short: '노드 Lease',
+      kind: '원리',
+      title: '노드 하트비트도 Lease다',
+      text: [
+        '노드마다 같은 이름의 Lease가 kube-node-lease 네임스페이스에 있다. kubelet은 기본 10초마다 이것을 갱신한다. 훨씬 드문 노드 status 전체 갱신과는 따로 돈다.',
+        '노드 수명 주기 컨트롤러는 이 renewTime을 지켜본다. 노드가 유예 기간(기본 수십 초)보다 오래 갱신하지 않으면 Ready 조건이 Unknown이 된다.',
+      ],
+      keyIdea: 'Lease 갱신은 아주 작은 쓰기다. 큰 클러스터에서 API 서버와 etcd의 부담을 줄이려고 하트비트가 노드 status에서 Lease로 옮겨 왔다.',
+      flows: [
+        {from: 'kubelet', to: 'api', label: '갱신', type: 'request'},
+        {from: 'api', to: 'nodeLease', type: 'request'},
+      ],
+      focus: ['kubelet', 'nodeLease'],
+      status: {b: null, managed: null},
+      badges: {b: null, nodeLease: 'node-1'},
+    },
+    {
+      short: '조정된 선출',
+      kind: '원리',
+      title: '조정된 리더 선출은 API 서버가 리더를 고른다',
+      text: [
+        '보통의 리더 선출에서는 먼저 쓰는 쪽이 이긴다. 업그레이드 중이라면 API 서버가 지원하는 것보다 새로운 kube-controller-manager가 이길 수도 있다. 조정된 리더 선출은 이를 바꾼다. 후보들이 LeaseCandidate 객체를 올리고, API 서버가 리더를 고른다.',
+        '기본 전략 OldestEmulationVersion은 가장 오래된 버전을 고르므로 버전이 섞인 업그레이드가 안전하다. v1.33부터 베타지만 기본값은 꺼짐이고, CoordinatedLeaderElection 기능 게이트와 coordination.k8s.io/v1beta1 API를 켜야 한다.',
+      ],
+      flows: [
+        {from: 'cand', to: 'api', label: '후보', type: 'request'},
+        {from: 'api', to: 'lease', label: '리더 지정', type: 'request'},
+      ],
+      focus: ['cand', 'api'],
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: 'Lease가 리더 하나를 뽑고, 펜싱이 그 리더를 정직하게 만든다',
+      text: [
+        '복제본들은 Lease에 쓰려고 겨룬다. holder는 retryPeriod마다 갱신하고 renewDeadline이 지나면 물러난다. 팔로워는 갱신 없이 leaseDuration이 지나면 넘겨받고, leaseTransitions가 바뀔 때마다 센다.',
+        'Lease는 대부분의 시간 동안 리더 하나를 주지만 보장은 아니다. 멈춤과 시계 속도 차이로 둘이 동시에 일할 수 있으니, 쓰기는 조건부이고 멱등이어야 한다.',
+      ],
+      keyIdea: '누가 리더인지는 kubectl get lease -n kube-system으로 본다. 노드 장애 뒤 조정이 멈춘다면, 다음 리더가 시작하기까지 대략 리스 기간 하나를 예상한다.',
+      flows: [
+        {from: 'c', to: 'api', label: '갱신', type: 'request'},
+        {from: 'api', to: 'lease', type: 'request'},
+      ],
+      focus: ['lease', 'c'],
+      badges: {nodeLease: null},
+    },
+  ]}
+/>
+
+## 시간 값 셋
+
+| 설정(client-go 이름) | 정하는 것 | kube-controller-manager 기본값 | 너무 작으면 | 너무 크면 |
+|---|---|---|---|---|
+| `leaseDuration` | 갱신이 없을 때 팔로워가 넘겨받기 전 기다리는 시간 | 15초 | 짧은 API 지연에도 리더가 자주 바뀐다 | 장애 뒤 넘겨받기가 느리다 |
+| `renewDeadline` | 리더가 포기하기 전까지 갱신을 시도하는 시간 | 10초 | API가 잠깐 느려도 리더가 물러난다 | 팔로워가 넘겨받기 전 여유가 줄어든다 |
+| `retryPeriod` | 리더가 갱신하고 팔로워가 재시도하는 주기 | 2초 | API 서버에 쓰기가 늘어난다 | 갱신이 기한을 놓칠 수 있다 |
+
+kube-controller-manager와 kube-scheduler의 플래그는 `--leader-elect-lease-duration`, `--leader-elect-renew-deadline`, `--leader-elect-retry-period`다. `leaseDuration` > `renewDeadline` > `retryPeriod`를 지킨다.
+
+## 직접 확인해 보기
+
+```bash
+kubectl get lease -n kube-system                     # controller-manager, scheduler 등의 HOLDER
+kubectl get lease kube-controller-manager -n kube-system -o yaml   # holderIdentity, leaseDurationSeconds, renewTime, leaseTransitions
+kubectl get lease kube-scheduler -n kube-system \
+  -o jsonpath='{.spec.holderIdentity}{"\n"}'         # 지금 스케줄링하는 인스턴스
+kubectl get lease -n kube-system -w                  # 수정 한 줄이 갱신 또는 넘겨받기 하나
+kubectl get lease -n kube-node-lease                 # 노드마다 하트비트 Lease 하나
+kubectl get lease <node-name> -n kube-node-lease \
+  -o jsonpath='{.spec.renewTime}{"\n"}'              # kubelet의 마지막 하트비트
+kubectl get leasecandidates -n kube-system           # 조정된 리더 선출을 켰을 때만
+```
+
+<Quiz questions={[
+  {q: '리더 복제본이 죽었다. 다음 리더가 시간이 좀 지나서야 넘겨받는 이유는?', options: ['API 서버가 먼저 Lease를 지워야 해서', '팔로워가 자기 시계로 갱신 없는 leaseDuration을 기다린 뒤에 Lease를 잡아서', '스케줄러가 먼저 새 파드를 배치해야 해서'], answer: 1, why: '팔로워는 죽은 리더와 느린 리더를 구분하지 못한다. Lease가 leaseDuration 동안 갱신되지 않을 때까지 기다렸다가 자신을 holder로 쓴다.'},
+  {q: '리더가 긴 GC 멈춤에 빠지고, Lease가 만료돼 다른 복제본이 넘겨받았다. 깨어난 뒤 무엇이 잘못될 수 있나?', options: ['아무 일도 없다. API 서버가 옛 리더의 쓰기를 모두 막는다', 'Lease가 지워진다', '클러스터 스케줄링이 멈춘다', '여전히 리더인 것처럼 써서 복제본 둘이 동시에 일할 수 있다'], answer: 3, why: 'Lease 기반 선출은 옛 리더를 막아 주지 않는다. 이미 리더인지 확인을 마친 코드는 갱신이 실패할 때까지 돈다. 조건부·멱등 쓰기나 펜싱 토큰이 그 낡은 쓰기를 무해하게 만든다.'},
+  {q: 'leaseDuration이 renewDeadline보다 길어야 하는 이유는?', options: ['팔로워가 넘겨받기 전에 옛 리더가 이미 일을 멈추게 하려고', 'Lease 객체를 작게 하려고', 'kubelet 하트비트를 빠르게 하려고'], answer: 0, why: '리더는 갱신 없이 renewDeadline이 지나면 물러난다. 팔로워는 leaseDuration이 지나야 넘겨받는다. 둘의 차이가 활동 기간이 겹치지 않게 하는 여유다.'},
+]} />
+
+더 읽을거리: [Lease](https://kubernetes.io/docs/concepts/architecture/leases/) · [조정된 리더 선출](https://kubernetes.io/docs/concepts/cluster-administration/coordinated-leader-election/) · [client-go leaderelection](https://pkg.go.dev/k8s.io/client-go/tools/leaderelection) · [CRD와 오퍼레이터](../advanced/crd-operator.mdx) · [분산 시스템 기초](../basic/distributed-systems.mdx) · [컨트롤 플레인 고가용성과 etcd 쿼럼](../advanced/etcd-quorum.mdx)

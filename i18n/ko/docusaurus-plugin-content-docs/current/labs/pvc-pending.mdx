@@ -1,0 +1,209 @@
+---
+id: pvc-pending
+title: 실습 09 · Pending에 멈춘 PVC
+sidebar_label: 09 · PVC Pending
+sidebar_position: 9
+description: 퍼시스턴트볼륨클레임 두 개가 Pending에 멈춘 장애 실습. 하나는 없는 스토리지클래스를 요청한다. 다른 하나는 멀쩡하고 WaitForFirstConsumer 때문에 파드를 기다릴 뿐이다.
+hide_table_of_contents: false
+---
+
+# 실습 09 · Pending에 멈춘 PVC
+
+## 목표
+
+PVC 두 개가 `Pending`이다. 진짜 문제와 원래 그렇게 동작하는 것을 구별하고, 진짜 문제를 고친다.
+
+## 준비
+
+[노트북에 실습 클러스터 만들기](../basic/lab-cluster.mdx)의 kind 클러스터를 쓴다. kind에는 local-path 프로비저너를 쓰는 `standard` 스토리지클래스 하나가 들어 있다.
+
+```bash
+kubectl apply -f - <<'EOF'
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: lab-09
+---
+# Case A: a claim and the Pod that needs it
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: data
+  namespace: lab-09
+spec:
+  storageClassName: fast-ssd
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: app
+  namespace: lab-09
+spec:
+  containers:
+  - name: nginx
+    image: nginx:1.29.3-alpine
+    volumeMounts:
+    - name: data
+      mountPath: /data
+  volumes:
+  - name: data
+    persistentVolumeClaim:
+      claimName: data
+---
+# Case B: a claim nobody uses yet
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: cache
+  namespace: lab-09
+spec:
+  storageClassName: standard
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 1Gi
+EOF
+```
+
+## 증상
+
+```bash
+kubectl -n lab-09 get pvc        # data와 cache 모두 Pending
+kubectl -n lab-09 get pods       # app이 Pending
+```
+
+목록에서는 두 클레임이 똑같아 보인다. 하지만 같은 문제가 아니다.
+
+## 살펴보기
+
+```bash
+kubectl -n lab-09 describe pvc data       # 맨 아래 Events를 읽는다
+kubectl -n lab-09 describe pvc cache
+kubectl -n lab-09 describe pod app
+kubectl get storageclass
+kubectl get storageclass standard -o jsonpath='{.provisioner} {.volumeBindingMode}{"\n"}'
+```
+
+## 힌트
+
+<details>
+<summary>힌트 1</summary>
+
+목록은 Pending이라고만 말한다. 이유는 PVC마다 남은 **이벤트**에 있다. 둘을 비교한다. 하나는 Warning이고 하나는 Normal 이벤트다.
+
+</details>
+
+<details>
+<summary>힌트 2</summary>
+
+각 클레임의 `storageClassName`을 `kubectl get storageclass`와 비교한다. 클레임은 실제로 있는 클래스로만 만들어질 수 있다.
+
+</details>
+
+<details>
+<summary>힌트 3</summary>
+
+`standard`의 `volumeBindingMode`를 본다. `WaitForFirstConsumer`이면 그 클레임을 쓰는 파드가 스케줄된 뒤에야 볼륨을 만든다. 그래서 볼륨이 파드와 같은 노드에 생긴다.
+
+</details>
+
+## 정답
+
+<details>
+<summary>정답</summary>
+
+**A, `data`: 진짜 문제다.** 이벤트에 스토리지클래스 `fast-ssd`를 찾을 수 없다는 `ProvisioningFailed` 경고가 있다. 클래스가 없으면 프로비저너도 없으니 클레임은 끝없이 기다리고, 파드 `app`도 함께 기다린다.
+
+이미 만든 클레임의 `storageClassName`은 바꿀 수 없으니 지우고 다시 만든다. `standard`를 쓰거나, 필드를 빼서 기본 클래스를 받는다.
+
+```bash
+kubectl -n lab-09 delete pod app
+kubectl -n lab-09 delete pvc data
+kubectl apply -f - <<'EOF'
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: data
+  namespace: lab-09
+spec:
+  storageClassName: standard
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: app
+  namespace: lab-09
+spec:
+  containers:
+  - name: nginx
+    image: nginx:1.29.3-alpine
+    volumeMounts:
+    - name: data
+      mountPath: /data
+  volumes:
+  - name: data
+    persistentVolumeClaim:
+      claimName: data
+EOF
+```
+
+실제 클러스터에서 팀이 정말 그 클래스를 원한다면, 앱이 기대하는 `fast-ssd` 스토리지클래스를 만드는 것도 해결이다.
+
+**B, `cache`: 문제가 아니다.** 이벤트는 Normal `WaitForFirstConsumer`이고, 바인딩 전에 첫 소비자가 생기기를 기다린다는 내용이다. `standard`는 `WaitForFirstConsumer`를 쓰므로 클레임을 쓰는 파드가 생길 때까지 아무것도 만들지 않는다. 그대로 두거나, 클레임을 쓰는 파드를 띄워 바인딩되는 것을 지켜본다.
+
+```bash
+kubectl apply -f - <<'EOF'
+apiVersion: v1
+kind: Pod
+metadata:
+  name: cache-user
+  namespace: lab-09
+spec:
+  containers:
+  - name: nginx
+    image: nginx:1.29.3-alpine
+    volumeMounts:
+    - name: cache
+      mountPath: /cache
+  volumes:
+  - name: cache
+    persistentVolumeClaim:
+      claimName: cache
+EOF
+```
+
+</details>
+
+## 확인
+
+```bash
+kubectl -n lab-09 get pvc        # data와 cache가 Bound
+kubectl -n lab-09 get pods       # app과 cache-user가 Running
+kubectl get pv                   # 클레임마다 프로비저너가 만든 PV 하나
+```
+
+## 정리
+
+```bash
+kubectl delete namespace lab-09
+```
+
+local-path PV는 회수 정책이 `Delete`라서 클레임과 함께 사라진다.
+
+<Quiz questions={[
+  {q: 'PVC가 Pending이고 이벤트는 Normal WaitForFirstConsumer 하나뿐이다. 아직 쓰는 파드가 없다. 어떻게 해야 하는가?', options: ['PVC를 지우고 PV를 손으로 만든다', '아무것도 하지 않는다. 클레임을 쓰는 파드가 스케줄되면 볼륨이 만들어진다', 'storageClassName을 다른 클래스로 바꾼다'], answer: 1, why: 'volumeBindingMode가 WaitForFirstConsumer이면 볼륨을 그 파드의 노드에 맞추려고 첫 파드를 기다린다. 여기서 Pending은 정상이다.'},
+  {q: 'storageClassName이 없는 클래스를 가리켜 PVC가 Pending이다. 왜 필드만 고칠 수 없는가?', options: ['이미 만든 클레임의 storageClassName은 바꿀 수 없어서 지우고 다시 만들어야 한다', '클러스터 관리자만 그 필드를 읽을 수 있다', '그 필드는 스케줄러가 채운다'], answer: 0, why: 'PVC spec은 만든 뒤 대부분 고정된다(스토리지 요청량만 늘릴 수 있다). 있는 클래스로 클레임을 다시 만들거나, 빠진 클래스를 만든다.'},
+]} />
+
+## 관련 레슨
+
+- [저장 공간이 붙기까지 (PVC·PV)](../k8s/storage-volume.mdx)
+- [볼륨이 붙는 시점과 장애](../advanced/volume-binding.mdx)

@@ -154,7 +154,7 @@ Follow one request through the Gateway API: **GatewayClass → Gateway → HTTPR
         'ResolvedRefs turns True. Traffic now splits by weight: weight divided by the sum of weights, so about 90% goes to store and 10% to store-v2. Weights are proportions and need not add up to 100.',
       ],
       flows: [
-        {from: 'grant', to: 'svc2', label: 'Allows', type: 'watch'},
+        {from: 'grant', to: 'svc2', label: 'Allows', type: 'watch', bend: -1},
         {from: 'gw', to: 'svc', label: '90', type: 'request'},
         {from: 'gw', to: 'svc2', label: '10', type: 'request'},
         {from: 'svc2', to: 'pod2', label: 'Endpoint', type: 'request'},

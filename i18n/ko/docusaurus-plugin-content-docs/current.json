@@ -46,5 +46,13 @@
   "sidebar.lessons.category.How LLM serving works": {
     "message": "LLM 서빙은 이렇게 움직인다",
     "description": "The label for category 'How LLM serving works' in sidebar 'lessons'"
+  },
+  "sidebar.lessons.category.Hands-on labs": {
+    "message": "장애 실습",
+    "description": "The label for category 'Hands-on labs' in sidebar 'lessons'"
+  },
+  "sidebar.lessons.category.Practice exams": {
+    "message": "자격증 모의 문제",
+    "description": "The label for category 'Practice exams' in sidebar 'lessons'"
   }
 }

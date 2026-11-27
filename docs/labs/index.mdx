@@ -1,0 +1,34 @@
+---
+title: Hands-on labs
+sidebar_label: Overview
+sidebar_position: 0
+description: Break-fix labs on a local kind cluster. Each lab breaks something on purpose, and you find and fix it with kubectl, using hints only when you are stuck.
+hide_table_of_contents: false
+---
+
+# Hands-on labs
+
+Lessons show how things work. Labs make you fix them. Each lab sets up something broken on purpose, and your job is to find out why and fix it, the same way you would at work.
+
+## How labs work
+
+1. **Create the lab cluster once** with [Build a Lab Cluster on Your Laptop](../basic/lab-cluster.mdx). Every lab runs on that kind cluster.
+2. **Run the Setup block.** It creates a namespace `lab-NN` (for example `lab-06`) and the broken resources in it.
+3. **Read the Symptoms, then Investigate.** The Investigate commands show you where to look but not the answer.
+4. **Try before you open a hint.** Hints go from gentle to almost the answer. Open the Solution last, and compare it with what you found.
+5. **Verify and clean up.** Deleting the namespace removes everything the lab made. Lab 10 also tells you how to remove the controller it installs.
+
+## Labs
+
+| Lab | What is broken |
+| --- | --- |
+| [Lab 01 · A Pod that never schedules](./pending-pod.mdx) | A Pod never gets a node. Read the scheduler's events. |
+| [Lab 02 · A container that will not stay up](./crashloop.mdx) | A container starts and exits again and again. Read the previous logs. |
+| [Lab 03 · An image that never arrives](./image-pull.mdx) | The kubelet cannot pull the image. Check name, tag and registry. |
+| [Lab 04 · A Service that answers nobody](./no-endpoints.mdx) | A Service exists but sends traffic nowhere. Compare its selector with Pod labels. |
+| [Lab 05 · Running, but never ready](./readiness.mdx) | Pods run but never become Ready, so they get no traffic. |
+| [Lab 06 · OOMKilled](./oomkilled.mdx) | A container is killed for using more memory than its limit. |
+| [Lab 07 · DNS blocked by NetworkPolicy](./dns-blocked.mdx) | A NetworkPolicy blocks DNS, so a Service works by IP but not by name. |
+| [Lab 08 · RBAC Forbidden](./rbac-forbidden.mdx) | A Pod's ServiceAccount gets 403 when it calls the API. |
+| [Lab 09 · PVC stuck in Pending](./pvc-pending.mdx) | Two claims are Pending: one is broken, one is just waiting. |
+| [Lab 10 · Route does nothing or returns 404](./ingress-404.mdx) | HTTP routing into the cluster does nothing, then returns 404 and 500. |

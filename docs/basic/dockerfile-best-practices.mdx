@@ -1,0 +1,239 @@
+---
+id: dockerfile-best-practices
+title: Writing a Good Dockerfile
+sidebar_label: 11 · Dockerfile best practices
+description: Animated walkthrough of Dockerfile best practices for Kubernetes, from layer cache order, .dockerignore and multi-stage builds to slim or distroless bases, non-root USER, exec-form ENTRYPOINT, build secrets, reproducible builds and why HEALTHCHECK is ignored
+summary: 'Cache-friendly layer order, multi-stage builds, small non-root images, signals that reach PID 1, and secrets that never land in a layer.'
+icon: hammer
+hide_table_of_contents: true
+---
+
+# Writing a Good Dockerfile
+
+A Dockerfile that builds is not yet a good one. Follow one image from source tree to a running Pod and see which lines make it faster to build, smaller, safer and easier to stop.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~12 min', level: 'Beginner'}}
+  groups={[
+    {label: 'docker build (BuildKit)', x: 230, y: 30, w: 470, h: 410, tone: 'mgmt'},
+  ]}
+  nodes={[
+    {id: 'src', label: 'Source tree', sub: 'code, lockfile, .git', icon: 'git', tone: 'ext', x: 110, y: 110, show: true},
+    {id: 'ignore', label: '.dockerignore', sub: 'filters the context', icon: 'shield', tone: 'ext', x: 110, y: 260},
+    {id: 'secret', label: 'Build secret', sub: 'token, never a layer', icon: 'ticket', tone: 'ext', x: 110, y: 390},
+    {id: 'ctx', label: 'Build context', sub: 'files sent to builder', icon: 'archive', tone: 'store', x: 340, y: 110},
+    {id: 'build', label: 'Build stage', sub: 'compiler, deps, tests', icon: 'gear', tone: 'node', x: 340, y: 260},
+    {id: 'base', label: 'Base image', sub: 'slim or distroless', icon: 'layers', tone: 'store', x: 340, y: 390},
+    {id: 'image', label: 'Image layers', sub: 'cached, reused', icon: 'box', tone: 'store', x: 625, y: 110},
+    {id: 'runtime', label: 'Runtime stage', sub: 'app binary only', icon: 'box', tone: 'app', x: 625, y: 260},
+    {id: 'pod', label: 'Pod', sub: 'container, PID 1', icon: 'pod', tone: 'app', x: 860, y: 190},
+    {id: 'kubelet', label: 'kubelet', sub: 'probes, SIGTERM', icon: 'server', tone: 'cp', x: 860, y: 340},
+  ]}
+  metrics={[
+    {id: 'rebuilt', label: 'Rebuilt on edit'},
+    {id: 'contents', label: 'Final image'},
+    {id: 'user', label: 'Runs as'},
+    {id: 'pid1', label: 'PID 1'},
+  ]}
+  learn={[
+    {text: 'Order lines so a code change does not reinstall dependencies', at: 1},
+    {text: 'Multi-stage builds keep the toolchain out of the final image', at: 3},
+    {text: 'Why slim or distroless bases and a non-root USER', at: 4},
+    {text: 'Exec-form ENTRYPOINT so SIGTERM reaches your process', at: 6},
+    {text: 'Build secrets, reproducible builds, and probes instead of HEALTHCHECK', at: 7},
+  ]}
+  steps={[
+    {
+      short: 'Start',
+      kind: '시작',
+      title: 'It builds, but every edit takes minutes',
+      text: [
+        'The first Dockerfile is often four lines: FROM a full OS image, COPY . ., RUN install, CMD. It works. But each code edit reinstalls every dependency, the image ships a compiler, and it runs as root.',
+        'How layers and tags work is covered in the image lesson. Here we fix the recipe itself, one line at a time.',
+      ],
+      flows: [{from: 'src', to: 'ctx', label: 'COPY . .', type: 'request'}],
+      focus: ['src', 'ctx'],
+      values: {rebuilt: {text: 'everything', tone: 'bad'}, contents: {text: 'OS + toolchain + app', tone: 'bad'}, user: {text: 'root', tone: 'bad'}, pid1: 'sh -c'},
+    },
+    {
+      short: 'Cache order',
+      kind: '원리',
+      title: 'Copy the dependency list first, then the source',
+      text: [
+        'Each instruction makes a layer, and a changed layer invalidates every layer after it. If COPY . . comes before the install step, any code edit forces a full reinstall.',
+        'Copy only the manifests first (package.json and its lockfile, go.mod and go.sum, requirements.txt), run the install, and copy the source after that. A code edit now rebuilds only the last few layers.',
+      ],
+      keyIdea: 'Put what changes least near the top. Keep apt-get update and apt-get install in the same RUN, so a cached update never goes stale.',
+      flows: [
+        {from: 'ctx', to: 'build', label: 'lockfile first', type: 'request'},
+        {from: 'build', to: 'image', label: 'cache hit', type: 'response'},
+      ],
+      focus: ['build', 'image'],
+      values: {rebuilt: {text: 'source layers only', tone: 'good'}},
+    },
+    {
+      short: '.dockerignore',
+      kind: '원리',
+      title: '.dockerignore decides what the builder even sees',
+      text: [
+        'docker build sends a build context to the builder. Without a .dockerignore, that is the whole folder: .git, node_modules, local build output, maybe a .env file.',
+        'A large context is slow to send. Files that change on every commit, like .git, break the cache of COPY . . for no reason. And a stray .env can end up inside the image.',
+      ],
+      keyIdea: 'Start .dockerignore with .git, dependency folders, build output and any secret files. It uses patterns like .gitignore.',
+      flows: [
+        {from: 'src', to: 'ignore', label: 'filter', type: 'request'},
+        {from: 'ignore', to: 'ctx', label: 'small context', type: 'request'},
+      ],
+      focus: ['ignore', 'ctx'],
+      status: {ignore: 'ok'},
+    },
+    {
+      short: 'Multi-stage',
+      kind: '원리',
+      title: 'Build with the toolchain, ship without it',
+      text: [
+        'A multi-stage Dockerfile has more than one FROM. The first stage (FROM golang AS build, or a Node or JDK image) has compilers and dev dependencies, and runs the build and tests.',
+        'The last stage starts from a small base and takes only the result: COPY --from=build /out/app /app. The toolchain, source and caches stay behind in the build stage and are not in the image you push.',
+      ],
+      flows: [
+        {from: 'build', to: 'runtime', label: 'COPY --from', type: 'request'},
+        {from: 'base', to: 'runtime', label: 'FROM', type: 'request'},
+      ],
+      focus: ['build', 'runtime'],
+      values: {contents: {text: 'base + app', tone: 'good'}},
+    },
+    {
+      short: 'Small base',
+      kind: '원리',
+      title: 'A slim or distroless base has less to patch',
+      text: [
+        'Every package in the base image is something a scanner can flag and someone must patch. A slim image (for example a -slim Debian tag or Alpine) drops most of them. A distroless image keeps only the runtime libraries, with no package manager and no shell.',
+        'Smaller images also pull faster on every node that starts the Pod. The cost: you cannot kubectl exec into a shell. Use kubectl debug to attach an ephemeral debug container instead.',
+      ],
+      keyIdea: 'Pick the smallest base your app runs on. Debugging moves from the image into a separate debug container.',
+      flows: [{from: 'base', to: 'runtime', label: 'fewer packages', type: 'request'}],
+      focus: ['base', 'runtime'],
+      badges: {base: 'no shell'},
+    },
+    {
+      short: 'Non-root',
+      kind: '원리',
+      title: 'Set USER to a numeric non-root ID',
+      text: [
+        'Without USER, the process runs as root inside the container. If the app is broken into, the attacker starts as root, one step closer to the node.',
+        'Add USER 10001 (or the nonroot user that distroless images provide). Use a numeric ID: with runAsNonRoot: true, the kubelet can only verify that the user is not root when the image gives a number, and it refuses to start a container with a non-numeric user name.',
+      ],
+      keyIdea: 'Files the app must write need to belong to that UID. Use COPY --chown, or write to a mounted volume.',
+      flows: [{from: 'runtime', to: 'pod', label: 'USER 10001', type: 'request'}],
+      focus: ['runtime', 'pod'],
+      values: {user: {text: 'UID 10001', tone: 'good'}},
+    },
+    {
+      short: 'PID 1',
+      kind: '문제',
+      title: 'Shell form swallows SIGTERM',
+      text: [
+        'To stop a Pod, the kubelet asks the runtime to send SIGTERM to PID 1 in the container. With shell form, CMD node server.js, PID 1 is /bin/sh -c, and the shell does not pass the signal on.',
+        'The app never hears it, keeps serving, and is killed with SIGKILL when the grace period (30 seconds by default) runs out. Open requests are cut off and every rollout waits the full timeout.',
+      ],
+      keyIdea: 'Use exec form: ENTRYPOINT ["/app"] or CMD ["node", "server.js"]. If a wrapper script is needed, end it with exec "$@". Run one main process per container.',
+      flows: [{from: 'kubelet', to: 'pod', label: 'SIGTERM', type: 'request'}],
+      focus: ['kubelet', 'pod'],
+      status: {pod: 'warn'},
+      values: {pid1: {text: 'sh → signal lost', tone: 'bad'}},
+    },
+    {
+      short: 'Secrets',
+      kind: '문제',
+      title: 'A deleted secret is still in an earlier layer',
+      text: [
+        'COPY .npmrc, RUN npm ci, RUN rm .npmrc looks clean, but the token stays in the layer made by COPY. ARG and ENV values persist in the image metadata too. Anyone who pulls the image can read them with docker history or by unpacking layers.',
+        'BuildKit secret mounts solve this. RUN --mount=type=secret,id=npmrc,target=/root/.npmrc npm ci makes the file visible only during that one RUN. Pass it with docker build --secret id=npmrc,src=$HOME/.npmrc.',
+      ],
+      keyIdea: 'Secrets never go in ARG, ENV or COPY. Mount them for the one step that needs them. Runtime secrets come from Kubernetes, not the image.',
+      flows: [{from: 'secret', to: 'build', label: '--mount=type=secret', type: 'request'}],
+      focus: ['secret', 'build'],
+      status: {pod: 'ok', secret: 'ok'},
+      values: {pid1: {text: '/app (exec form)', tone: 'good'}},
+    },
+    {
+      short: 'Reproducible',
+      kind: '주의',
+      title: 'Same input, same image',
+      text: [
+        'FROM node:22 can mean a different image next week, and npm install without a lockfile can pull different versions. Then a rebuild of the same commit is not the same image.',
+        'Pin the base by digest (FROM image:tag@sha256:...) and let a bot such as Dependabot or Renovate bump it. Install from lockfiles. Set SOURCE_DATE_EPOCH so BuildKit writes fixed timestamps. Why digests matter for trust is in the supply chain lesson.',
+      ],
+      keyIdea: 'A digest pin also stops automatic base updates, so pair it with a bot that proposes new digests.',
+      flows: [{from: 'base', to: 'build', label: '@sha256 pin', type: 'request'}],
+      focus: ['base'],
+      badges: {base: '@sha256'},
+    },
+    {
+      short: 'HEALTHCHECK',
+      kind: '주의',
+      title: 'Kubernetes ignores HEALTHCHECK',
+      text: [
+        'A HEALTHCHECK line in the Dockerfile is read by Docker. The kubelet does not run it. A Pod with a hung app stays Running and Ready unless the Pod spec has probes.',
+        'Define readinessProbe, livenessProbe and, for slow starters, startupProbe in the manifest. An exec probe needs its command inside the image, which a distroless image may not have, so prefer httpGet or grpc probes.',
+      ],
+      flows: [{from: 'kubelet', to: 'pod', label: 'httpGet probe', type: 'watch'}],
+      focus: ['kubelet', 'pod'],
+      badges: {pod: 'probes'},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Fast to build, small to ship, clean to stop',
+      text: [
+        'Order layers from least to most often changed, and filter the context with .dockerignore. Build in one stage and ship a small, pinned base in another.',
+        'Run as a numeric non-root user, start the app in exec form, mount build secrets instead of copying them, and leave health checks to Kubernetes probes.',
+      ],
+      keyIdea: 'Before you push, run docker history on the image: every layer should be something you meant to ship.',
+      flows: [
+        {from: 'ctx', to: 'build', label: 'cached', type: 'request'},
+        {from: 'build', to: 'runtime', label: 'artifact', type: 'request'},
+        {from: 'runtime', to: 'pod', label: 'non-root, exec', type: 'request'},
+      ],
+      focus: ['build', 'runtime', 'pod'],
+      status: {pod: null, ignore: null, secret: null},
+      badges: {base: null, pod: null},
+    },
+  ]}
+/>
+
+## Line by line: common mistake and better habit
+
+| Line | Common mistake | Better | Why |
+|---|---|---|---|
+| `COPY` | `COPY . .` before installing dependencies | Copy lockfiles, install, then copy source | A code edit no longer reinstalls everything |
+| `.dockerignore` | Missing | Exclude `.git`, dependency folders, build output, `.env` | Smaller context, stable cache, no leaked files |
+| `FROM` | One stage on a full SDK image | Build stage plus a slim or distroless runtime stage | Toolchain and source stay out of the image |
+| `FROM` | Floating tag like `node:22` | `image:tag@sha256:...`, updated by a bot | Same commit builds the same image |
+| `USER` | None (root) | Numeric non-root UID | Works with `runAsNonRoot`, smaller blast radius |
+| `CMD` / `ENTRYPOINT` | Shell form `CMD node server.js` | Exec form `CMD ["node", "server.js"]` | SIGTERM reaches the app, rollouts stop cleanly |
+| `ARG` / `ENV` / `COPY` | Token passed or copied in | `RUN --mount=type=secret` | Secret never lands in a layer or metadata |
+| `HEALTHCHECK` | Relied on in Kubernetes | Readiness, liveness and startup probes | The kubelet does not run HEALTHCHECK |
+
+## Try it yourself
+
+```bash
+docker build -t my-app:dev .                                  # uses BuildKit by default
+docker history my-app:dev                                     # every layer, its size and the line that made it
+docker image inspect my-app:dev \
+  --format 'user={{.Config.User}} entrypoint={{json .Config.Entrypoint}} cmd={{json .Config.Cmd}}'
+docker buildx imagetools inspect gcr.io/distroless/static-debian12:nonroot   # digest to pin in FROM
+docker build --secret id=npmrc,src=$HOME/.npmrc -t my-app:dev .              # pair with RUN --mount=type=secret,id=npmrc
+docker build --build-arg SOURCE_DATE_EPOCH=$(git log -1 --pretty=%ct) -t my-app:dev .   # fixed timestamps
+kubectl debug -it pod/my-app --image=busybox:1.36 --target=app # shell next to a distroless container
+```
+
+<Quiz questions={[
+  {q: 'A Dockerfile does COPY . . and then RUN npm ci. Why does every small code edit take as long as a clean build?', options: ['BuildKit never caches RUN steps', 'The edit changes the COPY layer, which invalidates the install layer after it', 'npm ci always ignores the lockfile', 'The base image is pulled again on every build'], answer: 1, why: 'A changed layer invalidates every layer after it. Copy the lockfile and install first, then copy the source, so code edits only rebuild the last layers.'},
+  {q: 'A Pod with CMD node server.js (shell form) always takes the full grace period to stop. What is happening?', options: ['The kubelet sends SIGKILL first', 'The readiness probe keeps the Pod alive', 'PID 1 is /bin/sh, which does not forward SIGTERM, so the app is killed when the grace period ends', 'Node.js ignores every signal by default'], answer: 2, why: 'In shell form the shell is PID 1 and the signal never reaches node. Exec form makes the app PID 1 so it receives SIGTERM and can shut down.'},
+  {q: 'A build copies .npmrc, runs npm ci, then deletes .npmrc in a later RUN. Is the token gone from the image?', options: ['No, it is still in the layer created by the COPY', 'Yes, the final filesystem no longer has the file', 'Only if the image is built with --squash'], answer: 0, why: 'Each layer is stored on its own, and a later delete only hides the file. Use RUN --mount=type=secret so the token is never written to any layer.'},
+]} />
+
+Further reading: [Docker build best practices](https://docs.docker.com/build/building/best-practices/) · [Multi-stage builds](https://docs.docker.com/build/building/multi-stage/) · [Build secrets](https://docs.docker.com/build/building/secrets/) · [Configure probes](https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/) · [How an Image Is Built and Run](../basic/container-image.mdx) · [Image and Supply Chain Security](../advanced/supply-chain.mdx) · [Health checks — alive, and ready for requests?](../intermediate/probes.mdx)

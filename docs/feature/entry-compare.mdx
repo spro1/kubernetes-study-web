@@ -1,7 +1,7 @@
 ---
 id: entry-compare
 title: Three Entry Points Compared (Ingress · Mesh Gateway · Gateway API)
-sidebar_label: 09 · Entry Points Compared
+sidebar_label: 11 · Entry Points Compared
 description: Send the same external request through Ingress, a service mesh gateway with a VirtualService, and the Gateway API's Gateway and HTTPRoute, and compare who handles what on each path
 summary: 'What Ingress, the mesh gateway and the Gateway API each handle, compared with the same request.'
 icon: layers
@@ -57,7 +57,7 @@ A Kubernetes cluster has three main ways to accept external requests. Send one r
       title: 'Ingress — entry and routes on one sheet',
       text: [
         'One Ingress holds the host, the path, and the target Service. The implementation that its ingress class points to reads and applies the rules.',
-        'It is the oldest and most widely used approach. Implementations include ingress-nginx, Traefik, Istio, and more.',
+        'It is the oldest and most widely used approach. Implementations include Traefik, HAProxy, Istio, and more. The once-dominant ingress-nginx was retired in March 2026, and the project points users to the Gateway API.',
       ],
       flows: [
         {from: 'user', to: 'ing', type: 'request'},

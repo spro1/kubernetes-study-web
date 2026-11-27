@@ -182,7 +182,7 @@ Pod Security Standards check only security fields. Most teams also have their ow
       keyIdea: 'Before switching a rule to Deny, list the existing objects that break it. Otherwise the first emergency hotfix to an old Deployment is the one that gets blocked.',
       flows: [
         {from: 'etcd', to: 'old', label: 'Unchanged', type: 'watch'},
-        {from: 'webhook', to: 'report', label: 'Background scan', type: 'watch'},
+        {from: 'webhook', to: 'report', label: 'Background scan', type: 'watch', bend: 0.3},
       ],
       focus: ['old', 'report'],
       status: {webhook: 'ok', old: 'warn'},

@@ -129,7 +129,7 @@ Follow one login from your laptop to a server in a private subnet. See which key
       keyIdea: 'ssh-add -l lists the keys the agent holds.',
       flows: [
         {from: 'key', to: 'agent', label: 'ssh-add', type: 'request'},
-        {from: 'client', to: 'agent', label: 'Sign this', type: 'request'},
+        {from: 'client', to: 'agent', type: 'request'},
       ],
       focus: ['agent'],
       status: {fake: 'gone'},

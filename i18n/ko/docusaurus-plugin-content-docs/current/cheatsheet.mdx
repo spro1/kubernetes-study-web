@@ -1,0 +1,252 @@
+---
+id: cheatsheet
+title: 명령어 치트시트
+description: K8s Flow 레슨의 "직접 확인해 보기"에 나오는 kubectl, Helm, Kustomize, 노드, 네트워크, 클라우드 CLI 명령을 작업별로 묶고, 각 명령을 설명하는 레슨에 연결한다.
+hide_table_of_contents: false
+---
+
+# 명령어 치트시트
+
+레슨의 "직접 확인해 보기"에 나오는 명령을 하려는 일별로 묶었다. `<파드>`, `<네임스페이스>`처럼 꺾쇠로 감싼 부분은 자기 이름으로 바꾼다. `kubectl` 명령 대부분은 다른 네임스페이스면 `-n <네임스페이스>`, 모든 네임스페이스면 `-A`를 붙인다. 처음 보는 명령은 연결된 레슨을 열어 무엇을 보여 주는지, 왜 쓰는지 확인한다.
+
+## 컨텍스트와 클러스터
+
+```bash
+kubectl config get-contexts                      # 이 kubeconfig가 아는 클러스터, *가 현재 것
+kubectl config current-context                   # 지금 명령이 가는 클러스터
+kubectl config use-context kind-lab              # 클러스터 바꾸기
+kubectl config set-context --current --namespace=<네임스페이스>   # 이 컨텍스트의 기본 네임스페이스
+kubectl config view --minify                     # 현재 컨텍스트의 클러스터·사용자·네임스페이스만
+kubectl cluster-info                             # API 서버와 CoreDNS 주소
+kubectl version                                  # 클라이언트와 컨트롤 플레인 버전
+kubectl auth whoami                              # API 서버가 보는 사용자 이름과 그룹
+kubectl api-resources | grep -i deploy           # 리소스 이름, 줄임말, API 그룹, 네임스페이스 소속 여부
+```
+
+레슨: [노트북에 실습 클러스터 만들기](./basic/lab-cluster.mdx) · [관리형 쿠버네티스 — 누가 무엇을 운영하나](./cloud/managed-kubernetes.mdx) · [API 요청이 저장되기까지](./advanced/api-request-path.mdx)
+
+## 리소스 읽기
+
+```bash
+kubectl get pods -o wide                         # 파드별 IP, 노드, 재시작 수
+kubectl get pods -A --field-selector=status.phase=Pending   # 모든 네임스페이스에서 멈춘 파드
+kubectl get pods -l app=web --show-labels        # 셀렉터에 걸리는 파드와 그 레이블
+kubectl get pods -L version                      # 레이블을 열로 추가
+kubectl get pods -w                              # 변화를 실시간으로 (Ctrl+C로 멈춤)
+kubectl get deploy web -o yaml                   # status까지 포함한 전체 오브젝트
+kubectl describe pod <파드>                      # 설정, 상태, 맨 아래 Events
+kubectl explain deployment.spec.strategy         # 클러스터 스키마가 말하는 필드 뜻
+kubectl get pod <파드> -o jsonpath='{.status.phase}'   # 필드 하나만
+kubectl get pod <파드> -o jsonpath='{.spec.containers[*].resources}'   # 요청값과 상한값
+kubectl get pods -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.nodeName}{"\n"}{end}'   # 파드당 한 줄
+kubectl get nodes -o custom-columns=NAME:.metadata.name,TAINTS:.spec.taints   # 원하는 열로 표 만들기
+kubectl get secret <이름> -o jsonpath='{.data.<키>}' | base64 -d   # base64는 풀릴 뿐 암호화가 아니다
+```
+
+레슨: [매니페스트 읽고 적용하기](./k8s/manifest-anatomy.mdx) · [상태를 세 단계로 읽고 문제 확인하기](./intermediate/troubleshoot-status.mdx) · [설정과 비밀값 (ConfigMap·Secret)](./k8s/config-secret.mdx)
+
+## 만들고 바꾸기
+
+```bash
+kubectl create deployment web --image=nginx:1.26 --replicas=3   # 명령형으로 만들기
+kubectl apply -f web.yaml                        # 파일로 만들거나 고치기
+kubectl diff -f web.yaml                         # apply가 바꿀 내용 (종료 코드 1 = 차이 있음)
+kubectl apply -f web.yaml --dry-run=server       # 검증과 어드미션까지 다 거치고 저장은 안 함
+kubectl create deployment web --image=nginx --dry-run=client -o yaml > web.yaml   # 매니페스트 초안 만들기
+kubectl apply -f web.yaml --server-side          # 필드 소유권을 쓰는 서버 사이드 적용
+kubectl patch deployment web -p '{"spec":{"replicas":4}}'   # 필드 하나만 바꾸기 (전략적 병합)
+kubectl scale deployment web --replicas=5        # 레플리카 수 바꾸기
+kubectl set image deployment/web nginx=nginx:1.27   # 컨테이너 이미지 바꾸기 (컨테이너=이미지)
+kubectl rollout status deployment/web            # 롤아웃이 끝날 때까지 지켜보기
+kubectl rollout history deployment/web           # 리비전 목록
+kubectl rollout undo deployment/web              # 이전 리비전으로 되돌리기
+kubectl rollout restart deployment/web           # 같은 스펙으로 파드 다시 만들기
+kubectl delete -f web.yaml                       # 파일로 만든 것 지우기
+```
+
+레슨: [매니페스트 읽고 적용하기](./k8s/manifest-anatomy.mdx) · [무중단 배포 (롤링 업데이트)](./k8s/rolling-update.mdx) · [원하는 상태와 컨트롤 루프](./basic/desired-state.mdx) · [블루/그린과 카나리를 기본 요소로 (CKAD)](./cert/deploy-strategies.mdx)
+
+## 파드 디버깅
+
+```bash
+kubectl describe pod <파드>                      # Events: Scheduled, Pulling, BackOff, FailedMount ...
+kubectl logs <파드>                              # 현재 컨테이너 로그
+kubectl logs <파드> -c <컨테이너>                # 멀티 컨테이너 파드에서 하나만
+kubectl logs <파드> --previous                   # 직전에 죽은 인스턴스의 로그
+kubectl logs -f deploy/web --tail=50             # Deployment 파드 하나의 최신 줄 따라가기
+kubectl get pod <파드> -o jsonpath='{.status.containerStatuses[*].lastState.terminated.reason}'   # OOMKilled인가?
+kubectl exec -it <파드> -- sh                    # 컨테이너 안 셸 (이미지에 셸이 있을 때)
+kubectl exec <파드> -- env                       # 실행 중인 컨테이너가 받은 환경 변수
+kubectl debug -it <파드> --image=busybox:1.36 --target=<컨테이너>   # 프로세스를 같이 보는 임시 컨테이너
+kubectl debug <파드> -it --copy-to=<파드>-debug --image=busybox:1.36 --share-processes   # 복사본으로 디버깅
+kubectl get events --sort-by=.metadata.creationTimestamp   # 최근 이벤트, 오래된 것부터 (약 1시간 보관)
+kubectl events --types=Warning                   # 경고만, 최신이 맨 아래
+kubectl get events --field-selector reason=FailedScheduling   # 이유로 이벤트 거르기
+```
+
+레슨: [상태를 세 단계로 읽고 문제 확인하기](./intermediate/troubleshoot-status.mdx) · [kubectl debug로 실행 중인 파드 디버깅하기](./k8s/kubectl-debug.mdx) · [파드가 죽으면 (자가 치유)](./k8s/self-healing.mdx) · [파드가 뜨기까지](./k8s/pod-startup.mdx) · [헬스 체크 — 살아 있나, 받을 준비가 됐나](./intermediate/probes.mdx)
+
+## 네트워킹
+
+```bash
+kubectl get svc <서비스> -o wide                 # 타입, ClusterIP, 포트, 셀렉터
+kubectl get endpointslices -l kubernetes.io/service-name=<서비스>   # 서비스 뒤의 파드 IP (비었으면 셀렉터를 의심)
+kubectl port-forward svc/web 8080:80             # http://localhost:8080 열기, Ctrl+C로 멈춤
+kubectl run dns-test --rm -it --image=busybox:1.36 --restart=Never -- nslookup <서비스>.<네임스페이스>   # 일회용 파드에서 DNS 확인
+kubectl exec <파드> -- cat /etc/resolv.conf      # search 목록, 자기 네임스페이스가 먼저
+kubectl get pods -n kube-system -l k8s-app=kube-dns   # CoreDNS가 떠 있나?
+kubectl get networkpolicy -n <네임스페이스>      # 정책과 그 정책이 고르는 파드
+kubectl describe ingress <이름>                  # 호스트·경로 → 서비스 규칙
+kubectl get gateway,httproute -A                 # 게이트웨이 API 오브젝트
+```
+
+레슨: [이름으로 찾아가기 (Service·DNS)](./k8s/service-dns.mdx) · [요청이 파드에 닿기까지](./k8s/traffic.mdx) · [서비스 종류 (ClusterIP · NodePort · LoadBalancer)](./feature/service-types.mdx) · [통신 막고 열기 (네트워크 정책)](./k8s/network-policy.mdx) · [인그레스 규칙과 TLS](./feature/ingress.mdx) · [게이트웨이 API HTTPRoute가 파드에 닿기까지](./feature/gateway-api.mdx)
+
+## 스토리지
+
+```bash
+kubectl get storageclass                         # PROVISIONER, VOLUMEBINDINGMODE, ALLOWVOLUMEEXPANSION
+kubectl get pvc -n <네임스페이스>                # Pending인지 Bound인지, 용량, 접근 모드
+kubectl describe pvc <이름>                      # Pending에 머무는 이유 (Events)
+kubectl get pv                                   # PVC를 지우기 전에 RECLAIM POLICY 확인
+kubectl get volumeattachments                    # 볼륨이 어느 노드에 붙었나
+kubectl describe pod <파드>                      # FailedAttachVolume 또는 FailedMount
+kubectl get pv --sort-by=.spec.capacity.storage  # 크기순 볼륨
+```
+
+레슨: [저장 공간이 붙기까지 (PVC·PV)](./k8s/storage-volume.mdx) · [볼륨이 붙는 시점과 장애](./advanced/volume-binding.mdx) · [스테이트풀셋과 데이터베이스](./intermediate/statefulset.mdx)
+
+## 노드
+
+```bash
+kubectl get nodes -o wide                        # 상태, kubelet 버전, IP, OS 이미지
+kubectl describe node <노드>                     # Conditions, 테인트, Allocated resources
+kubectl top nodes                                # CPU·메모리 사용량 (metrics-server 필요)
+kubectl top pods -A --sort-by=cpu                # 가장 바쁜 파드부터 (또는 --sort-by=memory)
+kubectl cordon <노드>                            # 새 파드를 받지 않게
+kubectl drain <노드> --ignore-daemonsets --delete-emptydir-data   # 파드 내보내기 (PodDisruptionBudget을 지킨다)
+kubectl uncordon <노드>                          # 다시 스케줄 가능하게
+kubectl get pdb -A                               # ALLOWED DISRUPTIONS가 0이면 drain이 멈춘다
+kubectl get pods -A -o wide --field-selector spec.nodeName=<노드>   # 한 노드의 파드
+kubectl debug node/<노드> -it --image=busybox:1.36   # 노드 셸, 노드 파일 시스템은 /host 아래
+```
+
+레슨: [노드 비우기와 클러스터 업그레이드](./k8s/node-drain.mdx) · [노드 NotReady와 구성요소 장애 (CKA)](./cert/node-troubleshoot.mdx) · [요청값과 상한값](./intermediate/requests-limits.mdx) · [파드를 어느 노드에 둘까 (스케줄링)](./k8s/scheduling.mdx)
+
+## RBAC
+
+```bash
+kubectl auth can-i create deployments -n <네임스페이스>   # 내가 할 수 있나 yes / no
+kubectl auth can-i delete pods -n <네임스페이스> --as <사용자>   # 다른 사용자로 묻기 (impersonate 권한 필요)
+kubectl auth can-i list pods -n <네임스페이스> --as=system:serviceaccount:<네임스페이스>:<서비스어카운트>   # 서비스 어카운트로 묻기
+kubectl auth can-i --list --as=system:serviceaccount:<네임스페이스>:<서비스어카운트>   # 그 서비스 어카운트가 할 수 있는 일 전부
+kubectl create role pod-reader --verb=get,list,watch --resource=pods -n <네임스페이스>
+kubectl create rolebinding pod-reader --role=pod-reader --serviceaccount=<네임스페이스>:<서비스어카운트> -n <네임스페이스>
+kubectl get rolebindings -n <네임스페이스> -o wide   # 어떤 Role이 누구에게 묶였나
+kubectl create token <서비스어카운트> -n <네임스페이스> --duration=10m   # 수명이 짧은 서비스 어카운트 토큰
+```
+
+레슨: [누가 무엇을 할 수 있나 (RBAC)](./k8s/rbac.mdx) · [파드는 자신을 어떻게 증명하나 (서비스 어카운트 토큰)](./advanced/serviceaccount-token.mdx) · [API 요청이 저장되기까지](./advanced/api-request-path.mdx)
+
+## Helm
+
+```bash
+helm repo add <저장소> <URL> && helm repo update   # 차트 저장소 등록과 목록 갱신
+helm show values <저장소>/<차트> | head -20      # 덮어쓸 수 있는 기본값
+helm template shop ./demo --set replicaCount=3   # 렌더링만, 클러스터에 안 보냄
+helm install shop ./demo -n shop --create-namespace --set replicaCount=3
+helm upgrade --install shop ./demo -n shop -f values-prod.yaml --wait --timeout 3m   # 없으면 설치, 있으면 업그레이드, 준비될 때까지 대기
+helm list -A                                     # 릴리스와 현재 리비전
+helm history shop -n shop                        # REVISION, STATUS, DESCRIPTION
+helm get values shop -n shop                     # 내가 넣은 값
+helm get manifest shop -n shop                   # Helm이 실제로 적용한 YAML
+helm rollback shop 1 -n shop                     # 리비전 1로 되돌리기 (새 리비전이 생긴다)
+helm uninstall shop -n shop                      # 릴리스와 그 오브젝트 삭제
+```
+
+레슨: [헬름 릴리스의 설치·업그레이드·롤백](./k8s/helm-release.mdx) · [Helm과 GitOps](./intermediate/gitops-sync.mdx)
+
+## Kustomize
+
+```bash
+kubectl kustomize overlays/prod                  # 합쳐진 YAML, 아무것도 보내지 않음
+kubectl diff -k overlays/prod                    # apply -k가 바꿀 내용
+kubectl apply -k overlays/prod                   # 오버레이 적용
+kubectl delete -k overlays/prod                  # 그것으로 만든 것 지우기
+kustomize edit set image nginx=nginx:1.27        # 별도 kustomize 바이너리: kustomization.yaml의 태그 바꾸기
+```
+
+레슨: [Kustomize로 환경별 배포 (CKA·CKAD)](./cert/kustomize.mdx) · [Helm과 GitOps](./intermediate/gitops-sync.mdx)
+
+## 노드에서 crictl과 journalctl
+
+노드 안에서 실행한다 (SSH, 또는 `kubectl debug node/<노드>` 다음 `chroot /host`). 컨테이너 런타임과 systemd에 직접 묻기 때문에 API 서버가 죽어 있어도 동작한다.
+
+```bash
+systemctl status kubelet --no-pager              # kubelet이 돌고 있나?
+sudo journalctl -u kubelet -n 50 --no-pager      # 최근 kubelet 로그
+sudo journalctl -u kubelet --since "10 min ago" -f   # kubelet 로그 따라가기
+sudo journalctl -u containerd -n 50 --no-pager   # 컨테이너 런타임 로그
+sudo crictl ps -a                                # 끝난 것까지 모든 컨테이너
+sudo crictl ps -a --name kube-apiserver          # API 서버 컨테이너가 Exited인가?
+sudo crictl logs <컨테이너-ID>                   # 마지막 오류
+sudo crictl pods                                 # 이 노드의 파드 샌드박스
+sudo crictl images                               # 이 노드에 캐시된 이미지
+sudo crictl inspect <컨테이너-ID>                # 컨테이너 상태 전체 (JSON)
+```
+
+레슨: [노드 NotReady와 구성요소 장애 (CKA)](./cert/node-troubleshoot.mdx) · [쿠버네티스를 위한 리눅스 기초](./basic/linux-basics.mdx) · [사설 레지스트리에서 이미지 받기](./k8s/private-registry.mdx)
+
+## 리눅스와 네트워크 도구
+
+```bash
+ss -tlnp                                         # 열려 있는 TCP 포트와 그 포트를 잡은 프로세스
+ip addr                                          # 인터페이스와 IP 주소
+ip route                                         # default via <게이트웨이>: 다른 서브넷으로 가는 길
+dig +short <도메인>                              # 이름을 IP 주소로
+dig @8.8.8.8 <도메인> +short                     # 특정 리졸버에 묻기
+dig +trace <도메인>                              # 루트 → TLD → 권한 서버를 직접 따라가기
+nc -zv <호스트> 443                              # 포트에 닿나?
+curl -v http://<호스트>:8080/                    # "Connected to"인지 "Connection refused"인지 타임아웃인지
+curl -sI https://<도메인>/                       # 응답 헤더만
+curl -s -o /dev/null -w '%{http_code} %{time_total}s\n' https://<도메인>/   # 상태 코드와 총 시간
+openssl s_client -connect <도메인>:443 -servername <도메인> </dev/null 2>/dev/null | openssl x509 -noout -subject -issuer -dates   # 인증서 이름, 발급자, 유효 기간
+openssl s_client -connect <도메인>:443 -servername <도메인> -showcerts </dev/null   # 서버가 보내는 인증서 체인
+```
+
+레슨: [쿠버네티스를 위한 리눅스 기초](./basic/linux-basics.mdx) · [요청 한 번의 아래층: TCP/IP 계층](./basic/tcp-ip-layers.mdx) · [DNS가 주소를 찾아가는 길](./basic/dns-resolution.mdx) · [주소창에 주소를 입력하면](./basic/web-request.mdx) · [HTTPS와 인증서](./basic/https-cert.mdx)
+
+## 클라우드 CLI 기초
+
+```bash
+aws sts get-caller-identity                      # AWS: 나는 어느 계정의 누구인가?
+aws configure sso                                # AWS: SSO 프로필 설정
+aws sso login --profile <프로필>                 # AWS: 브라우저로 로그인
+aws eks update-kubeconfig --name <클러스터> --region <리전>   # AWS: EKS 클러스터를 kubeconfig에 추가
+gcloud auth list                                 # 구글 클라우드: 활성 계정
+gcloud container clusters get-credentials <클러스터> --region <리전>   # 구글 클라우드: GKE 클러스터 추가
+az account show                                  # 애저: 현재 구독과 사용자
+az aks get-credentials --resource-group <리소스-그룹> --name <클러스터>   # 애저: AKS 클러스터 추가
+```
+
+레슨: [API 요청 하나의 권한 검사 (IAM)](./cloud/iam-request.mdx) · [사람을 위한 싱글 사인온 (SSO와 페더레이션)](./cloud/sso-federation.mdx) · [관리형 쿠버네티스 — 누가 무엇을 운영하나](./cloud/managed-kubernetes.mdx)
+
+## 시험용 속도 팁
+
+```bash
+alias k=kubectl                                  # 짧게 치기
+source <(kubectl completion bash)                # 탭 자동 완성 (두 줄 모두 ~/.bashrc에)
+complete -o default -F __start_kubectl k         # 별칭에도 자동 완성
+export do="--dry-run=client -o yaml"             # 이후: k create deploy web --image=nginx $do > web.yaml
+k config set-context --current --namespace=<네임스페이스>   # 명령마다 -n을 치지 않게
+k explain pod.spec --recursive | less            # 경로 아래 모든 필드 이름, 웹 검색 없이
+k get pods -o wide                               # 노드와 IP를 한눈에
+k get pods --sort-by=.metadata.creationTimestamp # 최신이 맨 아래
+k get pods --sort-by='.status.containerStatuses[0].restartCount'   # 많이 재시작한 파드가 맨 아래
+```
+
+매니페스트를 처음부터 치지 말고 `$do`로 YAML을 만들어 고친다. 문제마다 시작할 때 지금 어느 컨텍스트, 어느 네임스페이스인지 먼저 확인한다.
+
+레슨: [노트북에 실습 클러스터 만들기](./basic/lab-cluster.mdx) · [학습 경로와 자격증](./roadmap.mdx)
+
+더 읽을거리: [kubectl 빠른 참조](https://kubernetes.io/ko/docs/reference/kubectl/cheatsheet/) · [kubectl 레퍼런스](https://kubernetes.io/docs/reference/kubectl/generated/) · [Helm 명령어](https://helm.sh/docs/helm/) · [crictl로 노드 디버깅하기](https://kubernetes.io/docs/tasks/debug/debug-cluster/crictl/)

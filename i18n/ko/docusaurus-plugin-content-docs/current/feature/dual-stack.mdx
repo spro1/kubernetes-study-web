@@ -1,0 +1,237 @@
+---
+id: dual-stack
+title: IPv4/IPv6 듀얼 스택 네트워킹
+sidebar_label: 06 · IPv4/IPv6 듀얼 스택
+description: 쿠버네티스 IPv4/IPv6 듀얼 스택을 파드·서비스 CIDR 두 개와 듀얼 스택 CNI부터 status.podIPs, 서비스 ipFamilyPolicy·ipFamilies, A·AAAA 레코드, 해피 아이볼, IPv6 전용 이그레스, 흔한 앱 실수까지 애니메이션으로 본다
+summary: '왜 IPv6인지, 듀얼 스택에 클러스터가 무엇을 갖춰야 하는지, 파드와 서비스가 주소를 둘 받는 방식, 가장 먼저 터지는 앱 버그.'
+icon: split
+hide_table_of_contents: true
+---
+
+# IPv4/IPv6 듀얼 스택 네트워킹
+
+IPv4와 IPv6 주소를 함께 나눠 주는 클러스터다. 컨트롤 플레인, CNI, 서비스, DNS가 각각 두 번째 주소 체계를 어떻게 얻는지, 애플리케이션은 어디서 걸려 넘어지는지 따라간다. 아래층 이야기는 [요청 한 번의 아래층: TCP/IP 계층](../basic/tcp-ip-layers.mdx)에 있다.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '약 12분', level: '심화'}}
+  groups={[
+    {label: '듀얼 스택 클러스터', x: 20, y: 30, w: 700, h: 400, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'api', label: 'API 서버', sub: '서비스 CIDR 2개', icon: 'server', tone: 'cp', x: 110, y: 100, show: true},
+    {id: 'kcm', label: '컨트롤러 매니저', sub: '파드 CIDR 2개', icon: 'gear', tone: 'cp', x: 110, y: 230, show: true},
+    {id: 'cni', label: 'CNI 플러그인', sub: '듀얼 스택 IPAM', icon: 'layers', tone: 'node', x: 110, y: 360},
+    {id: 'svc', label: '서비스', sub: 'ipFamilyPolicy', icon: 'target', tone: 'cp', x: 380, y: 100},
+    {id: 'pod', label: 'web 파드', sub: 'status.podIPs', icon: 'pod', tone: 'app', x: 380, y: 230},
+    {id: 'dns', label: 'CoreDNS', sub: 'A + AAAA', icon: 'book', tone: 'cp', x: 380, y: 360},
+    {id: 'client', label: '클라이언트 파드', sub: '해피 아이볼', icon: 'pod', tone: 'app', x: 610, y: 230},
+    {id: 'user', label: 'IPv6 사용자', sub: '인터넷', icon: 'browser', tone: 'ext', x: 870, y: 100},
+    {id: 'lb', label: '클라우드 LB', sub: 'IPv4 + IPv6', icon: 'split', tone: 'ext', x: 870, y: 230},
+    {id: 'v4', label: 'IPv4 전용 API', sub: '클러스터 밖', icon: 'server', tone: 'ext', x: 870, y: 360},
+  ]}
+  metrics={[
+    {id: 'pod', label: '파드 IP'},
+    {id: 'svc', label: '서비스 IP'},
+    {id: 'dns', label: 'DNS 응답'},
+    {id: 'conn', label: '연결'},
+  ]}
+  learn={[
+    {text: '클러스터가 IPv6로 옮겨 가는 이유', at: 0},
+    {text: 'CIDR 두 개가 필요한 구성 요소와 CNI가 중요한 이유', at: 1},
+    {text: '서비스의 ipFamilyPolicy와 ipFamilies', at: 4},
+    {text: 'A·AAAA 레코드와 클라이언트의 해피 아이볼', at: 5},
+    {text: 'IPv6 이그레스, IPv6 전용 클러스터, 로드 밸런서', at: 7},
+    {text: '앱 버그: IPv4만 듣는 리스너와 하드코딩된 주소 파싱', at: 8},
+  ]}
+  steps={[
+    {
+      short: '왜 IPv6',
+      kind: '시작',
+      title: '큰 클러스터는 IPv4 주소가 모자란다',
+      text: [
+        '공인 IPv4 주소는 바닥났고, 규모가 커지면 사설 대역도 모자란다. 노드마다 파드 서브넷 하나(IPv4 기본값은 /24)를 통째로 가져가므로, 노드 수백 대면 큰 사설 대역도 금방 찬다. 그 대역은 회사 네트워크와도 겹치면 안 된다.',
+        'IPv6는 넉넉하다. 노드마다 기본으로 /64를 받는데, 노드가 쓸 일이 없을 만큼 많은 주소다. 듀얼 스택을 쓰면 IPv4만 아는 것들은 그대로 두고 IPv6를 더할 수 있다.',
+      ],
+      focus: ['pod'],
+      values: {pod: '10.244.1.7', svc: '10.96.0.0/16 만', dns: 'A', conn: 'IPv4'},
+    },
+    {
+      short: 'CIDR 두 개',
+      kind: '원리',
+      title: '컨트롤 플레인은 주소 체계마다 대역을 하나씩 받는다',
+      text: [
+        '듀얼 스택은 쿠버네티스 1.23부터 안정 기능이다. kube-apiserver의 --service-cluster-ip-range에 IPv4 CIDR과 IPv6 CIDR을 쉼표로 이어 준다. kube-controller-manager는 파드용 --cluster-cidr와 --service-cluster-ip-range를 받고, 노드마다 주소 체계별로 파드 CIDR을 하나씩 나눠 준다.',
+        'kube-proxy의 --cluster-cidr에도 두 대역이 필요하다. 베어메탈에서는 kubelet의 --node-ip에 노드 주소 둘을 준다. 관리형 클러스터에서는 보통 클러스터나 서브넷을 만들 때 듀얼 스택을 고른다.',
+      ],
+      keyIdea: '먼저 적은 대역이 서비스의 기본 주소 체계가 된다. 순서를 일부러 정한다.',
+      flows: [
+        {from: 'kcm', to: 'cni', label: 'podCIDRs ×2', type: 'request'},
+      ],
+      focus: ['api', 'kcm'],
+      badges: {api: 'v4,v6', kcm: 'v4,v6'},
+    },
+    {
+      short: '파드 IP 두 개',
+      kind: '원리',
+      title: '듀얼 스택 CNI가 파드마다 주소 둘을 준다',
+      text: [
+        'CNI 플러그인이 듀얼 스택을 지원해야 한다. 파드마다 IPv4 주소 하나와 IPv6 주소 하나를 주고 두 경로를 다 잡는다. CNI가 IPv4만 한다면 위의 IPv6 설정은 파드에 아무 효과가 없다.',
+        '파드의 status.podIPs에 둘 다 나온다. 예전 필드인 status.podIP에는 첫 번째 주소만 있다. 이 필드만 읽는 도구는 두 번째 주소 체계를 놓친다.',
+      ],
+      flows: [{from: 'cni', to: 'pod', label: 'IPv4 + IPv6', type: 'request'}],
+      focus: ['cni', 'pod'],
+      badges: {api: null, kcm: null, pod: 'IP 두 개'},
+      values: {pod: {text: '10.244.1.7 · fd00:10:244:1::7', tone: 'good'}},
+    },
+    {
+      short: 'SingleStack',
+      kind: '원리',
+      title: '서비스는 요청하지 않으면 단일 스택이다',
+      text: [
+        '서비스에 ipFamilyPolicy가 없으면 쿠버네티스는 SingleStack으로 두고, 첫 번째 서비스 대역에서 ClusterIP 하나를 준다. 기존 서비스는 예전과 똑같이 동작한다.',
+        '그래서 듀얼 스택을 켠다고 앱이 저절로 바뀌지는 않는다. 서비스마다 직접 선택한다.',
+      ],
+      flows: [{from: 'svc', to: 'pod', label: 'IPv4 만', type: 'request'}],
+      focus: ['svc'],
+      badges: {pod: null, svc: 'SingleStack'},
+      values: {svc: '10.96.12.5'},
+    },
+    {
+      short: '듀얼 서비스',
+      kind: '원리',
+      title: 'PreferDualStack·RequireDualStack과 ipFamilies 순서',
+      text: [
+        'PreferDualStack은 클러스터가 두 주소 체계를 가지면 둘 다 받고, 아니면 하나로 물러선다. RequireDualStack은 듀얼 스택이 아닌 클러스터에서 생성이 실패한다. 이때 spec.clusterIPs에 주소 둘이 들어간다.',
+        'ipFamilies가 순서를 정한다. 예를 들어 [IPv6, IPv4]다. 첫 번째가 기본 주소 체계이고 예전 필드 spec.clusterIP를 채운다. 두 번째 주소 체계는 나중에 더하거나 뺄 수 있지만, 기존 서비스의 기본 주소 체계는 바꿀 수 없다.',
+      ],
+      keyIdea: '기본 주소 체계를 뒤집으려면 서비스를 새로 만든다. SingleStack을 PreferDualStack으로 바꾸면 두 번째 주소만 더해진다.',
+      flows: [{from: 'svc', to: 'pod', label: 'IPv4 + IPv6', type: 'request'}],
+      focus: ['svc'],
+      badges: {svc: 'PreferDualStack'},
+      values: {svc: {text: '10.96.12.5 · fd00:10:96::c', tone: 'good'}},
+    },
+    {
+      short: 'A + AAAA',
+      kind: '원리',
+      title: 'DNS가 두 종류의 레코드로 답한다',
+      text: [
+        '듀얼 스택 서비스라면 클러스터 DNS는 web.shop.svc.cluster.local에 A 레코드(IPv4)와 AAAA 레코드(IPv6)를 함께 돌려준다. 단일 스택 서비스에는 둘 중 하나만 있다.',
+        '클라이언트 리졸버는 둘 다 묻고 답 두 개를 받는다. 어느 쪽을 쓸지는 쿠버네티스가 아니라 클라이언트 라이브러리가 정한다.',
+      ],
+      flows: [
+        {from: 'client', to: 'dns', label: 'A? AAAA?', type: 'request'},
+        {from: 'dns', to: 'client', label: '둘 다', type: 'response'},
+      ],
+      focus: ['dns', 'client'],
+      values: {dns: {text: 'A + AAAA', tone: 'good'}},
+    },
+    {
+      short: '해피 아이볼',
+      kind: '원리',
+      title: '좋은 클라이언트는 두 주소 체계를 경주시킨다',
+      text: [
+        '해피 아이볼(RFC 8305)은 한 주소 체계(보통 IPv6)로 먼저 시작하고, 느리면 잠시 뒤 다른 쪽도 시도한다. 먼저 성공한 연결을 쓴다.',
+        '모든 클라이언트가 이렇게 하지는 않는다. 첫 주소만 시도하다가 그 경로가 망가져 있으면 타임아웃까지 기다리는 클라이언트도 있다. 그러면 요청이 가끔 이유 없이 느린 것처럼 보인다.',
+      ],
+      keyIdea: '듀얼 스택 서비스가 일부 클라이언트에서만 느리면 주소 체계를 하나씩 따로 시험한다. curl -4와 curl -6이다.',
+      flows: [{from: 'client', to: 'svc', label: 'IPv6 먼저', type: 'request'}],
+      focus: ['client'],
+      values: {conn: {text: 'IPv6 · IPv4로 대체', tone: 'good'}},
+    },
+    {
+      short: '경계',
+      kind: '주의',
+      title: 'IPv6 이그레스, IPv6 전용 클러스터, 클라우드 로드 밸런서',
+      text: [
+        '라우팅되지 않는 IPv6 주소를 가진 파드는 IPv4 때처럼 IP 마스커레이드나 프록시가 있어야 IPv6로 인터넷에 닿는다. IPv6 전용 클러스터에서 IPv4 전용 API에 닿으려면 DNS64와 함께 NAT64 같은 것도 필요하다.',
+        'PreferDualStack이나 RequireDualStack인 LoadBalancer 서비스는 클라우드 제공자가 듀얼 스택 로드 밸런서를 지원해야 공인 주소 둘을 받는다.',
+      ],
+      keyIdea: 'IPv6에 기대기 전에 CNI, 클라우드 LB, 이그레스 경로가 모두 IPv6를 지원하는지 확인한다.',
+      flows: [
+        {from: 'user', to: 'lb', label: 'IPv6', type: 'request'},
+        {from: 'lb', to: 'svc', type: 'request'},
+        {from: 'client', to: 'v4', label: 'NAT64 필요', type: 'request'},
+      ],
+      focus: ['lb', 'v4'],
+      status: {v4: 'warn'},
+    },
+    {
+      short: '0.0.0.0 바인드',
+      kind: '문제',
+      title: '앱이 IPv4에서만 듣는다',
+      text: [
+        'web 컨테이너가 0.0.0.0:8080에 바인드한다. 모든 IPv4 주소라는 뜻이고 IPv6는 없다. 파드의 IPv6 주소로 온 연결은 거부되고 IPv4는 된다. 그래서 일부 클라이언트에서만 버그가 보인다.',
+        '대신 [::]에 바인드한다. 리눅스에서 [::]의 IPv6 소켓은 앱이나 시스템이 IPV6_V6ONLY를 켜지 않는 한 보통 IPv4도 함께 받는다(IPv4 매핑 주소로).',
+      ],
+      flows: [{from: 'client', to: 'pod', label: 'IPv6 거부', type: 'request'}],
+      focus: ['pod'],
+      status: {pod: 'error', v4: null},
+      badges: {pod: '0.0.0.0 만'},
+      values: {conn: {text: 'IPv6 거부', tone: 'bad'}},
+    },
+    {
+      short: 'IPv4 파싱',
+      kind: '문제',
+      title: '주소가 IPv4 모양이라고 가정한 코드',
+      text: [
+        'host:port를 첫 콜론에서 자르는 코드, 점으로 나뉜 숫자 넷을 찾는 정규식, 15자 크기의 DB 컬럼은 fd00:10:244:1::7 앞에서 모두 깨진다. URL과 host:port 문자열의 IPv6 주소는 [fd00::7]:8080처럼 대괄호로 감싸야 한다.',
+        '클라이언트 IP를 키로 쓰는 로그, 허용 목록, 요청 수 제한기도 같은 수정이 필요하다. 아니면 IPv6 클라이언트가 한 칸에 몰리거나 거부된다.',
+      ],
+      keyIdea: '문자열 요령 대신 표준 라이브러리로 주소를 나누고 합친다(예: net.SplitHostPort, ipaddress).',
+      flows: [{from: 'client', to: 'pod', label: '[::]:8080', type: 'request'}],
+      focus: ['pod', 'client'],
+      status: {pod: 'warn'},
+      badges: {pod: '[::]에서 들음'},
+      values: {conn: 'IPv6 됨 · 파싱 버그'},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '컨트롤 플레인부터 앱까지 주소 체계 둘',
+      text: [
+        '듀얼 스택에는 API 서버와 컨트롤러 매니저의 대역 둘, 두 주소 체계를 나눠 주는 CNI, ipFamilyPolicy로 직접 선택하는 서비스가 필요하다. 그러면 DNS가 A와 AAAA를 돌려주고 클라이언트가 고른다.',
+        '대부분의 고장은 앱이나 경계에서 난다. IPv4에서만 듣는 리스너, IPv4 문자열 파싱, IPv6가 없는 로드 밸런서나 이그레스 경로다.',
+      ],
+      keyIdea: '파드의 status.podIPs와 서비스의 spec.clusterIPs·spec.ipFamilies를 읽으면 실제로 쓰는 주소 체계를 알 수 있다.',
+      flows: [
+        {from: 'client', to: 'svc', label: 'IPv6', type: 'request'},
+        {from: 'svc', to: 'pod', type: 'request'},
+      ],
+      focus: ['api', 'cni', 'svc'],
+      status: {pod: 'ok', v4: null},
+      badges: {pod: null, svc: null},
+      values: {conn: {text: 'IPv4 + IPv6', tone: 'good'}},
+    },
+  ]}
+/>
+
+## 서비스 ipFamilyPolicy
+
+| ipFamilyPolicy | ClusterIPs | 단일 스택 클러스터에서 | 흔한 용도 |
+| --- | --- | --- | --- |
+| SingleStack (기본값) | 첫 번째 서비스 대역이나 `ipFamilies`의 주소 체계에서 하나 | 동작함 | 기존 서비스, 아직 IPv6로 시험하지 않은 앱 |
+| PreferDualStack | 클러스터가 듀얼 스택이면 둘 | 하나로 물러섬 | 앱이 두 주소 체계에서 다 들은 뒤의 대부분의 서비스 |
+| RequireDualStack | 항상 둘 | 생성 실패 | 두 주소 체계 모두로 닿아야 하는 서비스 |
+
+셀렉터가 없는 헤드리스 서비스에서 `ipFamilyPolicy`를 정하지 않으면 기본값은 RequireDualStack이다. `ipFamilies`의 첫 항목이 기본 주소 체계이고, 기존 서비스에서는 바꿀 수 없다.
+
+## 직접 확인해 보기
+
+```bash
+kubectl get nodes -o jsonpath='{range .items[*]}{.metadata.name}{"  "}{.spec.podCIDRs}{"\n"}{end}'   # 주소 체계마다 파드 CIDR 하나
+kubectl get pod <pod> -o jsonpath='{.status.podIPs}'                       # 듀얼 스택이면 항목 둘
+kubectl get svc <svc> -o jsonpath='{.spec.ipFamilyPolicy} {.spec.ipFamilies} {.spec.clusterIPs}'
+kubectl patch svc <svc> -p '{"spec":{"ipFamilyPolicy":"PreferDualStack"}}'   # 두 번째 주소 체계를 그 자리에서 더한다
+kubectl run dns-test --rm -it --image=busybox:1.36 --restart=Never -- nslookup -type=AAAA <svc>.<namespace>.svc.cluster.local
+kubectl exec <pod> -- ss -ltn       # 이미지에 ss가 있으면: 0.0.0.0:8080 = IPv4 만, [::]:8080 = IPv6 도
+```
+
+<Quiz questions={[
+  {q: '클러스터에 듀얼 스택을 켰는데 기존 서비스에는 여전히 IPv4 ClusterIP 하나뿐이다. 왜인가?', options: ['ipFamilyPolicy가 없는 서비스는 SingleStack으로 남아 ClusterIP 하나를 유지한다', 'CNI가 아직 재시작되지 않았다', '서비스는 IPv6 주소를 가질 수 없다'], answer: 0, why: '듀얼 스택은 서비스마다 직접 선택한다. 기본값은 첫 번째 서비스 대역의 SingleStack이다. ipFamilyPolicy를 PreferDualStack이나 RequireDualStack으로 바꾸면 두 번째 주소가 더해진다.'},
+  {q: 'IPv4 클라이언트는 듀얼 스택 서비스에 잘 닿는데 IPv6 클라이언트는 연결 거부를 받는다. 가장 그럴듯한 원인은?', options: ['CoreDNS가 AAAA 레코드를 돌려주지 않는다', 'ipFamilies의 기본 주소 체계가 틀렸다', '클라우드 로드 밸런서가 IPv4 전용이다', '앱이 IPv4에서만 듣는 0.0.0.0에 바인드했다'], answer: 3, why: '연결 거부는 패킷이 파드에 닿았지만 IPv6에서 듣는 것이 없다는 뜻이다. [::]에 바인드하면 앱이 IPv6를 받는다(리눅스에서는 보통 IPv4도).'},
+  {q: '기존 서비스를 ipFamilies [IPv6, IPv4]인 IPv6 기본으로 바꾸고 싶다. 무엇이 통하나?', options: ['ipFamilies 순서를 그 자리에서 바꾼다', 'ipFamilies [IPv6, IPv4]로 서비스를 새로 만든다', 'ipFamilyPolicy를 RequireDualStack으로 바꾼다'], answer: 1, why: '두 번째 주소 체계는 더하거나 뺄 수 있지만, 기존 서비스의 기본 주소 체계는 바꿀 수 없다. 새 서비스가 필요하다.'},
+]} />
+
+더 읽을거리: [IPv4/IPv6 듀얼 스택](https://kubernetes.io/docs/concepts/services-networking/dual-stack/) · [IPv4/IPv6 듀얼 스택 검증](https://kubernetes.io/docs/tasks/network/validate-dual-stack/) · [RFC 8305 Happy Eyeballs v2](https://www.rfc-editor.org/rfc/rfc8305) · [서비스 종류 (ClusterIP · NodePort · LoadBalancer)](../feature/service-types.mdx) · [요청 한 번의 아래층: TCP/IP 계층](../basic/tcp-ip-layers.mdx)

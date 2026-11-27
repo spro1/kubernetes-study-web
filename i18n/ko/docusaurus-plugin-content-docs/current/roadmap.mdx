@@ -179,7 +179,9 @@ displayed_sidebar: lessons
 **Storage: 10%**
 - [저장 공간이 붙기까지 (PVC·PV)](./k8s/storage-volume.mdx), [볼륨이 붙는 시점과 장애](./advanced/volume-binding.mdx): 스토리지 클래스, 동적 프로비저닝, PV와 PVC.
 
-**여기서 다루지 않는 것:** `kubeadm init`과 `kubeadm join`으로 새 클러스터 만들기, 설치 전 기반 준비(컨테이너 런타임, 커널 모듈, 스왑), 설치할 수 있는 인터페이스로서의 CNI·CSI·CRI, 회수 정책(접근 모드는 잠깐만 나온다).
+**함께 볼 레슨:** `kubeadm init`·`kubeadm join`으로 클러스터 만들기는 [kubeadm으로 클러스터 만들기 (CKA)](./cert/kubeadm-install.mdx), 회수 정책은 [PV 생명주기와 회수 정책](./k8s/pv-lifecycle.mdx), CRI는 [노드 안에서 - kubelet, CRI, containerd](./advanced/kubelet-cri.mdx)에서 다룬다.
+
+**여기서 다루지 않는 것:** 설치할 수 있는 인터페이스로서의 CNI·CSI(접근 모드는 잠깐만 나온다).
 
 ### CKAD: Certified Kubernetes Application Developer
 
@@ -251,7 +253,9 @@ displayed_sidebar: lessons
 - [감사 로그](./advanced/audit-log.mdx)
 - [4C와 위협 모델로 클러스터 보기 (KCSA·KCNA)](./cert/threat-model.mdx): 공격 단계.
 
-**여기서 다루지 않는 것:** CIS 벤치마크와 kube-bench, 노드 메타데이터 엔드포인트 보호, 체크섬으로 플랫폼 바이너리 검증, 호스트 OS 줄이기, 샌드박스 런타임(gVisor, Kata), Cilium으로 하는 파드 간 암호화, 커리큘럼에 나오는 정적 분석 도구(Kubesec, KubeLinter).
+**함께 볼 레슨:** [CIS 쿠버네티스 벤치마크와 kube-bench (CKS)](./cert/cis-benchmark.mdx), [샌드박스 컨테이너 런타임 — gVisor, Kata, RuntimeClass (CKS)](./cert/sandbox-runtime.mdx).
+
+**여기서 다루지 않는 것:** 노드 메타데이터 엔드포인트 보호, 체크섬으로 플랫폼 바이너리 검증, 호스트 OS 줄이기, Cilium으로 하는 파드 간 암호화, 커리큘럼에 나오는 정적 분석 도구(Kubesec, KubeLinter).
 
 ## 공부하는 방법
 

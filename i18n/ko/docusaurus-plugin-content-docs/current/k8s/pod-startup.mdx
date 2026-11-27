@@ -102,7 +102,7 @@ hide_table_of_contents: true
       keyIdea: '스케줄러는 노드를 고르기만 하고 실행은 하지 않는다. 실행은 그 노드의 kubelet이 맡는다.',
       changes: ['파드에 node-2 배정'],
       flows: [
-        {from: 'api', to: 'sched', label: '미배정 파드 감지', type: 'watch'},
+        {from: 'api', to: 'sched', label: '미배정 파드 감지', type: 'watch', bend: 0.3},
         {from: 'sched', to: 'api', label: 'bind → node-2', type: 'request', bend: 0.12},
       ],
       focus: ['sched'],
@@ -133,7 +133,7 @@ hide_table_of_contents: true
       ],
       keyIdea: '폐쇄망에서는 외부 저장소에 닿지 못한다. 그래서 사내 저장소(Harbor 등)에 이미지를 미리 올려 두어야 한다.',
       flows: [
-        {from: 'runtime', to: 'registry', label: '이미지 요청', type: 'request'},
+        {from: 'runtime', to: 'registry', label: '이미지 요청', type: 'request', bend: 0.3},
         {from: 'registry', to: 'runtime', type: 'response'},
       ],
       focus: ['registry'],

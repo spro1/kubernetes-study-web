@@ -177,7 +177,7 @@ A managed database hands the engine, the OS and the hardware to the cloud provid
       ],
       keyIdea: 'Watch DatabaseConnections against max_connections. Size app pools as replicas × pool size, not per Pod.',
       flows: [
-        {from: 'app', to: 'proxy', label: '1,000 clients', type: 'request'},
+        {from: 'app', to: 'proxy', label: '1,000 clients', type: 'request', bend: 0.3},
         {from: 'proxy', to: 'standby', label: '100 server', type: 'request'},
       ],
       focus: ['proxy', 'app'],

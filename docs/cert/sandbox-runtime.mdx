@@ -1,0 +1,282 @@
+---
+id: sandbox-runtime
+title: Sandboxed container runtimes — gVisor, Kata and RuntimeClass (CKS)
+sidebar_label: 11 · Sandboxed runtimes
+description: Follow an animation of why a kernel exploit escapes a normal container, how gVisor (runsc) and Kata Containers put a kernel between the Pod and the host, and how RuntimeClass handlers, runtimeClassName, scheduling and overhead pick the runtime per Pod
+summary: 'Why a shared kernel is the weak spot, how gVisor and Kata add a second kernel, and how RuntimeClass chooses the runtime per Pod.'
+icon: shield
+hide_table_of_contents: true
+---
+
+# Sandboxed container runtimes — gVisor, Kata and RuntimeClass (CKS)
+
+This covers "Understand and implement isolation techniques (multi-tenancy, sandboxed containers, etc.)" in the CKS Minimize Microservice Vulnerabilities domain. We run one untrusted Pod on a normal runtime, see why that is risky, and move it to a sandbox with a RuntimeClass.
+
+How namespaces and cgroups isolate a container is in [How Linux Isolates a Container](../basic/linux-isolation.mdx), and seccomp, AppArmor and Falco are in [Runtime security — catching abnormal behavior (CKS)](./runtime-security.mdx). Here we look at what changes when the kernel itself is no longer shared.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~12 min', level: 'Advanced'}}
+  groups={[
+    {label: 'Node · containerd', x: 240, y: 40, w: 740, h: 390, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'rc', label: 'RuntimeClass', sub: 'gvisor → runsc', icon: 'ticket', tone: 'store', x: 110, y: 110, w: 160},
+    {id: 'sched', label: 'Scheduler', sub: 'nodeSelector', icon: 'target', tone: 'cp', x: 110, y: 250},
+    {id: 'dev', label: 'Developer', sub: 'runtimeClassName', icon: 'user', tone: 'ext', x: 110, y: 380, show: true},
+    {id: 'pod', label: 'Pod (runc)', sub: 'untrusted code', icon: 'pod', tone: 'app', x: 340, y: 110, show: true},
+    {id: 'gpod', label: 'Pod (gVisor)', sub: 'runtimeClassName', icon: 'pod', tone: 'app', x: 580, y: 110},
+    {id: 'kpod', label: 'Pod (Kata)', sub: 'runtimeClassName', icon: 'pod', tone: 'app', x: 830, y: 110},
+    {id: 'runc', label: 'runc', sub: 'default handler', icon: 'box', tone: 'node', x: 340, y: 240, show: true},
+    {id: 'sentry', label: 'gVisor Sentry', sub: 'user-space kernel', icon: 'shield', tone: 'node', x: 580, y: 240, w: 160},
+    {id: 'vm', label: 'Kata VM', sub: 'guest kernel', icon: 'layers', tone: 'node', x: 830, y: 240, w: 160},
+    {id: 'ctrd', label: 'containerd', sub: 'runtime handlers', icon: 'gear', tone: 'cp', x: 340, y: 370},
+    {id: 'kernel', label: 'Host kernel', sub: 'one per node', icon: 'server', tone: 'node', x: 690, y: 370, w: 420, show: true},
+  ]}
+  metrics={[
+    {id: 'runtime', label: 'Runtime'},
+    {id: 'boundary', label: 'Boundary to host'},
+    {id: 'pod', label: 'Pod'},
+  ]}
+  learn={[
+    {text: 'Why a kernel exploit escapes a normal container', at: 1},
+    {text: 'How gVisor and Kata put another kernel in front of the host', at: 2},
+    {text: 'Handlers in containerd, RuntimeClass and runtimeClassName', at: 4},
+    {text: 'What happens when a node lacks the handler, and how scheduling avoids it', at: 6},
+    {text: 'Overhead and the trade-offs of sandboxing', at: 8},
+  ]}
+  steps={[
+    {
+      short: 'Start',
+      kind: '시작',
+      title: 'A container is a process on the shared kernel',
+      text: [
+        'A team runs user-submitted code in a Pod. With the default runtime, runc, the container is an ordinary host process. Namespaces limit what it sees and cgroups limit what it uses.',
+        'Every system call it makes goes straight to the host kernel. That kernel is shared by every Pod on the node and by the node itself.',
+      ],
+      flows: [
+        {from: 'pod', to: 'runc', label: 'started by', type: 'watch'},
+        {from: 'pod', to: 'kernel', label: 'syscalls', type: 'request', bend: -60},
+      ],
+      focus: ['pod', 'kernel'],
+      values: {runtime: 'runc', boundary: 'namespaces · cgroups', pod: 'Running'},
+    },
+    {
+      short: 'Kernel bug',
+      kind: '문제',
+      title: 'One kernel bug and the container is out',
+      text: [
+        'The code calls a system call with a known kernel vulnerability. The exploit runs in the host kernel, so namespaces no longer matter: the attacker gets host privileges and can reach the other Pods on the node.',
+        'seccomp and AppArmor shrink what the container may call, which blocks many such exploits. But whatever is still allowed reaches the same host kernel.',
+      ],
+      keyIdea: 'The shared kernel is the boundary. For code you do not trust, you want a second kernel between the code and the host.',
+      flows: [{from: 'pod', to: 'kernel', label: 'exploit', type: 'request', bend: -60}],
+      focus: ['pod', 'kernel'],
+      status: {pod: 'error', kernel: 'error'},
+      badges: {kernel: 'escaped'},
+      values: {boundary: {text: 'host kernel only', tone: 'bad'}},
+    },
+    {
+      short: 'gVisor',
+      kind: '원리',
+      title: 'gVisor: a kernel written in user space',
+      text: [
+        'gVisor runs containers with its runtime runsc. Its Sentry is an application kernel that implements Linux system calls in user space. The app\'s system calls go to the Sentry, not to the host.',
+        'The Sentry itself uses only a small, filtered set of host system calls. A bug in the app\'s view of the kernel is a bug in the Sentry, so the host kernel is much harder to reach.',
+      ],
+      flows: [
+        {from: 'gpod', to: 'sentry', label: 'syscalls', type: 'request'},
+        {from: 'sentry', to: 'kernel', label: 'few, filtered', type: 'request'},
+      ],
+      focus: ['gpod', 'sentry'],
+      status: {pod: null, kernel: null, sentry: 'ok'},
+      badges: {kernel: null, sentry: 'runsc'},
+      values: {runtime: 'runsc', boundary: {text: 'Sentry, then host', tone: 'good'}},
+    },
+    {
+      short: 'Kata',
+      kind: '원리',
+      title: 'Kata Containers: a lightweight VM per Pod',
+      text: [
+        'Kata Containers starts a small virtual machine for each Pod, with its own guest kernel. The containers run inside it, and hardware virtualization separates it from the host.',
+        'An exploit now hits the guest kernel and stays inside the VM. The node needs virtualization support, so on cloud VMs that usually means nested virtualization or bare-metal nodes.',
+      ],
+      flows: [
+        {from: 'kpod', to: 'vm', label: 'syscalls', type: 'request'},
+        {from: 'vm', to: 'kernel', label: 'hypervisor', type: 'request'},
+      ],
+      focus: ['kpod', 'vm'],
+      status: {vm: 'ok'},
+      badges: {vm: 'kata'},
+      values: {runtime: 'kata', boundary: {text: 'guest kernel + VM', tone: 'good'}},
+    },
+    {
+      short: 'Handlers',
+      kind: '원리',
+      title: 'containerd knows each runtime by a handler name',
+      text: [
+        'On the node, each runtime is an entry under the CRI runtimes section of /etc/containerd/config.toml, for example runtimes.runsc with runtime_type io.containerd.runsc.v1, and runtimes.kata with io.containerd.kata.v2. runc is the default.',
+        'The entry name, runsc or kata here, is the handler. It must be a valid DNS label, and it is the only link between Kubernetes and the runtime on that node.',
+      ],
+      changes: ['+ runtimes.runsc', '+ runtimes.kata', '~ restart containerd'],
+      flows: [
+        {from: 'ctrd', to: 'runc', label: 'runc', type: 'request'},
+        {from: 'ctrd', to: 'sentry', label: 'runsc', type: 'request'},
+        {from: 'ctrd', to: 'vm', label: 'kata', type: 'request', bend: 40},
+      ],
+      focus: ['ctrd'],
+      badges: {ctrd: 'runc · runsc · kata'},
+    },
+    {
+      short: 'RuntimeClass',
+      kind: '원리',
+      title: 'RuntimeClass maps a name to a handler, and the Pod picks it',
+      text: [
+        'A RuntimeClass is a cluster-scoped object in node.k8s.io/v1 with a name (gvisor) and a handler (runsc). Only cluster admins should be able to create or change one.',
+        'The developer sets spec.runtimeClassName: gvisor in the Pod. The kubelet passes handler runsc to containerd, which starts the Pod sandbox with runsc. Pods without runtimeClassName keep the default runtime.',
+      ],
+      flows: [
+        {from: 'dev', to: 'rc', label: 'runtimeClassName', type: 'request'},
+        {from: 'rc', to: 'gpod', label: 'handler runsc', type: 'request', bend: -30},
+      ],
+      focus: ['rc', 'gpod'],
+      values: {pod: 'Running in gVisor'},
+    },
+    {
+      short: 'No handler',
+      kind: '장애',
+      title: 'On a node without the handler, the Pod never runs',
+      text: [
+        'Only some nodes have runsc installed. A gvisor Pod lands on a node without it. containerd cannot find the handler, and the Pod events show FailedCreatePodSandBox with a message like no runtime for "runsc" is configured.',
+        'A runtimeClassName that names no RuntimeClass fails earlier: the API server rejects the Pod. Either way, the error or the Pod events say which one it is.',
+      ],
+      keyIdea: 'RuntimeClass assumes every node supports the handler unless you say otherwise. On mixed nodes, tell the scheduler.',
+      flows: [{from: 'ctrd', to: 'sentry', label: 'no runsc here', type: 'request'}],
+      focus: ['gpod', 'ctrd'],
+      status: {gpod: 'error', sentry: 'off'},
+      badges: {gpod: 'FailedCreatePodSandBox'},
+      values: {pod: {text: 'no runtime for runsc', tone: 'bad'}},
+    },
+    {
+      short: 'Scheduling',
+      kind: '원리',
+      title: 'scheduling.nodeSelector sends the Pod to nodes that have it',
+      text: [
+        'Label the nodes that have runsc (for example sandbox=gvisor) and set scheduling.nodeSelector in the RuntimeClass. At admission it is merged with the Pod\'s own nodeSelector. If the two conflict, the Pod is rejected.',
+        'If those nodes are tainted to keep other Pods away, add scheduling.tolerations to the RuntimeClass. They are added to every Pod that uses it, so developers only write runtimeClassName.',
+      ],
+      flows: [
+        {from: 'rc', to: 'sched', label: 'nodeSelector', type: 'watch'},
+        {from: 'sched', to: 'gpod', label: 'sandbox=gvisor', type: 'request', bend: 30},
+      ],
+      focus: ['sched', 'rc'],
+      status: {gpod: 'ok', sentry: 'ok'},
+      badges: {gpod: null, rc: 'sandbox=gvisor'},
+      values: {pod: {text: 'Running on a gVisor node', tone: 'good'}},
+    },
+    {
+      short: 'Overhead',
+      kind: '원리',
+      title: 'overhead counts what the sandbox itself uses',
+      text: [
+        'The Sentry or the VM uses CPU and memory beyond what the containers request. RuntimeClass overhead.podFixed declares that amount, for example a little memory and CPU per Pod.',
+        'At admission it is written into the Pod\'s spec.overhead. The scheduler adds it to the container requests when it picks a node, and it also counts toward ResourceQuota and the Pod cgroup.',
+      ],
+      keyIdea: 'Without overhead, a node fills up with sandboxed Pods on paper while the real memory runs out.',
+      flows: [{from: 'rc', to: 'sched', label: 'requests + overhead', type: 'watch'}],
+      focus: ['rc', 'sched'],
+      badges: {rc: 'overhead.podFixed'},
+    },
+    {
+      short: 'Trade-offs',
+      kind: '주의',
+      title: 'Stronger isolation is not free',
+      text: [
+        'gVisor implements most, not all, of Linux. Some system calls, /proc and /sys details or kernel features behave differently, so test the app first. System-call-heavy and I/O-heavy work runs slower.',
+        'Kata adds VM start time and memory per Pod and needs virtualization on the node. GPUs need extra support (for example gVisor nvproxy for some NVIDIA GPUs, or device passthrough in Kata), and not every setup works.',
+      ],
+      keyIdea: 'Use a sandbox where the code is untrusted or tenants share nodes: CI jobs, user code, plugins. Keep trusted, performance-sensitive Pods on runc.',
+      flows: [
+        {from: 'sentry', to: 'kernel', label: 'slower syscalls', type: 'request'},
+        {from: 'vm', to: 'kernel', label: 'VM per Pod', type: 'request'},
+      ],
+      focus: ['sentry', 'vm'],
+      status: {sentry: 'warn', vm: 'warn'},
+      badges: {rc: null, ctrd: null},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Choose the boundary per Pod with RuntimeClass',
+      text: [
+        'With runc, a kernel exploit reaches the host because the kernel is shared. gVisor puts a user-space kernel in between, and Kata puts a VM with its own kernel in between.',
+        'containerd names each runtime with a handler. A RuntimeClass maps a name to that handler, adds scheduling rules and overhead, and the Pod chooses it with runtimeClassName.',
+      ],
+      keyIdea: 'When a sandboxed Pod does not start, check in order: does the RuntimeClass exist, does its handler match the containerd config on that node, and does scheduling.nodeSelector send it there.',
+      flows: [
+        {from: 'gpod', to: 'sentry', label: 'syscalls', type: 'request'},
+        {from: 'kpod', to: 'vm', label: 'syscalls', type: 'request'},
+        {from: 'pod', to: 'runc', label: 'trusted', type: 'watch'},
+      ],
+      focus: ['rc', 'sentry', 'vm'],
+      status: {sentry: null, vm: null, gpod: null},
+      badges: {sentry: null, vm: null},
+    },
+  ]}
+/>
+
+## runc, gVisor and Kata compared
+
+| | runc (default) | gVisor (runsc) | Kata Containers |
+|---|---|---|---|
+| Kernel the app talks to | Host kernel | Sentry, a user-space kernel | Guest kernel in a VM |
+| What separates it from the host | Namespaces, cgroups, seccomp, AppArmor | Sentry plus a small, filtered set of host syscalls | Hardware virtualization |
+| Typical containerd `runtime_type` | `io.containerd.runc.v2` | `io.containerd.runsc.v1` | `io.containerd.kata.v2` |
+| Node needs | Nothing extra | runsc installed | Virtualization support (KVM, nested or bare metal) |
+| Costs | Lowest | Slower syscalls and I/O, some syscalls unsupported | VM start time and memory per Pod |
+| Good for | Trusted workloads | Untrusted code with modest I/O | Untrusted or multi-tenant workloads that need full Linux behavior |
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `FailedCreatePodSandBox`: no runtime for "runsc" is configured | Node has no handler with that name | Install and configure the runtime, or use `scheduling.nodeSelector` |
+| Pod rejected at create time | RuntimeClass nodeSelector conflicts with the Pod's nodeSelector | Align the labels |
+| Pod rejected: RuntimeClass not found | Wrong `runtimeClassName` | `kubectl get runtimeclass` and fix the name |
+| Nodes run out of memory with many sandboxed Pods | No `overhead` set | Set `overhead.podFixed` in the RuntimeClass |
+| App errors only in the sandbox | Unsupported syscall or kernel feature | Test in the sandbox, or keep that app on runc |
+
+## Try it yourself
+
+```bash
+# On a node: is the handler configured?
+grep -n 'runtimes.runsc\|runtimes.kata' /etc/containerd/config.toml
+
+# A RuntimeClass that only lands on labeled nodes
+kubectl label node worker-1 sandbox=gvisor
+cat <<EOF | kubectl apply -f -
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: gvisor
+handler: runsc
+scheduling:
+  nodeSelector:
+    sandbox: gvisor
+EOF
+kubectl get runtimeclass
+
+# A Pod that uses it
+kubectl run sandboxed --image=busybox:1.36 --restart=Never \
+  --overrides='{"spec":{"runtimeClassName":"gvisor"}}' -- sleep 3600
+kubectl get pod sandboxed -o wide                     # NODE should be worker-1
+kubectl exec sandboxed -- dmesg                       # gVisor prints its own boot messages
+kubectl describe pod sandboxed | grep -A5 Events      # FailedCreatePodSandBox if the handler is missing
+```
+
+<Quiz questions={[
+  {q: 'A Pod is hardened with seccomp RuntimeDefault and AppArmor, and still runs on runc. Why can a kernel exploit through an allowed syscall still reach the host?', options: ['seccomp only applies to root containers', 'The container uses the same host kernel, so an allowed syscall that hits a bug runs in that kernel', 'AppArmor is disabled when seccomp is on'], answer: 1, why: 'seccomp and AppArmor narrow what the container may do, but whatever is allowed still runs in the shared host kernel. gVisor or Kata add a separate kernel in between.'},
+  {q: 'A Pod with runtimeClassName: gvisor shows FailedCreatePodSandBox: no runtime for "runsc" is configured. What is the best fix for a cluster where only some nodes have gVisor?', options: ['Rename the RuntimeClass to runsc', 'Remove runtimeClassName from the Pod', 'Restart the scheduler', 'Label the gVisor nodes and set scheduling.nodeSelector in the RuntimeClass'], answer: 3, why: 'Without scheduling, RuntimeClass assumes every node has the handler. A nodeSelector in the RuntimeClass is merged into each Pod that uses it, so it lands only on nodes with runsc.'},
+  {q: 'Many Kata Pods fit on a node by requests, but the node runs out of memory. What is missing?', options: ['overhead.podFixed in the RuntimeClass', 'A larger handler name', 'A ResourceQuota on the namespace', 'A PodDisruptionBudget'], answer: 0, why: 'Each VM uses memory beyond the container requests. overhead.podFixed adds that amount to the Pod, so the scheduler and quota count it.'},
+]} />
+
+Further reading: [Runtime Class](https://kubernetes.io/docs/concepts/containers/runtime-class/) · [Pod Overhead](https://kubernetes.io/docs/concepts/scheduling-eviction/pod-overhead/) · [gVisor](https://gvisor.dev/docs/) · [Kata Containers](https://katacontainers.io/) · [How Linux Isolates a Container](../basic/linux-isolation.mdx) · [Runtime security — catching abnormal behavior (CKS)](./runtime-security.mdx) · [Pod Security Standards and securityContext](../advanced/pod-security.mdx)

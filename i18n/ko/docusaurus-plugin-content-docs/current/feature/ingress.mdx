@@ -89,7 +89,7 @@ hide_table_of_contents: true
       title: '인그레스 클래스가 처리할 구현체를 고른다',
       text: [
         '한 클러스터에 입구 구현체가 여럿일 수 있다. 인그레스의 인그레스 클래스(ingressClassName) 항목이 "이 규칙은 어느 구현체가 처리하나"를 정한다.',
-        '구현체는 여러 가지다(예: ingress-nginx, Traefik, Istio). kubectl get ingressclass로 클러스터에 어떤 클래스가 있는지, 어느 것이 기본값인지 본다. 여기서는 Istio 입구가 처리한다.',
+        '구현체는 여러 가지다(예: Traefik, HAProxy, Istio). 널리 쓰이던 ingress-nginx는 2026년 3월에 지원이 끝나 더는 수정되지 않는다. 새 클러스터라면 유지보수되는 컨트롤러나 게이트웨이 API를 고른다. kubectl get ingressclass로 클러스터에 어떤 클래스가 있는지, 어느 것이 기본값인지 본다. 여기서는 Istio 입구가 처리한다.',
       ],
       flows: [{from: 'cls', to: 'ctrl', label: '처리 담당', type: 'watch'}],
       focus: ['cls', 'ctrl'],

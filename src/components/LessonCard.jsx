@@ -25,7 +25,10 @@ export function LessonGrid({children}) {
 
 export default function LessonCard({no, to, track = 'k8s', icon, title, duration, steps, level, children}) {
   const en = useDocusaurusContext().i18n.currentLocale === 'en';
-  const done = useProgress().done.has(to?.replace(/^\//, ''));
+  const progress = useProgress();
+  const id = to?.replace(/^\//, '');
+  const done = progress.done.has(id);
+  const quiz = progress.quiz[id];
   const body = (
     <>
       <div className={styles.top}>
@@ -39,7 +42,7 @@ export default function LessonCard({no, to, track = 'k8s', icon, title, duration
       <p className={styles.title}>{title}</p>
       <div className={styles.summary}>{children}</div>
       <div className={styles.meta}>
-        {[duration, steps && (en ? `${steps} steps` : `${steps}단계`), level].filter(Boolean).map((m) => (
+        {[duration, steps && (en ? `${steps} steps` : `${steps}단계`), level, quiz && `${en ? 'Quiz' : '퀴즈'} ${quiz.right}/${quiz.total}`].filter(Boolean).map((m) => (
           <span key={m}>{m}</span>
         ))}
       </div>

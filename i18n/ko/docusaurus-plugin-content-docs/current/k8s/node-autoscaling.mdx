@@ -170,7 +170,7 @@ HPA는 파드를 늘리지만, 파드가 올라갈 기계는 다른 누군가가
         'Karpenter는 karpenter.sh/do-not-disrupt: "true" 주석이 달린 파드가 있는 노드를 건너뛴다. PDB와 자기 예산도 지킨다.',
       ],
       keyIdea: '노드가 끝내 안 지워지면 오토스케일러가 아니라 그 노드의 파드를 본다. 파드 하나가 VM 하나를 통째로 붙잡을 수 있다.',
-      flows: [{from: 'pdb', to: 'n2', label: '남은 중단 없음', type: 'watch'}],
+      flows: [{from: 'pdb', to: 'n2', label: '남은 중단 없음', type: 'watch', bend: -0.3}],
       focus: ['pdb', 'n2'],
       status: {n2: 'error'},
       badges: {npool: null, n2: '드레인 불가'},

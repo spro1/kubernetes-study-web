@@ -1,0 +1,81 @@
+---
+id: ckad
+title: CKAD practice questions
+sidebar_label: CKAD
+sidebar_position: 3
+description: 25 original practice questions for the CKAD exam, grouped by its five official domains, with the reason and the command or field behind each answer.
+---
+
+# CKAD practice questions
+
+The CKAD is a 2-hour hands-on exam in a terminal, based on Kubernetes v1.37. It has five domains:
+
+| Domain | Weight | Questions here |
+| --- | --- | --- |
+| Application Environment, Configuration and Security | 25% | 6 |
+| Application Design and Build | 20% | 5 |
+| Application Deployment | 20% | 5 |
+| Services and Networking | 20% | 5 |
+| Application Observability and Maintenance | 15% | 4 |
+
+The questions are original and unofficial, not taken from the real exam. Domains and weights come from the official curriculum, as listed on [Learning paths & certifications](../roadmap.mdx). The real exam asks you to write and fix manifests, so practice the commands in the [Hands-on labs](../labs/index.mdx).
+
+## Application Environment, Configuration and Security (25%)
+
+<Quiz title={null} save={false} questions={[
+  {q: 'The app must get the value of key password from the Secret db-cred as the environment variable DB_PASSWORD. Which container field does that?', options: ['env with valueFrom.configMapKeyRef', 'env with valueFrom.secretKeyRef (name: db-cred, key: password)', 'envFrom.secretRef with prefix DB_PASSWORD', 'volumeMounts with subPath: password'], answer: 1, why: 'env[].valueFrom.secretKeyRef picks one key from a Secret into one variable. envFrom.secretRef imports every key as its own variable, and its prefix is only prepended to the key names.'},
+  {q: 'A namespace has a ResourceQuota on requests.cpu and requests.memory. A Pod without resources is now rejected. What is the cleanest fix for all future Pods?', options: ['Delete the ResourceQuota', 'Give the Pod a higher priorityClassName', 'Add a LimitRange with default requests and limits for containers', 'Run the Pod in the default namespace'], answer: 2, why: 'When a quota tracks requests, every Pod must state them. A LimitRange fills in defaultRequest and default values for containers that set none, so they pass the quota check.'},
+  {q: 'Where do you drop all Linux capabilities for a container?', options: ['spec.containers[].securityContext.capabilities.drop: ["ALL"]', 'spec.securityContext.capabilities.drop: ["ALL"]', 'metadata.annotations', 'spec.containers[].resources'], answer: 0, why: 'capabilities exists only on the container-level securityContext. The Pod-level securityContext holds fields like runAsUser, fsGroup and seccompProfile that apply to all containers.'},
+  {q: 'A container with readOnlyRootFilesystem: true crashes because it writes temporary files to /tmp. How do you fix it without loosening the setting?', options: ['Set privileged: true', 'Set runAsUser: 0', 'Remove readOnlyRootFilesystem only for /tmp', 'Mount an emptyDir volume at /tmp'], answer: 3, why: 'A read-only root filesystem blocks writes to the image layers, but mounted volumes stay writable. An emptyDir at /tmp gives the app scratch space and keeps the rest of the filesystem locked.'},
+  {q: 'A Pod never talks to the Kubernetes API. How do you keep a ServiceAccount token from being mounted into it?', options: ['Delete the default ServiceAccount', 'Set automountServiceAccountToken: false in the Pod spec', 'Set serviceAccountName to an empty string', 'Add a NetworkPolicy blocking port 443'], answer: 1, why: 'automountServiceAccountToken: false on the Pod (or on the ServiceAccount) stops the projected token volume from being added. Fewer tokens mean less to steal if the container is compromised.'},
+  {q: 'An operator installed the custom resource Backup. How do you see which fields its spec accepts?', options: ['kubectl describe crd backups', 'kubectl get backup -o yaml', 'kubectl explain backup.spec', 'kubectl api-versions'], answer: 2, why: 'kubectl explain reads the OpenAPI schema the CRD publishes and prints field names, types and descriptions. Use --recursive to see every nested field at once.'},
+]} />
+
+**Study:** [CRDs and Operators](../advanced/crd-operator.mdx), [How an API Request Gets Stored](../advanced/api-request-path.mdx), [Admission Policies with CEL and Webhooks](../advanced/admission-policy.mdx), [Requests and limits](../intermediate/requests-limits.mdx), [Namespaces and Resource Quotas](../feature/namespace-quota.mdx), [Config and Secrets (ConfigMap · Secret)](../k8s/config-secret.mdx), [How a Pod Proves Who It Is (ServiceAccount Tokens)](../advanced/serviceaccount-token.mdx), [Pod Security Standards and securityContext](../advanced/pod-security.mdx)
+
+## Application Design and Build (20%)
+
+<Quiz title={null} save={false} questions={[
+  {q: 'A Job must finish 6 work items, running at most 2 Pods at the same time. Which fields do you set?', options: ['completions: 6 and parallelism: 2', 'parallelism: 6 and backoffLimit: 2', 'replicas: 6 and maxSurge: 2', 'completions: 2 and parallelism: 6'], answer: 0, why: 'spec.completions is how many Pods must succeed, and spec.parallelism is how many run at once. backoffLimit is the retry count before the Job is marked failed.'},
+  {q: 'A CronJob runs every 5 minutes, but one run sometimes takes 8 minutes and two runs overlap. Which setting stops a new run while the last is still going?', options: ['startingDeadlineSeconds: 300', 'successfulJobsHistoryLimit: 1', 'suspend: true', 'concurrencyPolicy: Forbid'], answer: 3, why: 'concurrencyPolicy: Forbid skips the new run while the previous Job is active. Replace would stop the old Job and start a new one; Allow is the default.'},
+  {q: 'You need a log-shipping container that starts before the app, keeps running beside it and does not block a Job from completing. How do you declare it?', options: ['As a second entry in spec.containers', 'As an entry in spec.initContainers with restartPolicy: Always', 'As an ephemeral container', 'As a separate DaemonSet'], answer: 1, why: 'An init container with restartPolicy: Always is a native sidecar (stable since v1.33). It starts before the app containers, keeps running, and is stopped after they exit, so Jobs can still complete.'},
+  {q: 'A Pod shows STATUS Init:0/1 for several minutes. What does it tell you and what do you run next?', options: ['The image is still pulling; run kubectl top pod', 'The Pod is waiting for a node; run kubectl get nodes', 'The first init container has not finished; run kubectl logs POD -c INIT_NAME', 'The readiness probe failed; run kubectl get endpoints'], answer: 2, why: 'Init containers run in order and each must exit 0 before the next one starts. Init:0/1 means none of 1 has completed, so read that init container\'s logs to see what it is waiting for.'},
+  {q: 'Two containers in the same Pod must share files that only live as long as the Pod. Which volume fits?', options: ['emptyDir', 'hostPath', 'A PersistentVolumeClaim', 'A ConfigMap'], answer: 0, why: 'An emptyDir is created when the Pod starts on a node, can be mounted by every container in the Pod, and is deleted with the Pod. ConfigMap volumes are read-only and hostPath ties you to a node.'},
+]} />
+
+**Study:** [How an Image Is Built and Run](../basic/container-image.mdx), [Workload Types](../basic/workload-types.mdx), [Run Once and Finish (Job · CronJob)](../k8s/job-cronjob.mdx), [Multi-container pods — init and sidecar (CKAD)](../cert/multi-container.mdx), [How Storage Gets Attached (PVC·PV)](../k8s/storage-volume.mdx)
+
+## Application Deployment (20%)
+
+<Quiz title={null} save={false} questions={[
+  {q: 'A Deployment with 4 replicas uses maxSurge: 1 and maxUnavailable: 0. How does the rollout behave?', options: ['All 4 old Pods stop, then 4 new ones start', 'It adds one new Pod and removes an old Pod only after the new one is Ready, never dropping below 4 ready Pods', 'It runs 8 Pods at once and then removes 4', 'It stops one old Pod first, then starts a new one'], answer: 1, why: 'maxUnavailable: 0 forbids going below the desired ready count, and maxSurge: 1 allows one extra Pod. So it is always one new Pod up, then one old Pod down.'},
+  {q: 'For a blue/green release with plain Kubernetes objects, both Deployments run and the Service selects version: blue. How do you switch all traffic to green?', options: ['Scale blue to 0 and wait', 'kubectl rollout undo on the blue Deployment', 'Change the Service selector to version: green', 'Add a second Service for green'], answer: 2, why: 'With two full Deployments, the Service selector is the switch. Changing it to version: green moves traffic at once, and switching it back is an instant rollback.'},
+  {q: 'Stable runs 9 replicas and canary runs 1. Both Deployments have the label app: shop, which is what the Service selects. About how much traffic does the canary get?', options: ['50%', 'None until it is promoted', '1%', 'About 10%'], answer: 3, why: 'A Service spreads connections across all ready endpoints it selects, so 1 of 10 Pods gets about one tenth of the traffic. To change the share, change the replica ratio.'},
+  {q: 'Which command shows the revisions of the Helm release shop so you can pick one to roll back to?', options: ['helm history shop', 'helm list --revisions', 'helm get values shop --all', 'kubectl rollout history release/shop'], answer: 0, why: 'helm history lists each revision with its status, chart version and description. Then run helm rollback shop N.'},
+  {q: 'Your repo has base/ and overlays/prod/ with a kustomization.yaml. Which command deploys the prod version?', options: ['kubectl apply -f overlays/prod', 'kubectl apply -k overlays/prod', 'kubectl kustomize base | kubectl apply -f overlays/prod', 'helm install prod overlays/prod'], answer: 1, why: 'kubectl apply -k builds the kustomization in that directory (the overlay plus its base) and applies the result. kubectl kustomize overlays/prod only prints it for review.'},
+]} />
+
+**Study:** [Blue/green and canary with core primitives (CKAD)](../cert/deploy-strategies.mdx), [Zero-Downtime Deploys (Rolling Update)](../k8s/rolling-update.mdx), [How a Helm Release Is Installed, Upgraded and Rolled Back](../k8s/helm-release.mdx), [Per-environment deploys with Kustomize (CKA·CKAD)](../cert/kustomize.mdx)
+
+## Services and Networking (20%)
+
+<Quiz title={null} save={false} questions={[
+  {q: 'A NetworkPolicy ingress rule has one from entry that contains both namespaceSelector (team: web) and podSelector (app: frontend). Which Pods may connect?', options: ['Any Pod in a namespace labeled team: web, plus any Pod labeled app: frontend anywhere', 'Only Pods in the policy\'s own namespace', 'Pods labeled app: frontend that are in namespaces labeled team: web', 'No Pods; the two selectors cancel out'], answer: 2, why: 'Selectors inside the same from element are combined with AND. Writing them as two separate list items (two dashes) would make them OR, which is a common mistake.'},
+  {q: 'The Service api has endpoints, but connections are refused. The container listens on 8080 and the Service has port: 80, targetPort: 80. What do you change?', options: ['Set targetPort: 8080', 'Set port: 8080', 'Set nodePort: 8080', 'Change the type to LoadBalancer'], answer: 0, why: 'port is what clients call on the Service, and targetPort is where traffic is sent on the Pod. It must match the port the container actually listens on.'},
+  {q: 'You need a DNS name that returns the IPs of each Pod directly instead of one virtual IP, for example for a StatefulSet. What do you create?', options: ['A NodePort Service', 'An ExternalName Service', 'An Ingress', 'A Service with clusterIP: None'], answer: 3, why: 'A headless Service (clusterIP: None) gets no virtual IP, so its DNS name returns the ready Pod IPs, and StatefulSet Pods also get per-Pod names such as db-0.db.'},
+  {q: 'An Ingress path is /api with pathType: Prefix. Which request path matches it?', options: ['/apiv2', '/api/v1/users', '/v1/api', 'Only /api with nothing after it'], answer: 1, why: 'Prefix matches whole path elements split by /, so /api matches /api, /api/ and /api/v1/users but not /apiv2. pathType: Exact would match only /api.'},
+  {q: 'Which command creates a ClusterIP Service for the Deployment web that listens on port 80 and sends to container port 8080?', options: ['kubectl expose deployment web --port=80 --target-port=8080', 'kubectl create service web --port=8080:80', 'kubectl port-forward deployment/web 80:8080', 'kubectl expose pod web --type=NodePort --port=8080'], answer: 0, why: 'kubectl expose reads the Deployment selector and creates a Service with it. --port is the Service port and --target-port is the container port; the type defaults to ClusterIP.'},
+]} />
+
+**Study:** [Blocking and Allowing Traffic (NetworkPolicy)](../k8s/network-policy.mdx), [Service Types (ClusterIP · NodePort · LoadBalancer)](../feature/service-types.mdx), [Finding Services by Name (Service·DNS)](../k8s/service-dns.mdx), [Ingress Rules and TLS](../feature/ingress.mdx)
+
+## Application Observability and Maintenance (15%)
+
+<Quiz title={null} save={false} questions={[
+  {q: 'A Pod is Running with READY 0/1 and RESTARTS 0. Its readiness probe keeps failing. What does Kubernetes do?', options: ['Restarts the container after three failures', 'Deletes the Pod and creates a new one', 'Keeps the container running but removes the Pod from the Service endpoints', 'Moves the Pod to another node'], answer: 2, why: 'A failing readiness probe only marks the Pod not ready, so it gets no Service traffic. Restarts come from a failing liveness probe, not readiness.'},
+  {q: 'A Java app takes up to 2 minutes to start and its liveness probe kills it before it is ready. What is the right fix?', options: ['Remove the liveness probe', 'Add a startupProbe with enough failureThreshold times periodSeconds to cover startup', 'Set restartPolicy: Never', 'Raise the memory limit'], answer: 1, why: 'While a startupProbe is defined and has not yet succeeded, liveness and readiness probes do not run. Once it passes, the normal liveness probe takes over with its short timing.'},
+  {q: 'The Pod web has two containers, app and proxy. How do you read the proxy logs?', options: ['kubectl logs web/proxy', 'kubectl logs web --previous', 'kubectl describe pod web', 'kubectl logs web -c proxy'], answer: 3, why: 'With more than one container, -c (or --container) picks which one. --all-containers prints them all, and --previous shows the last terminated instance.'},
+  {q: 'kubectl top pod fails with "Metrics API not available". What is missing?', options: ['metrics-server, which serves the metrics.k8s.io API', 'Prometheus in the monitoring namespace', 'A liveness probe on the Pod', 'Resource limits on the Pod'], answer: 0, why: 'kubectl top reads the Metrics API, which metrics-server provides from kubelet resource metrics. Prometheus alone does not serve that API.'},
+]} />
+
+**Study:** [Health checks — alive, and ready for requests?](../intermediate/probes.mdx), [How Logs, Metrics and Traces Leave a Pod](../k8s/observability-pipeline.mdx), [Reading status in three layers and the troubleshooting order](../intermediate/troubleshoot-status.mdx), [Debugging a Running Pod with kubectl debug](../k8s/kubectl-debug.mdx)

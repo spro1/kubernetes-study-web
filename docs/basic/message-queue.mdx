@@ -1,7 +1,7 @@
 ---
 id: message-queue
 title: How a Message Queue Decouples Services
-sidebar_label: 06 · Message Queues and Kafka
+sidebar_label: 08 · Message Queues and Kafka
 description: Animated walkthrough of asynchronous messaging with Kafka as the example, from topics, partitions and keys to producer acks, replication, consumer groups and offset commits, redelivery after a crash, consumer lag, dead-letter queues, and queue versus pub/sub
 summary: 'Topics, partitions and consumer groups, why at-least-once delivery means consumers must be idempotent, consumer lag, and dead-letter queues.'
 icon: layers
@@ -175,7 +175,7 @@ The order service publishes one **event**. Shipping and email each read it at th
       ],
       flows: [
         {from: 'p2', to: 'c2', label: 'Retry ×3', type: 'request'},
-        {from: 'c2', to: 'dlq', label: 'Dead-letter', type: 'request'},
+        {from: 'c2', to: 'dlq', label: 'Dead-letter', type: 'request', bend: 0.8},
       ],
       focus: ['c2', 'dlq'],
       status: {c1: 'ok', c2: 'ok', dlq: 'warn'},

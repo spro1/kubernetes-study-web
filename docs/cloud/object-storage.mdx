@@ -145,7 +145,7 @@ A shop app saves product photos to object storage and shows them to users. This 
         'A DELETE without a version ID does not remove data. It adds a delete marker, so GET returns 404, while older versions stay and can be restored. This protects against mistakes and some ransomware, but you pay to store every version.',
       ],
       keyIdea: 'Turn on versioning for buckets that hold anything you cannot rebuild. Once turned on, versioning can only be suspended, not removed.',
-      flows: [{from: 'obj', to: 'ver', label: 'Becomes old', type: 'watch'}],
+      flows: [{from: 'obj', to: 'ver', label: 'Becomes old', type: 'watch', bend: 1}],
       focus: ['obj', 'ver'],
       badges: {obj: 'v2 current', ver: 'v1'},
       values: {versions: '2 (v2 current)'},
@@ -159,7 +159,7 @@ A shop app saves product photos to object storage and shows them to users. This 
         'Cheaper classes trade price for something else. Infrequent-access classes charge per GB read and have a minimum storage time. Some archive classes, such as Glacier Flexible Retrieval, take minutes to hours to restore. The same rules can expire noncurrent versions after, say, 90 days so versioning does not grow forever.',
       ],
       flows: [
-        {from: 'ver', to: 'cold', label: 'After 180 days', type: 'watch'},
+        {from: 'ver', to: 'cold', label: '180 days', type: 'watch', bend: 1.2},
       ],
       focus: ['ver', 'cold'],
       badges: {cold: 'v1 archived'},

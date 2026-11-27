@@ -1,0 +1,279 @@
+---
+id: serving-engines
+title: Choosing an LLM Serving Engine
+sidebar_label: 12 · Serving engines
+description: 'Compare LLM serving engines such as vLLM, SGLang, Hugging Face TGI, NVIDIA TensorRT-LLM with Triton or Dynamo, and llama.cpp or Ollama: what they share (OpenAI-compatible API, continuous batching, paged KV cache, prefix caching), how they differ, how to benchmark them fairly with TTFT, TPOT and throughput at your SLO, and how to run them on Kubernetes with KServe, llm-d or a plain Deployment.'
+summary: 'What vLLM, SGLang, TensorRT-LLM, TGI and llama.cpp have in common, where they differ, and how to compare them without fooling yourself.'
+icon: server
+hide_table_of_contents: true
+---
+
+# Choosing an LLM Serving Engine
+
+Many engines can serve the same open model, and most of them look alike from the outside. See what they share, where they really differ, and how to run a comparison that answers the question for your own model, hardware and traffic.
+
+<StepDiagram
+  width={1000}
+  height={510}
+  meta={{duration: '~13 min', level: 'Intermediate'}}
+  nodes={[
+    {id: 'client', label: 'Client', sub: 'OpenAI SDK · curl', icon: 'browser', tone: 'ext', x: 110, y: 80, show: true},
+    {id: 'api', label: 'OpenAI-style API', sub: '/v1/chat/completions', icon: 'gate', tone: 'cp', w: 180, x: 340, y: 80, show: true},
+    {id: 'slo', label: 'Your SLO', sub: 'TTFT · TPOT targets', icon: 'target', tone: 'ext', x: 860, y: 80},
+    {id: 'vllm', label: 'vLLM', sub: 'PagedAttention', icon: 'box', tone: 'app', x: 110, y: 210},
+    {id: 'sglang', label: 'SGLang', sub: 'RadixAttention', icon: 'box', tone: 'app', x: 290, y: 210},
+    {id: 'trt', label: 'TensorRT-LLM', sub: 'Triton · Dynamo', icon: 'box', tone: 'app', x: 470, y: 210},
+    {id: 'tgi', label: 'Hugging Face TGI', sub: 'maintenance mode', icon: 'box', tone: 'app', x: 650, y: 210},
+    {id: 'local', label: 'llama.cpp · Ollama', sub: 'one machine', icon: 'box', tone: 'app', w: 170, x: 840, y: 210},
+    {id: 'sched', label: 'Scheduler', sub: 'continuous batching', icon: 'gear', tone: 'node', w: 170, x: 200, y: 340},
+    {id: 'kv', label: 'Paged KV cache', sub: 'fixed-size blocks', icon: 'db', tone: 'store', x: 420, y: 340},
+    {id: 'prefix', label: 'Prefix cache', sub: 'reuse shared prompts', icon: 'layers', tone: 'store', x: 640, y: 340},
+    {id: 'hw', label: 'Accelerators', sub: 'NVIDIA · AMD · TPU · NPU', icon: 'server', tone: 'node', x: 860, y: 340},
+    {id: 'bench', label: 'Benchmark', sub: 'TTFT · TPOT · tok/s', icon: 'chart', tone: 'ext', x: 200, y: 450},
+    {id: 'k8s', label: 'On Kubernetes', sub: 'Deployment · KServe · llm-d', icon: 'wheel', tone: 'cp', w: 180, x: 640, y: 450},
+  ]}
+  metrics={[
+    {id: 'engine', label: 'Engine'},
+    {id: 'shared', label: 'Shared'},
+    {id: 'differs', label: 'Differs'},
+    {id: 'measure', label: 'Measured'},
+  ]}
+  learn={[
+    {text: 'What almost every modern engine shares', at: 1},
+    {text: 'Where vLLM, SGLang and the NVIDIA stack differ', at: 3},
+    {text: 'The current status of Hugging Face TGI', at: 5},
+    {text: 'Why most published comparisons do not apply to you', at: 7},
+    {text: 'A fair benchmark: TTFT, TPOT and throughput at your SLO', at: 8},
+    {text: 'Running any engine on Kubernetes', at: 9},
+  ]}
+  steps={[
+    {
+      short: 'Start',
+      kind: '시작',
+      title: 'One model, many engines',
+      text: [
+        'You want to serve an open model behind an API. vLLM, SGLang, TensorRT-LLM, Hugging Face TGI, llama.cpp and Ollama can all load it, and each project shows charts where it wins.',
+        'The engine is the program that holds the weights in accelerator memory, schedules requests and generates tokens. The choice decides latency, cost per token, which hardware you can use and what you operate.',
+      ],
+      flows: [
+        {from: 'client', to: 'api', label: 'prompt', type: 'request'},
+      ],
+      focus: ['client', 'api'],
+      values: {engine: '?'},
+    },
+    {
+      short: 'Same API',
+      kind: '원리',
+      title: 'They all speak an OpenAI-compatible API',
+      text: [
+        'Almost every engine exposes an OpenAI-compatible HTTP API, with routes such as /v1/models and /v1/chat/completions and streaming over server-sent events. vLLM, SGLang, TensorRT-LLM (trtllm-serve), llama.cpp (llama-server) and Ollama all do.',
+        'A client can switch engines by changing the base URL. Support for extras differs, though: tool calling, structured output parameters, logprobs and newer routes are not the same everywhere.',
+      ],
+      keyIdea: 'Code against the common subset of the API and test the extra features you need on each engine. Then swapping engines is a config change.',
+      flows: [
+        {from: 'api', to: 'vllm', label: 'same request', type: 'request'},
+        {from: 'api', to: 'sglang', label: 'same request', type: 'request'},
+        {from: 'api', to: 'trt', label: 'same request', type: 'request'},
+        {from: 'api', to: 'local', label: 'same request', type: 'request'},
+      ],
+      focus: ['api', 'vllm', 'sglang', 'trt', 'tgi', 'local'],
+      values: {shared: 'OpenAI-compatible API'},
+    },
+    {
+      short: 'Same core',
+      kind: '원리',
+      title: 'They share the same core ideas',
+      text: [
+        'Continuous batching adds and removes requests at every decode step, so the accelerator stays busy. A paged KV cache stores attention keys and values in fixed-size blocks, so memory is not reserved for the longest possible answer.',
+        'Prefix caching keeps the KV blocks of a shared start, like a long system prompt, and reuses them for the next request. vLLM calls its design PagedAttention and SGLang calls its prefix cache RadixAttention.',
+      ],
+      keyIdea: 'These ideas are table stakes now. An engine without them is not a fair alternative for a busy multi-user service.',
+      flows: [
+        {from: 'vllm', to: 'sched', label: 'batch', type: 'request'},
+        {from: 'sched', to: 'kv', label: 'blocks', type: 'request'},
+        {from: 'kv', to: 'prefix', label: 'reuse', type: 'request'},
+      ],
+      focus: ['sched', 'kv', 'prefix'],
+      values: {shared: 'API · batching · paged KV · prefix cache'},
+    },
+    {
+      short: 'vLLM · SGLang',
+      kind: '원리',
+      title: 'vLLM and SGLang: broad, open and fast-moving',
+      text: [
+        'vLLM supports a very wide range of models and hardware. It runs on NVIDIA, AMD and Intel GPUs and CPUs, and hardware plugins add Google TPUs, Intel Gaudi, Huawei Ascend and others.',
+        'SGLang puts a lot of work into its scheduler and prefix cache, and is strong for workloads that share long prefixes, such as agents and multi-turn chat. It also runs on NVIDIA and AMD GPUs, TPUs, NPUs and CPUs. Both offer structured output, tensor and expert parallelism, multi-node serving and prefill-decode disaggregation.',
+      ],
+      keyIdea: 'Check the support matrix for your exact model and accelerator. Day-one support for a new model and its quantized variants differs between engines and releases.',
+      flows: [
+        {from: 'vllm', to: 'hw', label: 'many backends', type: 'request', bend: 40},
+        {from: 'sglang', to: 'prefix', label: 'RadixAttention', type: 'request'},
+      ],
+      focus: ['vllm', 'sglang', 'hw'],
+      values: {engine: 'vLLM · SGLang', differs: 'scheduler · prefix reuse · hardware'},
+    },
+    {
+      short: 'NVIDIA stack',
+      kind: '원리',
+      title: 'TensorRT-LLM, Triton and Dynamo: the NVIDIA stack',
+      text: [
+        'TensorRT-LLM is an NVIDIA library with kernels tuned for NVIDIA GPUs. It serves through trtllm-serve or through the TensorRT-LLM backend of Triton Inference Server, a general server that also hosts non-LLM models.',
+        'NVIDIA Dynamo sits one level higher. It does not replace engines. It coordinates SGLang, TensorRT-LLM or vLLM workers across many nodes with disaggregated serving, KV-aware routing and KV cache tiers.',
+      ],
+      keyIdea: 'TensorRT-LLM runs on NVIDIA GPUs only. It can be very fast there, but you trade portability, and the setup has more moving parts.',
+      flows: [
+        {from: 'trt', to: 'hw', label: 'NVIDIA only', type: 'request'},
+        {from: 'trt', to: 'kv', label: 'tuned kernels', type: 'request'},
+      ],
+      focus: ['trt', 'hw'],
+      badges: {trt: 'NVIDIA only'},
+      values: {engine: 'TensorRT-LLM', differs: 'hardware lock-in vs tuned kernels'},
+    },
+    {
+      short: 'TGI status',
+      kind: '주의',
+      title: 'Hugging Face TGI is in maintenance mode',
+      text: [
+        'Text Generation Inference powered Hugging Face products for years. Its README now says it is in maintenance mode: the project accepts minor bug fixes, docs and light maintenance, and recommends vLLM and SGLang, or llama.cpp and MLX for local use.',
+        'Existing TGI deployments keep working. New models, hardware and features will land in other engines first, so a new service should not start on TGI.',
+      ],
+      keyIdea: 'Check the status of any project before you depend on it: the README, recent releases and commits. Maintenance mode is a reason to plan a migration, not an emergency.',
+      flows: [
+        {from: 'api', to: 'tgi', label: 'still works', type: 'request'},
+      ],
+      focus: ['tgi'],
+      status: {tgi: 'warn'},
+      badges: {trt: null, tgi: 'maintenance'},
+      values: {engine: 'TGI', differs: {text: 'no new features', tone: 'bad'}},
+    },
+    {
+      short: 'Local',
+      kind: '원리',
+      title: 'llama.cpp and Ollama: one machine, many devices',
+      text: [
+        'llama.cpp runs GGUF models on CPUs and on Apple, NVIDIA, AMD and other GPUs, often with aggressive quantization. llama-server gives it an OpenAI-compatible endpoint. Ollama wraps local models in a simple pull-and-run tool with its own API and an OpenAI-compatible one.',
+        'They shine on laptops, edge boxes and small internal tools. They are not built for many concurrent users on a GPU cluster, so do not compare their throughput with vLLM on the same chart.',
+      ],
+      flows: [
+        {from: 'api', to: 'local', label: 'local', type: 'request'},
+      ],
+      focus: ['local'],
+      status: {tgi: null},
+      badges: {tgi: null, local: 'GGUF'},
+      values: {engine: 'llama.cpp · Ollama', differs: 'single machine, wide device support'},
+    },
+    {
+      short: 'Unfair bench',
+      kind: '문제',
+      title: 'Most published comparisons do not fit your case',
+      text: [
+        'Engine A runs the model in FP8 on newer GPUs, engine B runs BF16 on older ones. Prompts are 100 tokens, while yours are 4,000. Only peak throughput at maximum batch size is reported. The winner says little about your service.',
+        'Defaults also differ: maximum batch size, KV cache memory share, chunked prefill, prefix caching on or off. A tuned engine against an untuned one measures the tuning, not the engine.',
+      ],
+      keyIdea: 'Never pick an engine from a chart that does not state model, precision, hardware, parallelism, input and output lengths, and concurrency.',
+      flows: [
+        {from: 'bench', to: 'vllm', label: 'FP8 · short prompts', type: 'request'},
+        {from: 'bench', to: 'trt', label: 'BF16 · long prompts', type: 'request', bend: 40},
+      ],
+      focus: ['bench'],
+      status: {bench: 'error'},
+      badges: {local: null},
+      values: {measure: {text: 'apples vs oranges', tone: 'bad'}},
+    },
+    {
+      short: 'Fair bench',
+      kind: '원리',
+      title: 'Fair comparison: same setup, your workload, your SLO',
+      text: [
+        'Fix the model, weights, precision, hardware and parallelism. Replay your real distribution of input and output lengths and prefix sharing. Sweep concurrency or request rate from low to high.',
+        'At each load, measure TTFT (time to first token), TPOT (time per output token) and output tokens per second, at p50 and p99. Then read off the highest load where p99 TTFT and TPOT still meet your SLO. That goodput is what you pay for.',
+      ],
+      keyIdea: 'Tools like vllm bench serve work against any OpenAI-compatible server and can report goodput for given TTFT and TPOT limits, so one harness can test every engine.',
+      flows: [
+        {from: 'bench', to: 'api', label: 'same load', type: 'request'},
+        {from: 'slo', to: 'bench', label: 'p99 limits', type: 'watch', bend: -60},
+      ],
+      focus: ['bench', 'slo'],
+      status: {bench: 'ok'},
+      values: {measure: {text: 'TTFT · TPOT · tok/s at SLO', tone: 'good'}},
+    },
+    {
+      short: 'Kubernetes',
+      kind: '원리',
+      title: 'On Kubernetes the engine is a container image',
+      text: [
+        'The simplest setup is a Deployment that runs the engine image with a GPU request, a readiness probe on its health route, and a Service in front. KServe adds a model-serving API and LLM-specific resources on top, with vLLM and llm-d as backends.',
+        'llm-d targets large clusters. It runs vLLM or SGLang behind an inference gateway with prefix-cache and load-aware routing, plus prefill-decode disaggregation. Dynamo offers a similar operator for its own stack.',
+      ],
+      keyIdea: 'Keep the engine swappable: same API, same health checks, same metrics dashboards. Then a better engine next year is a rollout, not a rewrite.',
+      flows: [
+        {from: 'k8s', to: 'vllm', label: 'Pod', type: 'watch'},
+        {from: 'k8s', to: 'sglang', label: 'Pod', type: 'watch'},
+        {from: 'k8s', to: 'hw', label: 'GPU request', type: 'request'},
+      ],
+      focus: ['k8s'],
+      status: {bench: null},
+      values: {engine: 'any, behind the same API'},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Shared basics, real differences, and your own numbers',
+      text: [
+        'Modern engines share an OpenAI-compatible API, continuous batching, a paged KV cache and prefix caching. They differ in scheduling, structured output, model and hardware support, multi-node features and how much there is to operate. TGI is in maintenance mode, and local engines solve a different problem.',
+        'A fair benchmark keeps everything equal except the engine, uses your workload and reports TTFT, TPOT and throughput at your SLO.',
+      ],
+      keyIdea: 'Shortlist by hardware and model support, decide by goodput on your own traffic, and keep the engine replaceable behind one API.',
+      flows: [
+        {from: 'client', to: 'api', label: 'prompt', type: 'request'},
+        {from: 'api', to: 'vllm', label: 'chosen', type: 'request'},
+        {from: 'bench', to: 'api', label: 'proof', type: 'watch'},
+      ],
+      focus: ['api', 'bench', 'slo'],
+      values: {engine: 'chosen by goodput', measure: {text: 'meets SLO', tone: 'good'}},
+    },
+  ]}
+/>
+
+## Engines at a glance
+
+Status checked against each project's own README and docs. Features move fast, so check again before you decide.
+
+| Engine | Good fit | Hardware | Notes |
+|---|---|---|---|
+| vLLM | General-purpose serving, widest model coverage | NVIDIA, AMD, Intel GPUs, CPUs; TPU, Gaudi, Ascend and more via plugins | `vllm serve`, structured output, multi-node, large community |
+| SGLang | Prefix-heavy workloads such as agents and multi-turn chat | NVIDIA, AMD, TPU, NPU, CPU, Apple Silicon | RadixAttention prefix cache, structured output, multi-node |
+| TensorRT-LLM | Peak performance on NVIDIA GPUs | NVIDIA only | `trtllm-serve` or Triton TensorRT-LLM backend |
+| NVIDIA Dynamo | Multi-node, disaggregated serving at data-center scale | Depends on the engine below | Orchestrates SGLang, TensorRT-LLM or vLLM; not an engine itself |
+| Hugging Face TGI | Existing deployments only | — | Maintenance mode: minor fixes only, project recommends vLLM or SGLang |
+| llama.cpp | Local and edge, CPU or small GPUs, GGUF models | CPU, Apple, NVIDIA, AMD, Vulkan and more | `llama-server` with an OpenAI-compatible endpoint |
+| Ollama | Easy local use for developers | Desktop and server GPUs, CPU | Pull-and-run models, own API plus OpenAI-compatible routes |
+
+## Try it yourself
+
+```bash
+# Serve a model with vLLM (any engine with an OpenAI-compatible API works the same way below)
+vllm serve Qwen/Qwen2.5-7B-Instruct --port 8000
+
+curl -s localhost:8000/v1/models                     # the served model name
+curl -s localhost:8000/v1/chat/completions -H 'Content-Type: application/json' \
+  -d '{"model":"Qwen/Qwen2.5-7B-Instruct","messages":[{"role":"user","content":"Hi"}],"max_tokens":32}'
+
+# Same benchmark against each engine: fixed lengths, fixed concurrency, goodput at your SLO (ms)
+vllm bench serve --backend openai-chat --base-url http://localhost:8000 \
+  --endpoint /v1/chat/completions --model Qwen/Qwen2.5-7B-Instruct \
+  --dataset-name random --random-input-len 2000 --random-output-len 200 \
+  --num-prompts 500 --max-concurrency 32 \
+  --percentile-metrics ttft,tpot --goodput ttft:1000 tpot:50
+
+kubectl get pods -l app=llm -o wide                  # engine Pods and their nodes
+kubectl get inferenceservice -A 2>/dev/null          # if KServe is installed
+```
+
+<Quiz questions={[
+  {q: 'A blog shows engine A with twice the throughput of engine B. A ran FP8 on newer GPUs with 100-token prompts, B ran BF16 on older GPUs. What can you conclude for your service?', options: ['A is twice as fast for everyone', 'B is broken', 'Very little, because precision, hardware and workload all differ'], answer: 2, why: 'A fair comparison changes only the engine. Here precision, hardware and prompt length all differ, so the gap mostly measures the setup, not the engine.'},
+  {q: 'Why measure throughput at your TTFT and TPOT limits instead of peak throughput?', options: ['Peak throughput is reached at batch sizes where latency is often too high for users', 'Peak throughput cannot be measured', 'TTFT does not depend on load'], answer: 0, why: 'Throughput keeps rising with batch size while latency grows. What you can sell is the highest load that still meets your p99 latency targets, the goodput.'},
+  {q: 'You start a new LLM service today. Why is Hugging Face TGI a poor first choice?', options: ['It has no HTTP API', 'Its README says it is in maintenance mode and recommends other engines', 'It only runs on CPUs', 'It was deleted from GitHub'], answer: 1, why: 'TGI now accepts only minor fixes and light maintenance. Existing deployments keep working, but new models and features land in engines like vLLM and SGLang.'},
+]} />
+
+Further reading: [vLLM docs](https://docs.vllm.ai/) · [SGLang docs](https://docs.sglang.io/) · [TensorRT-LLM](https://nvidia.github.io/TensorRT-LLM/) · [NVIDIA Dynamo](https://docs.nvidia.com/dynamo/) · [TGI repository](https://github.com/huggingface/text-generation-inference) · [llama.cpp](https://github.com/ggml-org/llama.cpp) · [KServe](https://kserve.github.io/website/) · [llm-d](https://llm-d.ai/docs) · [Batching Requests (Continuous Batching)](../llm/continuous-batching.mdx) · [From API Request to Response](../ai/inference-request.mdx)

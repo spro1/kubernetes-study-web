@@ -21,6 +21,7 @@ npm run build             # full build, also checks for broken links
 - Each lesson is one `<StepDiagram nodes={...} steps={...} />` element. Its props are documented at the top of [`src/components/StepDiagram.jsx`](src/components/StepDiagram.jsx). Copying a similar lesson is the fastest way to start.
 - Front matter needs `title`, `sidebar_label`, `description` (used for search results), `summary` (the lesson card text) and `icon` (one of the names in `src/components/lessonIcons.jsx`).
 - Step `kind` values stay in Korean in every language (`시작`, `원리`, `주의`, `문제`, `장애`, `정리`). They are keys that set the step's color and label.
+- End each lesson with a 3-question `<Quiz questions={[{q, options, answer, why}]} />` right before "Further reading" (`answer` is the 0-based index of the correct option). Props are documented at the top of [`src/components/Quiz.jsx`](src/components/Quiz.jsx).
 - Keep node labels short (about 16 characters, subtitles about 22). Longer text is shrunk to fit, but short reads better.
 
 ## Adding or moving a lesson

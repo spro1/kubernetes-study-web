@@ -1,7 +1,7 @@
 ---
 id: entry-compare
 title: 입구 셋 비교 (인그레스 · 메시 게이트웨이 · 게이트웨이 API)
-sidebar_label: 09 · 입구 셋 비교
+sidebar_label: 11 · 입구 셋 비교
 description: 같은 바깥 요청이 인그레스, 서비스 메시 게이트웨이와 가상 서비스, 게이트웨이 API의 Gateway와 HTTPRoute로 들어올 때 각각 누가 무엇을 맡는지 경로를 바꿔 가며 비교한다
 summary: '인그레스·메시 게이트웨이·게이트웨이 API가 각각 무엇을 맡는지 같은 요청으로 비교.'
 icon: layers
@@ -57,7 +57,7 @@ hide_table_of_contents: true
       title: '인그레스 — 입구와 경로를 한 장에',
       text: [
         '인그레스(Ingress) 한 장에 호스트, 경로, 보낼 서비스를 모두 적는다. 규칙은 인그레스 클래스가 가리키는 구현체가 읽어 처리한다.',
-        '가장 오래되고 널리 쓰이는 방식이다. 구현체는 ingress-nginx, Traefik, Istio 등 여러 가지다.',
+        '가장 오래되고 널리 쓰이는 방식이다. 구현체는 Traefik, HAProxy, Istio 등 여러 가지다. 한때 가장 많이 쓰이던 ingress-nginx는 2026년 3월에 지원이 끝났고, 쿠버네티스 프로젝트는 게이트웨이 API로 옮기기를 권한다.',
       ],
       flows: [
         {from: 'user', to: 'ing', type: 'request'},

@@ -1,0 +1,289 @@
+---
+id: streaming
+title: Long-Lived Connections and Streaming
+sidebar_label: 04 · Streaming and WebSocket
+description: Animated walkthrough of polling, long polling, Server-Sent Events, WebSocket and gRPC streaming, how LLM token streaming uses SSE, and what proxies and load balancers do to long connections with idle timeouts, buffering, connection draining, sticky load and heartbeats
+summary: 'Polling, SSE, WebSocket and gRPC streams compared, how LLM tokens reach the browser, and why proxies buffer, time out and unevenly spread long connections.'
+icon: route
+hide_table_of_contents: true
+---
+
+# Long-Lived Connections and Streaming
+
+A chat UI wants each token as soon as the model writes it, not one big answer 30 seconds later. Follow one answer from **client → load balancer → reverse proxy → Pod → model server**, compare the ways to keep a response flowing, and see what every hop in between does to a connection that stays open.
+
+<StepDiagram
+  width={1000}
+  height={460}
+  meta={{duration: '~13 min', level: 'Intermediate'}}
+  groups={[
+    {label: 'Kubernetes cluster', x: 395, y: 40, w: 590, h: 400, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'client', label: 'Chat UI', sub: 'Browser', icon: 'browser', tone: 'ext', x: 90, y: 240, show: true},
+    {id: 'lb', label: 'Load balancer', sub: 'Idle timeout', icon: 'split', tone: 'ext', x: 290, y: 240},
+    {id: 'proxy', label: 'Reverse proxy', sub: 'Ingress / Gateway', icon: 'gate', tone: 'node', x: 490, y: 240},
+    {id: 'pod1', label: 'API Pod 1', sub: 'Streams', icon: 'pod', tone: 'app', size: 'sm', x: 690, y: 120},
+    {id: 'pod2', label: 'API Pod 2', sub: 'Streams', icon: 'pod', tone: 'app', size: 'sm', x: 690, y: 240},
+    {id: 'pod3', label: 'API Pod 3', sub: 'New after scale-out', icon: 'pod', tone: 'app', size: 'sm', x: 690, y: 360},
+    {id: 'llm', label: 'Model server', sub: 'Generates tokens', icon: 'spark', tone: 'store', x: 880, y: 240},
+  ]}
+  metrics={[
+    {id: 'mode', label: 'Pattern'},
+    {id: 'dir', label: 'Direction'},
+    {id: 'conn', label: 'Connection'},
+    {id: 'seen', label: 'Client sees'},
+  ]}
+  learn={[
+    {text: 'Polling and long polling, and why they waste requests', at: 1},
+    {text: 'SSE: one-way text/event-stream with auto reconnect', at: 2},
+    {text: 'WebSocket and gRPC streams for two-way traffic', at: 3},
+    {text: 'How LLM token streaming uses SSE', at: 5},
+    {text: 'Buffering, idle timeouts, draining and uneven load at the proxies', at: 6},
+  ]}
+  steps={[
+    {
+      short: 'Start',
+      kind: '시작',
+      title: 'One answer, hundreds of tokens',
+      text: [
+        'A user asks the chat UI a question. The model server writes the answer one token at a time, and the whole answer takes many seconds.',
+        'With plain request and response, the client waits until the last token and then gets everything at once. To show text as it is written, the response has to keep flowing over a connection that stays open. Every proxy on the path must allow that.',
+      ],
+      flows: [
+        {from: 'client', to: 'lb', label: 'POST /chat', type: 'request'},
+        {from: 'lb', to: 'proxy', type: 'request'},
+        {from: 'proxy', to: 'pod2', type: 'request'},
+        {from: 'pod2', to: 'llm', type: 'request'},
+      ],
+      focus: ['client', 'llm'],
+      values: {mode: 'Request / response', dir: 'Client → server', conn: 'Short', seen: 'All at the end'},
+    },
+    {
+      short: 'Polling',
+      kind: '원리',
+      title: 'Polling and long polling ask again and again',
+      text: [
+        'Polling is the simplest way: the client asks "anything new?" every few seconds. Most answers are "no", and each one still costs a full request. New data waits up to one polling interval.',
+        'Long polling keeps each request open until the server has something or a timeout hits. Then the client asks again at once. Updates arrive faster, but every message still needs a new request, with its headers.',
+      ],
+      keyIdea: 'Polling works everywhere and is easy to scale, so it is fine for slow updates. For a token stream it is far too chatty.',
+      flows: [
+        {from: 'client', to: 'lb', label: 'GET ?since=41', type: 'request'},
+        {from: 'lb', to: 'client', label: 'nothing new', type: 'response'},
+      ],
+      focus: ['client'],
+      values: {mode: 'Polling / long polling', dir: 'Client asks', conn: 'One per message', seen: 'Batches, with delay'},
+    },
+    {
+      short: 'SSE',
+      kind: '원리',
+      title: 'Server-Sent Events keep one response open',
+      text: [
+        'With Server-Sent Events (SSE) the server answers with Content-Type: text/event-stream and never ends the body. It writes events as plain text lines such as data: ..., with optional event: and id: fields, and a blank line ends each event.',
+        'It is one-way, server to client, over ordinary HTTP. The browser EventSource API reconnects by itself when the stream drops, and sends the last id it saw in the Last-Event-ID header. A server that keeps recent events can resume from there. The retry: field sets the reconnect delay.',
+      ],
+      keyIdea: 'SSE is just a long HTTP response, so it passes most proxies and works well with HTTP/2. Resuming only works if the server gives each event an id and can replay from it.',
+      flows: [
+        {from: 'pod2', to: 'proxy', label: 'data: ...', type: 'response'},
+        {from: 'proxy', to: 'lb', type: 'response'},
+        {from: 'lb', to: 'client', label: 'text/event-stream', type: 'response'},
+      ],
+      focus: ['client', 'pod2'],
+      values: {mode: 'SSE', dir: 'Server → client', conn: 'One open response', seen: 'Each event at once'},
+    },
+    {
+      short: 'WebSocket',
+      kind: '원리',
+      title: 'WebSocket upgrades the connection to two-way frames',
+      text: [
+        'A WebSocket starts as an HTTP/1.1 request with Upgrade: websocket and Connection: Upgrade. The server answers 101 Switching Protocols, and from then on the TCP connection carries WebSocket frames, not HTTP. (Over HTTP/2 it uses an extended CONNECT instead.)',
+        'Both sides can send at any time. That suits chat with typing indicators, games and live collaboration. There is no built-in reconnect or resume: when the connection drops, the app has to reconnect and work out what it missed.',
+      ],
+      keyIdea: 'Upgrade and Connection are hop-by-hop headers. Every proxy on the path has to support WebSocket and pass the upgrade on, or the handshake fails.',
+      flows: [
+        {from: 'client', to: 'lb', label: 'Upgrade: websocket', type: 'request'},
+        {from: 'lb', to: 'proxy', type: 'request'},
+        {from: 'proxy', to: 'pod2', type: 'request'},
+        {from: 'pod2', to: 'client', label: '101 · frames ⇄', type: 'response', bend: -60},
+      ],
+      focus: ['client', 'proxy', 'pod2'],
+      values: {mode: 'WebSocket', dir: 'Both ways', conn: 'Upgraded TCP', seen: 'Frames both ways'},
+    },
+    {
+      short: 'gRPC',
+      kind: '원리',
+      title: 'gRPC streams run over HTTP/2',
+      text: [
+        'Between services, gRPC offers server streaming, client streaming and bidirectional streaming. Each RPC is one HTTP/2 stream, and many streams share one TCP connection.',
+        'Here the API Pod calls the model server with a server-streaming RPC and gets tokens back as a stream of messages. Many model servers offer both a gRPC API and an HTTP API with SSE.',
+      ],
+      keyIdea: 'gRPC needs HTTP/2 end to end and is not called directly from a browser without a bridge such as gRPC-Web. It fits service-to-service streams best.',
+      flows: [
+        {from: 'pod2', to: 'llm', label: 'HTTP/2 stream', type: 'request'},
+        {from: 'llm', to: 'pod2', label: 'token, token, ...', type: 'response', bend: 40},
+      ],
+      focus: ['pod2', 'llm'],
+      values: {mode: 'gRPC server stream', dir: 'Either or both', conn: 'HTTP/2 streams', seen: '—'},
+    },
+    {
+      short: 'Tokens',
+      kind: '원리',
+      title: 'LLM APIs stream tokens as SSE',
+      text: [
+        'Most LLM HTTP APIs stream with SSE. With "stream": true, an OpenAI-compatible server (for example vLLM) sends one data: line per chunk of tokens and ends with data: [DONE]. Some APIs use named events and also send ping events.',
+        'The API Pod relays each chunk the moment it arrives. The user sees the first words after the time to first token (TTFT) instead of after the whole answer.',
+      ],
+      keyIdea: 'Streaming does not make the answer faster to finish. It makes the first words appear sooner, which is what users notice.',
+      flows: [
+        {from: 'llm', to: 'pod2', label: 'tokens', type: 'response'},
+        {from: 'pod2', to: 'proxy', label: 'data: {...}', type: 'response'},
+        {from: 'proxy', to: 'lb', type: 'response'},
+        {from: 'lb', to: 'client', label: 'data: [DONE]', type: 'response'},
+      ],
+      focus: ['llm', 'client'],
+      values: {mode: 'SSE token stream', dir: 'Server → client', conn: 'One open response', seen: 'Words as written'},
+    },
+    {
+      short: 'Buffering',
+      kind: '문제',
+      title: 'A buffering proxy turns the stream back into one lump',
+      text: [
+        'The app streams, yet the user still sees the answer all at once. A proxy is buffering: nginx has proxy_buffering on by default, so it collects the upstream response before passing it on. Compression middleware can do the same.',
+        'Turn buffering off for streaming routes, for example proxy_buffering off in nginx, or let the app send the response header X-Accel-Buffering: no for one response. Check every hop: an API gateway or CDN in front may buffer too.',
+      ],
+      keyIdea: 'To find the buffering hop, stream with curl -N at each hop in turn: the Pod directly, then the proxy, then the public URL. The first hop where lines arrive in one lump is the culprit.',
+      flows: [
+        {from: 'pod2', to: 'proxy', label: 'data: ... data: ...', type: 'response'},
+        {from: 'proxy', to: 'lb', label: 'held back', type: 'response'},
+      ],
+      focus: ['proxy'],
+      status: {proxy: 'warn'},
+      badges: {proxy: 'buffering'},
+      values: {seen: 'All at the end', conn: 'Open but stuck'},
+    },
+    {
+      short: 'Timeout',
+      kind: '장애',
+      title: 'An idle timeout cuts a quiet stream',
+      text: [
+        'A long reasoning step sends nothing for over a minute, and the stream dies. Proxies close connections that stay quiet: an AWS Application Load Balancer has a 60-second idle timeout by default, and nginx proxy_read_timeout is 60 seconds between two reads from the upstream.',
+        'Fix it at two levels. Send a heartbeat well inside the shortest timeout: an SSE comment line (: ping), a WebSocket ping frame, or gRPC keepalive. And raise the timeout on each hop that carries streams, for example nginx proxy-read-timeout and proxy-send-timeout on an Ingress, or timeouts in a Gateway API HTTPRoute rule.',
+      ],
+      keyIdea: 'The shortest timeout on the path wins. Write down every hop (CDN, cloud load balancer, Ingress or Gateway, mesh sidecar, app server) and its idle timeout.',
+      flows: [
+        {from: 'lb', to: 'client', label: 'connection closed', type: 'response'},
+      ],
+      focus: ['lb', 'proxy'],
+      status: {proxy: null, lb: 'error'},
+      badges: {proxy: null, lb: 'idle 60s'},
+      values: {conn: 'Cut after idle', seen: 'Stream stops halfway'},
+    },
+    {
+      short: 'Drain',
+      kind: '주의',
+      title: 'A rolling deploy ends open streams',
+      text: [
+        'A new version rolls out and Pod 1 is replaced. Kubernetes removes it from the endpoints and sends SIGTERM. Short requests finish quickly, but a stream can stay open for minutes. If the grace period (30 seconds by default) runs out, the Pod is killed and its streams end abruptly.',
+        'Stop taking new streams on SIGTERM, let current ones finish, and set terminationGracePeriodSeconds long enough for a typical stream. For very long connections, close them politely and let clients reconnect to a new Pod. SSE clients reconnect by themselves; WebSocket clients need retry logic.',
+      ],
+      keyIdea: 'Design clients to expect a dropped stream. Reconnect with backoff, and resume from the last event id if the server supports it.',
+      flows: [
+        {from: 'pod1', to: 'proxy', label: 'closing', type: 'response'},
+      ],
+      focus: ['pod1'],
+      status: {lb: null, pod1: 'warn'},
+      badges: {lb: null, pod1: 'SIGTERM'},
+      values: {conn: 'Draining', seen: 'Reconnects'},
+    },
+    {
+      short: 'Uneven',
+      kind: '주의',
+      title: 'Long connections stick and spread load unevenly',
+      text: [
+        'The HPA adds Pod 3, yet it gets almost no work. Load balancing happens when a connection opens. Existing WebSocket and gRPC connections stay on the Pods they first reached, so new Pods only see new connections.',
+        'For gRPC, one HTTP/2 connection can carry every request from a client, so a single Pod may get all of it. Common fixes: limit connection age so clients reconnect from time to time (gRPC servers have MAX_CONNECTION_AGE), balance per request with an L7 proxy or client-side load balancing, and prefer least-connections over round robin for long streams.',
+      ],
+      keyIdea: 'Watch active connections per Pod, not only requests per second. Rising CPU on a few Pods while others idle is the typical sign.',
+      flows: [
+        {from: 'proxy', to: 'pod1', label: 'old conns', type: 'request'},
+        {from: 'proxy', to: 'pod2', label: 'old conns', type: 'request'},
+        {from: 'proxy', to: 'pod3', label: 'few', type: 'request'},
+      ],
+      focus: ['pod3', 'pod2'],
+      status: {pod1: null, pod2: 'warn', pod3: 'ok'},
+      badges: {pod1: null, pod2: '900 conns', pod3: '12 conns'},
+      values: {conn: 'Pinned to first Pod'},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Pick the simplest pattern, then fix every hop',
+      text: [
+        'Polling for slow updates, SSE for one-way streams such as LLM tokens and notifications, WebSocket when the client also sends a lot, gRPC streaming between services.',
+        'Then go hop by hop: no buffering, idle timeouts longer than the gap between heartbeats, a grace period that drains streams, clients that reconnect, and connection limits so load spreads to new Pods.',
+      ],
+      flows: [
+        {from: 'llm', to: 'pod2', type: 'response'},
+        {from: 'pod2', to: 'proxy', type: 'response'},
+        {from: 'proxy', to: 'lb', type: 'response'},
+        {from: 'lb', to: 'client', label: 'data: ...', type: 'response'},
+      ],
+      focus: ['client', 'lb', 'proxy'],
+      status: {pod1: null, pod2: null, pod3: null},
+      badges: {pod2: null, pod3: null, pod1: null},
+      values: {mode: 'SSE + heartbeats', dir: 'Server → client', conn: 'Long, kept alive', seen: 'Words as written'},
+    },
+  ]}
+/>
+
+## Choosing a pattern
+
+| Pattern | Direction | Transport | Reconnect | Good for |
+|---|---|---|---|---|
+| Polling | Client asks | A new request every interval | Each poll is new | Slow-changing status, simplest setups |
+| Long polling | Client asks, server holds | A request held open until data or timeout | Client asks again | Notifications where SSE or WebSocket is blocked |
+| Server-Sent Events | Server → client | One long HTTP response, `text/event-stream` | Built into EventSource, resumes with `Last-Event-ID` | LLM tokens, live feeds, progress |
+| WebSocket | Both ways | HTTP upgrade (`101`), then frames | App must do it | Chat, games, collaboration |
+| gRPC streaming | Either or both | HTTP/2 streams | App or library retry | Service-to-service streams |
+
+## When a stream breaks
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| Whole answer appears at once | A proxy, gateway or compression layer buffers | `proxy_buffering off` or `X-Accel-Buffering: no`; test each hop with `curl -N` |
+| Stream stops after about a minute of silence | Idle or read timeout on one hop | Heartbeats more often than the shortest timeout; raise timeouts on streaming routes |
+| WebSocket handshake fails, no `101` | A proxy does not pass `Upgrade` and `Connection` | Enable WebSocket support on that proxy or load balancer |
+| Streams end during every deploy | Grace period shorter than streams | Drain on SIGTERM, longer `terminationGracePeriodSeconds`, client reconnect |
+| New Pods idle after scale-out | Long connections pinned to old Pods | Max connection age, per-request L7 balancing, least-connections |
+
+## Try it yourself
+
+```bash
+# Watch an SSE stream arrive; -N turns off curl's own output buffering
+curl -N -H 'Accept: text/event-stream' https://app.example.com/events
+
+# Stream tokens from an OpenAI-compatible server (for example vLLM) with a timestamp per line
+curl -sN http://localhost:8000/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"my-model","stream":true,"messages":[{"role":"user","content":"Count to 20"}]}' \
+  | while IFS= read -r line; do echo "$(date +%T) $line"; done    # one timestamp for all lines = buffering
+
+# Same request straight to a Pod, skipping the proxies, to find the buffering hop
+kubectl port-forward deploy/chat-api 8080:8080
+
+# Streaming-related timeouts on Ingresses and HTTPRoutes
+kubectl get ingress -A -o yaml | grep -E 'proxy-(read|send)-timeout|proxy-buffering'
+kubectl get httproute -A -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.spec.rules[*].timeouts}{"\n"}{end}'
+
+# How long a Pod gets to drain its streams
+kubectl get deploy chat-api -o jsonpath='{.spec.template.spec.terminationGracePeriodSeconds}{"\n"}'
+```
+
+<Quiz questions={[
+  {q: 'The app sends SSE events every 50 ms, but users see the whole answer at once after 20 seconds. Calling the Pod directly with curl -N streams fine. What is most likely wrong?', options: ['The model server is slow', 'A proxy in front of the Pod buffers the response', 'SSE needs WebSocket underneath', 'The browser does not support EventSource'], answer: 1, why: 'The Pod streams correctly, so a hop after it holds the response back. nginx buffers upstream responses by default; turn it off for the route or send X-Accel-Buffering: no.'},
+  {q: 'A model sometimes thinks for 90 seconds before the first token, and those streams always die. The load balancer has a 60-second idle timeout. What is the most robust fix?', options: ['Switch from SSE to polling', 'Lower the grace period of the Pods', 'Send a heartbeat (for example an SSE comment line) every 15–20 seconds, and raise idle timeouts on streaming routes'], answer: 2, why: 'An idle timeout counts time with no data. A regular heartbeat keeps every hop from seeing the connection as idle, and higher timeouts give extra margin.'},
+  {q: 'After scaling from 3 to 6 Pods, the 3 new Pods stay almost idle while the old ones are busy. Clients hold long gRPC connections. Why?', options: ['Load is balanced when a connection opens, and the existing connections stay on the old Pods', 'The new Pods failed their readiness probes', 'gRPC can only talk to 3 Pods at a time', 'The HPA scaled the wrong Deployment'], answer: 0, why: 'A long HTTP/2 connection carries many requests to the Pod it first reached. Limit connection age or balance per request so traffic moves to new Pods.'},
+]} />
+
+Further reading: [MDN: Using server-sent events](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events/Using_server-sent_events) · [RFC 6455: The WebSocket Protocol](https://datatracker.ietf.org/doc/html/rfc6455) · [gRPC core concepts](https://grpc.io/docs/what-is-grpc/core-concepts/) · [nginx proxy_buffering](https://nginx.org/en/docs/http/ngx_http_proxy_module.html#proxy_buffering) · [Gateway API HTTPRoute timeouts](https://gateway-api.sigs.k8s.io/reference/api-types/httproute/) · [HTTP/1.1, HTTP/2 and HTTP/3](../basic/http-versions.mdx) · [Reverse Proxies and Load Balancing](../basic/reverse-proxy.mdx) · [From API Request to Response](../ai/inference-request.mdx)

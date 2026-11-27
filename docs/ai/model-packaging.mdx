@@ -1,7 +1,7 @@
 ---
 id: model-packaging
 title: Getting a Model Ready to Deploy
-sidebar_label: 07 · Getting a Model Ready to Deploy
+sidebar_label: 08 · Getting a Model Ready to Deploy
 description: Follow model weights from Hugging Face or S3 as they are pulled, packaged as an OCI artifact, and pre-pulled onto GPU nodes so that serving Pods start fast.
 summary: 'Pull weights, package them as an image or artifact, and pre-cache them on nodes so serving starts fast.'
 icon: archive
@@ -80,7 +80,7 @@ A model on Hugging Face does not make a serving Pod start fast. Tens to hundreds
         'It downloads weight files such as safetensors, plus the config and tokenizer files.',
       ],
       flows: [
-        {from: 'secret', to: 'dl', label: 'token / keys', type: 'response'},
+        {from: 'secret', to: 'dl', label: 'token / keys', type: 'response', bend: -0.3},
         {from: 'src', to: 'dl', label: 'weight files', type: 'response'},
       ],
       focus: ['dl', 'secret'],

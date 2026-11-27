@@ -1,0 +1,265 @@
+---
+id: distributed-training
+title: Training One Model on Many GPUs
+sidebar_label: 10 · Distributed Training
+description: Animated walkthrough of distributed training on Kubernetes, from data parallel DDP and gradient all-reduce to FSDP and ZeRO sharding, NCCL ring and tree collectives, network bandwidth, torchrun ranks with a Kubeflow TrainJob, and checkpoint-based restarts after a worker fails
+summary: 'Copy the model or shard it, average gradients with all-reduce every step, and why one failed worker stops the whole job.'
+icon: hammer
+hide_table_of_contents: true
+---
+
+# Training One Model on Many GPUs
+
+One training run spread over 4 GPUs on 2 nodes. Follow how each GPU gets its own slice of the data, how gradients are combined every step, how sharding fits a bigger model, and what happens when one worker dies. How the Job waits for GPU quota is in [From Training Job to Model](../ai/training-job.mdx).
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~14 min', level: 'Advanced'}}
+  groups={[
+    {label: 'Node A · 2 GPUs on NVLink', x: 220, y: 40, w: 340, h: 300, tone: 'biz'},
+    {label: 'Node B · 2 GPUs on NVLink', x: 600, y: 40, w: 360, h: 300, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'data', label: 'Dataset', sub: 'Sharded by rank', icon: 'db', tone: 'store', x: 100, y: 100, show: true},
+    {id: 'job', label: 'TrainJob', sub: 'torch-distributed', icon: 'gear', tone: 'cp', x: 100, y: 240},
+    {id: 'ckpt', label: 'Checkpoint', sub: 'Object storage', icon: 'archive', tone: 'store', x: 100, y: 380},
+    {id: 'g0', label: 'GPU · rank 0', sub: 'Node A', icon: 'layers', tone: 'node', size: 'sm', w: 120, x: 310, y: 130, show: true},
+    {id: 'g1', label: 'GPU · rank 1', sub: 'Node A', icon: 'layers', tone: 'node', size: 'sm', w: 120, x: 470, y: 130, show: true},
+    {id: 'g2', label: 'GPU · rank 2', sub: 'Node B', icon: 'layers', tone: 'node', size: 'sm', w: 120, x: 700, y: 130, show: true},
+    {id: 'g3', label: 'GPU · rank 3', sub: 'Node B', icon: 'layers', tone: 'node', size: 'sm', w: 120, x: 860, y: 130, show: true},
+    {id: 'podA', label: 'Pod · torchrun', sub: 'nproc-per-node 2', icon: 'pod', tone: 'app', x: 390, y: 265},
+    {id: 'podB', label: 'Pod · torchrun', sub: 'nproc-per-node 2', icon: 'pod', tone: 'app', x: 780, y: 265},
+    {id: 'net', label: 'Node network', sub: 'InfiniBand · RoCE', icon: 'route', tone: 'ext', x: 590, y: 395, w: 170},
+  ]}
+  metrics={[
+    {id: 'layout', label: 'Layout'},
+    {id: 'mem', label: 'Memory per GPU'},
+    {id: 'comm', label: 'Each step'},
+    {id: 'state', label: 'Job'},
+  ]}
+  learn={[
+    {text: 'Data parallel: full copies, different data, averaged gradients', at: 1},
+    {text: 'All-reduce, all-gather and reduce-scatter in NCCL', at: 2},
+    {text: 'Why network bandwidth sets the speed of training', at: 4},
+    {text: 'FSDP and ZeRO shard states to fit bigger models', at: 6},
+    {text: 'torchrun ranks and a Kubeflow TrainJob on Kubernetes', at: 8},
+    {text: 'One failed worker stops all, so checkpoint and restart', at: 9},
+  ]}
+  steps={[
+    {
+      short: 'Start',
+      kind: '시작',
+      title: 'One GPU is too slow for this run',
+      text: [
+        'A training run on one GPU would take weeks. The plan is to spread it over 4 GPUs on 2 nodes and finish in roughly a quarter of the time.',
+        'Unlike serving, training repeats the same loop millions of times: forward pass, backward pass to get gradients, optimizer step. Every GPU must end each step with the same weights.',
+      ],
+      focus: ['g0'],
+      values: {layout: '1 GPU', mem: 'fits', comm: '—', state: 'planning'},
+    },
+    {
+      short: 'DDP',
+      kind: '원리',
+      title: 'Data parallel: every GPU holds a full copy',
+      text: [
+        'With data parallelism (PyTorch DDP), each GPU keeps a full copy of the model and the optimizer. Each rank reads a different shard of the batch (for example through DistributedSampler).',
+        'After the backward pass, every rank has different gradients, because it saw different data. Before the optimizer step, the gradients are averaged across all ranks. Then every copy applies the same update and stays identical.',
+      ],
+      keyIdea: 'The global batch is the per-GPU batch times the number of GPUs. Changing the GPU count changes the batch, so learning rate settings may need to follow.',
+      flows: [
+        {from: 'data', to: 'g0', label: 'shard 0', type: 'request'},
+        {from: 'data', to: 'g2', label: 'shard 2', type: 'request'},
+      ],
+      focus: ['g0', 'g1', 'g2', 'g3'],
+      badges: {g0: 'full copy', g1: 'full copy', g2: 'full copy', g3: 'full copy'},
+      values: {layout: 'DDP × 4', comm: 'average gradients'},
+    },
+    {
+      short: 'Collectives',
+      kind: '원리',
+      title: 'NCCL collectives move the tensors between GPUs',
+      text: [
+        'The averaging is an all-reduce: every rank contributes its gradients and every rank gets back the sum (divided by the world size). On NVIDIA GPUs the NCCL library runs it, over NVLink inside a node and the network between nodes.',
+        'Two more collectives matter for sharding. All-gather collects pieces from every rank so each has the whole tensor. Reduce-scatter sums the tensors and leaves each rank only its own piece of the result.',
+      ],
+      flows: [
+        {from: 'g0', to: 'g1', label: 'NVLink', type: 'request'},
+        {from: 'g1', to: 'g2', label: 'network', type: 'request'},
+      ],
+      focus: ['g0', 'g1', 'g2', 'g3'],
+      values: {comm: 'all-reduce every step'},
+    },
+    {
+      short: 'Ring · tree',
+      kind: '원리',
+      title: 'Ring and tree: how an all-reduce is wired',
+      text: [
+        'In a ring all-reduce, the ranks form a loop and pass chunks to their neighbor. Each GPU sends about 2 × (N − 1) / N times the gradient size per all-reduce, close to twice the gradients no matter how many GPUs join. It uses bandwidth well, but its steps grow with N.',
+        'A tree all-reduce sums up a tree and sends the result back down, so it takes fewer hops and has lower latency at large scale. NCCL picks the algorithm by message size and topology on its own.',
+      ],
+      keyIdea: 'Set NCCL_DEBUG=INFO to see which transports (NVLink, InfiniBand, sockets) and rings or trees NCCL chose at startup.',
+      flows: [
+        {from: 'g0', to: 'g1', type: 'request'},
+        {from: 'g1', to: 'g2', type: 'request'},
+        {from: 'g2', to: 'g3', type: 'request'},
+        {from: 'g3', to: 'g0', type: 'request', bend: -60},
+      ],
+      focus: ['g0', 'g1', 'g2', 'g3'],
+      badges: {g0: 'ring', g1: 'ring', g2: 'ring', g3: 'ring'},
+      values: {comm: '≈ 2× gradients per GPU'},
+    },
+    {
+      short: 'Bandwidth',
+      kind: '주의',
+      title: 'Communication becomes the bottleneck',
+      text: [
+        'A 1B-parameter model has about 2 GB of BF16 gradients. A ring all-reduce over 4 GPUs then sends about 3 GB per GPU, every step. Inside a node NVLink carries that quickly, but the hop between nodes is often far slower.',
+        'DDP overlaps the all-reduce with the backward pass by sending gradients in buckets as they are ready. When the network is too slow to hide behind compute, the GPUs sit idle waiting for each other, and adding GPUs stops helping.',
+      ],
+      keyIdea: 'Multi-node training wants a fast fabric (InfiniBand or RoCE, ideally with GPUDirect RDMA). On Kubernetes that often means an RDMA device plugin and a secondary network, for example with Multus.',
+      flows: [
+        {from: 'g1', to: 'net', label: 'gradients', type: 'request'},
+        {from: 'net', to: 'g2', type: 'request'},
+      ],
+      focus: ['net'],
+      status: {net: 'warn'},
+      badges: {g0: null, g1: null, g2: null, g3: null},
+      values: {comm: {text: 'GPUs wait on network', tone: 'bad'}},
+    },
+    {
+      short: 'Memory wall',
+      kind: '문제',
+      title: 'A bigger model does not fit as a full copy',
+      text: [
+        'Now the team wants a 7B model. With Adam in mixed precision, each parameter needs about 16 bytes: BF16 weights and gradients plus FP32 master weights and two optimizer moments. That is about 112 GB before activations.',
+        'A GPU here has 80 GB. DDP keeps all of it on every GPU, so adding more GPUs does not help at all. The copy itself does not fit.',
+      ],
+      flows: [],
+      focus: ['g0', 'g1', 'g2', 'g3'],
+      status: {net: null, g0: 'error', g1: 'error', g2: 'error', g3: 'error'},
+      badges: {g0: 'OOM', g1: 'OOM', g2: 'OOM', g3: 'OOM'},
+      values: {mem: {text: '≈ 112 GB > 80 GB', tone: 'bad'}},
+    },
+    {
+      short: 'FSDP · ZeRO',
+      kind: '원리',
+      title: 'Shard the states instead of copying them',
+      text: [
+        'ZeRO (DeepSpeed) and FSDP (PyTorch) split the training state across the data parallel ranks. ZeRO stage 1 shards the optimizer state, stage 2 also the gradients, and stage 3 (like FSDP full sharding) also the parameters. With 4 ranks, each holds about a quarter: around 28 GB.',
+        'Before a layer runs, the ranks all-gather its parameters, use them, and free them again. After the backward pass, a reduce-scatter leaves each rank only the gradient shard it owns. Each rank still trains on its own data.',
+      ],
+      keyIdea: 'Full sharding costs about 1.5 times the communication of plain DDP. It trades network for memory, so the bandwidth from the last step matters even more.',
+      flows: [
+        {from: 'g0', to: 'g1', label: 'all-gather', type: 'request'},
+        {from: 'g2', to: 'g3', label: 'reduce-scatter', type: 'response'},
+      ],
+      focus: ['g0', 'g1', 'g2', 'g3'],
+      status: {g0: 'ok', g1: 'ok', g2: 'ok', g3: 'ok'},
+      badges: {g0: '1/4', g1: '1/4', g2: '1/4', g3: '1/4'},
+      values: {layout: 'FSDP × 4', mem: {text: '≈ 28 GB + activations', tone: 'good'}, comm: 'all-gather + reduce-scatter'},
+    },
+    {
+      short: 'TP · PP',
+      kind: '원리',
+      title: 'Very large models also split layers, as in serving',
+      text: [
+        'At the largest scale, sharding alone is not enough. Tensor parallelism splits each layer across the GPUs of one node, and pipeline parallelism splits the layer stack across nodes. Combined with data parallelism, this is often called 3D parallelism.',
+        'Training has extra costs over serving: backward passes double the traffic, activations must be kept for the backward pass, and pipelines need micro-batches to keep the bubble small. The splits work the same way as in Splitting a Model Across GPUs.',
+      ],
+      keyIdea: 'Keep tensor parallel inside a node on NVLink, and put data parallel or pipeline traffic on the network between nodes.',
+      flows: [
+        {from: 'g0', to: 'g1', label: 'TP', type: 'request'},
+        {from: 'g1', to: 'g2', label: 'PP', type: 'request'},
+      ],
+      focus: ['g0', 'g1', 'g2'],
+      badges: {g0: 'TP', g1: 'TP', g2: 'stage 2', g3: 'stage 2'},
+      values: {layout: 'TP × PP × DP'},
+    },
+    {
+      short: 'Launch',
+      kind: '원리',
+      title: 'torchrun starts one worker per GPU, each with a rank',
+      text: [
+        'Kubeflow Trainer (v2, which replaces the Training Operator and its PyTorchJob) takes a TrainJob that points at a runtime such as torch-distributed, with numNodes: 2 and resourcesPerNode of 2 GPUs. It creates the Pods through a JobSet.',
+        'In each Pod, torchrun starts one process per GPU and sets RANK, LOCAL_RANK, WORLD_SIZE, MASTER_ADDR and MASTER_PORT. All ranks meet at rank 0 to form the process group, then NCCL connects them.',
+      ],
+      keyIdea: 'All Pods must run at once, or the ones that started wait forever for the rest. Use gang scheduling, for example through Kueue or Volcano, so a job starts whole or not at all.',
+      flows: [
+        {from: 'job', to: 'podA', label: 'node 0', type: 'request'},
+        {from: 'job', to: 'podB', label: 'node 1', type: 'request', bend: 40},
+        {from: 'podA', to: 'g0', label: 'ranks 0,1', type: 'request'},
+        {from: 'podB', to: 'g2', label: 'ranks 2,3', type: 'request'},
+      ],
+      focus: ['job', 'podA', 'podB'],
+      badges: {g0: 'rank 0', g1: 'rank 1', g2: 'rank 2', g3: 'rank 3'},
+      values: {state: {text: 'Running · world size 4', tone: 'good'}},
+    },
+    {
+      short: 'One fails',
+      kind: '장애',
+      title: 'One worker dies and the whole job stops',
+      text: [
+        'Node B loses a GPU and rank 3 crashes. The other ranks block in the next all-reduce, waiting for a peer that will never answer, until the collective times out. Every rank depends on every other rank each step.',
+        'torchrun stops all workers and restarts the whole group, up to --max-restarts. If the Pod or node is gone, the job controller recreates the group. Either way, everything since the last checkpoint is lost.',
+      ],
+      keyIdea: 'Checkpoint often to shared storage and make the code resume from the latest one. Distributed checkpointing lets each rank save its own shard in parallel. With torchrun --nnodes=MIN:MAX the job can also restart elastically on fewer nodes.',
+      flows: [
+        {from: 'g0', to: 'ckpt', label: 'save shards', type: 'request'},
+        {from: 'ckpt', to: 'podA', label: 'resume', type: 'response'},
+      ],
+      focus: ['g3', 'ckpt'],
+      status: {g3: 'error', g0: 'warn', g1: 'warn', g2: 'warn', podB: 'error'},
+      badges: {g3: 'crashed'},
+      values: {state: {text: 'All ranks stopped · restart', tone: 'bad'}},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Copy or shard, then keep the network fast and the checkpoints fresh',
+      text: [
+        'DDP gives each GPU a full copy and averages gradients with an all-reduce every step. FSDP or ZeRO shards the states when the copy does not fit. Tensor and pipeline parallelism split layers for the largest models.',
+        'Collectives make the network part of every step, and they tie all ranks together, so one failure stops all of them. Fast links and frequent checkpoints keep a large run moving.',
+      ],
+      keyIdea: 'Watch GPU utilization next to network throughput. Low GPU use with a busy network means communication, not compute, is the limit.',
+      flows: [
+        {from: 'g1', to: 'g2', label: 'all-reduce', type: 'request'},
+      ],
+      focus: ['g0', 'g1', 'g2', 'g3'],
+      status: {g0: 'ok', g1: 'ok', g2: 'ok', g3: 'ok', podB: null},
+      badges: {g3: 'rank 3'},
+      values: {state: {text: 'Running from checkpoint', tone: 'good'}},
+    },
+  ]}
+/>
+
+## Choosing a parallelism
+
+| Approach | What each GPU holds | Communication | Use when |
+| --- | --- | --- | --- |
+| DDP (data parallel) | Full model, gradients, optimizer state | All-reduce of gradients once per step | The model and its optimizer state fit on one GPU |
+| ZeRO-1 / ZeRO-2 | Full weights, shard of optimizer state (and gradients) | About the same as DDP | Optimizer state is what does not fit |
+| FSDP / ZeRO-3 | A shard of weights, gradients and optimizer state | All-gather of weights, reduce-scatter of gradients, about 1.5× DDP | Even the weights plus states do not fit on one GPU |
+| Tensor parallel | A slice of every layer | Collectives inside every layer | Layers are too large; keep inside one node on NVLink |
+| Pipeline parallel | A range of layers | Activations between stages | The model is too deep for one node; needs micro-batches |
+
+## Try it yourself
+
+```bash
+kubectl get clustertrainingruntimes                       # Runtimes a TrainJob can use, e.g. torch-distributed
+kubectl get trainjobs -n <namespace>                      # Kubeflow Trainer v2 jobs
+kubectl get jobset -n <namespace>                         # The JobSet the TrainJob created
+kubectl get pods -n <namespace> -l jobset.sigs.k8s.io/jobset-name=<trainjob> -o wide   # One Pod per node
+kubectl logs -n <namespace> <pod> | grep -E "NCCL INFO|rank"   # With NCCL_DEBUG=INFO set: transports and rings
+kubectl exec -n <namespace> <pod> -- nvidia-smi topo -m   # NVLink vs PCIe between the GPUs in a node
+# Inside a container: one process per GPU, two nodes, rendezvous at the rank 0 Pod
+torchrun --nnodes=2 --nproc-per-node=2 --rdzv-backend=c10d --rdzv-endpoint=<rank0-host>:29400 --rdzv-id=run1 train.py
+```
+
+<Quiz questions={[
+  {q: 'In DDP, why does every GPU run an all-reduce after the backward pass?', options: ['To copy the dataset to every GPU', 'To average the gradients so every copy applies the same update and stays identical', 'To split the model weights between GPUs', 'To save a checkpoint'], answer: 1, why: 'Each rank sees different data and gets different gradients. Averaging them with an all-reduce keeps all full copies of the model in sync.'},
+  {q: 'A 7B model with Adam needs about 112 GB of states and each GPU has 80 GB. Why does adding more DDP GPUs not help?', options: ['DDP keeps the full model and optimizer state on every GPU, so the copy still does not fit', 'NCCL cannot run on more than 4 GPUs', 'The global batch becomes too small'], answer: 0, why: 'DDP adds throughput, not memory. FSDP or ZeRO-3 shards weights, gradients and optimizer state across ranks so each holds only a part.'},
+  {q: 'Rank 3 crashes in a 4-GPU training job. What happens to the other ranks?', options: ['They keep training and skip rank 3\'s data', 'They pause until rank 3 is restarted alone', 'Their GPUs are reassigned to another job', 'They block in the next collective, and the whole group is stopped and restarted from the last checkpoint'], answer: 3, why: 'Every collective needs every rank. torchrun or the job controller restarts the whole group, so work since the last checkpoint is lost.'},
+]} />
+
+Further reading: [PyTorch DDP](https://docs.pytorch.org/docs/stable/notes/ddp.html) · [PyTorch FSDP](https://docs.pytorch.org/docs/stable/fsdp.html) · [torchrun](https://docs.pytorch.org/docs/stable/elastic/run.html) · [NCCL collectives](https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/usage/collectives.html) · [Kubeflow Trainer](https://www.kubeflow.org/docs/components/trainer/) · [From Training Job to Model](../ai/training-job.mdx) · [Splitting a Model Across GPUs (TP, PP, EP)](../llm/model-parallelism.mdx)

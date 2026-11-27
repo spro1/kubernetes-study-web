@@ -129,7 +129,7 @@ hide_table_of_contents: true
       keyIdea: 'ssh-add -l이 에이전트가 들고 있는 키를 보여 준다.',
       flows: [
         {from: 'key', to: 'agent', label: 'ssh-add', type: 'request'},
-        {from: 'client', to: 'agent', label: '서명해 줘', type: 'request'},
+        {from: 'client', to: 'agent', type: 'request'},
       ],
       focus: ['agent'],
       status: {fake: 'gone'},

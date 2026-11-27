@@ -1,0 +1,209 @@
+---
+id: dns-blocked
+title: Lab 07 · DNS blocked by NetworkPolicy
+sidebar_label: 07 · DNS blocked
+sidebar_position: 7
+description: Break-fix lab where a default-deny egress NetworkPolicy breaks name lookups. The Service works by IP but not by name. Find why and allow DNS to kube-dns on UDP and TCP 53.
+hide_table_of_contents: false
+---
+
+# Lab 07 · DNS blocked by NetworkPolicy
+
+## Goal
+
+A client Pod can reach a Service by its IP but not by its name. Find the NetworkPolicy that blocks name lookups and open only what DNS needs.
+
+## Setup
+
+Use the kind cluster from [Build a Lab Cluster on Your Laptop](../basic/lab-cluster.mdx). NetworkPolicy only works if the network plugin enforces it. kind's default plugin (kindnet) enforces NetworkPolicy from **kind v0.24.0** on. Check with `kind version`. On an older kind, upgrade it, or the policies below are silently ignored and the lab shows no problem.
+
+```bash
+kubectl apply -f - <<'EOF'
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: lab-07
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  namespace: lab-07
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:1.29.3-alpine
+        ports:
+        - containerPort: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+  namespace: lab-07
+spec:
+  selector:
+    app: web
+  ports:
+  - port: 80
+    targetPort: 80
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: client
+  namespace: lab-07
+spec:
+  containers:
+  - name: curl
+    image: curlimages/curl:8.17.0
+    command: ["sleep", "3600"]
+---
+# Block all outgoing traffic from every Pod in the namespace ...
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-egress
+  namespace: lab-07
+spec:
+  podSelector: {}
+  policyTypes: ["Egress"]
+---
+# ... then allow traffic to the web Pods only.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-to-web
+  namespace: lab-07
+spec:
+  podSelector: {}
+  policyTypes: ["Egress"]
+  egress:
+  - to:
+    - podSelector:
+        matchLabels:
+          app: web
+    ports:
+    - protocol: TCP
+      port: 80
+EOF
+kubectl -n lab-07 wait --for=condition=Ready pod/client
+kubectl -n lab-07 rollout status deploy/web
+```
+
+## Symptoms
+
+```bash
+WEB_IP=$(kubectl -n lab-07 get svc web -o jsonpath='{.spec.clusterIP}')
+kubectl -n lab-07 exec client -- curl -s -o /dev/null -w '%{http_code}\n' -m 5 http://$WEB_IP   # 200
+kubectl -n lab-07 exec client -- curl -sS -m 15 http://web                                     # fails
+```
+
+By IP you get `200`. By name, curl waits and then gives up with a "could not resolve host" error (or a resolving timeout). The app is fine. Only the name lookup fails.
+
+## Investigate
+
+```bash
+kubectl -n lab-07 get networkpolicy
+kubectl -n lab-07 describe networkpolicy
+kubectl -n lab-07 exec client -- cat /etc/resolv.conf     # who answers DNS?
+kubectl -n kube-system get svc kube-dns
+kubectl -n kube-system get pods -l k8s-app=kube-dns --show-labels
+```
+
+## Hints
+
+<details>
+<summary>Hint 1</summary>
+
+Look at `/etc/resolv.conf`. The `nameserver` is the IP of the `kube-dns` Service in `kube-system`. A name lookup is a network packet like any other, and it leaves the Pod as egress.
+
+</details>
+
+<details>
+<summary>Hint 2</summary>
+
+Once any egress policy selects a Pod, only traffic that some policy allows can leave it. Policies add up (they are a union). Which allowed destination covers CoreDNS on port 53?
+
+</details>
+
+<details>
+<summary>Hint 3</summary>
+
+DNS uses UDP port 53, and falls back to TCP port 53 for large answers. The CoreDNS Pods live in another namespace, so a plain `podSelector` does not reach them. You also need a `namespaceSelector`.
+
+</details>
+
+## Solution
+
+<details>
+<summary>Solution</summary>
+
+`default-deny-egress` blocks everything, and `allow-to-web` only opens TCP 80 to the web Pods. Nothing allows packets to CoreDNS, so every lookup is dropped. By IP, curl skips DNS, which is why that still works.
+
+Add one more policy that allows DNS to the CoreDNS Pods only:
+
+```bash
+kubectl apply -f - <<'EOF'
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: lab-07
+spec:
+  podSelector: {}
+  policyTypes: ["Egress"]
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+      podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+EOF
+```
+
+Note that `namespaceSelector` and `podSelector` sit in the **same** list item, so both must match (CoreDNS Pods in kube-system). With a `-` before `podSelector` they would be two separate items, ORed, and the policy would allow far more than DNS. Every namespace gets the `kubernetes.io/metadata.name` label automatically, so it is a safe selector. Allow both UDP and TCP: large answers switch to TCP, and with only UDP open those lookups fail now and then.
+
+</details>
+
+## Verify
+
+```bash
+kubectl -n lab-07 exec client -- curl -s -o /dev/null -w '%{http_code}\n' -m 5 http://web   # 200
+kubectl -n lab-07 exec client -- curl -sS -m 5 https://example.com                         # still blocked
+```
+
+The second command still fails. The name resolves now, but the connection to the internet is not allowed. That is what default-deny should do.
+
+## Clean up
+
+```bash
+kubectl delete namespace lab-07
+```
+
+<Quiz questions={[
+  {q: 'With a default-deny egress policy, curl http://10.96.12.34 works but curl http://web fails. What is the most likely cause?', options: ['The Service has no endpoints', 'Egress to CoreDNS on port 53 is not allowed, so the name cannot be resolved', 'The nginx Pod is not Ready'], answer: 1, why: 'Reaching the IP proves the path to the app is open. The name needs a DNS packet to kube-dns first, and the policy drops it.'},
+  {q: 'In an egress rule, namespaceSelector and podSelector are written in the same item under to. What does that select?', options: ['Pods that match the podSelector in namespaces that match the namespaceSelector', 'All Pods in the selected namespaces, plus matching Pods in any namespace', 'Nothing, because you can only use one selector'], answer: 0, why: 'In one item the two selectors are ANDed. As two separate items (each with its own dash) they are ORed.'},
+]} />
+
+## Related lessons
+
+- [Blocking and Allowing Traffic (NetworkPolicy)](../k8s/network-policy.mdx)
+- [Finding Services by Name (Service·DNS)](../k8s/service-dns.mdx)
+- [How DNS Finds an Address](../basic/dns-resolution.mdx)

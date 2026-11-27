@@ -1,0 +1,184 @@
+---
+id: readiness
+title: 'Lab 05 · Running, but never ready'
+sidebar_label: '05 · Readiness probe'
+sidebar_position: 5
+description: 'Break-fix lab: Pods are Running but stay 0/1 READY and the Service has no ready endpoints, because the readinessProbe checks the wrong port and path. Read the probe events and fix the probe.'
+hide_table_of_contents: false
+---
+
+# Lab 05 · Running, but never ready
+
+This lab runs on the kind cluster from [Build a Lab Cluster on Your Laptop](../basic/lab-cluster.mdx). Check `kubectl config current-context` first: it should say `kind-lab`.
+
+## Goal
+
+The Pods are `Running` and never restart, yet they stay `0/1` ready and the Service `web` sends traffic nowhere. Find out what the readiness check is doing wrong and fix it.
+
+## Setup
+
+```bash
+kubectl apply -f - <<'EOF'
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: lab-05
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  namespace: lab-05
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.27
+          ports:
+            - containerPort: 80
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+  namespace: lab-05
+spec:
+  selector:
+    app: web
+  ports:
+    - port: 80
+      targetPort: 80
+EOF
+```
+
+## Symptoms
+
+```bash
+kubectl -n lab-05 get pods
+```
+
+```text
+NAME                   READY   STATUS    RESTARTS   AGE
+web-7d5f8b6c9d-9x2kq   0/1     Running   0          1m
+web-7d5f8b6c9d-lm4tr   0/1     Running   0          1m
+```
+
+`STATUS` is `Running` and `RESTARTS` stays `0`, but `READY` never reaches `1/1`. A request to `http://web` from inside the cluster gets no answer.
+
+## Investigate
+
+```bash
+kubectl -n lab-05 describe pod -l app=web     # Readiness line, Conditions, Events
+kubectl -n lab-05 describe svc web            # Endpoints
+kubectl -n lab-05 get endpointslices -l kubernetes.io/service-name=web \
+  -o jsonpath='{range .items[*].endpoints[*]}{.addresses[0]} ready={.conditions.ready}{"\n"}{end}'
+kubectl -n lab-05 get pods -o wide            # Pod IPs
+# Ask nginx yourself: which port and path does it answer on?
+kubectl -n lab-05 run tmp --rm -i --restart=Never --image=busybox:1.36 -- wget -S -O /dev/null -T 3 http://<pod-ip>:80/
+```
+
+The Pods are listed in the EndpointSlice, but are they marked ready? Then compare what the probe checks with what the container serves.
+
+## Hints
+
+<details>
+<summary>Hint 1</summary>
+
+A failing readiness probe does not restart the container (that is what a liveness probe does). It only marks the Pod not ready, and a not-ready Pod is left out of the Service's ready endpoints. Look for `Unhealthy` events in `describe pod`.
+
+</details>
+
+<details>
+<summary>Hint 2</summary>
+
+The first event says `connection refused`. The probe connects to the Pod IP on the port in `readinessProbe.httpGet.port`. Which port does nginx listen on?
+
+</details>
+
+<details>
+<summary>Hint 3</summary>
+
+Once the port is right, the event changes to a status code. An HTTP probe passes only on a code from 200 to 399. Does the default nginx image serve `/healthz`?
+
+</details>
+
+## Solution
+
+<details>
+<summary>Solution</summary>
+
+**Problem 1: the wrong port.** The events show:
+
+```text
+Warning  Unhealthy  ...  Readiness probe failed: Get "http://10.244.1.6:8080/healthz": dial tcp 10.244.1.6:8080: connect: connection refused
+```
+
+nginx listens on port 80, so nothing answers on 8080.
+
+**Problem 2: the wrong path.** With only the port fixed, the event becomes:
+
+```text
+Warning  Unhealthy  ...  Readiness probe failed: HTTP probe failed with statuscode: 404
+```
+
+nginx now answers, but the stock image has no `/healthz` page, and 404 counts as a failure. Use a path it really serves, such as `/`. Fix both fields at once:
+
+```bash
+kubectl -n lab-05 patch deployment web --type=json -p='[
+  {"op":"replace","path":"/spec/template/spec/containers/0/readinessProbe/httpGet/port","value":80},
+  {"op":"replace","path":"/spec/template/spec/containers/0/readinessProbe/httpGet/path","value":"/"}
+]'
+```
+
+The change to the Pod template starts a rolling update. New Pods pass the probe, become ready, join the Service's ready endpoints, and the old Pods are removed. In a real app, point the probe at an endpoint that reports whether the app can serve requests, and keep it cheap.
+
+</details>
+
+## Verify
+
+```bash
+kubectl -n lab-05 rollout status deployment web
+kubectl -n lab-05 get pods
+kubectl -n lab-05 run tmp --rm -i --restart=Never --image=busybox:1.36 -- sh -c 'wget -qO- -T 3 http://web | grep title'
+```
+
+```text
+deployment "web" successfully rolled out
+NAME                   READY   STATUS    RESTARTS   AGE
+web-5c9d7f8b6f-h7wzp   1/1     Running   0          30s
+web-5c9d7f8b6f-r2nqs   1/1     Running   0          20s
+<title>Welcome to nginx!</title>
+pod "tmp" deleted
+```
+
+Both Pods are `1/1`, the EndpointSlice jsonpath above now prints `ready=true` for each, and the Service answers.
+
+## Clean up
+
+```bash
+kubectl delete ns lab-05
+```
+
+<Quiz questions={[
+  {q: 'A readinessProbe keeps failing. What does Kubernetes do with the Pod?', options: ['Restarts the container after a few failures', 'Keeps the container running, but leaves the Pod out of the Service\'s ready endpoints', 'Deletes the Pod and creates a new one'], answer: 1, why: 'Readiness only decides whether the Pod gets traffic. Restarting is the job of a liveness probe.'},
+  {q: 'The event says "Readiness probe failed: HTTP probe failed with statuscode: 404". What does it tell you?', options: ['Nothing listens on the probe port', 'The Pod has no IP address yet', 'Something answers on the port, but the path does not exist'], answer: 2, why: 'A status code means the connection worked. A wrong port gives connection refused instead.'},
+]} />
+
+## Related lessons
+
+- [Health checks — alive, and ready for requests?](../intermediate/probes.mdx)
+- [Finding Services by Name (Service·DNS)](../k8s/service-dns.mdx)
+- [Reading status in three layers and the troubleshooting order](../intermediate/troubleshoot-status.mdx)
