@@ -1,0 +1,252 @@
+---
+id: cheatsheet
+title: Command cheat sheet
+description: The kubectl, Helm, Kustomize, node, network and cloud CLI commands used in the K8s Flow "Try it yourself" sections, grouped by task, each linked to the lessons that explain them.
+hide_table_of_contents: false
+---
+
+# Command cheat sheet
+
+The commands from the lessons' "Try it yourself" sections, grouped by what you are trying to do. Replace anything in angle brackets, such as `<pod>` or `<namespace>`, with your own names. Most `kubectl` commands take `-n <namespace>` for another namespace or `-A` for all namespaces. If a command is new to you, open the linked lesson to see what it shows and why.
+
+## Contexts & clusters
+
+```bash
+kubectl config get-contexts                      # Clusters this kubeconfig knows; * marks the current one
+kubectl config current-context                   # Which cluster commands go to right now
+kubectl config use-context kind-lab              # Switch cluster
+kubectl config set-context --current --namespace=<namespace>   # Default namespace for this context
+kubectl config view --minify                     # Only the current context's cluster, user and namespace
+kubectl cluster-info                             # API server and CoreDNS addresses
+kubectl version                                  # Client and control plane versions
+kubectl auth whoami                              # Username and groups the API server sees
+kubectl api-resources | grep -i deploy           # Resource names, short names, API group, namespaced or not
+```
+
+Lessons: [Build a Lab Cluster on Your Laptop](./basic/lab-cluster.mdx) · [Managed Kubernetes — Who Runs What](./cloud/managed-kubernetes.mdx) · [How an API Request Gets Stored](./advanced/api-request-path.mdx)
+
+## Reading resources
+
+```bash
+kubectl get pods -o wide                         # Pod IP, node and restarts per Pod
+kubectl get pods -A --field-selector=status.phase=Pending   # Stuck Pods in every namespace
+kubectl get pods -l app=web --show-labels        # Pods a selector matches, with their labels
+kubectl get pods -L version                      # Add a label as a column
+kubectl get pods -w                              # Watch changes live (Ctrl+C to stop)
+kubectl get deploy web -o yaml                   # The full object, including status
+kubectl describe pod <pod>                       # Settings, state, and Events at the bottom
+kubectl explain deployment.spec.strategy         # Field meaning from the cluster's own schema
+kubectl get pod <pod> -o jsonpath='{.status.phase}'   # One field only
+kubectl get pod <pod> -o jsonpath='{.spec.containers[*].resources}'   # Requests and limits
+kubectl get pods -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.nodeName}{"\n"}{end}'   # One line per Pod
+kubectl get nodes -o custom-columns=NAME:.metadata.name,TAINTS:.spec.taints   # Your own table columns
+kubectl get secret <name> -o jsonpath='{.data.<key>}' | base64 -d   # base64 decodes; it is not encryption
+```
+
+Lessons: [Reading and Applying a Manifest](./k8s/manifest-anatomy.mdx) · [Reading status in three layers and the troubleshooting order](./intermediate/troubleshoot-status.mdx) · [Config and Secrets (ConfigMap · Secret)](./k8s/config-secret.mdx)
+
+## Creating & changing
+
+```bash
+kubectl create deployment web --image=nginx:1.26 --replicas=3   # Imperative create
+kubectl apply -f web.yaml                        # Create or update from a file
+kubectl diff -f web.yaml                         # What apply would change (exit code 1 = differences)
+kubectl apply -f web.yaml --dry-run=server       # Full validation and admission, nothing saved
+kubectl create deployment web --image=nginx --dry-run=client -o yaml > web.yaml   # Write a starter manifest
+kubectl apply -f web.yaml --server-side          # Server-side apply with field ownership
+kubectl patch deployment web -p '{"spec":{"replicas":4}}'   # Change one field (strategic merge)
+kubectl scale deployment web --replicas=5        # Change the replica count
+kubectl set image deployment/web nginx=nginx:1.27   # Change a container's image (container=image)
+kubectl rollout status deployment/web            # Wait until the rollout finishes
+kubectl rollout history deployment/web           # Revisions
+kubectl rollout undo deployment/web              # Back to the previous revision
+kubectl rollout restart deployment/web           # Recreate Pods with the same spec
+kubectl delete -f web.yaml                       # Remove what the file created
+```
+
+Lessons: [Reading and Applying a Manifest](./k8s/manifest-anatomy.mdx) · [Zero-Downtime Deploys (Rolling Update)](./k8s/rolling-update.mdx) · [Desired State and the Control Loop](./basic/desired-state.mdx) · [Blue/green and canary with core primitives (CKAD)](./cert/deploy-strategies.mdx)
+
+## Debugging Pods
+
+```bash
+kubectl describe pod <pod>                       # Events: Scheduled, Pulling, BackOff, FailedMount ...
+kubectl logs <pod>                               # Current container's log
+kubectl logs <pod> -c <container>                # One container in a multi-container Pod
+kubectl logs <pod> --previous                    # Log of the last crashed instance
+kubectl logs -f deploy/web --tail=50             # Follow the newest lines of one Pod in the Deployment
+kubectl get pod <pod> -o jsonpath='{.status.containerStatuses[*].lastState.terminated.reason}'   # OOMKilled?
+kubectl exec -it <pod> -- sh                     # Shell inside the container (if the image has one)
+kubectl exec <pod> -- env                        # Env values the running container got
+kubectl debug -it <pod> --image=busybox:1.36 --target=<container>   # Ephemeral container sharing its processes
+kubectl debug <pod> -it --copy-to=<pod>-debug --image=busybox:1.36 --share-processes   # Debug a copy instead
+kubectl get events --sort-by=.metadata.creationTimestamp   # Recent events, oldest first (kept about 1 hour)
+kubectl events --types=Warning                   # Only warnings, newest last
+kubectl get events --field-selector reason=FailedScheduling   # Filter events by reason
+```
+
+Lessons: [Reading status in three layers and the troubleshooting order](./intermediate/troubleshoot-status.mdx) · [Debugging a Running Pod with kubectl debug](./k8s/kubectl-debug.mdx) · [When a Pod Dies (Self-Healing)](./k8s/self-healing.mdx) · [How a Pod Starts](./k8s/pod-startup.mdx) · [Health checks — alive, and ready for requests?](./intermediate/probes.mdx)
+
+## Networking
+
+```bash
+kubectl get svc <service> -o wide                # Type, ClusterIP, ports and selector
+kubectl get endpointslices -l kubernetes.io/service-name=<service>   # Pod IPs behind the Service (empty? check the selector)
+kubectl port-forward svc/web 8080:80             # Open http://localhost:8080; Ctrl+C to stop
+kubectl run dns-test --rm -it --image=busybox:1.36 --restart=Never -- nslookup <service>.<namespace>   # DNS test from a throwaway Pod
+kubectl exec <pod> -- cat /etc/resolv.conf       # Search list: own namespace first
+kubectl get pods -n kube-system -l k8s-app=kube-dns   # Is CoreDNS running?
+kubectl get networkpolicy -n <namespace>         # Policies and the Pods they select
+kubectl describe ingress <name>                  # Host and path → Service rules
+kubectl get gateway,httproute -A                 # Gateway API objects
+```
+
+Lessons: [Finding Services by Name (Service·DNS)](./k8s/service-dns.mdx) · [How a Request Reaches a Pod](./k8s/traffic.mdx) · [Service Types (ClusterIP · NodePort · LoadBalancer)](./feature/service-types.mdx) · [Blocking and Allowing Traffic (NetworkPolicy)](./k8s/network-policy.mdx) · [Ingress Rules and TLS](./feature/ingress.mdx) · [How a Gateway API HTTPRoute Reaches a Pod](./feature/gateway-api.mdx)
+
+## Storage
+
+```bash
+kubectl get storageclass                         # PROVISIONER, VOLUMEBINDINGMODE, ALLOWVOLUMEEXPANSION
+kubectl get pvc -n <namespace>                   # Pending or Bound, capacity, access modes
+kubectl describe pvc <pvc>                       # Why it stays Pending (Events)
+kubectl get pv                                   # RECLAIM POLICY before you delete a PVC
+kubectl get volumeattachments                    # Which node a volume is attached to
+kubectl describe pod <pod>                       # FailedAttachVolume or FailedMount
+kubectl get pv --sort-by=.spec.capacity.storage  # Volumes by size
+```
+
+Lessons: [How Storage Gets Attached (PVC·PV)](./k8s/storage-volume.mdx) · [When Volumes Attach, and Failures](./advanced/volume-binding.mdx) · [StatefulSets and databases](./intermediate/statefulset.mdx)
+
+## Nodes
+
+```bash
+kubectl get nodes -o wide                        # Status, kubelet version, IPs, OS image
+kubectl describe node <node>                     # Conditions, taints, Allocated resources
+kubectl top nodes                                # CPU and memory use (needs metrics-server)
+kubectl top pods -A --sort-by=cpu                # Busiest Pods first (or --sort-by=memory)
+kubectl cordon <node>                            # No new Pods here
+kubectl drain <node> --ignore-daemonsets --delete-emptydir-data   # Evict Pods (respects PodDisruptionBudgets)
+kubectl uncordon <node>                          # Schedulable again
+kubectl get pdb -A                               # ALLOWED DISRUPTIONS 0 stalls a drain
+kubectl get pods -A -o wide --field-selector spec.nodeName=<node>   # Pods on one node
+kubectl debug node/<node> -it --image=busybox:1.36   # Shell on the node; its filesystem is under /host
+```
+
+Lessons: [Draining Nodes and Upgrading the Cluster](./k8s/node-drain.mdx) · [Node NotReady and component failures (CKA)](./cert/node-troubleshoot.mdx) · [Requests and limits](./intermediate/requests-limits.mdx) · [Which Node Gets the Pod (Scheduling)](./k8s/scheduling.mdx)
+
+## RBAC
+
+```bash
+kubectl auth can-i create deployments -n <namespace>   # yes / no for you
+kubectl auth can-i delete pods -n <namespace> --as <user>   # Ask as another user (needs impersonate rights)
+kubectl auth can-i list pods -n <namespace> --as=system:serviceaccount:<namespace>:<sa>   # Ask as a ServiceAccount
+kubectl auth can-i --list --as=system:serviceaccount:<namespace>:<sa>   # Everything that ServiceAccount may do
+kubectl create role pod-reader --verb=get,list,watch --resource=pods -n <namespace>
+kubectl create rolebinding pod-reader --role=pod-reader --serviceaccount=<namespace>:<sa> -n <namespace>
+kubectl get rolebindings -n <namespace> -o wide  # Which Role is bound to whom
+kubectl create token <sa> -n <namespace> --duration=10m   # Short-lived ServiceAccount token
+```
+
+Lessons: [Who Can Do What (RBAC)](./k8s/rbac.mdx) · [How a Pod Proves Who It Is (ServiceAccount Tokens)](./advanced/serviceaccount-token.mdx) · [How an API Request Gets Stored](./advanced/api-request-path.mdx)
+
+## Helm
+
+```bash
+helm repo add <repo> <url> && helm repo update   # Register a chart repository and refresh its index
+helm show values <repo>/<chart> | head -20       # Defaults you can override
+helm template shop ./demo --set replicaCount=3   # Render only, no cluster
+helm install shop ./demo -n shop --create-namespace --set replicaCount=3
+helm upgrade --install shop ./demo -n shop -f values-prod.yaml --wait --timeout 3m   # Install or upgrade, wait for ready
+helm list -A                                     # Releases and their current revision
+helm history shop -n shop                        # REVISION, STATUS, DESCRIPTION
+helm get values shop -n shop                     # Values you supplied
+helm get manifest shop -n shop                   # YAML Helm actually applied
+helm rollback shop 1 -n shop                     # Back to revision 1 (writes a new revision)
+helm uninstall shop -n shop                      # Delete the release and its objects
+```
+
+Lessons: [How a Helm Release Is Installed, Upgraded and Rolled Back](./k8s/helm-release.mdx) · [Helm and GitOps](./intermediate/gitops-sync.mdx)
+
+## Kustomize
+
+```bash
+kubectl kustomize overlays/prod                  # Merged YAML; sends nothing
+kubectl diff -k overlays/prod                    # What apply -k would change
+kubectl apply -k overlays/prod                   # Apply the overlay
+kubectl delete -k overlays/prod                  # Remove what it created
+kustomize edit set image nginx=nginx:1.27        # Standalone kustomize: change the tag in kustomization.yaml
+```
+
+Lessons: [Per-environment deploys with Kustomize (CKA·CKAD)](./cert/kustomize.mdx) · [Helm and GitOps](./intermediate/gitops-sync.mdx)
+
+## crictl & journalctl on a node
+
+Run these on the node itself (SSH, or `kubectl debug node/<node>` then `chroot /host`). They talk to the container runtime and systemd directly, so they still work when the API server is down.
+
+```bash
+systemctl status kubelet --no-pager              # Is the kubelet running?
+sudo journalctl -u kubelet -n 50 --no-pager      # Most recent kubelet log lines
+sudo journalctl -u kubelet --since "10 min ago" -f   # Follow the kubelet log
+sudo journalctl -u containerd -n 50 --no-pager   # Container runtime log
+sudo crictl ps -a                                # All containers, including exited ones
+sudo crictl ps -a --name kube-apiserver          # Did the API server container exit?
+sudo crictl logs <container-id>                  # Its last error
+sudo crictl pods                                 # Pod sandboxes on this node
+sudo crictl images                               # Images cached on this node
+sudo crictl inspect <container-id>               # Full container state as JSON
+```
+
+Lessons: [Node NotReady and component failures (CKA)](./cert/node-troubleshoot.mdx) · [Linux Basics for Kubernetes](./basic/linux-basics.mdx) · [Pulling Images from a Private Registry](./k8s/private-registry.mdx)
+
+## Linux & network tools
+
+```bash
+ss -tlnp                                         # Listening TCP sockets and the process holding each
+ip addr                                          # Interfaces and their IP addresses
+ip route                                         # default via <gateway>: where off-subnet traffic goes
+dig +short <domain>                              # Name to IP address
+dig @8.8.8.8 <domain> +short                     # Ask a specific resolver
+dig +trace <domain>                              # Walk root → TLD → authoritative yourself
+nc -zv <host> 443                                # Is the port reachable?
+curl -v http://<host>:8080/                      # "Connected to" vs "Connection refused" vs timeout
+curl -sI https://<domain>/                       # Response headers only
+curl -s -o /dev/null -w '%{http_code} %{time_total}s\n' https://<domain>/   # Status code and total time
+openssl s_client -connect <domain>:443 -servername <domain> </dev/null 2>/dev/null | openssl x509 -noout -subject -issuer -dates   # Certificate name, issuer, validity
+openssl s_client -connect <domain>:443 -servername <domain> -showcerts </dev/null   # Chain the server sends
+```
+
+Lessons: [Linux Basics for Kubernetes](./basic/linux-basics.mdx) · [Under One Request: TCP/IP Layers](./basic/tcp-ip-layers.mdx) · [How DNS Finds an Address](./basic/dns-resolution.mdx) · [When You Type an Address](./basic/web-request.mdx) · [HTTPS and Certificates](./basic/https-cert.mdx)
+
+## Cloud CLI basics
+
+```bash
+aws sts get-caller-identity                      # AWS: which account and identity am I?
+aws configure sso                                # AWS: set up an SSO profile
+aws sso login --profile <profile>                # AWS: sign in through the browser
+aws eks update-kubeconfig --name <cluster> --region <region>   # AWS: add an EKS cluster to kubeconfig
+gcloud auth list                                 # Google Cloud: active account
+gcloud container clusters get-credentials <cluster> --region <region>   # Google Cloud: add a GKE cluster
+az account show                                  # Azure: current subscription and user
+az aks get-credentials --resource-group <rg> --name <cluster>   # Azure: add an AKS cluster
+```
+
+Lessons: [Permission Checks on One API Request (IAM)](./cloud/iam-request.mdx) · [Single Sign-On for People (SSO and Federation)](./cloud/sso-federation.mdx) · [Managed Kubernetes — Who Runs What](./cloud/managed-kubernetes.mdx)
+
+## Speed tips for exams
+
+```bash
+alias k=kubectl                                  # Shorter to type
+source <(kubectl completion bash)                # Tab completion (put both lines in ~/.bashrc)
+complete -o default -F __start_kubectl k         # Completion for the alias too
+export do="--dry-run=client -o yaml"             # Then: k create deploy web --image=nginx $do > web.yaml
+k config set-context --current --namespace=<namespace>   # Stop typing -n on every command
+k explain pod.spec --recursive | less            # Every field name under a path, no web search needed
+k get pods -o wide                               # Node and IP in one view
+k get pods --sort-by=.metadata.creationTimestamp # Newest last
+k get pods --sort-by='.status.containerStatuses[0].restartCount'   # Most restarted last
+```
+
+Generate YAML with `$do` and edit it instead of typing manifests from scratch. Check which context and namespace you are in at the start of every task.
+
+Lessons: [Build a Lab Cluster on Your Laptop](./basic/lab-cluster.mdx) · [Learning paths & certifications](./roadmap.mdx)
+
+Further reading: [kubectl Quick Reference](https://kubernetes.io/docs/reference/kubectl/quick-reference/) · [kubectl reference](https://kubernetes.io/docs/reference/kubectl/generated/) · [Helm commands](https://helm.sh/docs/helm/) · [Debugging nodes with crictl](https://kubernetes.io/docs/tasks/debug/debug-cluster/crictl/)

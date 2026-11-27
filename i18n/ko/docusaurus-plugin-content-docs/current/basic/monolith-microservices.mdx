@@ -1,0 +1,285 @@
+---
+id: monolith-microservices
+title: 모놀리스, 모듈러 모놀리스, 마이크로서비스
+sidebar_label: 11 · 모놀리스와 마이크로서비스
+description: 모놀리스·모듈러 모놀리스·마이크로서비스를 애니메이션으로 비교한다. 배포 단위 하나와 여럿, 얻는 것과 치르는 것, 서비스별 데이터베이스와 공유 데이터베이스, 동기 호출 사슬의 지연과 가용성, 스트랭글러 피그 이전, 모놀리스가 맞는 때까지
+summary: '배포 단위 하나냐 여럿이냐. 독립 배포와 확장 대신 치르는 네트워크 호출·쪼개진 데이터·추적·버전 관리, 그리고 스트랭글러 피그로 옮기는 법.'
+icon: split
+hide_table_of_contents: true
+---
+
+# 모놀리스, 모듈러 모놀리스, 마이크로서비스
+
+쇼핑몰은 애플리케이션 하나로 시작한다. 커지면 누군가 서비스로 쪼개자고 한다. 같은 **결제(checkout)** 요청을 **모놀리스**, **모듈러 모놀리스**, **마이크로서비스**에서 차례로 따라가며, 쪼갤 때마다 무엇을 얻고 무엇을 치르는지 본다.
+
+<StepDiagram
+  width={1000}
+  height={460}
+  meta={{duration: '약 13분', level: '기초'}}
+  groups={[
+    {label: '모놀리스 · 배포 하나', x: 200, y: 90, w: 200, h: 300, tone: 'plain'},
+    {label: '마이크로서비스', x: 610, y: 45, w: 375, h: 375, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'client', label: '구매자', sub: '결제하기', icon: 'user', tone: 'ext', x: 90, y: 240, show: true},
+    {id: 'mono', label: '쇼핑몰 앱', sub: '주문·결제·재고', icon: 'box', tone: 'app', x: 300, y: 160, w: 170, show: true},
+    {id: 'monodb', label: '공유 DB', sub: '모든 테이블', icon: 'db', tone: 'store', x: 300, y: 320, show: true},
+    {id: 'gw', label: 'API 게이트웨이', sub: '경로로 라우팅', icon: 'gate', tone: 'node', x: 505, y: 240},
+    {id: 'orders', label: '주문', sub: 'A팀', icon: 'pod', tone: 'app', x: 700, y: 110, w: 130},
+    {id: 'pay', label: '결제', sub: 'B팀', icon: 'pod', tone: 'app', x: 700, y: 240, w: 130},
+    {id: 'stock', label: '재고', sub: 'C팀', icon: 'pod', tone: 'app', x: 700, y: 370, w: 130},
+    {id: 'odb', label: '주문 DB', sub: 'A팀 소유', icon: 'db', tone: 'store', size: 'sm', x: 900, y: 110},
+    {id: 'pdb', label: '결제 DB', sub: 'B팀 소유', icon: 'db', tone: 'store', size: 'sm', x: 900, y: 240, w: 120},
+    {id: 'sdb', label: '재고 DB', sub: 'C팀 소유', icon: 'db', tone: 'store', size: 'sm', x: 900, y: 370},
+  ]}
+  metrics={[
+    {id: 'deploy', label: '배포 단위'},
+    {id: 'call', label: '내부 호출'},
+    {id: 'data', label: '데이터'},
+    {id: 'ops', label: '운영 부담'},
+  ]}
+  learn={[
+    {text: '모놀리스와 모듈러 모놀리스가 무엇이고 왜 잘 동작하는지', at: 1},
+    {text: '마이크로서비스가 주는 것: 독립 배포, 확장, 소유권', at: 3},
+    {text: '서비스별 데이터베이스, 그리고 공유 DB가 서비스를 묶는 이유', at: 4},
+    {text: '호출 사슬이 지연과 장애를 곱하는 방식', at: 5},
+    {text: '스트랭글러 피그 이전, 그리고 모놀리스로 남아야 할 때', at: 8},
+  ]}
+  steps={[
+    {
+      short: '시작',
+      kind: '시작',
+      title: '쇼핑몰 하나, 애플리케이션 하나',
+      text: [
+        '구매자가 결제한다. 모놀리스에서는 애플리케이션 하나가 주문·결제·재고를 모두 갖고 있다. 하나로 빌드하고, 테스트하고, 배포하며, 데이터는 모두 데이터베이스 하나에 둔다.',
+        '결제 처리는 결제 코드와 재고 코드를 같은 프로세스 안의 평범한 함수 호출로 부른다. 이런 호출은 나노초 단위로 끝나고 네트워크에서 사라질 일도 없다.',
+      ],
+      flows: [
+        {from: 'client', to: 'mono', label: 'POST /checkout', type: 'request', bend: -0.2},
+        {from: 'mono', to: 'monodb', label: '트랜잭션 1개', type: 'request'},
+      ],
+      focus: ['mono', 'monodb'],
+      values: {deploy: '1', call: '함수 호출', data: 'DB 하나, 트랜잭션 하나', ops: '파이프라인 1개'},
+    },
+    {
+      short: '모놀리스',
+      kind: '원리',
+      title: '모놀리스는 단순하다, 여러 팀이 함께 쓰기 전까지는',
+      text: [
+        '모놀리스는 운영하기 쉽다. 파이프라인 하나, 로그 흐름 하나, 디버깅할 대상 하나. 주문과 재고를 함께 바꾸는 것도 커밋 하나, 데이터베이스 트랜잭션 하나면 된다.',
+        '아픔은 커지면서 온다. 여러 팀이 코드베이스 하나에 머지하고 릴리스 열차 하나를 기다린다. 한 영역의 버그가 앱 전체를 멈출 수 있다. 바쁜 재고 조회 하나를 늘리려면 앱 전체를 늘려야 한다.',
+      ],
+      keyIdea: '"모놀리스 탓"으로 돌리는 문제의 대부분은 사실 그 안에 경계가 없어서 생긴다. 배포를 쪼갠다고 엉킨 코드가 저절로 풀리지는 않는다.',
+      flows: [
+        {from: 'client', to: 'mono', type: 'request'},
+      ],
+      focus: ['mono'],
+      status: {mono: 'warn'},
+      badges: {mono: '5팀, 릴리스 1개'},
+      values: {ops: '파이프라인 1개, 대기열 공유'},
+    },
+    {
+      short: '모듈러',
+      kind: '원리',
+      title: '모듈러 모놀리스는 안쪽에 선을 긋는다',
+      text: [
+        '모듈러 모놀리스도 배포 단위는 하나지만, 경계가 분명한 모듈로 나뉜다. 주문·결제·재고가 저마다 자기 테이블을 갖고, 다른 모듈은 공개 인터페이스로만 부르며 남의 테이블을 직접 읽지 않는다.',
+        '빠른 프로세스 내부 호출과 배포 하나는 그대로 두고, 팀이 맡을 수 있는 경계를 얻는다. 나중에 어떤 모듈이 별도 서비스가 되어야 하면 자를 선이 이미 있다.',
+      ],
+      keyIdea: '경계는 도구로 지킨다. 예를 들어 아키텍처 테스트나 빌드 규칙으로 한 모듈이 다른 모듈의 내부를 가져다 쓰지 못하게 막는다.',
+      flows: [
+        {from: 'mono', to: 'monodb', label: '모듈별 테이블', type: 'request'},
+      ],
+      focus: ['mono', 'monodb'],
+      status: {mono: 'ok'},
+      badges: {mono: '모듈', monodb: '스키마 3개'},
+      values: {data: 'DB 하나, 모듈별 소유'},
+    },
+    {
+      short: '서비스',
+      kind: '원리',
+      title: '마이크로서비스는 배포 단위를 쪼갠다',
+      text: [
+        '마이크로서비스에서는 주문·결제·재고가 따로따로 서비스가 된다. 저마다 코드 저장소나 폴더, 파이프라인, 팀을 갖는다. API 게이트웨이가 경로를 보고 요청을 보낸다.',
+        'B팀은 누구도 기다리지 않고 결제를 하루 다섯 번 내보낼 수 있다. 세일 때 바빠지는 재고는 레플리카 10개로 늘리고 결제는 2개로 둔다. 재고가 죽어도 결제 전체가 멈출 필요는 없다.',
+      ],
+      keyIdea: '얻는 것은 기술만큼이나 조직에 관한 것이다. 독립 배포, 독립 확장, 분명한 소유권.',
+      flows: [
+        {from: 'client', to: 'gw', label: 'POST /checkout', type: 'request'},
+        {from: 'gw', to: 'orders', type: 'request'},
+      ],
+      focus: ['orders', 'pay', 'stock'],
+      status: {mono: null},
+      badges: {mono: null, monodb: null, stock: '×10', pay: '×2'},
+      values: {deploy: '3개 이상', ops: '파이프라인 3개'},
+    },
+    {
+      short: '서비스별 DB',
+      kind: '원리',
+      title: '서비스마다 자기 데이터를 갖는다',
+      text: [
+        '서비스마다 자기 데이터베이스, 적어도 남이 손대지 않는 자기 스키마를 둔다. 다른 서비스는 그 서비스의 API나 이벤트로 데이터를 얻는다.',
+        '서비스들이 데이터베이스 하나를 같이 쓰면 테이블 하나하나가 숨은 API가 된다. 재고에서 열 이름을 바꾸면 주문이 깨진다. 팀들이 함께 배포하고 마이그레이션을 맞춰야 하니, 네트워크 호출만 늘어난 모놀리스로 돌아간 셈이다.',
+      ],
+      keyIdea: '공유 데이터베이스는 마이크로서비스가 서로 묶이는 가장 흔한 길이다. 시스템을 "독립적"이라 부르기 전에 어떤 서비스가 어떤 DB 호스트에 붙는지 확인한다.',
+      flows: [
+        {from: 'orders', to: 'odb', type: 'request'},
+        {from: 'pay', to: 'pdb', type: 'request'},
+        {from: 'stock', to: 'sdb', type: 'request'},
+      ],
+      focus: ['odb', 'pdb', 'sdb'],
+      badges: {stock: null, pay: null},
+      values: {data: '서비스별 DB'},
+    },
+    {
+      short: '호출 사슬',
+      kind: '문제',
+      title: '동기 호출 사슬은 지연과 장애를 곱한다',
+      text: [
+        '이제 결제 요청은 네트워크를 건너 결제 서비스를 부르고, 결제 서비스는 재고를 부른다. 구간마다 지연과 직렬화가 더해지고 타임아웃이 날 수 있다. 지연은 사슬을 따라 더해지고, 가용성은 곱해진다. 가용성 99.9%인 서비스 다섯이 모두 필요하면 요청 전체는 약 99.5%다.',
+        '꼬리 지연도 나빠진다. 호출 백 번 중 한 번이 느리고 요청 하나에 호출이 열 번 필요하면, 요청 열 개 중 하나쯤은 느린 호출을 만난다.',
+      ],
+      keyIdea: '사슬은 짧게, 할 수 있으면 병렬로 부르고, 답하기 전에 끝날 필요가 없는 일은 이벤트로 넘긴다. 구간마다 타임아웃, 백오프 재시도, 서킷 브레이커를 둔다.',
+      flows: [
+        {from: 'gw', to: 'orders', label: '20ms', type: 'request'},
+        {from: 'orders', to: 'pay', label: '+40ms', type: 'request'},
+        {from: 'pay', to: 'stock', label: '+30ms', type: 'request'},
+      ],
+      focus: ['orders', 'pay', 'stock'],
+      status: {stock: 'warn'},
+      badges: {stock: 'p99 느림'},
+      values: {call: '네트워크: ms, 실패 가능'},
+    },
+    {
+      short: '쪼개진 데이터',
+      kind: '문제',
+      title: '서비스를 가로지르는 트랜잭션은 없다',
+      text: [
+        '모놀리스에서 "결제하고 재고를 잡는다"는 트랜잭션 하나였다. 이제 둘은 다른 데이터베이스에 있고, 둘을 한 번에 커밋해 줄 것은 없다.',
+        '트랜잭션 대신 사가(saga)를 쓴다. 로컬 단계를 차례로 밟으며 단계마다 이벤트를 내고, 뒤 단계가 실패하면 보상 단계(환불, 재고 풀기)를 돌린다. 데이터는 최종 일관성을 갖고, 주문과 결제를 조인하는 보고서는 둘의 복사본을 한곳에 모아야 한다.',
+      ],
+      keyIdea: '두 데이터가 늘 함께 바뀌어야 한다면 아마 같은 서비스에 있어야 한다.',
+      flows: [
+        {from: 'pay', to: 'pdb', label: '결제됨 ✓', type: 'request'},
+        {from: 'stock', to: 'sdb', label: '재고 잡기 ✕', type: 'request'},
+      ],
+      focus: ['pay', 'stock'],
+      status: {stock: 'error'},
+      badges: {stock: '재고 없음', pay: '환불?'},
+      values: {data: '최종 일관성, 사가'},
+    },
+    {
+      short: '운영 비용',
+      kind: '주의',
+      title: '관측, 버전 관리, 운영에 더 많이 든다',
+      text: [
+        '결제 한 번이 이제 서비스 셋을 거친다. 왜 느렸는지 찾으려면 분산 추적과, 구간마다 넘겨지는 요청 id가 필요하다. 모든 서비스의 로그가 한곳에 모여야 한다.',
+        '서비스가 따로 배포되므로 API는 하위 호환을 지켜야 한다. 필드는 더하고, 모든 호출자가 옮겨 갈 때까지 이름을 바꾸거나 지우지 않는다. 그리고 서비스마다 파이프라인, 대시보드, 알림, 보안 패치, 온콜 담당자가 필요하다.',
+      ],
+      keyIdea: '쪼개기 전에 추적, 중앙 로그, 새 서비스용 템플릿을 먼저 갖춘다. 이것이 없으면 마이크로서비스는 디버깅하기 어렵다.',
+      flows: [
+        {from: 'gw', to: 'orders', label: 'traceparent', type: 'request'},
+        {from: 'orders', to: 'pay', label: 'traceparent', type: 'request'},
+        {from: 'pay', to: 'stock', label: 'traceparent', type: 'request'},
+      ],
+      focus: ['gw', 'orders', 'pay', 'stock'],
+      status: {stock: null},
+      badges: {stock: null, pay: 'v1 + v2 API'},
+      values: {ops: '파이프라인 3개, 추적, 온콜 ×3'},
+    },
+    {
+      short: '스트랭글러 피그',
+      kind: '원리',
+      title: '스트랭글러 피그로 한 조각씩 옮긴다',
+      text: [
+        '한 번에 다시 짜는 빅뱅 재작성은 잘 되는 일이 드물다. 스트랭글러 피그 패턴에서는 먼저 모놀리스 앞에 프록시나 API 게이트웨이를 둔다. 그다음 기능 하나, 예를 들어 결제를 새 서비스로 만들고 그 경로만 그쪽으로 보낸다.',
+        '나머지는 여전히 모놀리스로 간다. 새 서비스가 잘 돌면 모놀리스에서 그 코드를 지우고 다음 조각을 고른다. 어느 시점에서든 시스템은 돌아가고, 라우트 하나만 바꾸면 되돌릴 수 있다.',
+      ],
+      keyIdea: '코드와 함께 데이터도 옮긴다. 모놀리스의 테이블을 여전히 읽는 새 서비스는 아직 떨어져 나온 것이 아니다.',
+      flows: [
+        {from: 'client', to: 'gw', type: 'request'},
+        {from: 'gw', to: 'mono', label: '/orders, /stock', type: 'request', bend: 0.35},
+        {from: 'gw', to: 'pay', label: '/payments', type: 'request'},
+      ],
+      focus: ['gw', 'mono', 'pay'],
+      badges: {pay: '새것', mono: '줄어드는 중'},
+      values: {deploy: '2개, 늘어나는 중', data: '조각마다 함께 옮김'},
+    },
+    {
+      short: '언제',
+      kind: '주의',
+      title: '모놀리스가 맞는 선택일 때가 많다',
+      text: [
+        '팀이 작거나, 경계가 아직 분명하지 않은 새 제품이거나, 부분마다 확장 요구가 크게 다르지 않은 시스템은 대개 잘 짜인 모놀리스가 낫다. 너무 일찍 쪼개면 틀린 경계가 굳어 버리고, 서비스 사이의 경계를 옮기는 것은 모듈 사이의 경계를 옮기는 것보다 훨씬 어렵다.',
+        '분명한 압력이 있을 때 쪼갠다. 팀들이 릴리스에서 서로를 막을 때, 어떤 부분이 확장이나 신뢰성 요구가 크게 다를 때, 보안이나 규정 요구가 다른 부분이 있을 때다.',
+      ],
+      keyIdea: '모듈러 모놀리스로 시작하고, 어디가 아픈지 재고, 이유가 가장 강한 조각부터 떼어 낸다.',
+      flows: [
+        {from: 'client', to: 'mono', type: 'request'},
+        {from: 'mono', to: 'monodb', type: 'request'},
+      ],
+      focus: ['mono'],
+      badges: {pay: null, mono: '모듈러'},
+      values: {deploy: '아플 때까지 1'},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '분산의 비용은 돌려받을 곳에만 치른다',
+      text: [
+        '모놀리스는 단순한 배포, 빠른 호출, 트랜잭션 하나를 준다. 모듈러 모놀리스는 팀에 필요한 경계를 더한다. 마이크로서비스는 독립 배포·확장·소유권을 더하고, 그 대가로 네트워크 호출, 쪼개진 데이터, 추적, API 버전 관리, 운영 비용을 받아 간다.',
+        '서비스마다 자기 데이터를 주고, 호출 사슬은 짧게 두고, 압력이 진짜일 때 스트랭글러 피그로 한 걸음씩 옮긴다.',
+      ],
+      flows: [
+        {from: 'client', to: 'gw', type: 'request'},
+        {from: 'gw', to: 'orders', type: 'request'},
+        {from: 'gw', to: 'pay', type: 'request'},
+        {from: 'gw', to: 'stock', type: 'request'},
+      ],
+      focus: ['gw', 'orders', 'pay', 'stock'],
+      badges: {mono: null, pay: null},
+      values: {deploy: '필요한 만큼만', call: '짧은 사슬', data: '서비스별 소유', ops: '추적 + 템플릿'},
+    },
+  ]}
+/>
+
+## 얻는 것과 치르는 것
+
+| | 모놀리스 | 모듈러 모놀리스 | 마이크로서비스 |
+|---|---|---|---|
+| 배포 단위 | 하나 | 하나 | 서비스마다 하나 |
+| 내부 호출 | 함수 호출 | 모듈 인터페이스를 거친 함수 호출 | 네트워크 호출(HTTP, gRPC, 이벤트) |
+| 데이터 | DB 하나, 테이블 공유 | DB 하나, 모듈별 테이블 소유 | 서비스별 DB |
+| 트랜잭션 | 전체에 걸친 로컬 트랜잭션 | 모듈에 걸친 로컬 트랜잭션 | 서비스 안에서만, 서비스 사이는 사가 |
+| 확장 | 앱 전체 | 앱 전체 | 서비스마다 |
+| 팀 독립성 | 낮음 | 중간 | 높음(데이터와 API가 나뉘어 있다면) |
+| 디버깅 | 프로세스 하나, 로그 하나 | 프로세스 하나, 로그 하나 | 분산 추적 필요 |
+| 운영 비용 | 낮음 | 낮음 | 높음: 서비스마다 파이프라인·대시보드·온콜 |
+
+## 직접 확인해 보기
+
+```bash
+# 사슬의 가용성: 99.9%짜리 필수 서비스 5개
+python3 -c 'print(round(0.999**5 * 100, 2), "%")'        # 약 99.5%
+
+# 호출 10번이 필요한 요청이 1% 확률로 느린 호출을 한 번 이상 만날 확률
+python3 -c 'print(round((1 - 0.99**10) * 100, 1), "%")'  # 약 9.6%
+
+# 배포 단위는 몇 개이고, 각자 따로 나가는가?
+kubectl get deploy -n shop
+kubectl rollout history deploy/payments -n shop
+
+# 서비스들이 DB를 공유하는가? 각자 받은 DB 호스트를 비교한다
+kubectl get deploy -n shop -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.template.spec.containers[*].env[?(@.name=="DB_HOST")].value}{"\n"}{end}'
+
+# 결제 한 번이 처음부터 끝까지 얼마나 걸리나?
+curl -s -o /dev/null -w 'total %{time_total}s\n' https://shop.example.com/checkout
+```
+
+<Quiz questions={[
+  {q: '마이크로서비스 셋이 공유 데이터베이스 하나의 같은 테이블을 읽고 쓴다. 한 팀이 열 이름을 바꾸면 어떻게 되는가?', options: ['서비스마다 따로 배포하므로 아무 일도 없다', '그 열을 쓰는 다른 서비스가 깨지므로 팀들이 함께 고치고 함께 배포해야 한다', '데이터베이스가 서비스마다 그 열의 복사본을 만든다'], answer: 1, why: '공유 테이블은 서비스 사이의 숨은 API다. 그것을 바꾸면 배포가 서로 묶여서 마이크로서비스의 가장 큰 이점이 사라진다. 서비스별 DB가 이를 막는다.'},
+  {q: '결제 요청이 가용성 99.9%인 서비스 다섯을 사슬로 부르고, 다섯 모두 필요하다. 결제의 가용성은 대략 얼마인가?', options: ['서비스 하나와 같은 99.9%', '서비스가 많으니 99.99%', '가장 느린 서비스에만 달려 있다', '가용성이 곱해지므로 약 99.5%'], answer: 3, why: '모든 구간이 성공해야 요청이 성공하므로 0.999의 5제곱, 약 0.995다. 동기 사슬이 길수록 가용성은 낮아지고 느려진다.'},
+  {q: '6명짜리 팀이 도메인이 매달 바뀌는 새 제품을 만든다. 보통 가장 좋은 시작은?', options: ['모듈 경계가 분명한 모듈러 모놀리스', '데이터베이스 테이블마다 마이크로서비스 하나', '단순하게 공유 DB를 쓰는 마이크로서비스', '출시 전에 전부 서비스로 다시 짜기'], answer: 0, why: '경계가 아직 움직이고 있다. 모듈 사이의 경계는 옮기기 싸고 서비스 사이의 경계는 비싸다. 분명한 압력이 생기면 그때 쪼갠다.'},
+]} />
+
+더 읽을거리: [Microservices (Lewis, Fowler)](https://martinfowler.com/articles/microservices.html) · [MonolithFirst](https://martinfowler.com/bliki/MonolithFirst.html) · [Strangler Fig Application](https://martinfowler.com/bliki/StranglerFigApplication.html) · [서비스별 데이터베이스 (microservices.io)](https://microservices.io/patterns/data/database-per-service.html) · [사가 (microservices.io)](https://microservices.io/patterns/data/saga.html) · [HTTP API 설계](../basic/api-design.mdx) · [서비스 호출이 장애를 견디게 하기](../basic/resilience-patterns.mdx) · [로그·메트릭·트레이스가 파드를 떠나는 길](../k8s/observability-pipeline.mdx)

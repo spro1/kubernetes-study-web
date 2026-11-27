@@ -25,7 +25,7 @@ Out of the box, Kubernetes only knows about CPU and memory. Plugging a GPU or NP
     {id: 'api', label: 'API server', sub: 'entry point', icon: 'gate', tone: 'cp', x: 290, y: 230, show: true},
     {id: 'sched', label: 'Scheduler', sub: 'picks a node', icon: 'target', tone: 'cp', x: 290, y: 370, show: true},
     {id: 'status', label: 'Node status', sub: 'capacity·allocatable', icon: 'db', tone: 'store', x: 480, y: 300, w: 170},
-    {id: 'kubelet', label: 'kubelet', sub: 'node-1', icon: 'agent', tone: 'node', x: 690, y: 185, w: 150, show: true},
+    {id: 'kubelet', label: 'kubelet', sub: 'node-1', icon: 'agent', tone: 'node', x: 690, y: 165, w: 150, show: true},
     {id: 'plugin', label: 'Device plugin', sub: 'DaemonSet Pod', icon: 'gear', tone: 'node', x: 690, y: 300, w: 160},
     {id: 'driver', label: 'Driver·toolkit', sub: 'installed first', icon: 'layers', tone: 'node', x: 690, y: 400, w: 160},
     {id: 'pod', label: 'train', sub: 'Pod', icon: 'pod', tone: 'app', size: 'sm', w: 100, x: 910, y: 160},
@@ -84,7 +84,7 @@ Out of the box, Kubernetes only knows about CPU and memory. Plugging a GPU or NP
       ],
       flows: [
         {from: 'kubelet', to: 'plugin', label: 'ListAndWatch', type: 'request'},
-        {from: 'plugin', to: 'kubelet', label: '2 devices Healthy', type: 'response', bend: 0.25},
+        {from: 'plugin', to: 'kubelet', label: '2 devices Healthy', type: 'response', bend: 1},
       ],
       focus: ['plugin', 'kubelet'],
       values: {devs: '2 Healthy'},
@@ -125,7 +125,7 @@ Out of the box, Kubernetes only knows about CPU and memory. Plugging a GPU or NP
       ],
       keyIdea: 'The scheduler only counts. It does not decide which device the Pod gets.',
       flows: [
-        {from: 'status', to: 'sched', label: 'allocatable', type: 'response'},
+        {from: 'status', to: 'sched', label: 'allocatable', type: 'response', bend: -0.3},
         {from: 'sched', to: 'api', label: 'bind: node-1', type: 'request'},
       ],
       focus: ['sched'],
@@ -141,7 +141,7 @@ Out of the box, Kubernetes only knows about CPU and memory. Plugging a GPU or NP
       ],
       flows: [
         {from: 'kubelet', to: 'plugin', label: 'Allocate(gpu-1)', type: 'request'},
-        {from: 'plugin', to: 'kubelet', label: 'env·devices·mounts', type: 'response', bend: 0.25},
+        {from: 'plugin', to: 'kubelet', label: 'env·devices·mounts', type: 'response', bend: 1},
       ],
       focus: ['kubelet', 'plugin'],
       badges: {gpu1: 'allocated'},

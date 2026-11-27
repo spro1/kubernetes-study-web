@@ -1,0 +1,288 @@
+---
+id: distributed-systems
+title: Distributed Systems Basics
+sidebar_label: 10 · Distributed systems
+description: Animated walkthrough of what every cloud engineer meets in distributed systems, from lost, delayed and duplicated messages and partial failure to idempotency, replication lag, consistency models, CAP and PACELC, quorum, unreliable clocks and the outbox pattern
+summary: 'Timeouts that tell you nothing, retries that duplicate, replicas that lag, clocks that lie, and the patterns (idempotency keys, versions, outbox) that keep data right.'
+icon: layers
+hide_table_of_contents: true
+---
+
+# Distributed Systems Basics
+
+On one machine, a function call either returns or throws. Across a network there is a third answer: silence. Follow one order through **client → order service → database and replica → outbox → queue → shipping**, and meet the problems every cloud system has, with the plain patterns that handle them.
+
+<StepDiagram
+  width={1000}
+  height={460}
+  meta={{duration: '~14 min', level: 'Intermediate'}}
+  groups={[
+    {label: 'Database', x: 455, y: 50, w: 485, h: 125, tone: 'mgmt'},
+  ]}
+  nodes={[
+    {id: 'client', label: 'Client', sub: 'Places an order', icon: 'user', tone: 'ext', x: 90, y: 230, show: true},
+    {id: 'order', label: 'Order service', sub: '2 replicas', icon: 'box', tone: 'app', x: 300, y: 230, show: true},
+    {id: 'primary', label: 'DB primary', sub: 'Takes writes', icon: 'db', tone: 'store', x: 545, y: 112},
+    {id: 'replica', label: 'DB replica', sub: 'Async copy', icon: 'db', tone: 'store', x: 800, y: 112},
+    {id: 'relay', label: 'Outbox relay', sub: 'Polls or reads the log', icon: 'gear', tone: 'node', x: 545, y: 360, w: 160},
+    {id: 'queue', label: 'Message queue', sub: 'At-least-once', icon: 'layers', tone: 'store', x: 740, y: 360},
+    {id: 'ship', label: 'Shipping', sub: 'Consumer', icon: 'pod', tone: 'app', size: 'sm', x: 915, y: 360},
+  ]}
+  metrics={[
+    {id: 'result', label: 'What we know'},
+    {id: 'consistency', label: 'Consistency'},
+    {id: 'clock', label: 'Ordering by'},
+    {id: 'delivery', label: 'Delivery'},
+  ]}
+  learn={[
+    {text: 'Why a timeout does not tell you whether something happened', at: 1},
+    {text: 'Idempotency keys make retries safe', at: 2},
+    {text: 'Replication lag, consistency models, CAP and PACELC', at: 3},
+    {text: 'Why clocks cannot order events, and what to use instead', at: 7},
+    {text: 'The outbox pattern for a database write plus a message', at: 9},
+  ]}
+  steps={[
+    {
+      short: 'Start',
+      kind: '시작',
+      title: 'One order, many machines',
+      text: [
+        'A client places an order. The order service saves it in a database, and shipping has to hear about it. Each box is a different process, often on a different machine, talking over a network.',
+        'In one process, a call either works or fails. Between processes there is a third outcome: no answer at all. Almost every pattern in this lesson exists to deal with that.',
+      ],
+      flows: [
+        {from: 'client', to: 'order', label: 'POST /orders', type: 'request'},
+        {from: 'order', to: 'primary', label: 'INSERT', type: 'request'},
+      ],
+      focus: ['client', 'order', 'primary'],
+      values: {result: 'Waiting', consistency: '—', clock: '—', delivery: '—'},
+    },
+    {
+      short: 'Timeout',
+      kind: '장애',
+      title: 'A timeout means "I do not know"',
+      text: [
+        'The client waits, then times out. Maybe the request never arrived. Maybe the order was saved and the reply was lost. Maybe the service is just slow and will finish later. The client cannot tell these apart, and a slow machine looks exactly like a dead one.',
+        'Networks lose, delay, reorder and duplicate messages. Parts of the system fail while others keep running. This is partial failure, and it is normal, not rare.',
+      ],
+      keyIdea: 'Never treat a timeout as "it did not happen". Design every write so that asking again is safe.',
+      flows: [
+        {from: 'order', to: 'client', label: 'reply lost', type: 'response'},
+      ],
+      focus: ['client', 'order'],
+      status: {client: 'warn'},
+      badges: {client: 'timeout'},
+      values: {result: 'Unknown: saved or not?'},
+    },
+    {
+      short: 'Idempotency',
+      kind: '원리',
+      title: 'An idempotency key makes the retry safe',
+      text: [
+        'The client retries, and sends the same Idempotency-Key header both times. The service stores the key with the result of the first attempt. When the key comes again, it returns that stored result instead of creating a second order.',
+        'An operation is idempotent when doing it twice has the same effect as once. Setting a value is naturally idempotent; adding to it is not. Messages from a queue need the same treatment, since a consumer can see one message twice.',
+      ],
+      keyIdea: 'Store the key in the same transaction as the write, with a unique constraint. Then two retries racing each other still create only one order.',
+      flows: [
+        {from: 'client', to: 'order', label: 'retry · same key', type: 'request'},
+        {from: 'order', to: 'primary', label: 'key seen?', type: 'request'},
+        {from: 'order', to: 'client', label: 'order 42 (again)', type: 'response', bend: 40},
+      ],
+      focus: ['order', 'primary'],
+      status: {client: 'ok'},
+      badges: {client: null, primary: 'key unique'},
+      values: {result: 'Exactly one order 42'},
+    },
+    {
+      short: 'Lag',
+      kind: '원리',
+      title: 'An async replica is a little behind',
+      text: [
+        'The primary copies each change to a replica in the background. Reads go to the replica to take load off the primary. The copy usually lands within milliseconds, but under load or after a network hiccup it can trail by seconds.',
+        'The client opens "My orders" right after ordering. The read hits the replica, which has not received order 42 yet, and the order seems to be missing. This gap is replication lag.',
+      ],
+      keyIdea: 'Measure lag on every replica and alert on it. Lag is the window in which readers can see old data.',
+      flows: [
+        {from: 'primary', to: 'replica', label: 'replicate', type: 'watch'},
+        {from: 'order', to: 'replica', label: 'SELECT my orders', type: 'request', bend: 50},
+      ],
+      focus: ['primary', 'replica'],
+      status: {replica: 'warn'},
+      badges: {primary: null, replica: 'lag 3 s'},
+      values: {consistency: 'Eventual: order missing'},
+    },
+    {
+      short: 'Models',
+      kind: '원리',
+      title: 'Consistency models say what a reader may see',
+      text: [
+        'Strong consistency (linearizability): every read sees the latest completed write, as if there were one copy. Read-your-writes: you always see your own writes, though others may see them later. Eventual consistency: if writes stop, all copies converge, but a read can return old data meanwhile.',
+        'Our bug breaks read-your-writes. Common fixes: send a user\'s reads to the primary for a short time after they write, or remember the write\'s log position and read from a replica only once it has caught up to it.',
+      ],
+      keyIdea: 'Ask "which reads must be fresh?" Payments and stock checks usually need the primary. Product lists and dashboards are fine with eventual consistency.',
+      flows: [
+        {from: 'order', to: 'primary', label: 'read own write', type: 'request'},
+      ],
+      focus: ['order', 'primary'],
+      status: {replica: null},
+      badges: {replica: null},
+      values: {consistency: 'Read-your-writes'},
+    },
+    {
+      short: 'CAP',
+      kind: '원리',
+      title: 'CAP and PACELC in plain words',
+      text: [
+        'CAP: when a network partition splits the copies, a system must choose. Either it refuses some requests to stay consistent, or it keeps answering and some answers may be stale. You cannot have both during a partition, and partitions do happen.',
+        'PACELC adds the everyday case: Else, when there is no partition, you still trade Latency against Consistency. Waiting for a replica to confirm every write is safer and slower. Many databases let you choose per query or per table.',
+      ],
+      keyIdea: 'CAP is about what happens during a failure, not a label for a product. Ask a database what it does on partition and what it trades for latency in normal times.',
+      flows: [
+        {from: 'primary', to: 'replica', label: 'partition ✕', type: 'watch'},
+      ],
+      focus: ['primary', 'replica'],
+      status: {replica: 'error'},
+      badges: {replica: 'cut off'},
+      values: {consistency: 'Refuse or answer stale'},
+    },
+    {
+      short: 'Quorum',
+      kind: '원리',
+      title: 'Consensus uses a majority, a quorum',
+      text: [
+        'Some decisions need every node to agree: who is the leader, which write came first. Consensus algorithms such as Raft (used by etcd) and Paxos commit a value once a majority of nodes has it. With 3 nodes, 2 is a majority; with 5, it is 3.',
+        'Two separate majorities always share a node, so two sides of a partition cannot both decide. The side without a majority stops taking writes. This is the consistent choice from CAP.',
+      ],
+      keyIdea: 'Do not build your own consensus. Use etcd, ZooKeeper, or a database with built-in leader election, and run an odd number of members.',
+      flows: [
+        {from: 'primary', to: 'replica', type: 'watch'},
+      ],
+      focus: ['primary'],
+      status: {replica: null},
+      badges: {replica: null, primary: 'leader'},
+      values: {consistency: 'Majority decides'},
+    },
+    {
+      short: 'Clocks',
+      kind: '주의',
+      title: 'Clocks drift, so they cannot order events',
+      text: [
+        'Both order service replicas update order 42 a few milliseconds apart. Each stamps the write with its own clock and the database keeps the later timestamp. But the clocks differ: one runs a little ahead, and NTP can even step a clock backwards. The real last write loses.',
+        'Wall-clock time is fine for logs and rough durations. To order changes to the same thing, use a counter that one place hands out: a version column, a sequence number, or a log offset. A write carries the version it read, and fails if it changed meanwhile.',
+      ],
+      keyIdea: 'Kubernetes does this with resourceVersion. An update based on an old version gets 409 Conflict, and the client reads again and retries.',
+      flows: [
+        {from: 'order', to: 'primary', label: 'UPDATE … WHERE version=7', type: 'request'},
+      ],
+      focus: ['order', 'primary'],
+      status: {order: 'warn'},
+      badges: {primary: 'version 8', order: 'clock +40 ms'},
+      values: {clock: 'Version number, not time'},
+    },
+    {
+      short: 'Dual write',
+      kind: '문제',
+      title: 'Writing to the DB and the queue is not atomic',
+      text: [
+        'The order service saves order 42, then publishes OrderCreated to the queue. If the Pod crashes between the two, the order exists but shipping never hears about it. If it publishes first and the database transaction then fails, shipping gets an order that does not exist.',
+        'A database and a message broker do not share one transaction. Two separate writes from one service can always end up half done.',
+      ],
+      keyIdea: 'Look for code that commits to a database and then calls a broker or another API. Each such place can lose or invent events on a crash.',
+      flows: [
+        {from: 'order', to: 'primary', label: 'COMMIT ✓', type: 'request'},
+        {from: 'order', to: 'queue', label: 'publish ✕', type: 'request', bend: 40},
+      ],
+      focus: ['order', 'queue'],
+      status: {order: 'error'},
+      badges: {primary: null, order: 'crashed'},
+      values: {delivery: 'Event lost'},
+    },
+    {
+      short: 'Outbox',
+      kind: '원리',
+      title: 'The outbox pattern: one transaction, then relay',
+      text: [
+        'Instead, the service writes the order row and an outbox row (the OrderCreated event) in the same local transaction. Both commit or neither does. A separate relay reads new outbox rows, by polling or by reading the database change log (for example with Debezium), and publishes them.',
+        'The relay can crash after publishing but before marking the row sent, so it may publish twice. Delivery is at-least-once, and the shipping consumer dedupes by event id. End-to-end exactly-once is an illusion; what you get is at-least-once delivery plus idempotent handling.',
+      ],
+      keyIdea: 'Give every event a unique id, and have consumers record processed ids in the same transaction as their own change.',
+      flows: [
+        {from: 'order', to: 'primary', label: 'order + outbox row', type: 'request'},
+        {from: 'relay', to: 'primary', label: 'read outbox', type: 'watch'},
+        {from: 'relay', to: 'queue', label: 'publish', type: 'request'},
+        {from: 'queue', to: 'ship', label: 'event id 9f2', type: 'request'},
+      ],
+      focus: ['relay', 'queue', 'ship'],
+      status: {order: null},
+      badges: {order: null, primary: 'same tx', ship: 'dedupe'},
+      values: {delivery: 'At-least-once + dedupe'},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Assume the network lies, and design for it',
+      text: [
+        'Timeouts mean "unknown", so make writes idempotent. Replicas lag, so decide which reads need fresh data. During a partition you pick consistency or availability; in normal times, latency or consistency.',
+        'Let a quorum system (such as etcd) decide leaders. Order changes with versions, not clocks. And when a write and a message must both happen, use an outbox and idempotent consumers.',
+      ],
+      flows: [
+        {from: 'client', to: 'order', label: 'key', type: 'request'},
+        {from: 'order', to: 'primary', label: 'version + outbox', type: 'request'},
+        {from: 'relay', to: 'queue', type: 'request'},
+        {from: 'queue', to: 'ship', type: 'request'},
+      ],
+      focus: ['order', 'primary', 'relay'],
+      status: {order: null, replica: null, client: null},
+      badges: {primary: null, ship: null, order: null},
+      values: {result: 'Known, retry-safe', consistency: 'Chosen per read', clock: 'Versions', delivery: 'At-least-once + dedupe'},
+    },
+  ]}
+/>
+
+## Problem → pattern
+
+| You meet | Why it happens | Pattern |
+|---|---|---|
+| Timeout, unsure if the write happened | Lost reply, slow node, partial failure | Idempotency key, safe retries with backoff |
+| Duplicate messages | At-least-once delivery, retries after crashes | Event ids, idempotent consumers |
+| Just-written data missing on read | Async replication lag | Read-your-writes: read from primary, or wait for the replica to catch up |
+| Two sides of a split both accept writes | No majority rule | Quorum-based consensus (Raft in etcd), odd member count |
+| Newer update lost | Ordering by wall-clock timestamps | Version numbers, optimistic concurrency (409 Conflict) |
+| Order saved but event never sent | Dual write to DB and broker | Transactional outbox plus relay |
+
+| Model | A read may return | Typical use |
+|---|---|---|
+| Strong (linearizable) | Only the latest completed write | Leader election, locks, balances |
+| Read-your-writes | Your own writes for sure; others' maybe later | User profile, "my orders" |
+| Eventual | Old data for a while; copies converge | Caches, search indexes, feeds |
+
+## Try it yourself
+
+```bash
+# Optimistic concurrency in Kubernetes: an update based on an old resourceVersion fails
+kubectl create configmap demo --from-literal=count=1
+kubectl get configmap demo -o yaml > old.yaml                      # remembers the current resourceVersion
+kubectl patch configmap demo -p '{"data":{"count":"2"}}'            # someone else changes it
+kubectl replace -f old.yaml                                         # Conflict: the object has been modified
+kubectl delete configmap demo
+
+# Replication lag in PostgreSQL
+psql -h primary -c "SELECT client_addr, state, replay_lag FROM pg_stat_replication;"
+psql -h replica -c "SELECT now() - pg_last_xact_replay_timestamp() AS lag;"
+
+# How far is this machine's clock off? (chrony or systemd-timesyncd)
+chronyc tracking            # "System time" shows the offset from NTP
+timedatectl                 # "System clock synchronized: yes/no"
+
+# A retry with an idempotency key (header name depends on the API)
+curl -X POST https://api.example.com/orders \
+  -H 'Idempotency-Key: 6f1c2a9e-order-42' -d '{"item":"book"}'
+```
+
+<Quiz questions={[
+  {q: 'A call to the payment service times out after 10 seconds. What do you actually know?', options: ['The payment failed, so retrying is safe', 'The payment succeeded, because timeouts only happen after processing', 'Nothing for sure: it may or may not have happened, so retry only with an idempotency key'], answer: 2, why: 'A timeout cannot tell a lost request from a lost reply or a slow server. Only an idempotent operation, for example one with an idempotency key, can be retried without risking a double charge.'},
+  {q: 'A user changes their name, reloads the page and sees the old name. Reads go to an async replica. Which guarantee is missing?', options: ['Read-your-writes', 'Partition tolerance', 'Exactly-once delivery', 'Quorum'], answer: 0, why: 'The user does not see their own write because the replica has not caught up. Read from the primary after a write, or wait until the replica reaches that write.'},
+  {q: 'A service commits an order to the database, then publishes an event to Kafka. Sometimes shipping never sees the order. What is the robust fix?', options: ['Publish first, then commit', 'Write the event to an outbox table in the same transaction and let a relay publish it', 'Increase the Kafka timeout', 'Use wall-clock timestamps to find missing events'], answer: 1, why: 'A database and a broker do not share a transaction, so a crash between the two loses the event. The outbox puts both in one local transaction, and the relay publishes at least once.'},
+]} />
+
+Further reading: [Transactional outbox (microservices.io)](https://microservices.io/patterns/data/transactional-outbox.html) · [Consistency models (Jepsen)](https://jepsen.io/consistency) · [Raft consensus](https://raft.github.io/) · [Kubernetes resource versions](https://kubernetes.io/docs/reference/using-api/api-concepts/#resource-versions) · [Control Plane HA and etcd Quorum](../advanced/etcd-quorum.mdx) · [How a Message Queue Decouples Services](../basic/message-queue.mdx) · [What Happens When an App Saves to a Database](../basic/database-basics.mdx)

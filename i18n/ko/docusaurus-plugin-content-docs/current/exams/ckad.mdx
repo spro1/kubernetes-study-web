@@ -1,0 +1,81 @@
+---
+id: ckad
+title: CKAD 모의 문제
+sidebar_label: CKAD
+sidebar_position: 3
+description: CKAD 시험을 위한 직접 만든 연습 문제 25개. 공식 영역 다섯 개로 묶고 정답마다 이유와 관련 명령·필드를 달았다.
+---
+
+# CKAD 모의 문제
+
+CKAD는 쿠버네티스 v1.37 기준으로 터미널에서 2시간 동안 푸는 실기 시험이고 영역은 다섯 개다.
+
+| 영역 | 비중 | 여기 문제 수 |
+| --- | --- | --- |
+| Application Environment, Configuration and Security | 25% | 6 |
+| Application Design and Build | 20% | 5 |
+| Application Deployment | 20% | 5 |
+| Services and Networking | 20% | 5 |
+| Application Observability and Maintenance | 15% | 4 |
+
+문제는 직접 만든 비공식 문제이고 실제 시험에서 가져온 것이 아니다. 영역과 비중은 [학습 경로와 자격증](../roadmap.mdx)에 정리한 공식 커리큘럼을 따른다. 실제 시험은 매니페스트를 직접 쓰고 고치는 시험이니 [장애 실습](../labs/index.mdx)에서 명령을 손에 익힌다.
+
+## Application Environment, Configuration and Security (25%)
+
+<Quiz title={null} save={false} questions={[
+  {q: '앱이 Secret db-cred의 키 password 값을 환경 변수 DB_PASSWORD로 받아야 한다. 어떤 컨테이너 필드로 하나?', options: ['valueFrom.configMapKeyRef를 쓴 env', 'valueFrom.secretKeyRef(name: db-cred, key: password)를 쓴 env', 'prefix를 DB_PASSWORD로 둔 envFrom.secretRef', 'subPath: password를 쓴 volumeMounts'], answer: 1, why: 'env[].valueFrom.secretKeyRef는 Secret의 키 하나를 변수 하나로 넣는다. envFrom.secretRef는 모든 키를 각각 변수로 가져오고, prefix는 키 이름 앞에 붙을 뿐이다.'},
+  {q: '네임스페이스에 requests.cpu와 requests.memory를 거는 ResourceQuota가 있다. 이제 resources가 없는 파드가 거부된다. 앞으로 만들 파드 전부에 가장 깔끔한 해결책은?', options: ['ResourceQuota를 지운다', '파드에 더 높은 priorityClassName을 준다', '컨테이너 기본 요청값과 상한값을 정하는 LimitRange를 추가한다', '파드를 default 네임스페이스에서 띄운다'], answer: 2, why: '쿼터가 요청값을 추적하면 모든 파드가 요청값을 적어야 한다. LimitRange는 아무것도 적지 않은 컨테이너에 defaultRequest와 default 값을 채워 주므로 쿼터 검사를 통과한다.'},
+  {q: '컨테이너의 리눅스 capabilities를 모두 빼려면 어디에 적나?', options: ['spec.containers[].securityContext.capabilities.drop: ["ALL"]', 'spec.securityContext.capabilities.drop: ["ALL"]', 'metadata.annotations', 'spec.containers[].resources'], answer: 0, why: 'capabilities는 컨테이너 수준 securityContext에만 있다. 파드 수준 securityContext에는 runAsUser, fsGroup, seccompProfile처럼 모든 컨테이너에 적용되는 필드가 있다.'},
+  {q: 'readOnlyRootFilesystem: true인 컨테이너가 /tmp에 임시 파일을 쓰다가 죽는다. 설정을 풀지 않고 고치려면?', options: ['privileged: true를 둔다', 'runAsUser: 0을 둔다', '/tmp에만 readOnlyRootFilesystem을 뺀다', '/tmp에 emptyDir 볼륨을 마운트한다'], answer: 3, why: '읽기 전용 루트 파일 시스템은 이미지 레이어에 쓰는 것을 막지만, 마운트한 볼륨에는 계속 쓸 수 있다. /tmp에 emptyDir을 붙이면 앱은 작업 공간을 얻고 나머지 파일 시스템은 잠긴 채로 남는다.'},
+  {q: '쿠버네티스 API를 전혀 부르지 않는 파드가 있다. 서비스 어카운트 토큰이 마운트되지 않게 하려면?', options: ['default 서비스 어카운트를 지운다', '파드 spec에 automountServiceAccountToken: false를 둔다', 'serviceAccountName을 빈 문자열로 둔다', '443 포트를 막는 NetworkPolicy를 넣는다'], answer: 1, why: '파드(또는 서비스 어카운트)에 automountServiceAccountToken: false를 두면 프로젝티드 토큰 볼륨이 추가되지 않는다. 토큰이 적을수록 컨테이너가 뚫렸을 때 훔칠 것도 적다.'},
+  {q: '오퍼레이터가 커스텀 리소스 Backup을 설치했다. 그 spec에 어떤 필드를 쓸 수 있는지 어떻게 보나?', options: ['kubectl describe crd backups', 'kubectl get backup -o yaml', 'kubectl explain backup.spec', 'kubectl api-versions'], answer: 2, why: 'kubectl explain은 CRD가 공개한 OpenAPI 스키마를 읽어 필드 이름, 타입, 설명을 보여 준다. --recursive를 주면 중첩된 필드를 한 번에 다 볼 수 있다.'},
+]} />
+
+**공부할 레슨:** [CRD와 오퍼레이터](../advanced/crd-operator.mdx), [API 요청이 저장되기까지](../advanced/api-request-path.mdx), [CEL과 웹훅으로 거는 어드미션 정책](../advanced/admission-policy.mdx), [요청값과 상한값](../intermediate/requests-limits.mdx), [네임스페이스와 리소스 쿼터](../feature/namespace-quota.mdx), [설정과 비밀값 (ConfigMap·Secret)](../k8s/config-secret.mdx), [파드는 자신을 어떻게 증명하나 (서비스 어카운트 토큰)](../advanced/serviceaccount-token.mdx), [파드 보안 기준과 securityContext](../advanced/pod-security.mdx)
+
+## Application Design and Build (20%)
+
+<Quiz title={null} save={false} questions={[
+  {q: 'Job이 작업 6개를 끝내야 하고 동시에 도는 파드는 최대 2개여야 한다. 어떤 필드를 두나?', options: ['completions: 6과 parallelism: 2', 'parallelism: 6과 backoffLimit: 2', 'replicas: 6과 maxSurge: 2', 'completions: 2와 parallelism: 6'], answer: 0, why: 'spec.completions는 성공해야 하는 파드 수, spec.parallelism은 동시에 도는 파드 수다. backoffLimit은 Job을 실패로 표시하기 전까지 재시도 횟수다.'},
+  {q: '5분마다 도는 CronJob이 가끔 8분 걸려서 두 실행이 겹친다. 앞 실행이 아직 돌고 있으면 새 실행을 막는 설정은?', options: ['startingDeadlineSeconds: 300', 'successfulJobsHistoryLimit: 1', 'suspend: true', 'concurrencyPolicy: Forbid'], answer: 3, why: 'concurrencyPolicy: Forbid는 앞 Job이 돌고 있으면 새 실행을 건너뛴다. Replace는 앞 Job을 멈추고 새로 시작하고, 기본값은 Allow다.'},
+  {q: '앱보다 먼저 시작해서 옆에서 계속 돌고, Job이 끝나는 것도 막지 않는 로그 전송 컨테이너가 필요하다. 어떻게 선언하나?', options: ['spec.containers의 두 번째 항목으로', 'restartPolicy: Always를 둔 spec.initContainers 항목으로', '임시(ephemeral) 컨테이너로', '별도 DaemonSet으로'], answer: 1, why: 'restartPolicy: Always를 둔 init 컨테이너가 네이티브 사이드카다(v1.33부터 정식). 앱 컨테이너보다 먼저 시작해서 계속 돌고, 앱 컨테이너가 끝난 뒤 멈추므로 Job도 완료될 수 있다.'},
+  {q: '파드가 몇 분째 STATUS Init:0/1이다. 무슨 뜻이고 다음에 무엇을 실행하나?', options: ['이미지를 아직 받는 중이다. kubectl top pod', '노드를 기다리는 중이다. kubectl get nodes', '첫 번째 init 컨테이너가 끝나지 않았다. kubectl logs POD -c INIT_NAME', 'readiness 프로브가 실패했다. kubectl get endpoints'], answer: 2, why: 'init 컨테이너는 순서대로 돌고, 하나가 0으로 끝나야 다음이 시작한다. Init:0/1은 1개 중 하나도 끝나지 않았다는 뜻이니 그 init 컨테이너 로그에서 무엇을 기다리는지 본다.'},
+  {q: '같은 파드의 두 컨테이너가 파드가 살아 있는 동안만 필요한 파일을 공유해야 한다. 어떤 볼륨이 맞나?', options: ['emptyDir', 'hostPath', 'PersistentVolumeClaim', 'ConfigMap'], answer: 0, why: 'emptyDir은 파드가 노드에서 시작할 때 만들어지고, 파드의 모든 컨테이너가 마운트할 수 있으며, 파드와 함께 지워진다. ConfigMap 볼륨은 읽기 전용이고 hostPath는 노드에 묶인다.'},
+]} />
+
+**공부할 레슨:** [이미지가 만들어지고 실행되기까지](../basic/container-image.mdx), [워크로드 종류](../basic/workload-types.mdx), [한 번 돌고 끝나는 일 (Job·CronJob)](../k8s/job-cronjob.mdx), [멀티 컨테이너 파드 — init과 사이드카 (CKAD)](../cert/multi-container.mdx), [저장 공간이 붙기까지 (PVC·PV)](../k8s/storage-volume.mdx)
+
+## Application Deployment (20%)
+
+<Quiz title={null} save={false} questions={[
+  {q: '레플리카 4개인 디플로이먼트가 maxSurge: 1, maxUnavailable: 0을 쓴다. 롤아웃은 어떻게 진행되나?', options: ['예전 파드 4개를 모두 멈춘 뒤 새 파드 4개를 띄운다', '새 파드를 하나 더 띄우고, 그 파드가 Ready가 된 뒤에야 예전 파드를 하나 지운다. Ready 파드는 4개 아래로 내려가지 않는다', '파드 8개를 한꺼번에 띄운 뒤 4개를 지운다', '예전 파드를 먼저 하나 멈추고 새 파드를 띄운다'], answer: 1, why: 'maxUnavailable: 0은 원하는 Ready 수 아래로 내려가는 것을 막고, maxSurge: 1은 파드 하나를 더 허용한다. 그래서 늘 새 파드 하나가 올라온 뒤 예전 파드 하나가 내려간다.'},
+  {q: '쿠버네티스 기본 객체로 하는 블루/그린 배포에서 디플로이먼트 두 개가 다 돌고 있고 Service는 version: blue를 고른다. 트래픽 전체를 green으로 옮기려면?', options: ['blue를 0으로 줄이고 기다린다', 'blue 디플로이먼트에 kubectl rollout undo', 'Service 셀렉터를 version: green으로 바꾼다', 'green용 Service를 하나 더 만든다'], answer: 2, why: '완전한 디플로이먼트가 두 개 있으면 Service 셀렉터가 스위치다. version: green으로 바꾸면 트래픽이 한 번에 옮겨 가고, 다시 바꾸면 곧바로 롤백된다.'},
+  {q: 'stable은 레플리카 9개, canary는 1개다. 두 디플로이먼트 모두 Service가 고르는 레이블 app: shop을 가진다. canary가 받는 트래픽은 대략 얼마인가?', options: ['50%', '승격 전까지는 없다', '1%', '약 10%'], answer: 3, why: 'Service는 자신이 고른 Ready 엔드포인트 전체에 연결을 나누므로 파드 10개 중 1개는 대략 10분의 1을 받는다. 비율을 바꾸려면 레플리카 비율을 바꾼다.'},
+  {q: '헬름 릴리스 shop의 리비전을 보고 되돌릴 리비전을 고르려면 어떤 명령을 쓰나?', options: ['helm history shop', 'helm list --revisions', 'helm get values shop --all', 'kubectl rollout history release/shop'], answer: 0, why: 'helm history는 리비전마다 상태, 차트 버전, 설명을 보여 준다. 그다음 helm rollback shop N을 실행한다.'},
+  {q: '저장소에 kustomization.yaml이 있는 base/와 overlays/prod/가 있다. prod 버전을 배포하는 명령은?', options: ['kubectl apply -f overlays/prod', 'kubectl apply -k overlays/prod', 'kubectl kustomize base | kubectl apply -f overlays/prod', 'helm install prod overlays/prod'], answer: 1, why: 'kubectl apply -k는 그 디렉터리의 kustomization(오버레이와 그 base)을 빌드해서 결과를 적용한다. kubectl kustomize overlays/prod는 검토용으로 출력만 한다.'},
+]} />
+
+**공부할 레슨:** [블루/그린과 카나리를 기본 요소로 (CKAD)](../cert/deploy-strategies.mdx), [무중단 배포 (롤링 업데이트)](../k8s/rolling-update.mdx), [헬름 릴리스의 설치·업그레이드·롤백](../k8s/helm-release.mdx), [Kustomize로 환경별 배포 (CKA·CKAD)](../cert/kustomize.mdx)
+
+## Services and Networking (20%)
+
+<Quiz title={null} save={false} questions={[
+  {q: 'NetworkPolicy ingress 규칙의 from 항목 하나에 namespaceSelector(team: web)와 podSelector(app: frontend)가 함께 들어 있다. 어떤 파드가 접속할 수 있나?', options: ['team: web 레이블이 붙은 네임스페이스의 모든 파드, 그리고 어디에 있든 app: frontend 레이블이 붙은 파드', '정책이 있는 네임스페이스의 파드만', 'team: web 레이블이 붙은 네임스페이스에 있으면서 app: frontend 레이블이 붙은 파드', '두 셀렉터가 서로 상쇄되어 아무 파드도 못 한다'], answer: 2, why: '같은 from 항목 안의 셀렉터는 AND로 묶인다. 목록 항목 두 개(대시 두 개)로 따로 쓰면 OR가 되는데, 흔히 하는 실수다.'},
+  {q: 'Service api에 엔드포인트는 있는데 연결이 거부된다. 컨테이너는 8080에서 듣고 Service는 port: 80, targetPort: 80이다. 무엇을 바꾸나?', options: ['targetPort: 8080으로 둔다', 'port: 8080으로 둔다', 'nodePort: 8080으로 둔다', '종류를 LoadBalancer로 바꾼다'], answer: 0, why: 'port는 클라이언트가 Service에서 부르는 포트이고 targetPort는 파드에서 트래픽을 받는 포트다. 컨테이너가 실제로 듣는 포트와 맞아야 한다.'},
+  {q: 'StatefulSet처럼 가상 IP 하나 대신 각 파드의 IP를 바로 돌려주는 DNS 이름이 필요하다. 무엇을 만드나?', options: ['NodePort Service', 'ExternalName Service', 'Ingress', 'clusterIP: None인 Service'], answer: 3, why: '헤드리스 Service(clusterIP: None)는 가상 IP가 없어서 DNS 이름이 Ready 파드 IP를 돌려준다. StatefulSet 파드는 db-0.db 같은 파드별 이름도 받는다.'},
+  {q: '인그레스 경로가 /api이고 pathType: Prefix다. 어떤 요청 경로가 맞나?', options: ['/apiv2', '/api/v1/users', '/v1/api', '뒤에 아무것도 없는 /api만'], answer: 1, why: 'Prefix는 /로 나눈 경로 요소 단위로 맞춘다. 그래서 /api는 /api, /api/, /api/v1/users와 맞고 /apiv2와는 맞지 않는다. pathType: Exact라면 /api만 맞는다.'},
+  {q: '디플로이먼트 web에 대해 80 포트에서 듣고 컨테이너 포트 8080으로 보내는 ClusterIP Service를 만드는 명령은?', options: ['kubectl expose deployment web --port=80 --target-port=8080', 'kubectl create service web --port=8080:80', 'kubectl port-forward deployment/web 80:8080', 'kubectl expose pod web --type=NodePort --port=8080'], answer: 0, why: 'kubectl expose는 디플로이먼트의 셀렉터를 읽어 그대로 Service를 만든다. --port는 Service 포트, --target-port는 컨테이너 포트이고 종류는 기본이 ClusterIP다.'},
+]} />
+
+**공부할 레슨:** [통신 막고 열기 (네트워크 정책)](../k8s/network-policy.mdx), [서비스 종류 (ClusterIP · NodePort · LoadBalancer)](../feature/service-types.mdx), [이름으로 찾아가기 (Service·DNS)](../k8s/service-dns.mdx), [인그레스 규칙과 TLS](../feature/ingress.mdx)
+
+## Application Observability and Maintenance (15%)
+
+<Quiz title={null} save={false} questions={[
+  {q: '파드가 Running이고 READY 0/1, RESTARTS 0이다. readiness 프로브가 계속 실패한다. 쿠버네티스는 무엇을 하나?', options: ['세 번 실패하면 컨테이너를 재시작한다', '파드를 지우고 새로 만든다', '컨테이너는 그대로 두고 파드를 Service 엔드포인트에서 뺀다', '파드를 다른 노드로 옮긴다'], answer: 2, why: 'readiness 프로브가 실패하면 파드를 준비되지 않음으로 표시할 뿐이라 Service 트래픽만 받지 않는다. 재시작은 readiness가 아니라 liveness 프로브 실패에서 온다.'},
+  {q: '자바 앱이 뜨는 데 최대 2분이 걸리는데, 준비되기 전에 liveness 프로브가 죽여 버린다. 올바른 해결책은?', options: ['liveness 프로브를 뺀다', '시작 시간을 덮을 만큼 failureThreshold와 periodSeconds를 곱한 값이 큰 startupProbe를 추가한다', 'restartPolicy: Never로 둔다', '메모리 상한을 올린다'], answer: 1, why: 'startupProbe가 있고 아직 성공하지 않았으면 liveness와 readiness 프로브는 돌지 않는다. 한 번 통과하면 원래의 짧은 간격으로 liveness 프로브가 이어받는다.'},
+  {q: '파드 web에 컨테이너 app과 proxy 두 개가 있다. proxy 로그는 어떻게 보나?', options: ['kubectl logs web/proxy', 'kubectl logs web --previous', 'kubectl describe pod web', 'kubectl logs web -c proxy'], answer: 3, why: '컨테이너가 둘 이상이면 -c(또는 --container)로 고른다. --all-containers는 전부 보여 주고, --previous는 마지막으로 종료된 인스턴스를 보여 준다.'},
+  {q: 'kubectl top pod가 "Metrics API not available"로 실패한다. 무엇이 없나?', options: ['metrics.k8s.io API를 제공하는 metrics-server', 'monitoring 네임스페이스의 프로메테우스', '파드의 liveness 프로브', '파드의 자원 상한값'], answer: 0, why: 'kubectl top은 Metrics API를 읽고, 이 API는 metrics-server가 kubelet 자원 메트릭으로 제공한다. 프로메테우스만으로는 이 API가 생기지 않는다.'},
+]} />
+
+**공부할 레슨:** [헬스 체크 — 살아 있나, 받을 준비가 됐나](../intermediate/probes.mdx), [로그·메트릭·트레이스가 파드를 떠나는 길](../k8s/observability-pipeline.mdx), [상태를 세 단계로 읽고 문제 확인하기](../intermediate/troubleshoot-status.mdx), [kubectl debug로 실행 중인 파드 디버깅하기](../k8s/kubectl-debug.mdx)

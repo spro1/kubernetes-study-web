@@ -1,0 +1,170 @@
+---
+id: no-endpoints
+title: '실습 04 · 아무에게도 닿지 않는 서비스'
+sidebar_label: '04 · 엔드포인트 없음'
+sidebar_position: 4
+description: '고장 내고 고치는 실습: 파드는 실행 중인데 서비스로 보낸 요청이 거부된다. EndpointSlice, kubectl describe svc, 디버그 파드로 셀렉터 불일치와 잘못된 targetPort를 찾는다.'
+hide_table_of_contents: false
+---
+
+# 실습 04 · 아무에게도 닿지 않는 서비스
+
+이 실습은 [노트북에 실습 클러스터 만들기](../basic/lab-cluster.mdx)에서 만든 kind 클러스터에서 한다. 먼저 `kubectl config current-context`가 `kind-lab`인지 확인한다.
+
+## 목표
+
+nginx 파드 두 개가 `Running`이고 `1/1` 준비됐는데, 서비스 `web`으로는 아무 응답도 받지 못한다. 요청이 어디서 사라지는지 찾아 서비스를 고친다.
+
+## 준비
+
+```bash
+kubectl apply -f - <<'EOF'
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: lab-04
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  namespace: lab-04
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.27
+          ports:
+            - containerPort: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+  namespace: lab-04
+spec:
+  selector:
+    app: frontend
+  ports:
+    - port: 80
+      targetPort: 8080
+EOF
+```
+
+## 증상
+
+```bash
+kubectl -n lab-04 get pods
+kubectl -n lab-04 run tmp --rm -i --restart=Never --image=busybox:1.36 -- wget -qO- -T 3 http://web
+```
+
+```text
+NAME                   READY   STATUS    RESTARTS   AGE
+web-6b7d8c9f5d-4kq9z   1/1     Running   0          40s
+web-6b7d8c9f5d-tn6vx   1/1     Running   0          40s
+wget: can't connect to remote host (10.96.143.27): Connection refused
+pod "tmp" deleted
+```
+
+파드는 멀쩡해 보인다. `web`이라는 이름이 ClusterIP(값은 다를 수 있다)로 풀리니 DNS는 동작하지만 연결이 거부된다. kube-proxy 모드에 따라 거부 대신 시간 초과(`download timed out`)가 날 수도 있다.
+
+## 살펴보기
+
+```bash
+kubectl -n lab-04 describe svc web                              # Selector, TargetPort, Endpoints
+kubectl -n lab-04 get endpointslices -l kubernetes.io/service-name=web
+kubectl -n lab-04 get pods --show-labels                         # 파드에 실제로 붙은 레이블
+kubectl -n lab-04 get pods -o wide                               # 파드 IP
+# 서비스를 거치지 않고 파드에 바로 묻는다 (위에서 본 파드 IP를 쓴다)
+kubectl -n lab-04 run tmp --rm -i --restart=Never --image=busybox:1.36 -- wget -qO- -T 3 http://<pod-ip>:80
+```
+
+경로를 따라간다. 클라이언트 → 서비스 이름 → ClusterIP → 엔드포인트 → 파드 IP와 포트. 처음으로 "거기에 아무도 없다"는 답이 나오는 곳을 찾는다.
+
+## 힌트
+
+<details>
+<summary>힌트 1</summary>
+
+서비스는 EndpointSlice에 적힌 엔드포인트로만 요청을 보낸다. `web`의 슬라이스에 엔드포인트가 없으면 서비스는 요청을 보낼 곳이 없다. EndpointSlice 컨트롤러는 파드 목록을 어디서 가져올까?
+
+</details>
+
+<details>
+<summary>힌트 2</summary>
+
+`kubectl describe svc web`의 `Selector` 줄을 `kubectl get pods --show-labels`의 `LABELS` 칸과 나란히 놓는다. 셀렉터의 키와 값이 모두 맞아야 한다.
+
+</details>
+
+<details>
+<summary>힌트 3</summary>
+
+셀렉터가 맞으면 슬라이스에 파드 IP 두 개가 보이는데도 요청은 여전히 거부된다. EndpointSlice의 포트와 nginx가 듣는 포트를 본다. 파드 IP의 80번 포트로 바로 보낸 `wget`은 성공하지 않았던가?
+
+</details>
+
+## 정답
+
+<details>
+<summary>정답</summary>
+
+**문제 1: 셀렉터와 맞는 파드가 없다.** 서비스는 `app=frontend`를 고르는데 파드에는 `app=web`이 붙어 있다. 맞는 파드가 없으니 `describe svc`에 엔드포인트가 없고 EndpointSlice도 비어 있다. 그러면 kube-proxy는 ClusterIP에 보낼 백엔드가 없어 연결을 거부한다. 셀렉터를 실제 레이블로 바꾼다.
+
+```bash
+kubectl -n lab-04 patch service web -p '{"spec":{"selector":{"app":"web"}}}'
+kubectl -n lab-04 get endpointslices -l kubernetes.io/service-name=web   # Two Pod IPs, port 8080
+```
+
+**문제 2: 잘못된 targetPort.** 이제 서비스가 파드 IP로 트래픽을 보내지만 포트가 8080이다. nginx는 80번 포트에서 들으니 파드가 연결을 거부한다. `port`는 클라이언트가 ClusterIP에서 쓰는 포트이고, `targetPort`는 파드의 포트다. 80으로 바꾼다.
+
+```bash
+kubectl -n lab-04 patch service web --type=json \
+  -p='[{"op":"replace","path":"/spec/ports/0/targetPort","value":80}]'
+```
+
+더 튼튼한 습관은 컨테이너 포트에 이름(`name: http`)을 붙이고 `targetPort: http`를 쓰는 것이다. 그러면 번호가 바뀌어도 서비스가 파드를 따라간다.
+
+</details>
+
+## 확인
+
+```bash
+kubectl -n lab-04 get endpointslices -l kubernetes.io/service-name=web
+kubectl -n lab-04 run tmp --rm -i --restart=Never --image=busybox:1.36 -- sh -c 'wget -qO- -T 3 http://web | grep title'
+```
+
+```text
+NAME        ADDRESSTYPE   PORTS   ENDPOINTS               AGE
+web-8xk2p   IPv4          80      10.244.1.5,10.244.2.4   5m
+<title>Welcome to nginx!</title>
+pod "tmp" deleted
+```
+
+슬라이스에 두 파드 IP가 80번 포트로 보이고, 서비스 이름으로 보낸 요청이 nginx 환영 페이지를 받는다.
+
+## 정리
+
+```bash
+kubectl delete ns lab-04
+```
+
+<Quiz questions={[
+  {q: '서비스의 EndpointSlice에 엔드포인트가 하나도 없는데 파드는 Running이고 Ready다. 가장 그럴듯한 원인은?', options: ['targetPort가 틀렸다', '서비스 셀렉터가 파드 레이블과 맞지 않는다', '클러스터 DNS가 고장 났다'], answer: 1, why: '엔드포인트는 셀렉터가 고른 파드에서 나온다. targetPort가 틀리면 파드는 여전히 목록에 오르고 포트만 틀린다.'},
+  {q: 'EndpointSlice에 파드 IP가 보이는데도 서비스로 보낸 연결이 거부된다. 다음에 무엇을 확인하는가?', options: ['targetPort가 컨테이너가 듣는 포트와 같은지', '서비스의 레플리카가 충분한지', '네임스페이스에 ResourceQuota가 있는지'], answer: 0, why: '트래픽은 이제 파드 IP까지 간다. 남은 질문은 포트다. 파드 IP로 바로 보내 맞는 포트를 확인한다.'},
+]} />
+
+## 관련 레슨
+
+- [이름으로 찾아가기 (Service·DNS)](../k8s/service-dns.mdx)
+- [요청이 파드에 닿기까지](../k8s/traffic.mdx)
+- [kubectl debug로 실행 중인 파드 디버깅하기](../k8s/kubectl-debug.mdx)
+- [상태를 세 단계로 읽고 문제 확인하기](../intermediate/troubleshoot-status.mdx)

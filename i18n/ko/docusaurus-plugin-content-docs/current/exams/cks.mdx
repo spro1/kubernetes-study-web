@@ -1,0 +1,91 @@
+---
+id: cks
+title: CKS 모의 문제
+sidebar_label: CKS
+sidebar_position: 4
+description: CKS 시험을 위한 직접 만든 연습 문제 27개. 공식 영역 여섯 개로 묶고 정답마다 이유와 관련 명령·필드를 달았다.
+---
+
+# CKS 모의 문제
+
+CKS는 쿠버네티스 v1.37 기준으로 터미널에서 2시간 동안 푸는 실기 시험이고, CKA를 먼저 따야 볼 수 있다. 영역은 여섯 개다.
+
+| 영역 | 비중 | 여기 문제 수 |
+| --- | --- | --- |
+| Cluster Setup | 15% | 4 |
+| Cluster Hardening | 15% | 4 |
+| System Hardening | 10% | 4 |
+| Minimize Microservice Vulnerabilities | 20% | 5 |
+| Supply Chain Security | 20% | 5 |
+| Monitoring, Logging and Runtime Security | 20% | 5 |
+
+문제는 직접 만든 비공식 문제이고 실제 시험에서 가져온 것이 아니다. 영역과 비중은 [학습 경로와 자격증](../roadmap.mdx)에 정리한 공식 커리큘럼을 따른다. 실제 시험은 살아 있는 클러스터를 직접 단단하게 만드는 시험이니 [장애 실습](../labs/index.mdx)에서 손에 익힌다.
+
+## Cluster Setup (15%)
+
+<Quiz title={null} save={false} questions={[
+  {q: 'payments 네임스페이스에서 파드로 들어오고 나가는 트래픽을 기본으로 모두 막아야 한다. 어떤 NetworkPolicy인가?', options: ['podSelector: {}에 policyTypes: [Ingress]', 'podSelector: {}에 policyTypes: [Ingress, Egress], 규칙 없음', 'podSelector: {}에 egress: [{}]', 'ingress 규칙에 빈 namespaceSelector'], answer: 1, why: '빈 podSelector는 모든 파드를 고르고, 두 정책 종류를 적고 규칙을 비우면 양방향 모두 아무것도 허용하지 않는다. 그다음 DNS egress를 포함해 좁은 허용 정책을 더한다.'},
+  {q: '인그레스가 shop.example.com에 HTTPS를 제공한다. spec.tls[].secretName은 무엇을 가리켜야 하나?', options: ['인그레스와 같은 네임스페이스에 있는 kubernetes.io/tls 타입 Secret(tls.crt와 tls.key 포함)', '인증서를 담은 ConfigMap', '인그레스 컨트롤러 네임스페이스에만 있는 Secret', '서비스 어카운트 토큰'], answer: 0, why: '인그레스는 자기 네임스페이스의 TLS Secret을 이름으로 참조한다. 컨트롤러가 거기서 tls.crt와 tls.key를 읽어 적힌 호스트에 그 인증서를 내놓는다.'},
+  {q: 'cert-manager가 설치돼 있다. 인증서를 발급받아 Secret에 넣고 계속 갱신하게 하려면 어떤 객체를 만드나?', options: ['CertificateSigningRequest', 'tls.crt가 빈 Secret', 'Issuer나 ClusterIssuer를 참조하고 secretName을 둔 Certificate', 'APIService'], answer: 2, why: 'cert-manager Certificate에는 발급자, DNS 이름, 결과를 쓸 Secret을 적고, cert-manager가 만료 전에 갱신한다. cert-manager.io/cluster-issuer 같은 어노테이션으로 ingress-shim이 대신 만들게 할 수도 있다.'},
+  {q: 'apps 네임스페이스의 파드가 169.254.169.254의 클라우드 인스턴스 메타데이터 엔드포인트에 닿으면 안 된다. 나머지는 모두 허용하면서 그것만 막는 egress 규칙은?', options: ['to:에 podSelector: {}', 'ports: [{port: 80}]만', 'to:에 namespaceSelector: {}', 'cidr: 0.0.0.0/0에 except: [169.254.169.254/32]를 둔 ipBlock'], answer: 3, why: 'ipBlock.except는 허용한 CIDR에서 주소를 빼낸다. 메타데이터 엔드포인트는 노드 자격 증명을 내줄 수 있어서, 파드에서 막는 것이 기본적인 보안 강화 단계다.'},
+]} />
+
+**공부할 레슨:** [통신 막고 열기 (네트워크 정책)](../k8s/network-policy.mdx), [인그레스 규칙과 TLS](../feature/ingress.mdx), [cert-manager로 TLS 인증서 자동 발급하기](../advanced/cert-manager.mdx)
+
+## Cluster Hardening (15%)
+
+<Quiz title={null} save={false} questions={[
+  {q: 'CI 시스템에 서비스 어카운트 deployer의 짧게 쓰는 토큰이 필요하다. 권장하는 방법은?', options: ['쿠버네티스가 자동으로 만드는 deployer Secret에서 토큰을 읽는다', '실행 중인 파드에서 토큰을 복사한다', 'admin.conf의 클라이언트 인증서를 쓴다', 'kubectl create token deployer --duration=1h'], answer: 3, why: 'kubectl create token은 TokenRequest API로 바인딩되고 만료되는 토큰을 발급한다. v1.24부터 서비스 어카운트에 오래가는 토큰 Secret이 자동으로 생기지 않고, 손으로 만드는 것도 권장하지 않는다.'},
+  {q: 'shop 네임스페이스의 서비스 어카운트 web이 그 안에서 할 수 있는 동작을 모두 보려면?', options: ['kubectl auth can-i --list -n shop --as=system:serviceaccount:shop:web', 'kubectl get clusterrolebindings -o wide', 'kubectl describe sa web -n shop', 'kubectl auth whoami --as=web'], answer: 0, why: '가장(impersonation)과 함께 쓴 kubectl auth can-i --list는 그 주체에 연결된 모든 Role과 ClusterRole에서 실제로 적용되는 규칙을 보여 준다. 와일드카드나 pods create, secrets get 같은 동사를 찾아본다.'},
+  {q: '인증되지 않은 kubelet API 요청을 실패시키고, 인가 판단은 API 서버에 맡기는 kubelet 설정은?', options: ['readOnlyPort: 10255', 'authentication.anonymous.enabled: false와 authorization.mode: Webhook', 'authorization.mode: AlwaysAllow', 'serverTLSBootstrap: false'], answer: 1, why: '익명 인증을 끄면 요청에 클라이언트 인증서나 토큰이 있어야 한다. Webhook 인가는 호출자가 그 kubelet 엔드포인트를 써도 되는지 API 서버에 묻는다(SubjectAccessReview). readOnlyPort는 0으로 둔다.'},
+  {q: '클러스터를 최신 쿠버네티스 버전으로 유지하는 것이 왜 보안 강화인가?', options: ['예전 버전은 NetworkPolicy를 쓸 수 없다', '업그레이드하면 Secret이 모두 교체된다', '보안 수정은 가장 최근 마이너 버전 세 개에만 나온다', '예전 버전은 RBAC를 끈다'], answer: 2, why: '쿠버네티스 프로젝트는 가장 최근 마이너 버전 세 개의 릴리스 브랜치만 유지한다. 그보다 뒤처진 클러스터는 새 CVE에 대한 패치 릴리스를 받지 못한다.'},
+]} />
+
+**공부할 레슨:** [누가 무엇을 할 수 있나 (RBAC)](../k8s/rbac.mdx), [파드는 자신을 어떻게 증명하나 (서비스 어카운트 토큰)](../advanced/serviceaccount-token.mdx), [API 요청이 저장되기까지](../advanced/api-request-path.mdx), [kubeadm으로 클러스터 업그레이드 (CKA)](../cert/kubeadm-upgrade.mdx)
+
+## System Hardening (10%)
+
+<Quiz title={null} save={false} questions={[
+  {q: 'k8s-deny-write라는 AppArmor 프로파일이 모든 노드에 올라가 있다. 컨테이너 하나에 적용하려면?', options: ['securityContext.appArmorProfile에 type: Localhost, localhostProfile: k8s-deny-write', 'securityContext.seccompProfile에 type: Localhost', 'securityContext.capabilities.add: [APPARMOR]', 'apparmor라는 RuntimeClass'], answer: 0, why: 'v1.30부터 AppArmor는 파드나 컨테이너 securityContext의 appArmorProfile 필드로 정한다. 프로파일이 노드에 미리 올라가 있어야 하고(apparmor_parser), 없으면 컨테이너가 시작하지 않는다.'},
+  {q: '컨테이너가 컨테이너 런타임의 기본 seccomp 필터로 돌게 하고 싶다. 어떤 설정인가?', options: ['privileged: true', 'securityContext.seccompProfile.type: Unconfined', 'securityContext.seccompProfile.type: RuntimeDefault', 'allowPrivilegeEscalation: true'], answer: 2, why: 'RuntimeDefault는 런타임의 기본 시스템 콜 필터를 적용한다. 이것이 없으면 kubelet의 --seccomp-default 옵션을 켜지 않은 한 Unconfined로 돈다. restricted 파드 보안 수준은 RuntimeDefault나 Localhost를 요구한다.'},
+  {q: '컨테이너가 노드의 모든 프로세스를 보고 시그널을 보낼 수 있게 되는 파드 설정은?', options: ['shareProcessNamespace: true', 'hostNetwork: true', 'runAsNonRoot: false', 'hostPID: true'], answer: 3, why: 'hostPID는 컨테이너를 노드의 PID 네임스페이스에 넣는다. shareProcessNamespace는 같은 파드의 컨테이너끼리만 프로세스를 공유한다. baseline 파드 보안 수준은 hostPID, hostIPC, hostNetwork를 금지한다.'},
+  {q: '파드가 클라우드 스토리지 버킷 하나를 읽어야 한다. 최소 권한에 맞는 구성은?', options: ['관리자 권한의 고정 액세스 키를 Secret에 넣는다', '파드의 서비스 어카운트를 그 버킷 읽기만 되는 클라우드 역할에 연결한다(워크로드 아이덴티티)', '노드 인스턴스 역할에 모든 버킷 읽기 권한을 준다', 'hostNetwork로 파드를 돌려 노드 신원을 쓴다'], answer: 1, why: '워크로드 아이덴티티 연동은 서비스 어카운트마다 역할 하나로 범위가 정해진 짧은 수명의 클라우드 자격 증명을 준다. 노드 역할은 그 노드의 모든 파드가 함께 쓰고, 고정 키는 만료되지 않는다.'},
+]} />
+
+**공부할 레슨:** [런타임 보안 — 이상 행동 잡기 (CKS)](../cert/runtime-security.mdx), [파드 보안 기준과 securityContext](../advanced/pod-security.mdx), [API 요청 하나의 권한 검사 (IAM)](../cloud/iam-request.mdx)
+
+## Minimize Microservice Vulnerabilities (20%)
+
+<Quiz title={null} save={false} questions={[
+  {q: 'restricted 파드 보안 기준을 어기는 파드를 API 서버가 거부하게 만드는 네임스페이스 레이블은?', options: ['pod-security.kubernetes.io/warn: restricted', 'pod-security.kubernetes.io/audit: restricted', 'security.kubernetes.io/policy: restricted', 'pod-security.kubernetes.io/enforce: restricted'], answer: 3, why: '파드 보안 어드미션에는 모드가 세 개 있다. enforce는 파드를 거부하고, audit은 감사 어노테이션만 남기고, warn은 클라이언트에 경고만 돌려준다.'},
+  {q: 'restricted 파드 보안 기준을 통과하는 컨테이너 securityContext는?', options: ['runAsNonRoot: true, allowPrivilegeEscalation: false, capabilities.drop: [ALL], seccompProfile.type: RuntimeDefault', 'privileged: false와 runAsUser: 0', 'readOnlyRootFilesystem: true만', 'runAsNonRoot: true에 capabilities.add: [NET_ADMIN]'], answer: 0, why: 'restricted는 루트가 아닌 사용자, 권한 상승 금지, capabilities 전부 제거(다시 넣을 수 있는 것은 NET_BIND_SERVICE뿐), RuntimeDefault나 Localhost seccomp 프로파일을 요구한다. readOnlyRootFilesystem은 좋은 습관이지만 필수는 아니다.'},
+  {q: 'CEL 규칙으로 ValidatingAdmissionPolicy를 만들었는데 잘못된 디플로이먼트가 여전히 받아들여진다. 무엇이 빠졌을 가능성이 가장 큰가?', options: ['정책용 웹훅 Service', '대상 자원을 고르고 validationActions를 정하는 ValidatingAdmissionPolicyBinding', 'kube-apiserver 재시작', '정책이 kube-system에 있어야 한다'], answer: 1, why: 'ValidatingAdmissionPolicy만으로는 아무 일도 일어나지 않는다. ValidatingAdmissionPolicyBinding이 정책을 범위(예: namespaceSelector)에 붙이고 Deny, Warn, Audit 같은 동작을 정한다.'},
+  {q: 'EncryptionConfiguration(맨 앞에 aescbc)으로 Secret 저장 시 암호화를 켰다. 이미 있던 Secret도 이제 etcd에서 암호화돼 있나?', options: ['그렇다. API 서버가 재시작할 때 모든 데이터를 암호화한다', '그렇다. etcd가 압축(compaction)하면 된다', '아니다. 다시 써야 한다. 예: kubectl get secrets -A -o json | kubectl replace -f -', '아니다. 저장 시 암호화는 KMS에서만 된다'], answer: 2, why: '쓰기에는 목록의 첫 번째 프로바이더가 쓰이므로 설정을 바꾼 뒤에 쓰인 Secret만 암호화된다. 모든 Secret을 다시 쓰면 새 프로바이더를 거쳐 다시 저장된다.'},
+  {q: 'Istio 메시에서 한 네임스페이스의 워크로드가 상호 TLS 트래픽만 받게 강제하는 자원은?', options: ['mtls.mode: STRICT인 PeerAuthentication', 'tls.mode: DISABLE인 DestinationRule', '15006 포트에 거는 NetworkPolicy', 'istio-mtls라는 쿠버네티스 Secret'], answer: 0, why: 'PeerAuthentication은 받는 쪽 사이드카가 무엇을 받을지 정한다. STRICT는 평문 연결을 거부하고, 기본값인 PERMISSIVE는 이전하는 동안 둘 다 받는다.'},
+]} />
+
+**공부할 레슨:** [파드 보안 기준과 securityContext](../advanced/pod-security.mdx), [CEL과 웹훅으로 거는 어드미션 정책](../advanced/admission-policy.mdx), [시크릿을 안전하게 지키기](../advanced/secret-management.mdx), [네임스페이스와 리소스 쿼터](../feature/namespace-quota.mdx), [서비스 메시 ① 사이드카와 상호 인증](../feature/mesh-sidecar.mdx)
+
+## Supply Chain Security (20%)
+
+<Quiz title={null} save={false} questions={[
+  {q: '매니페스트가 image: nginx:1.27을 쓴다. 매번 정확히 같은 이미지가 돌게 하려면?', options: ['imagePullPolicy: Always를 둔다', 'latest 태그를 쓴다', '다이제스트로 고정한다. 예: nginx@sha256:...', 'imagePullSecret을 추가한다'], answer: 2, why: '태그는 다른 이미지를 가리키도록 옮길 수 있지만, 다이제스트는 이미지 매니페스트의 해시라 바뀌지 않는다. imagePullPolicy: Always는 지금 태그가 가리키는 것을 받을 뿐이다.'},
+  {q: 'Trivy로 이미지의 HIGH와 CRITICAL 취약점만 보는 명령은?', options: ['trivy image --severity HIGH,CRITICAL registry.example.com/app:2.1', 'trivy k8s --report summary', 'trivy fs --scanners secret .', 'trivy config ./manifests'], answer: 0, why: 'trivy image는 이미지 안의 OS 패키지와 라이브러리를 검사하고, --severity로 결과를 거른다. trivy config는 CVE가 아니라 매니페스트 설정 오류를 검사한다.'},
+  {q: 'SBOM은 무엇을 알려 주나?', options: ['이미지를 누가 빌드했는지 증명하는 서명', '산출물 안에 든 패키지와 버전 목록. SPDX나 CycloneDX 같은 형식으로 쓴다', '컨테이너가 부른 시스템 콜의 실행 기록', '허용된 레지스트리에 대한 어드미션 정책'], answer: 1, why: 'SBOM(소프트웨어 자재 명세서)은 구성 요소 목록이다. 새로 발표된 CVE가 우리에게 해당하는지 빠르게 확인할 수 있다. 서명(예: cosign)은 별도 단계다.'},
+  {q: '이미지를 cosign과 키 쌍으로 서명했다. 배포하기 전에 서명을 확인하는 명령은?', options: ['cosign sign --key cosign.key IMAGE', 'docker trust inspect IMAGE', 'trivy image --verify IMAGE', 'cosign verify --key cosign.pub IMAGE'], answer: 3, why: 'cosign verify는 레지스트리에 저장된 서명을 공개 키로 확인한다. cosign sign은 서명을 만든다. 클러스터에서는 어드미션 컨트롤러가 모든 파드에 같은 검사를 할 수 있다.'},
+  {q: '클러스터에서는 registry.example.com의 이미지만 돌아야 한다. 어디서 강제하나?', options: ['각 Dockerfile에서', '어드미션 정책에서. 예: 컨테이너 image 필드를 검사하는 CEL 규칙의 ValidatingAdmissionPolicy, 또는 ImagePolicyWebhook 플러그인', '노드의 /etc/hosts 파일에서', 'NetworkPolicy egress 규칙에서'], answer: 1, why: '어드미션은 모든 생성과 수정에서 돌기 때문에, containers[].image(그리고 initContainers)의 접두사를 검사하는 정책이 파드가 저장되기 전에 다른 레지스트리를 막는다.'},
+]} />
+
+**공부할 레슨:** [이미지와 공급망 보안](../advanced/supply-chain.mdx), [이미지가 만들어지고 실행되기까지](../basic/container-image.mdx), [사설 레지스트리에서 이미지 받기](../k8s/private-registry.mdx)
+
+## Monitoring, Logging and Runtime Security (20%)
+
+<Quiz title={null} save={false} questions={[
+  {q: '감사 정책이 Secret을 누가 읽고 바꿨는지 기록하되 Secret 값은 로그에 남기지 않아야 한다. secrets에 어떤 수준을 쓰나?', options: ['RequestResponse', 'Request', 'None', 'Metadata'], answer: 3, why: 'Metadata는 사용자, 동사, 자원, 네임스페이스, 시각을 남기지만 요청·응답 본문은 남기지 않는다. Request와 RequestResponse는 Secret 데이터를 로그 파일에 복사한다.'},
+  {q: '감사 정책에 secrets를 Metadata로 기록하는 규칙이 있고, 그 뒤에 모든 것을 RequestResponse로 기록하는 규칙이 있다. Secret 읽기에는 어떤 수준이 적용되나?', options: ['Metadata. 처음 맞은 규칙이 이긴다', 'RequestResponse. 가장 높은 수준이 이긴다', '두 이벤트로 모두 기록된다', 'None. 규칙이 충돌한다'], answer: 0, why: '감사 정책 규칙은 순서대로 검사하고 처음 맞은 규칙이 수준을 정한다. 구체적인 규칙을 앞에, 모두 잡는 규칙을 맨 뒤에 둔다.'},
+  {q: 'kube-apiserver 스태틱 파드 매니페스트에 --audit-policy-file과 --audit-log-path를 넣었더니 API 서버가 다시 뜨지 않는다. 흔한 원인은?', options: ['감사 로그를 쓰려면 etcd를 재시작해야 한다', '정책 파일과 로그 디렉터리가 hostPath 볼륨과 volumeMounts로 파드에 마운트되지 않았다', '감사 플래그는 kubelet에서만 쓸 수 있다', '감사 로그는 /tmp에 있어야 한다'], answer: 1, why: 'API 서버는 컨테이너 안에서 돌기 때문에 마운트된 경로만 본다. 정책 파일과 로그 디렉터리에 hostPath 볼륨과 volumeMounts를 추가하고 crictl logs로 확인한다.'},
+  {q: 'Falco가 어떤 파드에 대해 "Terminal shell in container"를 띄웠다. Falco는 이것을 잡으려고 무엇을 지켜보나?', options: ['컨테이너 로그 출력', '쿠버네티스 감사 로그만', '노드의 시스템 콜. 예를 들어 컨테이너 안에서 셸 프로세스가 시작되는 것', '레지스트리의 이미지 레이어'], answer: 2, why: 'Falco는 eBPF 프로브나 커널 모듈로 커널 이벤트를 읽고 규칙과 맞춰 본다. 그래서 컨테이너 안에서 bash 같은 프로세스가 생기는 것을 실시간으로 본다.'},
+  {q: '실행 중인 컨테이너를 불변에 가장 가깝게 만드는 설정은?', options: ['restartPolicy: Never', 'imagePullPolicy: IfNotPresent', '더 큰 메모리 상한', 'readOnlyRootFilesystem: true, 그리고 앱이 꼭 써야 하는 곳에만 emptyDir'], answer: 3, why: '루트 파일 시스템이 읽기 전용이면 공격자가 컨테이너에 새 바이너리를 떨구거나 설정을 바꿀 수 없다. 셸과 패키지 관리자가 없는 최소 이미지와 함께 쓴다.'},
+]} />
+
+**공부할 레슨:** [런타임 보안 — 이상 행동 잡기 (CKS)](../cert/runtime-security.mdx), [감사 로그](../advanced/audit-log.mdx), [4C와 위협 모델로 클러스터 보기 (KCSA·KCNA)](../cert/threat-model.mdx)

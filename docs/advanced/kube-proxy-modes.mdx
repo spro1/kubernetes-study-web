@@ -1,0 +1,249 @@
+---
+id: kube-proxy-modes
+title: kube-proxy Modes, from Service IP to Pod IP
+sidebar_label: 10 · kube-proxy modes
+description: Animated walkthrough of how kube-proxy turns Services and EndpointSlices into node rules in iptables, IPVS and nftables mode, how eBPF datapaths such as Cilium replace it, conntrack and stale entries, externalTrafficPolicy Local and client IP, and how to debug with iptables-save, nft and conntrack
+summary: 'What kube-proxy actually programs on each node in iptables, IPVS and nftables mode, how eBPF replaces it, and why conntrack and traffic policy matter.'
+icon: split
+hide_table_of_contents: true
+---
+
+# kube-proxy Modes, from Service IP to Pod IP
+
+The packet lesson showed that a Service IP becomes a Pod IP on the sending node. Here we open that box: what kube-proxy writes into the kernel in each mode, how eBPF datapaths do the same job, and what conntrack and traffic policy change.
+
+<StepDiagram
+  width={1000}
+  height={470}
+  meta={{duration: '~14 min', level: 'Advanced'}}
+  groups={[
+    {label: 'Node A', x: 210, y: 30, w: 520, h: 425, tone: 'biz'},
+    {label: 'Endpoints', x: 760, y: 30, w: 220, h: 425, tone: 'plain'},
+  ]}
+  nodes={[
+    {id: 'api', label: 'API server', sub: 'Services, EndpointSlices', icon: 'server', tone: 'cp', x: 110, y: 90, show: true},
+    {id: 'ext', label: 'External client', sub: 'via NodePort or LB', icon: 'browser', tone: 'ext', x: 110, y: 390},
+    {id: 'client', label: 'Client Pod', sub: '→ 10.96.12.34:80', icon: 'pod', tone: 'app', size: 'sm', x: 300, y: 250, show: true},
+    {id: 'proxy', label: 'kube-proxy', sub: 'DaemonSet, watches', icon: 'gear', tone: 'node', x: 520, y: 90},
+    {id: 'rules', label: 'Kernel rules', sub: 'iptables · IPVS · nft', icon: 'split', tone: 'store', x: 520, y: 250, w: 170},
+    {id: 'ct', label: 'conntrack', sub: 'one entry per flow', icon: 'db', tone: 'store', x: 520, y: 390},
+    {id: 'ebpf', label: 'eBPF datapath', sub: 'socket and tc hooks', icon: 'spark', tone: 'node', x: 300, y: 390},
+    {id: 'pod1', label: 'Pod 1', sub: '10.244.1.5', icon: 'pod', tone: 'app', size: 'sm', x: 870, y: 120},
+    {id: 'pod2', label: 'Pod 2', sub: '10.244.1.6', icon: 'pod', tone: 'app', size: 'sm', x: 870, y: 250},
+    {id: 'pod3', label: 'Pod 3', sub: 'on Node B', icon: 'pod', tone: 'app', size: 'sm', x: 870, y: 380},
+  ]}
+  metrics={[
+    {id: 'mode', label: 'Mode'},
+    {id: 'lookup', label: 'Service lookup'},
+    {id: 'picked', label: 'Endpoint picked'},
+    {id: 'srcip', label: 'Source IP at Pod'},
+  ]}
+  learn={[
+    {text: 'kube-proxy is a controller that programs rules, not a proxy in the path', at: 1},
+    {text: 'iptables DNAT chains and random probability per endpoint', at: 2},
+    {text: 'IPVS (deprecated) and nftables (GA) compared', at: 4},
+    {text: 'eBPF kube-proxy replacement at the socket and tc level', at: 6},
+    {text: 'conntrack, stale entries and externalTrafficPolicy: Local', at: 7},
+  ]}
+  steps={[
+    {
+      short: 'Start',
+      kind: '시작',
+      title: 'No device owns the Service IP',
+      text: [
+        'A client Pod connects to 10.96.12.34:80, the ClusterIP of Service web. No network interface answers on that address, and no proxy process sits in between. Rules in the kernel of Node A rewrite the destination to one Pod IP.',
+        'This lesson is about who writes those rules and what they look like. Name lookup is in the Service DNS lesson; the path after the rewrite is in the packet lesson.',
+      ],
+      flows: [{from: 'client', to: 'rules', label: 'SYN 10.96.12.34', type: 'request'}],
+      focus: ['client', 'rules'],
+    },
+    {
+      short: 'Watch',
+      kind: '원리',
+      title: 'kube-proxy watches and programs, it does not forward',
+      text: [
+        'kube-proxy runs on every node, usually as a DaemonSet. It watches Services and EndpointSlices through the API server. When an endpoint becomes ready or goes away, it updates the rules on its own node.',
+        'Packets never pass through the kube-proxy process. If kube-proxy stops, existing rules keep working, but new Services and endpoint changes are not applied on that node.',
+      ],
+      keyIdea: 'Stale routing on one node only, while others are fine, often means kube-proxy there is down or failing to sync. Check its logs and sync metrics.',
+      flows: [
+        {from: 'api', to: 'proxy', label: 'watch', type: 'watch'},
+        {from: 'proxy', to: 'rules', label: 'program', type: 'request'},
+      ],
+      focus: ['api', 'proxy'],
+    },
+    {
+      short: 'iptables',
+      kind: '원리',
+      title: 'iptables mode: a chain per Service, a coin flip per endpoint',
+      text: [
+        'In the nat table, KUBE-SERVICES has a rule per Service IP and port that jumps to a KUBE-SVC-... chain. That chain has one rule per endpoint, each jumping to a KUBE-SEP-... chain that DNATs to the Pod IP and port.',
+        'The choice is random. With three endpoints, the first rule matches with probability 1/3, the second with 1/2 of the rest, and the last always. Each endpoint gets about a third of new connections.',
+      ],
+      keyIdea: 'iptables-save -t nat | grep KUBE-SVC shows the chain for a Service, and each statistic --probability rule in it.',
+      flows: [
+        {from: 'client', to: 'rules', label: 'KUBE-SERVICES', type: 'request'},
+        {from: 'rules', to: 'pod2', label: 'DNAT 10.244.1.6', type: 'request'},
+      ],
+      focus: ['rules', 'pod2'],
+      badges: {rules: 'KUBE-SVC → SEP'},
+      values: {mode: 'iptables', lookup: 'walk the rule list', picked: 'Pod 2 (random)'},
+    },
+    {
+      short: 'Rule growth',
+      kind: '문제',
+      title: 'Thousands of Services mean tens of thousands of rules',
+      text: [
+        'Rules grow with Services times endpoints. Matching walks KUBE-SERVICES in order, and a change rewrites large parts of the table. In clusters with tens of thousands of Services and Pods, each sync gets slow, and endpoint changes reach the kernel late.',
+        'kube-proxy batches changes with minSyncPeriod to cope, which trades freshness for less CPU. That limit is why the other modes exist.',
+      ],
+      keyIdea: 'Watch the kube-proxy sync duration metrics. Long syncs mean traffic can still go to Pods that are already gone.',
+      flows: [{from: 'proxy', to: 'rules', label: 'full resync', type: 'request'}],
+      focus: ['proxy', 'rules'],
+      status: {rules: 'warn'},
+      values: {lookup: {text: 'grows with Services', tone: 'bad'}},
+    },
+    {
+      short: 'IPVS',
+      kind: '주의',
+      title: 'IPVS mode: hash tables, but deprecated',
+      text: [
+        'IPVS is the kernel load balancer. kube-proxy binds every ClusterIP to a dummy interface, kube-ipvs0, and creates a virtual server per Service with the endpoints as real servers. Lookup is a hash table, and you can pick a scheduler such as rr (the default), lc or sh.',
+        'The IPVS API never matched every Service edge case. The mode is deprecated since v1.35; it is planned to be off by default from v1.40 and removed in v1.43.',
+      ],
+      keyIdea: 'Running IPVS today? Plan a move to nftables. ipvsadm -Ln shows the current virtual servers.',
+      flows: [{from: 'rules', to: 'pod1', label: 'rr', type: 'request'}],
+      focus: ['rules'],
+      status: {rules: 'warn'},
+      badges: {rules: 'kube-ipvs0'},
+      values: {mode: {text: 'ipvs (deprecated)', tone: 'bad'}, lookup: 'hash table', picked: 'Pod 1 (round robin)'},
+    },
+    {
+      short: 'nftables',
+      kind: '원리',
+      title: 'nftables mode: maps instead of long chains',
+      text: [
+        'nftables mode went GA in v1.33 and needs Linux kernel 5.13 or later. kube-proxy keeps its rules in its own table (ip kube-proxy and ip6 kube-proxy). Service IPs sit in a verdict map, so finding the Service is one lookup instead of a walk.',
+        'Updates touch only what changed. The default mode is still iptables, and the docs say it will move to nftables in a future release, so set mode explicitly in the kube-proxy config to avoid a surprise on upgrade.',
+      ],
+      keyIdea: 'nft list table ip kube-proxy shows the maps and per-Service chains. iptables-save does not show these rules.',
+      flows: [
+        {from: 'client', to: 'rules', label: 'map lookup', type: 'request'},
+        {from: 'rules', to: 'pod2', label: 'DNAT', type: 'request'},
+      ],
+      focus: ['rules'],
+      status: {rules: 'ok'},
+      badges: {rules: 'table kube-proxy'},
+      values: {mode: {text: 'nftables', tone: 'good'}, lookup: {text: 'map, one lookup', tone: 'good'}, picked: 'Pod 2 (random)'},
+    },
+    {
+      short: 'eBPF',
+      kind: '원리',
+      title: 'eBPF datapaths replace kube-proxy entirely',
+      text: [
+        'Some CNIs, for example Cilium with kube-proxy replacement, run no kube-proxy at all. Their agent watches the same Services and EndpointSlices and fills eBPF maps.',
+        'For Pod traffic, a hook on the socket picks the backend when the app calls connect(), so the connection is opened to the Pod IP and later packets need no NAT. Traffic from outside to NodePorts is handled by eBPF programs at tc or XDP on the node interface.',
+      ],
+      keyIdea: 'With an eBPF replacement, iptables-save shows almost no KUBE- rules. Ask the CNI instead, for example cilium-dbg service list in the agent Pod.',
+      flows: [
+        {from: 'client', to: 'ebpf', label: 'connect()', type: 'request'},
+        {from: 'ebpf', to: 'pod2', label: 'to Pod IP', type: 'request'},
+      ],
+      focus: ['ebpf'],
+      status: {rules: 'off', proxy: 'off'},
+      badges: {rules: null},
+      values: {mode: 'eBPF (no kube-proxy)', lookup: 'eBPF map', picked: 'at the socket'},
+    },
+    {
+      short: 'conntrack',
+      kind: '장애',
+      title: 'conntrack remembers the choice, even after the Pod is gone',
+      text: [
+        'With iptables, IPVS or nftables, only the first packet of a flow goes through the rules. The kernel records the DNAT in conntrack, and later packets follow that entry. That is why one TCP connection stays on one Pod.',
+        'When Pod 2 is deleted, its entries can linger. TCP clients see resets or timeouts and must reconnect. For UDP there is no connection to break, so kube-proxy deletes conntrack entries for removed UDP endpoints. Without that cleanup, DNS queries could keep going to a dead CoreDNS Pod.',
+      ],
+      keyIdea: 'conntrack -L -d 10.96.12.34 lists flows to a Service. Long-lived connections do not rebalance when you scale up; clients must reconnect.',
+      flows: [
+        {from: 'rules', to: 'ct', label: 'record DNAT', type: 'request'},
+        {from: 'ct', to: 'pod2', label: 'stale entry', type: 'request'},
+      ],
+      focus: ['ct', 'pod2'],
+      status: {rules: 'ok', proxy: null, pod2: 'gone', ct: 'error'},
+      values: {mode: 'nftables', lookup: 'map, one lookup', picked: {text: 'Pod 2, deleted', tone: 'bad'}},
+    },
+    {
+      short: 'Traffic policy',
+      kind: '원리',
+      title: 'externalTrafficPolicy: Local keeps the client IP',
+      text: [
+        'External traffic arrives at a NodePort or load balancer. With the default policy Cluster, any node may forward it to any endpoint, even on another node, and SNATs it to the node IP on the way. The Pod sees the node address, not the client.',
+        'With Local, the node only forwards to endpoints on itself, without SNAT, so the Pod sees the real client IP. A node with no local endpoint drops it. The load balancer avoids such nodes by checking healthCheckNodePort, where kube-proxy answers 200 only if a local endpoint exists.',
+      ],
+      keyIdea: 'Local preserves client IP and saves a hop, but traffic is spread per node, not per Pod. Keep endpoints evenly spread across nodes.',
+      flows: [
+        {from: 'ext', to: 'rules', label: 'NodePort', type: 'request'},
+        {from: 'rules', to: 'pod1', label: 'local only', type: 'request'},
+      ],
+      focus: ['ext', 'pod1'],
+      status: {pod2: null, ct: null, pod3: 'off'},
+      values: {picked: 'Pod 1 (same node)', srcip: {text: 'client IP', tone: 'good'}},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Same Service, different machinery',
+      text: [
+        'kube-proxy or an eBPF agent watches Services and EndpointSlices and programs each node. iptables walks chains, IPVS uses hash tables and is on its way out, nftables uses maps and is the recommended path, and eBPF can pick the backend at the socket.',
+        'conntrack pins each flow to the endpoint chosen first, so endpoint changes need cleanup and clients need to reconnect. Traffic policy decides whether external traffic may hop and lose its source IP.',
+      ],
+      keyIdea: 'Debug from the node: find the mode first, then read the rules with the matching tool, then check conntrack for the flow.',
+      flows: [
+        {from: 'api', to: 'proxy', label: 'watch', type: 'watch'},
+        {from: 'proxy', to: 'rules', label: 'program', type: 'request'},
+        {from: 'rules', to: 'pod1', label: 'DNAT', type: 'request'},
+      ],
+      focus: ['proxy', 'rules'],
+      status: {pod3: null, rules: null},
+      badges: {rules: null},
+    },
+  ]}
+/>
+
+## The modes side by side
+
+| | iptables | IPVS | nftables | eBPF replacement (e.g. Cilium) |
+|---|---|---|---|---|
+| Status | Default today | Deprecated since v1.35, removal planned | GA since v1.33, kernel 5.13+ | Outside Kubernetes, from the CNI |
+| Service lookup | Walks `KUBE-SERVICES` rules | Hash table of virtual servers | Verdict map | eBPF map |
+| Endpoint choice | Random, `statistic --probability` | Scheduler: `rr`, `lc`, `sh` and others | Random | Chosen at `connect()` or per packet at tc/XDP |
+| Updates | Large table rewrites | Per virtual server | Only what changed | Map updates |
+| Where to look | `iptables-save -t nat` | `ipvsadm -Ln` | `nft list table ip kube-proxy` | CNI tools, e.g. `cilium-dbg service list` |
+
+## Try it yourself
+
+```bash
+# Which mode? (on a node; kind nodes: docker exec -it lab-worker bash)
+curl -s localhost:10249/proxyMode                     # kube-proxy metrics port answers iptables / ipvs / nftables
+kubectl logs -n kube-system ds/kube-proxy | grep -i proxier   # e.g. "Using iptables Proxier"
+kubectl get endpointslices -l kubernetes.io/service-name=web  # the endpoints kube-proxy programs
+
+# iptables mode
+iptables-save -t nat | grep -E 'KUBE-SVC|KUBE-SEP' | head     # chains and probability rules
+iptables-save -t nat | grep -c KUBE-SEP                        # how many endpoint rules on this node
+
+# nftables and IPVS mode
+nft list table ip kube-proxy | less                   # maps and per-Service chains
+ipvsadm -Ln                                           # virtual servers and real servers
+
+# conntrack
+conntrack -L -d 10.96.12.34                           # flows to this ClusterIP and their DNAT target
+conntrack -D -p udp --orig-dst 10.96.0.10             # clear stale UDP entries to kube-dns by hand
+```
+
+<Quiz questions={[
+  {q: 'kube-proxy on one node crashes. What happens to traffic from Pods on that node to an existing Service?', options: ['It stops at once, because packets pass through kube-proxy', 'It keeps working with the existing rules, but endpoint changes are no longer applied on that node', 'It is redirected to another node\'s kube-proxy', 'It switches to IPVS mode'], answer: 1, why: 'kube-proxy only programs kernel rules. Existing rules stay, so traffic flows, but new Services and endpoint changes are not reflected until it syncs again.'},
+  {q: 'You scale a Deployment from 2 to 6 Pods, but a client with one long-lived TCP connection still talks to the same Pod. Why?', options: ['iptables gives the first endpoint the highest probability', 'The new Pods are not in the EndpointSlice yet', 'externalTrafficPolicy is Cluster', 'conntrack pins the connection to the endpoint chosen for its first packet'], answer: 3, why: 'Only the first packet goes through the rules. Later packets follow the conntrack entry, so a connection never moves. Only new connections are spread over the new Pods.'},
+  {q: 'A LoadBalancer Service uses externalTrafficPolicy: Local. Why does the app now see real client IPs?', options: ['Nodes forward only to local endpoints, so they do not SNAT the traffic', 'The load balancer adds an X-Forwarded-For header', 'kube-proxy switches to nftables mode'], answer: 0, why: 'With Cluster, a node may forward to another node and SNATs to its own IP. With Local there is no second hop and no SNAT, so the source IP is preserved.'},
+]} />
+
+Further reading: [Virtual IPs and Service Proxies](https://kubernetes.io/docs/reference/networking/virtual-ips/) · [Removal of the kube-proxy IPVS backend](https://kubernetes.io/blog/2026/11/16/ipvs-removal/) · [Source IP for Services](https://kubernetes.io/docs/tutorials/services/source-ip/) · [Cilium kube-proxy replacement](https://docs.cilium.io/en/stable/network/kubernetes/kubeproxy-free/) · [A Packet from Pod to Pod](../advanced/packet-path.mdx) · [Finding Services by Name (Service·DNS)](../k8s/service-dns.mdx) · [Service Types (ClusterIP · NodePort · LoadBalancer)](../feature/service-types.mdx)

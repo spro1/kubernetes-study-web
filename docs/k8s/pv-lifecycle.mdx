@@ -1,0 +1,253 @@
+---
+id: pv-lifecycle
+title: PersistentVolume Lifecycle and Reclaim Policy
+sidebar_label: 11 · PV lifecycle
+description: Animated walkthrough of a PersistentVolume moving from Available to Bound, Released and Failed, the Delete and Retain reclaim policies, pvc-protection, patching the policy, and binding a pre-created PV with claimRef and volumeName
+summary: 'Available, Bound, Released, Failed: what deleting a PVC does to the disk under Delete and Retain, how to save data in time, and how to bind a PV by hand.'
+icon: disk
+hide_table_of_contents: true
+---
+
+# PersistentVolume Lifecycle and Reclaim Policy
+
+Someone deletes the PVC of a database. Does the disk go with it? Follow one PersistentVolume through **Available → Bound → Released → (Failed)** and see what the reclaim policy decides.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~12 min', level: 'Intermediate'}}
+  groups={[
+    {label: 'Kubernetes cluster', x: 220, y: 30, w: 530, h: 400, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'admin', label: 'Admin', sub: 'kubectl', icon: 'user', tone: 'ext', x: 110, y: 230, show: true},
+    {id: 'pod', label: 'Pod db-0', sub: 'mounts PVC', icon: 'pod', tone: 'app', size: 'sm', x: 320, y: 90, show: true},
+    {id: 'pvc', label: 'PVC data', sub: 'ns shop', icon: 'ticket', tone: 'store', x: 320, y: 210, show: true},
+    {id: 'pvc2', label: 'PVC data-new', sub: 'ns shop', icon: 'ticket', tone: 'store', x: 320, y: 345},
+    {id: 'sc', label: 'StorageClass', sub: 'reclaimPolicy', icon: 'layers', tone: 'cp', x: 560, y: 90},
+    {id: 'pv', label: 'PV pv-db', sub: 'persistentVolume', icon: 'disk', tone: 'store', x: 560, y: 210, w: 170, show: true},
+    {id: 'ctrl', label: 'PV controller', sub: 'binds · reclaims', icon: 'gear', tone: 'cp', x: 560, y: 350},
+    {id: 'disk', label: 'Cloud disk', sub: 'vol-0abc · the data', icon: 'archive', tone: 'ext', x: 870, y: 210, show: true},
+  ]}
+  metrics={[
+    {id: 'phase', label: 'PV phase'},
+    {id: 'policy', label: 'Reclaim policy'},
+    {id: 'claim', label: 'claimRef'},
+    {id: 'data', label: 'Data on disk'},
+  ]}
+  learn={[
+    {text: 'The four PV phases and what moves a PV between them', at: 1},
+    {text: 'Where the reclaim policy comes from: StorageClass or the PV itself', at: 1},
+    {text: 'Why pvc-protection holds a PVC while a Pod uses it', at: 2},
+    {text: 'Delete versus Retain, and patching the policy in time', at: 3},
+    {text: 'Making a Released PV usable, and binding a PV by hand', at: 7},
+  ]}
+  steps={[
+    {
+      short: 'Start',
+      kind: '시작',
+      title: 'A database Pod writes to a bound PV',
+      text: [
+        'Pod db-0 mounts PVC data. The PVC was dynamically provisioned, so a CSI driver created cloud disk vol-0abc and a PV pv-db that points to it.',
+        'The PV is Bound: its claimRef names PVC data, and the PVC names the PV in volumeName. The binding is one-to-one in both directions.',
+      ],
+      flows: [
+        {from: 'pod', to: 'pvc', label: 'Mounts', type: 'request'},
+        {from: 'pvc', to: 'pv', label: 'Bound', type: 'watch'},
+        {from: 'pv', to: 'disk', label: 'Backed by', type: 'watch'},
+      ],
+      focus: ['pvc', 'pv'],
+      badges: {pv: 'Bound'},
+      values: {phase: 'Bound', policy: 'Delete', claim: 'shop/data', data: {text: 'present', tone: 'good'}},
+    },
+    {
+      short: 'Phases',
+      kind: '원리',
+      title: 'Four phases, and the policy comes from the StorageClass',
+      text: [
+        'A PV is Available (free, no claim), Bound (paired with a claim), Released (the claim is gone but the storage is not reclaimed yet) or Failed (automatic reclamation failed).',
+        'persistentVolumeReclaimPolicy says what happens on release. A dynamically provisioned PV copies reclaimPolicy from its StorageClass, which defaults to Delete. A PV you create by hand defaults to Retain.',
+      ],
+      keyIdea: 'kubectl get pv shows RECLAIM POLICY and STATUS for every PV. Read it before you delete any PVC that holds data you care about.',
+      flows: [{from: 'sc', to: 'pv', label: 'reclaimPolicy', type: 'watch'}],
+      focus: ['sc', 'pv'],
+      badges: {sc: 'Delete (default)'},
+    },
+    {
+      short: 'Protection',
+      kind: '원리',
+      title: 'Deleting a PVC in use only marks it Terminating',
+      text: [
+        'Someone runs kubectl delete pvc data by mistake. The command returns, but the PVC does not disappear. It shows Terminating.',
+        'Every PVC carries the finalizer kubernetes.io/pvc-protection. While any Pod object uses the PVC, the finalizer stays and the PVC is kept. A bound PV has kubernetes.io/pv-protection for the same reason.',
+      ],
+      keyIdea: 'A Terminating PVC is still bound and its data is still there. This is your window to act.',
+      flows: [{from: 'admin', to: 'pvc', label: 'delete pvc', type: 'request'}],
+      focus: ['pvc', 'pod'],
+      status: {pvc: 'warn'},
+      badges: {sc: null, pvc: 'Terminating'},
+    },
+    {
+      short: 'Delete',
+      kind: '주의',
+      title: 'With Delete, the disk goes when the claim goes',
+      text: [
+        'As soon as Pod db-0 stops, the finalizer is removed and the PVC is deleted. With policy Delete, the PV object and the cloud disk behind it are both deleted. The data cannot be brought back from Kubernetes.',
+        'A finalizer on the PV makes sure the PV object is removed only after the backing disk is deleted, so no disk is left behind unnoticed.',
+      ],
+      keyIdea: 'Delete is the right default for scratch data. For databases, treat it as "deleting the PVC deletes the data".',
+      flows: [{from: 'ctrl', to: 'disk', label: 'Would delete', type: 'request', bend: 40}],
+      focus: ['pv', 'disk'],
+      status: {disk: 'warn'},
+      badges: {disk: 'Deleted with PVC'},
+      values: {data: {text: 'at risk', tone: 'bad'}},
+    },
+    {
+      short: 'Patch',
+      kind: '원리',
+      title: 'Switch the PV to Retain while it is still bound',
+      text: [
+        'The admin patches the PV: kubectl patch pv pv-db -p with spec.persistentVolumeReclaimPolicy set to Retain. The policy lives on the PV, so this works on an existing volume.',
+        'Changing the StorageClass afterwards does not touch PVs it already created. To make future volumes Retain, set reclaimPolicy: Retain in a StorageClass when you create it.',
+      ],
+      flows: [{from: 'admin', to: 'pv', label: 'patch Retain', type: 'request'}],
+      focus: ['admin', 'pv'],
+      status: {disk: null},
+      badges: {disk: null, pv: 'Retain'},
+      values: {policy: {text: 'Retain', tone: 'good'}, data: {text: 'present', tone: 'good'}},
+    },
+    {
+      short: 'Released',
+      kind: '원리',
+      title: 'The claim is gone, the PV is Released, the data stays',
+      text: [
+        'Pod db-0 is deleted, then the PVC finishes deleting. With Retain, the PV stays and moves to Released. The cloud disk and its data are untouched.',
+        'The PV still holds claimRef to the old PVC, including its uid. That keeps the previous claimant\'s data from being handed to someone else.',
+      ],
+      flows: [{from: 'pv', to: 'disk', label: 'Kept', type: 'watch'}],
+      focus: ['pv', 'disk'],
+      status: {pod: 'gone', pvc: 'gone', pv: 'warn'},
+      badges: {pvc: null, pv: 'Released'},
+      values: {phase: {text: 'Released', tone: 'bad'}, claim: 'shop/data (old uid)'},
+    },
+    {
+      short: 'Pending',
+      kind: '문제',
+      title: 'A new PVC will not bind to a Released PV',
+      text: [
+        'The team creates PVC data-new and expects it to pick up the old volume. It stays Pending, or a new empty disk is provisioned for it from the default StorageClass.',
+        'A Released PV is not available for another claim. The PV controller does not scrub or hand over a volume on its own. An admin must decide what happens to the old data.',
+      ],
+      flows: [{from: 'pvc2', to: 'pv', label: 'No match', type: 'watch'}],
+      focus: ['pvc2', 'pv'],
+      status: {pvc2: 'error'},
+      badges: {pvc2: 'Pending'},
+    },
+    {
+      short: 'Reclaim',
+      kind: '원리',
+      title: 'The admin reclaims the volume by hand',
+      text: [
+        'The documented way: delete the PV (the disk survives), clean or keep the data, then create a new PV that points to the same disk. The new PV starts out Available.',
+        'A common shortcut is to remove spec.claimRef from the Released PV with kubectl patch. It goes back to Available with the old data still on it, so only do this when the next claimant should see that data.',
+      ],
+      keyIdea: 'Retain moves the decision to a person. Reclaiming is always a manual, deliberate step.',
+      flows: [{from: 'admin', to: 'pv', label: 'Recreate PV', type: 'request'}],
+      focus: ['admin', 'pv'],
+      status: {pv: 'ok', pvc2: null},
+      badges: {pv: 'Available', pvc2: null},
+      values: {phase: 'Available', claim: '—'},
+    },
+    {
+      short: 'Pre-bind',
+      kind: '원리',
+      title: 'Static provisioning: bind a chosen PV to a chosen PVC',
+      text: [
+        'The new PV sets claimRef to name data-new in namespace shop, which reserves it for that claim. PVC data-new sets volumeName: pv-db. Both set storageClassName to the empty string.',
+        'The empty string matters. Without it the default StorageClass is filled in, and the PVC may get a fresh empty disk instead of this PV. Size and access modes must still fit.',
+      ],
+      keyIdea: 'claimRef on the PV reserves it. volumeName on the PVC asks for it. Together they bind exactly this pair.',
+      flows: [
+        {from: 'pvc2', to: 'pv', label: 'volumeName', type: 'watch'},
+        {from: 'ctrl', to: 'pv', label: 'Binds', type: 'watch'},
+        {from: 'pv', to: 'disk', label: 'Backed by', type: 'watch'},
+      ],
+      focus: ['pvc2', 'pv'],
+      status: {pvc2: 'ok'},
+      badges: {pv: 'Bound', pvc2: 'Bound'},
+      values: {phase: {text: 'Bound', tone: 'good'}, claim: 'shop/data-new'},
+    },
+    {
+      short: 'Failed',
+      kind: '주의',
+      title: 'Failed means automatic reclamation did not work',
+      text: [
+        'If the storage backend refuses or cannot do the reclamation, the PV can end up Failed, or stay Released with warning events. A deleted disk that was already gone, or missing permissions for the driver, are typical causes.',
+        'Kubernetes does not retry this into a clean state for you. Read the PV events, fix the cause on the storage side, then delete the PV object.',
+      ],
+      flows: [{from: 'ctrl', to: 'disk', label: 'Delete failed', type: 'response', bend: 40}],
+      focus: ['ctrl', 'disk'],
+      status: {ctrl: 'warn'},
+      badges: {ctrl: 'VolumeFailedDelete'},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'The policy decides whether deleting a PVC deletes data',
+      text: [
+        'A PV moves Available → Bound → Released, and to Failed when reclamation breaks. pvc-protection holds a PVC while a Pod uses it.',
+        'Delete removes the PV and the disk with the claim. Retain keeps both, but leaves the PV Released until an admin recreates it or clears claimRef. Recycle is deprecated.',
+      ],
+      keyIdea: 'Set Retain on volumes you cannot lose, through the StorageClass or with kubectl patch, before anyone deletes the PVC. Backups are still a separate job.',
+      flows: [
+        {from: 'pod', to: 'pvc', label: 'Mounts', type: 'request'},
+        {from: 'pvc2', to: 'pv', label: 'Bound', type: 'watch'},
+        {from: 'pv', to: 'disk', label: 'Backed by', type: 'watch'},
+      ],
+      focus: ['sc', 'pv', 'disk'],
+      status: {ctrl: null},
+      badges: {ctrl: null},
+    },
+  ]}
+/>
+
+## What happens when the PVC is deleted
+
+| Policy | PV after the PVC is gone | Cloud disk and data | Next step |
+|---|---|---|---|
+| `Delete` (default for dynamic provisioning) | Deleted | Deleted | Nothing to clean up, and nothing to recover |
+| `Retain` (default for hand-made PVs) | `Released`, keeps `claimRef` | Kept | Admin deletes and recreates the PV, or removes `claimRef` |
+| `Recycle` (deprecated) | `Available` after `rm -rf` of the volume | Data wiped | Use dynamic provisioning instead |
+| Reclamation failed | `Failed`, or `Released` with warning events | Unknown, check the backend | Read `kubectl describe pv`, fix the storage side, delete the PV |
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| PVC stuck `Terminating` | A Pod still uses it (`kubernetes.io/pvc-protection`) | Stop or delete the Pod; take a backup or patch the PV to `Retain` first if needed |
+| New PVC `Pending` next to a `Released` PV | Released PVs do not bind again | Reclaim the PV by hand, then pre-bind with `claimRef` and `volumeName` |
+| PVC with `volumeName` got an empty new disk | `storageClassName` was left out, so the default class applied | Set `storageClassName: ""` on both the PVC and the PV |
+
+## Try it yourself
+
+```bash
+kubectl get pv                                         # STATUS, CLAIM, RECLAIM POLICY, STORAGECLASS
+kubectl get storageclass -o custom-columns=NAME:.metadata.name,RECLAIM:.reclaimPolicy
+kubectl get pvc data -n shop -o jsonpath='{.metadata.finalizers}{"\n"}'   # ["kubernetes.io/pvc-protection"]
+
+# Keep the disk even if the PVC is deleted
+kubectl patch pv pv-db -p '{"spec":{"persistentVolumeReclaimPolicy":"Retain"}}'
+
+# After the PVC is deleted: Released, with the old claimRef
+kubectl get pv pv-db -o jsonpath='{.status.phase} {.spec.claimRef.namespace}/{.spec.claimRef.name}{"\n"}'
+
+# Shortcut to make it Available again (old data stays on the disk)
+kubectl patch pv pv-db --type json -p '[{"op":"remove","path":"/spec/claimRef"}]'
+kubectl describe pv pv-db                              # Events explain a Failed phase
+```
+
+<Quiz questions={[
+  {q: 'A PVC was dynamically provisioned from a StorageClass that does not set reclaimPolicy. Someone deletes the PVC after its Pod is gone. What happens to the data?', options: ['The PV becomes Released and the data stays', 'The PV and the cloud disk are deleted, so the data is gone', 'The volume is scrubbed and made Available again'], answer: 1, why: 'A dynamically provisioned PV inherits the StorageClass reclaimPolicy, and that defaults to Delete. Delete removes both the PV object and the backing storage.'},
+  {q: 'You delete a PVC while its Pod is still running. Why does it stay Terminating, and why is that useful?', options: ['The kubernetes.io/pvc-protection finalizer keeps it while a Pod uses it, which gives you time to patch the PV to Retain', 'The CSI driver is copying the data to a snapshot first', 'The API server waits for the disk to be detached from every node', 'The StorageClass is set to WaitForFirstConsumer'], answer: 0, why: 'pvc-protection keeps a PVC that is in use by a Pod. While it is Terminating the PVC is still bound, so changing the PV policy now still decides what happens on release.'},
+  {q: 'A PV with Retain is Released. A new PVC asks for it with volumeName, but stays Pending. What is the reason?', options: ['volumeName only works with dynamic provisioning', 'Retain PVs can only be read, not bound', 'Its claimRef still points to the old PVC, so the PV is not available until an admin reclaims it', 'The PVC must use the Recycle policy'], answer: 2, why: 'A Released PV keeps claimRef to the previous claim so its data is not handed over by accident. Recreating the PV or removing claimRef makes it Available again.'},
+]} />
+
+Further reading: [Persistent Volumes](https://kubernetes.io/docs/concepts/storage/persistent-volumes/) · [Change the Reclaim Policy of a PersistentVolume](https://kubernetes.io/docs/tasks/administer-cluster/change-pv-reclaim-policy/) · [How Storage Gets Attached (PVC·PV)](../k8s/storage-volume.mdx) · [When Volumes Attach, and Failures](../advanced/volume-binding.mdx) · [Deletion Is More Complex Than You Think](../advanced/deletion-finalizer.mdx)

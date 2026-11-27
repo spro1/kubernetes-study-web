@@ -170,7 +170,7 @@ The HPA adds Pods, but someone has to add the machines they run on. Follow one P
         'Karpenter skips nodes with a Pod annotated karpenter.sh/do-not-disrupt: "true". It also respects PDBs and its own budgets.',
       ],
       keyIdea: 'When a node never goes away, look at its Pods, not the autoscaler. One stuck Pod can hold a whole VM.',
-      flows: [{from: 'pdb', to: 'n2', label: 'No disruptions left', type: 'watch'}],
+      flows: [{from: 'pdb', to: 'n2', label: 'No disruptions left', type: 'watch', bend: -0.3}],
       focus: ['pdb', 'n2'],
       status: {n2: 'error'},
       badges: {npool: null, n2: 'Cannot drain'},

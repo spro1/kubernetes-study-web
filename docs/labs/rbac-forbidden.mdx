@@ -1,0 +1,164 @@
+---
+id: rbac-forbidden
+title: Lab 08 · RBAC Forbidden
+sidebar_label: 08 · RBAC Forbidden
+sidebar_position: 8
+description: Break-fix lab where a Pod calls the Kubernetes API with its ServiceAccount and gets 403 Forbidden. Check permissions with kubectl auth can-i --as and fix them with a least-privilege Role and RoleBinding.
+hide_table_of_contents: false
+---
+
+# Lab 08 · RBAC Forbidden
+
+## Goal
+
+A Pod runs `kubectl get pods` inside the cluster and fails with Forbidden. Find out which identity it uses, what it may do, and grant only the permission it needs.
+
+## Setup
+
+Use the kind cluster from [Build a Lab Cluster on Your Laptop](../basic/lab-cluster.mdx). The Pod uses the official `registry.k8s.io/kubectl` image, whose entrypoint is `kubectl`. Inside a Pod, kubectl picks up the ServiceAccount token automatically.
+
+```bash
+kubectl apply -f - <<'EOF'
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: lab-08
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: reporter
+  namespace: lab-08
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: report
+  namespace: lab-08
+spec:
+  serviceAccountName: reporter
+  restartPolicy: Never
+  containers:
+  - name: kubectl
+    image: registry.k8s.io/kubectl:v1.34.2
+    args: ["get", "pods", "-n", "lab-08"]
+EOF
+```
+
+## Symptoms
+
+```bash
+kubectl -n lab-08 get pods        # report  0/1  Error
+kubectl -n lab-08 logs report
+```
+
+The Pod ends with STATUS `Error`, and the log has an `Error from server (Forbidden)` line.
+
+## Investigate
+
+```bash
+kubectl -n lab-08 logs report                                        # read the whole message
+kubectl -n lab-08 get pod report -o jsonpath='{.spec.serviceAccountName}{"\n"}'
+kubectl auth can-i list pods -n lab-08 \
+  --as=system:serviceaccount:lab-08:reporter
+kubectl auth can-i --list -n lab-08 \
+  --as=system:serviceaccount:lab-08:reporter
+kubectl -n lab-08 get role,rolebinding
+```
+
+## Hints
+
+<details>
+<summary>Hint 1</summary>
+
+Read the Forbidden message slowly. It names the **user**, the **verb**, the **resource**, the **API group** and the **namespace**. Those five things are exactly what a Role rule must cover.
+
+</details>
+
+<details>
+<summary>Hint 2</summary>
+
+A ServiceAccount's username is `system:serviceaccount:<namespace>:<name>`. With `--as` you ask the API server "could this identity do it?" without running the Pod again.
+
+</details>
+
+<details>
+<summary>Hint 3</summary>
+
+A new ServiceAccount has almost no permissions. RBAC only adds permissions, so you need a Role (what) and a RoleBinding (who gets it). Pods are in the core API group, written as `""`.
+
+</details>
+
+## Solution
+
+<details>
+<summary>Solution</summary>
+
+The log says:
+
+```text
+Error from server (Forbidden): pods is forbidden: User "system:serviceaccount:lab-08:reporter" cannot list resource "pods" in API group "" in the namespace "lab-08"
+```
+
+and `kubectl auth can-i list pods ... --as=...` answers `no`. Nothing grants `reporter` the right to list Pods. Give it exactly that, in this namespace only:
+
+```bash
+kubectl apply -f - <<'EOF'
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: pod-reader
+  namespace: lab-08
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: reporter-pod-reader
+  namespace: lab-08
+subjects:
+- kind: ServiceAccount
+  name: reporter
+  namespace: lab-08
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: pod-reader
+EOF
+```
+
+Why not a ClusterRoleBinding to `cluster-admin` or `edit`? It would "work", but a stolen token from this Pod could then change or read everything, including Secrets. A Role plus RoleBinding stays inside `lab-08` and allows only reads of Pods. The same commands could be written with `kubectl create role pod-reader --verb=get,list --resource=pods -n lab-08` and `kubectl create rolebinding ... --serviceaccount=lab-08:reporter`.
+
+</details>
+
+## Verify
+
+```bash
+kubectl auth can-i list pods -n lab-08 --as=system:serviceaccount:lab-08:reporter      # yes
+kubectl auth can-i delete pods -n lab-08 --as=system:serviceaccount:lab-08:reporter    # no
+kubectl auth can-i list pods -n default --as=system:serviceaccount:lab-08:reporter     # no
+
+# A finished Pod cannot be restarted, so recreate it
+kubectl -n lab-08 get pod report -o yaml | kubectl replace --force -f -
+kubectl -n lab-08 logs report     # a table of Pods instead of Forbidden
+```
+
+## Clean up
+
+```bash
+kubectl delete namespace lab-08
+```
+
+<Quiz questions={[
+  {q: 'A Pod with ServiceAccount app in namespace shop gets 403 Forbidden. How do you check its permission without running the Pod again?', options: ['kubectl auth can-i list pods -n shop --as=system:serviceaccount:shop:app', 'kubectl describe serviceaccount app -n shop', 'kubectl logs on the API server'], answer: 0, why: 'can-i with --as asks the API server to evaluate RBAC for that identity. The ServiceAccount username has the form system:serviceaccount:namespace:name.'},
+  {q: 'The Pod only needs to read Pods in its own namespace. Which fix follows least privilege?', options: ['A ClusterRoleBinding to cluster-admin', 'A Role with get and list on pods, bound to the ServiceAccount with a RoleBinding in that namespace', 'Turning off RBAC on the API server'], answer: 1, why: 'A Role and RoleBinding grant only those verbs on that resource in one namespace. cluster-admin would also hand out Secrets and write access everywhere.'},
+]} />
+
+## Related lessons
+
+- [Who Can Do What (RBAC)](../k8s/rbac.mdx)
+- [How a Pod Proves Who It Is (ServiceAccount Tokens)](../advanced/serviceaccount-token.mdx)
+- [How an API Request Gets Stored](../advanced/api-request-path.mdx)

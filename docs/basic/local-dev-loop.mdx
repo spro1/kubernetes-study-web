@@ -1,0 +1,234 @@
+---
+id: local-dev-loop
+title: The Inner Dev Loop on Kubernetes
+sidebar_label: 13 · Local dev loop
+description: Animated walkthrough of the inner development loop on Kubernetes, with Skaffold and Tilt automating build and deploy, file sync into a running container, loading images into kind without a registry, port-forward and logs, production manifests in dev, remote development with Telepresence or mirrord, and devcontainers
+summary: 'Save a file and see it running in a cluster seconds later: watch-build-deploy tools, file sync, no registry for kind, and the same manifests as prod.'
+icon: wheel
+hide_table_of_contents: true
+---
+
+# The Inner Dev Loop on Kubernetes
+
+The inner loop is what you repeat dozens of times a day: change code, see it run. On Kubernetes, doing it by hand means build, push, deploy and wait. Follow one file save and see how tools shorten that loop.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~11 min', level: 'Beginner'}}
+  groups={[
+    {label: 'kind cluster (laptop)', x: 540, y: 30, w: 230, h: 290, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'dev', label: 'Your editor', sub: 'save a file', icon: 'user', tone: 'ext', x: 110, y: 110, show: true},
+    {id: 'devc', label: 'Devcontainer', sub: 'same tools for all', icon: 'box', tone: 'ext', x: 110, y: 300},
+    {id: 'tool', label: 'Dev tool', sub: 'skaffold dev · tilt up', icon: 'wheel', tone: 'cp', x: 350, y: 110},
+    {id: 'build', label: 'Image build', sub: 'local BuildKit', icon: 'hammer', tone: 'node', x: 350, y: 250},
+    {id: 'manif', label: 'Manifests', sub: 'Helm or Kustomize', icon: 'book', tone: 'store', x: 350, y: 390},
+    {id: 'pod', label: 'App Pod', sub: 'container running', icon: 'pod', tone: 'app', x: 655, y: 110},
+    {id: 'knode', label: 'kind node', sub: 'containerd images', icon: 'server', tone: 'node', x: 655, y: 245},
+    {id: 'reg', label: 'Registry', sub: 'remote clusters only', icon: 'registry', tone: 'store', x: 655, y: 390},
+    {id: 'shared', label: 'Shared cluster', sub: 'staging, own ns', icon: 'cloud', tone: 'cp', x: 885, y: 245},
+  ]}
+  metrics={[
+    {id: 'change', label: 'Change'},
+    {id: 'path', label: 'Path'},
+    {id: 'manual', label: 'Commands by hand'},
+  ]}
+  learn={[
+    {text: 'What Skaffold and Tilt automate: watch, build, deploy, logs', at: 1},
+    {text: 'Load images into kind without pushing to a registry', at: 2},
+    {text: 'File sync into a running container, and when it falls back to a rebuild', at: 3},
+    {text: 'Use the same Helm or Kustomize manifests as production', at: 6},
+    {text: 'Remote dev against a shared cluster, and devcontainers', at: 7},
+  ]}
+  steps={[
+    {
+      short: 'Start',
+      kind: '시작',
+      title: 'Edit, build, push, deploy, by hand',
+      text: [
+        'You fix one line in a handler. To see it in the cluster you run docker build, docker push, edit the image tag in the manifest, kubectl apply, wait for the rollout, then kubectl logs.',
+        'Each step is quick alone, but together they turn a one-second edit into minutes. Repeat that all day and you stop testing in the cluster at all.',
+      ],
+      flows: [
+        {from: 'dev', to: 'build', label: 'docker build', type: 'request'},
+        {from: 'build', to: 'reg', label: 'docker push', type: 'request', bend: 30},
+        {from: 'reg', to: 'knode', label: 'pull', type: 'request'},
+      ],
+      focus: ['dev', 'build', 'reg'],
+      values: {change: 'one line', path: {text: 'build → push → pull', tone: 'bad'}, manual: {text: '5 or more', tone: 'bad'}},
+    },
+    {
+      short: 'Watch',
+      kind: '원리',
+      title: 'A dev tool watches files and runs the loop',
+      text: [
+        'skaffold dev (with a skaffold.yaml) or tilt up (with a Tiltfile) watches your source. On save, it builds the image, tags it uniquely, renders the manifests with that tag, deploys, and waits for the rollout.',
+        'The steps are the ones you ran by hand. The tool just chains them on every save and stops when you press Ctrl+C.',
+      ],
+      keyIdea: 'skaffold init can generate a first skaffold.yaml from your Dockerfile and manifests.',
+      flows: [
+        {from: 'dev', to: 'tool', label: 'file saved', type: 'watch'},
+        {from: 'tool', to: 'build', label: 'build', type: 'request'},
+        {from: 'tool', to: 'pod', label: 'deploy', type: 'request'},
+      ],
+      focus: ['tool'],
+      values: {manual: {text: '0, save only', tone: 'good'}},
+    },
+    {
+      short: 'No registry',
+      kind: '원리',
+      title: 'For kind, the image skips the registry',
+      text: [
+        'A local cluster does not need a registry. Skaffold sees a kubectl context named kind-<name> and treats it as local: it loads the image into the nodes instead of pushing. Tilt pushes to a local registry wired into kind if it finds one, and falls back to the slower kind load if not.',
+        'Either way the image goes straight into the containerd store of each kind node, as in the lab cluster lesson. The registry is only needed for remote clusters.',
+      ],
+      keyIdea: 'Check kubectl config current-context before you start. On a remote context, the same command pushes and deploys there.',
+      flows: [
+        {from: 'build', to: 'knode', label: 'kind load', type: 'request'},
+        {from: 'knode', to: 'pod', label: 'start', type: 'request'},
+      ],
+      focus: ['build', 'knode'],
+      status: {reg: 'off'},
+      values: {path: {text: 'build → kind node', tone: 'good'}},
+    },
+    {
+      short: 'File sync',
+      kind: '원리',
+      title: 'File sync copies the change into the running container',
+      text: [
+        'For interpreted code, templates or static files, a rebuild is not needed. Skaffold sync rules and Tilt live_update copy the changed files straight into the running container. With a hot-reloading server, the change is live in a moment.',
+        'Skaffold sends the files as a tar archive, so the container needs tar. Tilt can also run a command after syncing, such as reinstalling dependencies when the lockfile changes.',
+      ],
+      flows: [{from: 'tool', to: 'pod', label: 'sync files', type: 'request'}],
+      focus: ['tool', 'pod'],
+      status: {pod: 'ok'},
+      values: {change: 'template.html', path: {text: 'sync, no rebuild', tone: 'good'}},
+    },
+    {
+      short: 'Fall back',
+      kind: '주의',
+      title: 'Some changes still need a full rebuild',
+      text: [
+        'A compiled binary, a new dependency or a Dockerfile edit cannot be synced. Skaffold rebuilds when a change matches no sync rule. In Tilt, list such files in fall_back_on so a change there triggers a rebuild.',
+        'Sync also lets the running container drift from the image. After a long session, do a clean build before trusting the result. A distroless production image usually has no tar, so many teams sync into a dev build target only.',
+      ],
+      keyIdea: 'Sync is for speed, the full build is for truth. Run the real image before you push.',
+      flows: [
+        {from: 'tool', to: 'build', label: 'rebuild', type: 'request'},
+        {from: 'build', to: 'knode', label: 'kind load', type: 'request'},
+      ],
+      focus: ['tool', 'build'],
+      status: {pod: 'warn'},
+      values: {change: 'go.mod', path: {text: 'full rebuild', tone: 'bad'}},
+    },
+    {
+      short: 'See it',
+      kind: '원리',
+      title: 'Port-forward and stream logs from the same terminal',
+      text: [
+        'skaffold dev streams the logs of the Pods it deployed, and skaffold dev --port-forward forwards Service ports to localhost. tilt up shows each resource with its logs and status in a web UI.',
+        'Under the hood this is kubectl port-forward and kubectl logs -f. You open localhost:8080 and see the new code without an Ingress or LoadBalancer.',
+      ],
+      flows: [
+        {from: 'pod', to: 'tool', label: 'logs', type: 'response'},
+        {from: 'tool', to: 'dev', label: 'localhost:8080', type: 'response'},
+      ],
+      focus: ['pod', 'dev'],
+      status: {pod: 'ok'},
+      values: {change: 'handler.py', path: 'sync → logs'},
+    },
+    {
+      short: 'Same manifests',
+      kind: '원리',
+      title: 'Deploy with the manifests production uses',
+      text: [
+        'A hand-written dev YAML drifts from what production runs. Point the dev tool at the real chart or Kustomize base instead: Helm with a values-dev.yaml, or a Kustomize overlay for dev that lowers replicas and resources.',
+        'Then a broken probe, a missing ConfigMap key or a wrong port shows up on your laptop, not in staging. Both Skaffold and Tilt can render Helm charts and Kustomize directories.',
+      ],
+      flows: [
+        {from: 'manif', to: 'tool', label: 'render dev', type: 'request'},
+        {from: 'tool', to: 'pod', label: 'apply', type: 'request'},
+      ],
+      focus: ['manif', 'tool'],
+      badges: {manif: 'overlay dev'},
+    },
+    {
+      short: 'Remote dev',
+      kind: '주의',
+      title: 'When the app needs the real cluster around it',
+      text: [
+        'Some services depend on databases, queues or many other services that do not fit on a laptop. Tools such as Telepresence and mirrord run your process locally while it joins a shared cluster: it reaches cluster DNS names, gets the Pod environment, and can receive traffic meant for the Pod.',
+        'On a shared cluster, taking all traffic of a Service affects everyone. Use your own namespace, or filter only requests that carry your header.',
+      ],
+      keyIdea: 'Remote dev trades isolation for realism. Agree on namespace and traffic rules with the team first.',
+      flows: [{from: 'dev', to: 'shared', label: 'intercept', type: 'request', bend: -60}],
+      focus: ['dev', 'shared'],
+      status: {shared: 'warn'},
+      badges: {manif: null},
+    },
+    {
+      short: 'Devcontainer',
+      kind: '원리',
+      title: 'A devcontainer gives everyone the same toolbox',
+      text: [
+        'The loop needs many tools at matching versions: a container runtime, kind, kubectl, Helm, Skaffold or Tilt, language runtimes. A devcontainer.json describes a container image with all of them.',
+        'Editors and cloud IDEs that support the Dev Container spec open the project inside that container. A new teammate gets a working loop without a long setup guide.',
+      ],
+      flows: [{from: 'devc', to: 'tool', label: 'pinned tools', type: 'request'}],
+      focus: ['devc'],
+      status: {shared: null},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Save, see, clean up',
+      text: [
+        'A dev tool watches files and runs build and deploy for you. For kind it skips the registry. File sync handles small changes and falls back to a rebuild when needed. Logs and port-forward come back to the same terminal.',
+        'Use production manifests with a dev overlay. Reach for a shared cluster only when the laptop is not enough, and pin the toolbox in a devcontainer.',
+      ],
+      keyIdea: 'Ctrl+C in skaffold dev deletes what it deployed. With Tilt, run tilt down.',
+      flows: [
+        {from: 'dev', to: 'tool', label: 'save', type: 'watch'},
+        {from: 'tool', to: 'pod', label: 'sync or deploy', type: 'request'},
+        {from: 'pod', to: 'tool', label: 'logs', type: 'response'},
+      ],
+      focus: ['dev', 'tool', 'pod'],
+      status: {pod: null, reg: null},
+    },
+  ]}
+/>
+
+## Which tool for which part of the loop
+
+| Need | Example tools | What it does | Watch out |
+|---|---|---|---|
+| Watch, build, deploy on save | Skaffold (`skaffold dev`), Tilt (`tilt up`) | Chains build, tag, render, deploy and logs | Check the kubectl context first |
+| Skip rebuilds for small edits | Skaffold `sync`, Tilt `live_update` | Copies files into the running container | Needs `tar` in the container for Skaffold; drift from the image |
+| No registry locally | `kind load`, a local registry wired to kind | Puts the image straight into the nodes | Only for local clusters |
+| See the app | `kubectl port-forward`, `kubectl logs -f`, tool UIs | Brings ports and logs to your terminal | Forward stops when the Pod restarts with plain kubectl |
+| Production-like config | Helm values file, Kustomize overlay | Same templates as prod, dev settings | Keep dev differences small |
+| Real dependencies | Telepresence, mirrord | Local process joins a shared cluster | Can take traffic from others |
+| Same tools for everyone | Dev Containers (`devcontainer.json`) | Pins the toolchain in a container | Docker-in-container setup for kind |
+
+## Try it yourself
+
+```bash
+kubectl config current-context            # kind-lab means Skaffold treats it as local (no push)
+skaffold init                             # generate skaffold.yaml from Dockerfile and manifests
+skaffold dev --port-forward               # watch, build, deploy, stream logs; Ctrl+C cleans up
+skaffold render -p dev                    # print the manifests the dev profile would apply
+tilt up                                   # read the Tiltfile; UI on http://localhost:10350
+tilt down                                 # remove what tilt up deployed
+kubectl port-forward svc/my-app 8080:80   # what the tools do under the hood
+kubectl logs -f deploy/my-app             # stream logs from one Pod of the Deployment
+```
+
+<Quiz questions={[
+  {q: 'skaffold dev builds an image while the context is kind-lab. Why is no registry needed?', options: ['Skaffold runs its own registry inside the cluster', 'Skaffold sees a kind context, treats it as local and loads the image into the nodes', 'kind nodes pull from the Docker Hub cache', 'The image is built inside the Pod'], answer: 1, why: 'Contexts named kind-* are treated as local clusters, so the image is loaded into each node instead of pushed. On a remote context the same command pushes.'},
+  {q: 'File sync is set up, but after editing go.mod the change does not appear by syncing. What should happen?', options: ['A full rebuild, because a dependency change cannot be synced into a running container', 'Nothing, sync only covers new files', 'The Pod must be deleted by hand'], answer: 0, why: 'Dependency and compile changes need a new image. Skaffold rebuilds when no sync rule matches, and in Tilt you list such files in fall_back_on.'},
+  {q: 'Why point the dev loop at the production Helm chart or Kustomize base with a dev overlay?', options: ['It makes builds faster', 'Production manifests cannot be applied to kind otherwise', 'Bugs in the manifests show up on your laptop instead of in staging', 'Dev overlays disable probes automatically'], answer: 2, why: 'A separate dev YAML drifts from what production runs. Using the same templates catches wrong ports, missing keys and broken probes early.'},
+]} />
+
+Further reading: [Skaffold docs](https://skaffold.dev/docs/) · [Tilt docs](https://docs.tilt.dev/) · [kind: loading an image](https://kind.sigs.k8s.io/docs/user/quick-start/#loading-an-image-into-your-cluster) · [Dev Containers](https://containers.dev/) · [Build a Lab Cluster on Your Laptop](../basic/lab-cluster.mdx) · [Per-environment deploys with Kustomize (CKA·CKAD)](../cert/kustomize.mdx) · [How a Helm Release Is Installed, Upgraded and Rolled Back](../k8s/helm-release.mdx)

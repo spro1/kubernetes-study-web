@@ -164,7 +164,7 @@ hide_table_of_contents: true
       flows: [
         {from: 'le', to: 'order', label: '서명된 인증서', type: 'response'},
         {from: 'cm', to: 'secret', label: '쓰기', type: 'request'},
-        {from: 'secret', to: 'ing', label: 'TLS', type: 'watch'},
+        {from: 'secret', to: 'ing', label: 'TLS', type: 'watch', bend: 0.4},
       ],
       focus: ['order', 'secret', 'ing'],
       status: {chal: null, secret: 'ok', cert: 'ok'},

@@ -1,0 +1,247 @@
+---
+id: ingress-404
+title: Lab 10 · Route does nothing or returns 404
+sidebar_label: 10 · Route 404
+sidebar_position: 10
+description: Break-fix lab for HTTP routing into the cluster with the Gateway API and Envoy Gateway. A wrong class name means nothing listens, a path typo returns 404 and a Service name typo returns 500. Read the status conditions to find each one.
+hide_table_of_contents: false
+---
+
+# Lab 10 · Route does nothing or returns 404
+
+## Goal
+
+Traffic from outside should reach the `shop` app at `/shop`. First nothing answers at all, then you get 404, then 500. Find and fix each mistake by reading the status that the controller writes.
+
+:::note Why Gateway API and not ingress-nginx
+The classic version of this lab used an Ingress with the ingress-nginx controller. Kubernetes retired ingress-nginx: best-effort maintenance ended in March 2026, and it no longer gets releases or security fixes. The Kubernetes project points users to the **Gateway API**, so this lab uses it with **Envoy Gateway**, one maintained open-source implementation (others work too, e.g. Cilium, Istio, NGINX Gateway Fabric or Traefik). The mistakes are the same ones people make with Ingress: `gatewayClassName` plays the role of `ingressClassName`.
+:::
+
+## Setup
+
+Use the kind cluster from [Build a Lab Cluster on Your Laptop](../basic/lab-cluster.mdx). You also need [Helm](https://helm.sh/docs/intro/install/). Install Envoy Gateway once (this also installs the Gateway API CRDs):
+
+```bash
+helm install eg oci://docker.io/envoyproxy/gateway-helm --version v1.10.0 \
+  -n envoy-gateway-system --create-namespace
+kubectl wait --timeout=5m -n envoy-gateway-system deployment/envoy-gateway --for=condition=Available
+```
+
+Then create the GatewayClass, the app and the broken Gateway and HTTPRoute:
+
+```bash
+kubectl apply -f - <<'EOF'
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: eg
+spec:
+  controllerName: gateway.envoyproxy.io/gatewayclass-controller
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: lab-10
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: shop
+  namespace: lab-10
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: shop
+  template:
+    metadata:
+      labels:
+        app: shop
+    spec:
+      containers:
+      - name: echo
+        image: hashicorp/http-echo:1.0.0
+        args: ["-text=shop ok", "-listen=:5678"]
+        ports:
+        - containerPort: 5678
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: shop
+  namespace: lab-10
+spec:
+  selector:
+    app: shop
+  ports:
+  - port: 80
+    targetPort: 5678
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: web
+  namespace: lab-10
+spec:
+  gatewayClassName: nginx
+  listeners:
+  - name: http
+    protocol: HTTP
+    port: 80
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: shop
+  namespace: lab-10
+spec:
+  parentRefs:
+  - name: web
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /shpo
+    backendRefs:
+    - name: shop-svc
+      port: 80
+EOF
+```
+
+To send requests, port-forward to the Service that Envoy Gateway creates for the Gateway. Run this in a second terminal (it only works once the Gateway is accepted):
+
+```bash
+SVC=$(kubectl get svc -n envoy-gateway-system \
+  -l gateway.envoyproxy.io/owning-gateway-namespace=lab-10,gateway.envoyproxy.io/owning-gateway-name=web \
+  -o jsonpath='{.items[0].metadata.name}')
+kubectl -n envoy-gateway-system port-forward svc/$SVC 8080:80
+```
+
+## Symptoms
+
+- `kubectl -n lab-10 get gateway` shows `web` with an empty ADDRESS and PROGRAMMED not `True`.
+- The port-forward command finds no Service, so there is nothing to send requests to.
+- `kubectl apply` reported no error for any of this.
+
+## Investigate
+
+```bash
+kubectl get gatewayclass                                    # which classes exist? ACCEPTED?
+kubectl -n lab-10 get gateway web -o yaml | sed -n '/^status:/,$p'
+kubectl -n lab-10 get httproute shop -o yaml | sed -n '/^status:/,$p'
+kubectl -n lab-10 get svc,endpointslice
+curl -i http://localhost:8080/shop                          # once the port-forward runs
+```
+
+## Hints
+
+<details>
+<summary>Hint 1</summary>
+
+A Gateway is handled only by the controller of the GatewayClass it names. If no controller owns that class, nobody ever writes status, and the conditions keep their default: `Unknown`, "Waiting for controller". Compare `gatewayClassName` with `kubectl get gatewayclass`.
+
+</details>
+
+<details>
+<summary>Hint 2</summary>
+
+Once the Gateway works, `curl /shop` returns `404`. A 404 from the gateway itself means no route rule matched the request. Read the path in the HTTPRoute letter by letter.
+
+</details>
+
+<details>
+<summary>Hint 3</summary>
+
+After the path is fixed you get `500`. Look at the route's `status.parents[].conditions`. `ResolvedRefs` tells you whether every `backendRef` points to something that exists. Compare it with `kubectl -n lab-10 get svc`.
+
+</details>
+
+## Solution
+
+<details>
+<summary>Solution</summary>
+
+There are three mistakes, and each one hides the next.
+
+**1. Wrong class.** The Gateway asks for class `nginx`, but the only class is `eg`. No controller picks it up, so `Accepted` and `Programmed` stay `Unknown` with reason `Pending` and message "Waiting for controller", and no Envoy Service is created. Fix the class. Delete and recreate the Gateway to be safe:
+
+```bash
+kubectl -n lab-10 delete gateway web
+kubectl apply -f - <<'EOF'
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: web
+  namespace: lab-10
+spec:
+  gatewayClassName: eg
+  listeners:
+  - name: http
+    protocol: HTTP
+    port: 80
+EOF
+kubectl -n lab-10 wait --for=condition=Programmed gateway/web --timeout=2m
+```
+
+Start the port-forward now. `curl -i http://localhost:8080/shop` returns `404`.
+
+**2. Path typo.** The rule matches `/shpo`, so `/shop` matches no rule and Envoy answers 404 itself. The route is still `Accepted`: a typo in a path is valid config.
+
+**3. Service name typo.** After fixing the path you get `500`. The route status shows `ResolvedRefs` `False` with reason `BackendNotFound`, because there is no Service `shop-svc`. The Gateway API says requests to a rule with an invalid backend must get a 500, so you see that instead of a 404.
+
+Fix both in the route:
+
+```bash
+kubectl apply -f - <<'EOF'
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: shop
+  namespace: lab-10
+spec:
+  parentRefs:
+  - name: web
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /shop
+    backendRefs:
+    - name: shop
+      port: 80
+EOF
+```
+
+The order of checks is the same for Ingress: is the class right (does any controller own this object)? Does a rule match the host and path? Does the backend Service exist and have endpoints?
+
+</details>
+
+## Verify
+
+```bash
+kubectl -n lab-10 get gateway web                    # PROGRAMMED True
+kubectl -n lab-10 get httproute shop -o jsonpath='{range .status.parents[0].conditions[*]}{.type}={.status} {end}{"\n"}'
+                                                     # Accepted=True ResolvedRefs=True
+curl -i http://localhost:8080/shop                   # 200, body: shop ok
+curl -i http://localhost:8080/other                  # 404, no rule matches
+```
+
+## Clean up
+
+```bash
+kubectl delete namespace lab-10
+kubectl delete gatewayclass eg
+helm uninstall eg -n envoy-gateway-system            # if you are done with Envoy Gateway
+kubectl delete namespace envoy-gateway-system
+```
+
+<Quiz questions={[
+  {q: 'A Gateway shows Accepted Unknown with the message Waiting for controller, and no address. What is the most likely cause?', options: ['The backend Service has no endpoints', 'gatewayClassName names a class that no installed controller owns', 'The HTTPRoute path has a typo'], answer: 1, why: 'Only the controller of the named GatewayClass writes status. If none owns it, the default Unknown conditions never change. With Ingress, a wrong or missing ingressClassName fails the same quiet way.'},
+  {q: 'The route is Accepted, but ResolvedRefs is False with reason BackendNotFound. What does a request to that rule get?', options: ['A 500 error, because the backend reference is invalid', 'A 404, because no route matched', 'It is sent to a random Service in the namespace'], answer: 0, why: 'The rule matched, so it is not a 404. The Gateway API requires a 500 for rules whose backendRefs cannot be resolved. Check that the Service name and port exist.'},
+]} />
+
+## Related lessons
+
+- [How a Gateway API HTTPRoute Reaches a Pod](../feature/gateway-api.mdx)
+- [Ingress Rules and TLS](../feature/ingress.mdx)
+- [Three Entry Points Compared (Ingress · Mesh Gateway · Gateway API)](../feature/entry-compare.mdx)

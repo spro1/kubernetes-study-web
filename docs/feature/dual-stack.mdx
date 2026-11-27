@@ -1,0 +1,237 @@
+---
+id: dual-stack
+title: IPv4/IPv6 Dual-Stack Networking
+sidebar_label: 06 · IPv4/IPv6 Dual-Stack
+description: Animated walkthrough of IPv4/IPv6 dual-stack in Kubernetes, from dual Pod and Service CIDRs and a dual-stack CNI to status.podIPs, Service ipFamilyPolicy and ipFamilies, A and AAAA records, happy eyeballs, IPv6-only egress and common app pitfalls
+summary: 'Why IPv6, what the cluster needs for dual-stack, how Pods and Services get two addresses, and the app bugs that show up first.'
+icon: split
+hide_table_of_contents: true
+---
+
+# IPv4/IPv6 Dual-Stack Networking
+
+A cluster that hands out both IPv4 and IPv6 addresses. Follow how the control plane, the CNI, Services and DNS each get a second address family, and where applications trip over it. The layers underneath are in [Under One Request: TCP/IP Layers](../basic/tcp-ip-layers.mdx).
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~12 min', level: 'Advanced'}}
+  groups={[
+    {label: 'Dual-stack cluster', x: 20, y: 30, w: 700, h: 400, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'api', label: 'API server', sub: 'Two Service CIDRs', icon: 'server', tone: 'cp', x: 110, y: 100, show: true},
+    {id: 'kcm', label: 'Controller mgr', sub: 'Two Pod CIDRs', icon: 'gear', tone: 'cp', x: 110, y: 230, show: true},
+    {id: 'cni', label: 'CNI plugin', sub: 'Dual-stack IPAM', icon: 'layers', tone: 'node', x: 110, y: 360},
+    {id: 'svc', label: 'Service', sub: 'ipFamilyPolicy', icon: 'target', tone: 'cp', x: 380, y: 100},
+    {id: 'pod', label: 'web Pod', sub: 'status.podIPs', icon: 'pod', tone: 'app', x: 380, y: 230},
+    {id: 'dns', label: 'CoreDNS', sub: 'A + AAAA', icon: 'book', tone: 'cp', x: 380, y: 360},
+    {id: 'client', label: 'Client Pod', sub: 'Happy eyeballs', icon: 'pod', tone: 'app', x: 610, y: 230},
+    {id: 'user', label: 'IPv6 user', sub: 'Internet', icon: 'browser', tone: 'ext', x: 870, y: 100},
+    {id: 'lb', label: 'Cloud LB', sub: 'IPv4 + IPv6', icon: 'split', tone: 'ext', x: 870, y: 230},
+    {id: 'v4', label: 'IPv4-only API', sub: 'Outside', icon: 'server', tone: 'ext', x: 870, y: 360},
+  ]}
+  metrics={[
+    {id: 'pod', label: 'Pod IPs'},
+    {id: 'svc', label: 'Service IPs'},
+    {id: 'dns', label: 'DNS answer'},
+    {id: 'conn', label: 'Connection'},
+  ]}
+  learn={[
+    {text: 'Why clusters move to IPv6', at: 0},
+    {text: 'Which components need two CIDRs, and why the CNI matters', at: 1},
+    {text: 'ipFamilyPolicy and ipFamilies on a Service', at: 4},
+    {text: 'A and AAAA records and happy eyeballs in clients', at: 5},
+    {text: 'IPv6 egress, IPv6-only clusters and load balancers', at: 7},
+    {text: 'App bugs: IPv4-only listeners and hardcoded parsing', at: 8},
+  ]}
+  steps={[
+    {
+      short: 'Why IPv6',
+      kind: '시작',
+      title: 'Large clusters run out of IPv4 addresses',
+      text: [
+        'Public IPv4 addresses are exhausted, and even private ranges run short at scale. Every node takes a whole Pod subnet (a /24 by default for IPv4), so a few hundred nodes can use up a large private block that also has to stay clear of the company network.',
+        'IPv6 has room to spare: each node gets a /64 by default, far more addresses than it will ever need. Dual-stack lets you add IPv6 while everything that only speaks IPv4 keeps working.',
+      ],
+      focus: ['pod'],
+      values: {pod: '10.244.1.7', svc: '10.96.0.0/16 only', dns: 'A', conn: 'IPv4'},
+    },
+    {
+      short: 'Two CIDRs',
+      kind: '원리',
+      title: 'The control plane gets one range per family',
+      text: [
+        'Dual-stack is stable since Kubernetes 1.23. kube-apiserver takes --service-cluster-ip-range with an IPv4 and an IPv6 CIDR, separated by a comma. kube-controller-manager takes --cluster-cidr for Pods, plus --service-cluster-ip-range, and gives each node one Pod CIDR per family.',
+        'kube-proxy also needs both ranges in --cluster-cidr. On bare metal, kubelet needs --node-ip with both node addresses. On managed clusters you usually choose dual-stack when the cluster or subnet is created.',
+      ],
+      keyIdea: 'The first range listed decides the default family for Services. Pick it on purpose.',
+      flows: [
+        {from: 'kcm', to: 'cni', label: 'podCIDRs ×2', type: 'request'},
+      ],
+      focus: ['api', 'kcm'],
+      badges: {api: 'v4,v6', kcm: 'v4,v6'},
+    },
+    {
+      short: 'Two Pod IPs',
+      kind: '원리',
+      title: 'A dual-stack CNI gives each Pod two addresses',
+      text: [
+        'The CNI plugin must support dual-stack. It assigns each Pod one IPv4 and one IPv6 address and sets up routes for both. If it only does IPv4, the IPv6 settings above do nothing for Pods.',
+        'The Pod shows both in status.podIPs. The older status.podIP field keeps only the first one, so tools that read only that field miss the second family.',
+      ],
+      flows: [{from: 'cni', to: 'pod', label: 'IPv4 + IPv6', type: 'request'}],
+      focus: ['cni', 'pod'],
+      badges: {api: null, kcm: null, pod: 'two IPs'},
+      values: {pod: {text: '10.244.1.7 · fd00:10:244:1::7', tone: 'good'}},
+    },
+    {
+      short: 'SingleStack',
+      kind: '원리',
+      title: 'A Service stays single-stack unless you ask',
+      text: [
+        'If a Service does not set ipFamilyPolicy, Kubernetes sets it to SingleStack and gives it one ClusterIP from the first Service range. Existing Services keep working exactly as before.',
+        'So turning on dual-stack does not change any app by itself. Each Service opts in.',
+      ],
+      flows: [{from: 'svc', to: 'pod', label: 'IPv4 only', type: 'request'}],
+      focus: ['svc'],
+      badges: {pod: null, svc: 'SingleStack'},
+      values: {svc: '10.96.12.5'},
+    },
+    {
+      short: 'Dual Service',
+      kind: '원리',
+      title: 'PreferDualStack or RequireDualStack, and ipFamilies order',
+      text: [
+        'PreferDualStack gets both families when the cluster has them and falls back to one otherwise. RequireDualStack fails to create on a cluster without dual-stack. spec.clusterIPs then holds two addresses.',
+        'ipFamilies sets the order, for example [IPv6, IPv4]. The first family is the primary one and fills the legacy spec.clusterIP. You can add or remove the secondary family later, but you cannot change the primary family of an existing Service.',
+      ],
+      keyIdea: 'To flip the primary family, create a new Service. Changing SingleStack to PreferDualStack in place only adds the second address.',
+      flows: [{from: 'svc', to: 'pod', label: 'IPv4 + IPv6', type: 'request'}],
+      focus: ['svc'],
+      badges: {svc: 'PreferDualStack'},
+      values: {svc: {text: '10.96.12.5 · fd00:10:96::c', tone: 'good'}},
+    },
+    {
+      short: 'A + AAAA',
+      kind: '원리',
+      title: 'DNS answers with both record types',
+      text: [
+        'For a dual-stack Service, cluster DNS returns an A record (IPv4) and an AAAA record (IPv6) for web.shop.svc.cluster.local. A single-stack Service has only one of the two.',
+        'The client resolver asks for both and gets two answers back. Which one it uses is up to the client library, not Kubernetes.',
+      ],
+      flows: [
+        {from: 'client', to: 'dns', label: 'A? AAAA?', type: 'request'},
+        {from: 'dns', to: 'client', label: 'both', type: 'response'},
+      ],
+      focus: ['dns', 'client'],
+      values: {dns: {text: 'A + AAAA', tone: 'good'}},
+    },
+    {
+      short: 'Happy eyeballs',
+      kind: '원리',
+      title: 'Good clients race both families',
+      text: [
+        'Happy eyeballs (RFC 8305) starts with one family, usually IPv6, and tries the other after a short delay if the first is slow. The first connection that succeeds wins.',
+        'Not every client does this. Some try only the first address and wait for a full timeout when that path is broken, which looks like random slow requests.',
+      ],
+      keyIdea: 'If a dual-stack Service is slow from some clients only, test each family on its own: curl -4 and curl -6.',
+      flows: [{from: 'client', to: 'svc', label: 'IPv6 first', type: 'request'}],
+      focus: ['client'],
+      values: {conn: {text: 'IPv6 · IPv4 fallback', tone: 'good'}},
+    },
+    {
+      short: 'Edges',
+      kind: '주의',
+      title: 'IPv6 egress, IPv6-only clusters and cloud load balancers',
+      text: [
+        'A Pod with a non-routable IPv6 address needs IP masquerading or a proxy to reach the internet over IPv6, just like with IPv4. In an IPv6-only cluster, reaching an IPv4-only API also needs something like NAT64 with DNS64.',
+        'A LoadBalancer Service with PreferDualStack or RequireDualStack only gets both public addresses if the cloud provider supports dual-stack load balancers.',
+      ],
+      keyIdea: 'Check that the CNI, the cloud LB and the egress path all support IPv6 before you depend on it.',
+      flows: [
+        {from: 'user', to: 'lb', label: 'IPv6', type: 'request'},
+        {from: 'lb', to: 'svc', type: 'request'},
+        {from: 'client', to: 'v4', label: 'needs NAT64', type: 'request'},
+      ],
+      focus: ['lb', 'v4'],
+      status: {v4: 'warn'},
+    },
+    {
+      short: 'Bind 0.0.0.0',
+      kind: '문제',
+      title: 'The app listens on IPv4 only',
+      text: [
+        'The web container binds to 0.0.0.0:8080. That is every IPv4 address and no IPv6. Connections to the Pod\'s IPv6 address are refused, while IPv4 works, so the bug only shows for some clients.',
+        'Bind to [::] instead. On Linux, an IPv6 socket on [::] usually accepts IPv4 too (as IPv4-mapped addresses) unless the app or the system sets IPV6_V6ONLY.',
+      ],
+      flows: [{from: 'client', to: 'pod', label: 'IPv6 refused', type: 'request'}],
+      focus: ['pod'],
+      status: {pod: 'error', v4: null},
+      badges: {pod: '0.0.0.0 only'},
+      values: {conn: {text: 'IPv6 refused', tone: 'bad'}},
+    },
+    {
+      short: 'IPv4 parsing',
+      kind: '문제',
+      title: 'Code that assumes an address looks like IPv4',
+      text: [
+        'Splitting host:port on the first colon, a regex for four dotted numbers, or a database column sized for 15 characters all break on fd00:10:244:1::7. IPv6 addresses in URLs and host:port strings need brackets, like [fd00::7]:8080.',
+        'Logs, allowlists and rate limiters that key on client IP need the same fix, or IPv6 clients pile into one bucket or get rejected.',
+      ],
+      keyIdea: 'Use the standard library to parse and join addresses (for example net.SplitHostPort or ipaddress) instead of string tricks.',
+      flows: [{from: 'client', to: 'pod', label: '[::]:8080', type: 'request'}],
+      focus: ['pod', 'client'],
+      status: {pod: 'warn'},
+      badges: {pod: 'listens on [::]'},
+      values: {conn: 'IPv6 OK · parsing bugs'},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Two families from the control plane to the app',
+      text: [
+        'Dual-stack needs two ranges on the API server and controller manager, a CNI that hands out both families, and Services that opt in with ipFamilyPolicy. DNS then returns A and AAAA, and clients choose.',
+        'Most breakage is in the app or at the edges: IPv4-only listeners, IPv4 string parsing, and load balancers or egress paths without IPv6.',
+      ],
+      keyIdea: 'Read status.podIPs on a Pod and spec.clusterIPs and spec.ipFamilies on a Service to see which families are really in use.',
+      flows: [
+        {from: 'client', to: 'svc', label: 'IPv6', type: 'request'},
+        {from: 'svc', to: 'pod', type: 'request'},
+      ],
+      focus: ['api', 'cni', 'svc'],
+      status: {pod: 'ok', v4: null},
+      badges: {pod: null, svc: null},
+      values: {conn: {text: 'IPv4 + IPv6', tone: 'good'}},
+    },
+  ]}
+/>
+
+## Service ipFamilyPolicy
+
+| ipFamilyPolicy | ClusterIPs | On a single-stack cluster | Typical use |
+| --- | --- | --- | --- |
+| SingleStack (default) | One, from the first Service range or the family in `ipFamilies` | Works | Existing Services, apps not yet tested on IPv6 |
+| PreferDualStack | Two when the cluster is dual-stack | Falls back to one | Most Services once the app listens on both families |
+| RequireDualStack | Always two | Creation fails | Services that must be reachable over both families |
+
+Headless Services without a selector that do not set `ipFamilyPolicy` default to RequireDualStack. The first entry in `ipFamilies` is the primary family and cannot be changed on an existing Service.
+
+## Try it yourself
+
+```bash
+kubectl get nodes -o jsonpath='{range .items[*]}{.metadata.name}{"  "}{.spec.podCIDRs}{"\n"}{end}'   # One Pod CIDR per family
+kubectl get pod <pod> -o jsonpath='{.status.podIPs}'                       # Two entries on dual-stack
+kubectl get svc <svc> -o jsonpath='{.spec.ipFamilyPolicy} {.spec.ipFamilies} {.spec.clusterIPs}'
+kubectl patch svc <svc> -p '{"spec":{"ipFamilyPolicy":"PreferDualStack"}}'   # Add the second family in place
+kubectl run dns-test --rm -it --image=busybox:1.36 --restart=Never -- nslookup -type=AAAA <svc>.<namespace>.svc.cluster.local
+kubectl exec <pod> -- ss -ltn       # If the image has ss: 0.0.0.0:8080 = IPv4 only, [::]:8080 = IPv6 too
+```
+
+<Quiz questions={[
+  {q: 'You enable dual-stack on the cluster, but an existing Service still has a single IPv4 ClusterIP. Why?', options: ['A Service without ipFamilyPolicy stays SingleStack and keeps one ClusterIP', 'The CNI has not restarted yet', 'Services can never have IPv6 addresses'], answer: 0, why: 'Dual-stack is opt-in per Service. The default is SingleStack from the first Service range. Change ipFamilyPolicy to PreferDualStack or RequireDualStack to add the second address.'},
+  {q: 'IPv4 clients reach a dual-stack Service fine, but IPv6 clients get connection refused. What is the most likely cause?', options: ['CoreDNS does not return AAAA records', 'The primary family in ipFamilies is wrong', 'The cloud load balancer is IPv4-only', 'The app binds to 0.0.0.0, which listens on IPv4 only'], answer: 3, why: 'Connection refused means the packet reached the Pod but nothing listened on IPv6. Binding to [::] makes the app accept IPv6 (and on Linux usually IPv4 too).'},
+  {q: 'You want an existing Service to become IPv6-primary, with ipFamilies [IPv6, IPv4]. What works?', options: ['Edit ipFamilies in place to swap the order', 'Create a new Service with ipFamilies [IPv6, IPv4]', 'Set ipFamilyPolicy to RequireDualStack'], answer: 1, why: 'You can add or remove the secondary family, but the primary family of an existing Service cannot change. A new Service is needed.'},
+]} />
+
+Further reading: [IPv4/IPv6 dual-stack](https://kubernetes.io/docs/concepts/services-networking/dual-stack/) · [Validate IPv4/IPv6 dual-stack](https://kubernetes.io/docs/tasks/network/validate-dual-stack/) · [RFC 8305 Happy Eyeballs v2](https://www.rfc-editor.org/rfc/rfc8305) · [Service Types (ClusterIP · NodePort · LoadBalancer)](../feature/service-types.mdx) · [Under One Request: TCP/IP Layers](../basic/tcp-ip-layers.mdx)

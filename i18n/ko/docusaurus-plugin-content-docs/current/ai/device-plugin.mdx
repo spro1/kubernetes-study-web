@@ -25,7 +25,7 @@ hide_table_of_contents: true
     {id: 'api', label: 'API 서버', sub: '요청의 입구', icon: 'gate', tone: 'cp', x: 290, y: 230, show: true},
     {id: 'sched', label: '스케줄러', sub: '노드 고르기', icon: 'target', tone: 'cp', x: 290, y: 370, show: true},
     {id: 'status', label: '노드 상태', sub: 'capacity·allocatable', icon: 'db', tone: 'store', x: 480, y: 300, w: 170},
-    {id: 'kubelet', label: 'kubelet', sub: 'node-1', icon: 'agent', tone: 'node', x: 690, y: 185, w: 150, show: true},
+    {id: 'kubelet', label: 'kubelet', sub: 'node-1', icon: 'agent', tone: 'node', x: 690, y: 165, w: 150, show: true},
     {id: 'plugin', label: '디바이스 플러그인', sub: 'DaemonSet 파드', icon: 'gear', tone: 'node', x: 690, y: 300, w: 160},
     {id: 'driver', label: '드라이버·툴킷', sub: '노드에 먼저 설치', icon: 'layers', tone: 'node', x: 690, y: 400, w: 160},
     {id: 'pod', label: 'train', sub: 'Pod', icon: 'pod', tone: 'app', size: 'sm', w: 100, x: 910, y: 160},
@@ -84,7 +84,7 @@ hide_table_of_contents: true
       ],
       flows: [
         {from: 'kubelet', to: 'plugin', label: 'ListAndWatch', type: 'request'},
-        {from: 'plugin', to: 'kubelet', label: 'gpu-0, gpu-1 Healthy', type: 'response', bend: 0.25},
+        {from: 'plugin', to: 'kubelet', label: 'gpu-0, gpu-1 Healthy', type: 'response', bend: 1},
       ],
       focus: ['plugin', 'kubelet'],
       values: {devs: '2 Healthy'},
@@ -125,7 +125,7 @@ hide_table_of_contents: true
       ],
       keyIdea: '스케줄러는 개수만 본다. 어느 장치를 줄지는 이 단계에서 정하지 않는다.',
       flows: [
-        {from: 'status', to: 'sched', label: 'allocatable', type: 'response'},
+        {from: 'status', to: 'sched', label: 'allocatable', type: 'response', bend: -0.3},
         {from: 'sched', to: 'api', label: '배치: node-1', type: 'request'},
       ],
       focus: ['sched'],
@@ -141,7 +141,7 @@ hide_table_of_contents: true
       ],
       flows: [
         {from: 'kubelet', to: 'plugin', label: 'Allocate(gpu-1)', type: 'request'},
-        {from: 'plugin', to: 'kubelet', label: 'env·장치·마운트', type: 'response', bend: 0.25},
+        {from: 'plugin', to: 'kubelet', label: 'env·장치·마운트', type: 'response', bend: 1},
       ],
       focus: ['kubelet', 'plugin'],
       badges: {gpu1: '할당됨'},

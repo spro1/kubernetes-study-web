@@ -1,0 +1,280 @@
+---
+id: api-design
+title: HTTP API 설계
+sidebar_label: 02 · API 설계
+description: 리소스와 메서드의 의미, 상태 코드와 멱등성 키, 커서 페이지네이션, RFC 9457 문제 상세, 하위 호환을 지키는 버전 관리, OpenAPI, gRPC·GraphQL을 고를 때까지 HTTP API 설계를 애니메이션으로 본다
+summary: '리소스와 메서드, 뜻이 분명한 상태 코드, 결제를 위한 멱등성 키, 커서 페이지네이션, 하나로 통일한 오류 형식, 클라이언트를 깨지 않는 버전 관리, REST·gRPC·GraphQL 비교.'
+icon: book
+hide_table_of_contents: true
+---
+
+# HTTP API 설계
+
+API는 그것을 부르는 모든 클라이언트와 맺는 약속이다. 엔드포인트 하나에서 공개 계약으로 자라는 주문 API를 따라가며, 일이 틀어지거나 바뀔 때 클라이언트를 지켜 주는 선택이 무엇인지 본다.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '약 13분', level: '기초'}}
+  groups={[
+    {label: '서버 쪽', x: 300, y: 30, w: 675, h: 410, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'client', label: '클라이언트 앱', sub: '웹 · 모바일', icon: 'browser', tone: 'ext', x: 140, y: 170, show: true},
+    {id: 'old', label: '옛 클라이언트', sub: 'v1 기준으로 만든 앱', icon: 'box', tone: 'ext', x: 140, y: 340},
+    {id: 'spec', label: 'OpenAPI 명세', sub: '글로 적은 계약', icon: 'book', tone: 'store', x: 420, y: 90, w: 160},
+    {id: 'api', label: '주문 API', sub: '/v1/orders', icon: 'server', tone: 'app', x: 420, y: 230, show: true},
+    {id: 'keys', label: '멱등성 키 저장소', sub: '키 → 저장한 응답', icon: 'ticket', tone: 'store', x: 420, y: 370, w: 170},
+    {id: 'db', label: '주문 DB', sub: '행', icon: 'db', tone: 'store', x: 680, y: 300, show: true},
+    {id: 'inv', label: 'inventory', sub: 'gRPC · protobuf', icon: 'server', tone: 'app', x: 860, y: 140, w: 160},
+  ]}
+  metrics={[
+    {id: 'req', label: '요청'},
+    {id: 'status', label: '상태 코드'},
+    {id: 'note', label: '계약'},
+  ]}
+  learn={[
+    {text: '명사인 리소스, 동사인 메서드, 안전과 멱등의 뜻', at: 1},
+    {text: '클라이언트가 다음 할 일을 정할 수 있는 상태 코드', at: 2},
+    {text: '재시도한 결제가 한 번만 청구되게 하는 멱등성 키', at: 4},
+    {text: '커서 페이지네이션과 하나로 통일한 오류 본문', at: 5},
+    {text: '옛 클라이언트를 깨지 않고 API를 바꾸는 법, REST·gRPC·GraphQL', at: 7},
+  ]}
+  steps={[
+    {
+      short: '시작',
+      kind: '시작',
+      title: '경로는 대상을, 메서드는 할 일을 말한다',
+      text: [
+        'API는 리소스를 드러낸다. 컬렉션 /v1/orders와 주문 하나 /v1/orders/42다. 경로는 명사다. 동사는 HTTP 메서드가 맡으니 /getOrder나 /deleteOrder 같은 경로는 없다.',
+        '클라이언트가 GET /v1/orders/42를 보내면 200 OK와 함께 주문이 JSON으로 온다. 몇 안 되는 메서드가 모든 리소스에서 똑같이 동작하니 API를 짐작하기 쉽다.',
+      ],
+      flows: [
+        {from: 'client', to: 'api', label: 'GET /v1/orders/42', type: 'request'},
+        {from: 'api', to: 'db', label: '읽기', type: 'request'},
+        {from: 'api', to: 'client', label: '200 + JSON', type: 'response', bend: 40},
+      ],
+      focus: ['client', 'api'],
+      values: {req: 'GET /v1/orders/42', status: {text: '200 OK', tone: 'good'}, note: '—'},
+    },
+    {
+      short: '메서드',
+      kind: '원리',
+      title: '안전과 멱등은 요청을 반복할 때의 약속이다',
+      text: [
+        'GET과 HEAD는 안전하다. 읽기만 한다. PUT은 리소스 전체를 바꾸고 DELETE는 지운다. 둘 다 멱등하다. 두 번 보내도 한 번 보낸 것과 같은 상태가 남는다.',
+        'POST /v1/orders는 보낼 때마다 새 주문을 만들므로 안전하지도 멱등하지도 않다. PATCH는 리소스 일부를 바꾸며 일반적으로 멱등하지 않다. 프록시, 클라이언트, 재시도 로직이 모두 이 뜻에 기댄다.',
+      ],
+      keyIdea: '멱등하지 않은 요청이라면 누군가 반드시 두 번 보낸다고 가정하고 설계한다.',
+      flows: [
+        {from: 'client', to: 'api', label: 'PUT · PATCH · DELETE', type: 'request'},
+        {from: 'api', to: 'db', label: '쓰기', type: 'request'},
+      ],
+      focus: ['api'],
+      values: {req: 'PATCH /v1/orders/42', status: '200 OK'},
+    },
+    {
+      short: '상태 코드',
+      kind: '원리',
+      title: '상태 코드가 클라이언트의 다음 행동을 알려 준다',
+      text: [
+        'POST /v1/orders는 201 Created와 새 주문을 가리키는 Location 헤더로 답한다. DELETE는 204 No Content로 답한다. JSON이 깨졌으면 400, 없는 주문이면 404, 형식은 맞지만 규칙을 어기면(수량 0) 422, 읽은 뒤에 주문이 바뀌었으면 409다.',
+        '4xx는 클라이언트가 요청을 고쳐야 한다는 뜻이다. 5xx는 서버가 실패했다는 뜻이고 같은 요청이 나중에는 될 수 있다. 본문에 오류를 적고 200으로 답하지 않는다. 클라이언트도, 프록시도, 대시보드도 코드를 먼저 읽는다.',
+      ],
+      flows: [
+        {from: 'client', to: 'api', label: 'POST /v1/orders', type: 'request'},
+        {from: 'api', to: 'client', label: '201 · Location', type: 'response', bend: 40},
+      ],
+      focus: ['client', 'api'],
+      values: {req: 'POST /v1/orders', status: {text: '201 Created', tone: 'good'}},
+    },
+    {
+      short: '이중 결제',
+      kind: '문제',
+      title: '재시도한 POST가 두 번 결제한다',
+      text: [
+        '클라이언트가 주문 42의 결제로 POST /v1/payments를 보낸다. 서버는 카드를 긁었지만 모바일 네트워크에서 응답이 사라져 클라이언트는 타임아웃을 맞는다.',
+        '클라이언트는 "실패했다"와 "됐는데 못 들었다"를 구분할 수 없다. 다시 보내면 서버는 새 POST로 보고, 고객은 두 번 결제된다.',
+      ],
+      flows: [
+        {from: 'client', to: 'api', label: 'POST /v1/payments ×2', type: 'request'},
+        {from: 'api', to: 'db', label: '결제 2건', type: 'request'},
+      ],
+      focus: ['client', 'api', 'db'],
+      status: {db: 'error'},
+      badges: {db: '두 번 결제'},
+      values: {req: 'POST /v1/payments', status: {text: '타임아웃 → 재시도', tone: 'bad'}},
+    },
+    {
+      short: '멱등성 키',
+      kind: '원리',
+      title: '멱등성 키가 재시도를 안전하게 만든다',
+      text: [
+        '클라이언트는 결제 하나마다 UUID 같은 고유한 키를 한 번 만들어 Idempotency-Key 헤더로 보낸다. 재시도할 때도 같은 키를 보낸다. 서버는 첫 요청의 결과를 키와 함께 저장한다.',
+        '같은 키로 온 재시도는 저장해 둔 응답을 받고, 두 번째 결제는 없다. IETF 초안은 같은 키에 다른 본문이 오면 422, 첫 요청이 아직 처리 중이면 409를 권하고, 키는 공개한 기간이 지나면 만료되게 한다.',
+      ],
+      keyIdea: '돈이 움직이거나 무언가를 보내는 POST는 멱등성 키를 받아야 한다. 그래야 클라이언트와 프록시가 안전하게 재시도할 수 있다.',
+      flows: [
+        {from: 'client', to: 'api', label: 'Idempotency-Key: 7f3c…', type: 'request'},
+        {from: 'api', to: 'keys', label: '본 키? 재생', type: 'request'},
+        {from: 'api', to: 'client', label: '같은 201', type: 'response', bend: 40},
+      ],
+      focus: ['api', 'keys'],
+      status: {db: 'ok'},
+      badges: {db: null, keys: '재생함'},
+      values: {status: {text: '201 (재생)', tone: 'good'}, note: '한 번만 결제'},
+    },
+    {
+      short: '페이지',
+      kind: '원리',
+      title: '긴 목록은 페이지로 나누고, 커서가 정확하다',
+      text: [
+        'GET /v1/orders?offset=40&limit=20은 만들기 쉽다. 하지만 데이터베이스는 여전히 앞의 40행을 지나가야 해서 목록 깊이 갈수록 느려진다. 페이지 사이에 새 주문이 들어오면 행이 밀려 클라이언트는 같은 항목을 또 보거나 몇 개를 놓친다.',
+        '커서는 둘 다 고친다. 응답에 "이 항목 다음"을 뜻하는 불투명한 토큰을 싣고, 다음 호출은 ?limit=20&cursor=…를 보낸다. 쿠버네티스 API도 limit과 continue로 이렇게 하고, 만료된 continue 토큰에는 410 Gone을 준다.',
+      ],
+      flows: [
+        {from: 'client', to: 'api', label: '?limit=20&cursor=…', type: 'request'},
+        {from: 'api', to: 'client', label: '항목 + 다음 커서', type: 'response', bend: 40},
+      ],
+      focus: ['client', 'api'],
+      badges: {keys: null},
+      values: {req: 'GET /v1/orders?limit=20', status: '200 OK', note: 'offset 대신 커서'},
+    },
+    {
+      short: '오류',
+      kind: '원리',
+      title: '모든 오류는 같은 본문을 쓴다',
+      text: [
+        'RFC 9457 문제 상세(problem details)는 오류에 한 가지 모양을 준다. 콘텐츠 유형은 application/problem+json이고, type(오류 종류를 나타내는 URI), title, status, detail, instance에 잘못된 필드 목록 같은 자체 필드를 더한다.',
+        '클라이언트는 API 전체에 오류 파서를 하나만 쓰면 된다. 로그와 문의에서 type과 instance를 인용할 수 있다. detail에 스택 트레이스나 내부 호스트 이름은 절대 넣지 않는다.',
+      ],
+      flows: [
+        {from: 'client', to: 'api', label: 'POST quantity: 0', type: 'request'},
+        {from: 'api', to: 'client', label: '422 problem+json', type: 'response', bend: 40},
+      ],
+      focus: ['api'],
+      values: {req: 'POST /v1/orders', status: {text: '422', tone: 'bad'}, note: 'type · title · detail'},
+    },
+    {
+      short: '호환성',
+      kind: '주의',
+      title: '필드는 마음껏 더하고, 이름 바꾸기는 새 버전에서만',
+      text: [
+        '선택 요청 필드, 응답 필드, 새 엔드포인트를 더하는 것은 하위 호환이다. 클라이언트가 모르는 필드를 무시한다면 말이다. 필드를 지우거나 이름을 바꾸거나, 타입을 바꾸거나, 선택 필드를 필수로 만들면 옛 클라이언트가 깨진다.',
+        '팀이 total을 그 자리에서 amount로 바꾼다. 사용자가 업데이트하지 않은 옛 모바일 앱은 total을 읽다가 아무것도 찾지 못해 0을 보여 준다. 깨지는 변경은 /v1 옆에 /v2(또는 버전 헤더)로 내고, Deprecation과 Sunset 헤더로 v1의 끝을 알린다.',
+      ],
+      keyIdea: '클라이언트가 언제 업데이트할지는 내가 정할 수 없다. 옛 버전의 트래픽이 사라질 때까지 그 버전을 살려 둔다.',
+      flows: [
+        {from: 'old', to: 'api', label: 'GET /v1/orders/42', type: 'request'},
+        {from: 'api', to: 'old', label: 'total 없음', type: 'response', bend: 40},
+      ],
+      focus: ['old', 'api'],
+      status: {old: 'error'},
+      badges: {old: '0으로 표시', api: 'v1 + v2'},
+      values: {req: 'GET /v1/orders/42', status: '200 OK', note: {text: '깨지는 이름 변경', tone: 'bad'}},
+    },
+    {
+      short: 'OpenAPI',
+      kind: '원리',
+      title: '계약은 OpenAPI로 적어 둔다',
+      text: [
+        'OpenAPI 문서는 모든 경로, 파라미터, 요청 본문, 응답과 오류 스키마를 YAML이나 JSON으로 적는다. 도구가 이것으로 문서를 그리고, 클라이언트 라이브러리와 서버 뼈대를 만들고, 서버가 명세와 맞는지 시험한다.',
+        '명세를 저장소에 두고 CI에서 비교한다. 필드를 지우거나 필수 파라미터를 더하는 차이는 출시 전에 잡을 수 있는 깨지는 변경이다. 쿠버네티스 API 서버도 자기 명세를 /openapi/v3에 공개한다.',
+      ],
+      flows: [
+        {from: 'spec', to: 'api', label: '계약', type: 'watch'},
+        {from: 'spec', to: 'client', label: '생성한 SDK', type: 'watch'},
+      ],
+      focus: ['spec', 'api'],
+      status: {old: 'ok'},
+      badges: {old: null, spec: 'v1 · v2'},
+      values: {note: {text: 'CI에서 명세 확인', tone: 'good'}},
+    },
+    {
+      short: 'gRPC · GraphQL',
+      kind: '원리',
+      title: 'REST, gRPC, GraphQL은 맞는 호출자가 다르다',
+      text: [
+        'inventory로 가는 내부 호출에 팀은 gRPC를 쓴다. .proto 파일이 계약이고, 메시지는 작은 protobuf이며, 호출은 HTTP/2 위에서 단건 호출이나 양방향 스트림으로 오간다. 연결이 오래 유지되므로 요청을 나누려면 L7 로드밸런서가 필요하다.',
+        'GraphQL은 여러 데이터 소스 앞에 엔드포인트 하나를 두고, 클라이언트가 필요한 필드만 정확히 묻게 한다. 화면이 다양한 프런트엔드에 잘 맞지만 HTTP 캐시와 요청별 속도 제한은 어려워진다. 공개 API에는 평범한 REST가 여전히 가장 쉽다.',
+      ],
+      flows: [
+        {from: 'api', to: 'inv', label: 'gRPC · HTTP/2', type: 'request'},
+        {from: 'inv', to: 'api', label: 'protobuf', type: 'response', bend: 40},
+      ],
+      focus: ['api', 'inv'],
+      badges: {spec: null},
+      values: {req: 'inventory.Reserve()', status: 'OK', note: '.proto 계약'},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '좋은 API는 예측 가능하고, 재시도에 안전하며, 쉽게 깨지지 않는다',
+      text: [
+        '리소스는 명사이고 메서드는 뜻이 정해진 동사다. 상태 코드와 하나로 통일한 문제 상세 본문이 클라이언트에 할 일을 알려 준다. 멱등성 키는 POST를 안전하게 재시도하게 하고, 커서는 페이지를 정확하게 지킨다.',
+        'API는 이름을 바꾸지 말고 더하면서 키운다. 깨지는 변경은 새 버전에 넣고, 계약은 OpenAPI로 적고, gRPC나 GraphQL은 그 장점이 중요한 곳에 고른다.',
+      ],
+      keyIdea: '엔드포인트를 내기 전에 답한다. 두 번 불리면 어떻게 되는가, 오류마다 어떤 모양인가, 옛 클라이언트를 깨지 않고 어떻게 바꿀 것인가?',
+      flows: [
+        {from: 'client', to: 'api', label: 'REST /v1', type: 'request'},
+        {from: 'spec', to: 'api', label: '계약', type: 'watch'},
+        {from: 'api', to: 'inv', label: 'gRPC', type: 'request'},
+      ],
+      focus: ['client', 'api', 'spec'],
+      badges: {api: null},
+    },
+  ]}
+/>
+
+## 메서드와 상태 코드 한눈에 보기
+
+| 메서드 | 쓰임 | 안전 | 멱등 | 흔한 성공 응답 |
+|---|---|---|---|---|
+| GET | 리소스나 목록 읽기 | 예 | 예 | 200 |
+| POST | 컬렉션에 만들기, 동작 실행 | 아니오 | 아니오 (멱등성 키를 쓴다) | `Location`과 함께 201, 또는 200 / 202 |
+| PUT | 리소스 전체 바꾸기 | 아니오 | 예 | 200 또는 204 |
+| PATCH | 리소스 일부 바꾸기 | 아니오 | 보장하지 않음 | 200 또는 204 |
+| DELETE | 리소스 지우기 | 아니오 | 예 | 204 |
+
+| 상태 코드 | 뜻 | 클라이언트가 할 일 |
+|---|---|---|
+| 400 Bad Request | 형식이 잘못된 요청: 깨진 JSON, 틀린 타입 | 요청을 고친다. 그대로 재시도하지 않는다 |
+| 404 Not Found | 그런 리소스가 없다 | 멈추거나 id를 확인한다 |
+| 409 Conflict | 현재 상태와 충돌한다. 예: 오래된 버전 | 다시 읽은 뒤 변경을 재시도한다 |
+| 422 Unprocessable Content | 형식은 맞지만 규칙을 어겼다 | 필드 오류를 사용자에게 보여 준다 |
+| 429 Too Many Requests | 속도 제한에 걸렸다 | `Retry-After`만큼 기다린 뒤 재시도한다 |
+| 500 / 502 / 503 / 504 | 서버나 업스트림이 실패했다 | 멱등한 요청만 백오프로 재시도한다 |
+
+| | REST + JSON | gRPC | GraphQL |
+|---|---|---|---|
+| 계약 | OpenAPI (선택) | `.proto` 파일 (필수) | 스키마 (필수) |
+| 전송 형식 | JSON 텍스트 | Protobuf 바이너리 | JSON |
+| 전송 계층 | HTTP/1.1, 2, 3 | HTTP/2 | 보통 엔드포인트 하나로 HTTP POST |
+| 스트리밍 | 서버 전송 이벤트, 따로 WebSocket | 기본 제공, 양방향 | 구독(subscription) |
+| 잘 맞는 곳 | 공개 API, 브라우저, 캐시 | 서비스 사이, 낮은 지연 | 필요한 필드가 제각각인 프런트엔드 |
+
+## 직접 확인해 보기
+
+쿠버네티스 API 자체가 잘 설계된 HTTP API다. 직접 들여다본다.
+
+```bash
+kubectl proxy --port=8001 &                                   # API 서버로 가는 인증된 로컬 터널
+
+curl -s localhost:8001/apis/apps | jq '.versions'             # 경로에 나란히 놓인 버전
+curl -i localhost:8001/api/v1/namespaces/default/pods/nope    # 404와 오류 본문인 Status 오브젝트
+
+# limit과 continue(커서)로 페이지 나누기
+curl -s 'localhost:8001/api/v1/pods?limit=2' | jq -r '.metadata.continue'
+
+curl -s localhost:8001/openapi/v3 | jq '.paths | keys | .[:5]'   # 공개된 OpenAPI 명세
+kubectl get pods -A -v=6 2>&1 | grep -E 'GET|200'             # kubectl은 나눠서 묻는다: ?limit=500
+kill %1                                                        # 프록시 멈추기
+```
+
+<Quiz questions={[
+  {q: '타임아웃 뒤 클라이언트가 같은 전체 본문으로 PUT /v1/orders/42를 다시 보낸다. 이것은 안전한데 POST /v1/payments 재시도는 왜 안전하지 않은가?', options: ['PUT이 POST보다 빠르기 때문이다', 'PUT은 멱등해서 두 번째 요청도 같은 상태를 남기지만, POST는 보낼 때마다 새 결제를 만들 수 있기 때문이다', '서버가 중복 PUT을 알아서 무시하기 때문이다', 'HTTP 클라이언트는 POST를 절대 재시도하지 않기 때문이다'], answer: 1, why: '멱등이란 같은 요청 N번의 효과가 한 번의 효과와 같다는 뜻이기 때문이다. PUT은 같은 본문으로 리소스를 다시 바꿀 뿐이다. POST는 멱등성 키가 재시도를 묶어 주지 않으면 매번 새것을 만든다.'},
+  {q: '주문 목록이 ?offset=40&limit=20을 쓴다. 사용자가 페이지를 넘기는 동안 새 주문이 들어온다. 무엇이 잘못되고, 무엇이 고치는가?', options: ['아무 문제 없다. offset은 안정적이다', '서버가 410 Gone을 주므로 limit을 키운다', '행이 밀려 항목이 반복되거나 빠진다. "이 항목 다음"을 뜻하는 커서가 고친다'], answer: 2, why: 'offset은 위치를 세는데 새 행이 들어오면 모든 위치가 밀리기 때문이다. 커서는 특정 항목을 가리키므로 무엇이 들어오든 다음 페이지는 바로 그 뒤에서 시작한다.'},
+  {q: '팀이 응답 필드 total을 amount로 바꾸려 한다. 옛 모바일 앱이 계속 동작하게 하는 방법은?', options: ['새 필드는 /v2로 내거나(또는 v1에서 total을 두고 amount를 더하고), v1은 나중에 종료한다', '/v1에서 이름을 바꾸고 사용자에게 업데이트를 부탁한다', '옛 클라이언트에 400을 돌려줘 업데이트하게 한다', '오류가 잘 보이게 필드 타입도 함께 바꾼다'], answer: 0, why: '필드 이름 바꾸기는 깨지는 변경이고 필드 더하기는 호환되기 때문이다. 옛 클라이언트가 읽는 것은 그 트래픽이 사라질 때까지 남기고, 깨지는 변경은 새 버전에 넣는다.'},
+]} />
+
+더 읽을거리: [HTTP 의미론 (RFC 9110)](https://www.rfc-editor.org/rfc/rfc9110) · [HTTP API 문제 상세 (RFC 9457)](https://www.rfc-editor.org/rfc/rfc9457) · [Idempotency-Key 헤더 (IETF 초안)](https://datatracker.ietf.org/doc/draft-ietf-httpapi-idempotency-key-header/) · [OpenAPI 명세](https://spec.openapis.org/oas/latest.html) · [gRPC 핵심 개념](https://grpc.io/docs/what-is-grpc/core-concepts/) · [쿠버네티스 API 개념](https://kubernetes.io/docs/reference/using-api/api-concepts/) · [HTTP/1.1, HTTP/2, HTTP/3](../basic/http-versions.mdx) · [주소창에 주소를 입력하면](../basic/web-request.mdx) · [서비스 호출이 장애를 견디게 하기](../basic/resilience-patterns.mdx)

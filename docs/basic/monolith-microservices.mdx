@@ -1,0 +1,285 @@
+---
+id: monolith-microservices
+title: Monolith, Modular Monolith and Microservices
+sidebar_label: 11 · Monolith vs microservices
+description: Animated walkthrough comparing a monolith, a modular monolith and microservices, from one deploy unit to many, what you gain and what you pay, database per service versus a shared database, latency and availability in synchronous call chains, strangler fig migration and when a monolith is the right choice
+summary: 'One deploy unit or many: independent deploys and scaling versus network calls, split data, tracing and versioning, and how to migrate with a strangler fig.'
+icon: split
+hide_table_of_contents: true
+---
+
+# Monolith, Modular Monolith and Microservices
+
+A shop starts as one application. As it grows, someone suggests splitting it into services. Follow the same **checkout** request through a **monolith**, a **modular monolith** and **microservices**, and see what each split buys you and what it costs.
+
+<StepDiagram
+  width={1000}
+  height={460}
+  meta={{duration: '~13 min', level: 'Beginner'}}
+  groups={[
+    {label: 'Monolith · one deploy', x: 200, y: 90, w: 200, h: 300, tone: 'plain'},
+    {label: 'Microservices', x: 610, y: 45, w: 375, h: 375, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'client', label: 'Shopper', sub: 'Checkout', icon: 'user', tone: 'ext', x: 90, y: 240, show: true},
+    {id: 'mono', label: 'Shop app', sub: 'Orders·pay·stock', icon: 'box', tone: 'app', x: 300, y: 160, w: 170, show: true},
+    {id: 'monodb', label: 'Shared DB', sub: 'All tables', icon: 'db', tone: 'store', x: 300, y: 320, show: true},
+    {id: 'gw', label: 'API gateway', sub: 'Routes by path', icon: 'gate', tone: 'node', x: 505, y: 240},
+    {id: 'orders', label: 'Orders', sub: 'Team A', icon: 'pod', tone: 'app', x: 700, y: 110, w: 130},
+    {id: 'pay', label: 'Payments', sub: 'Team B', icon: 'pod', tone: 'app', x: 700, y: 240, w: 130},
+    {id: 'stock', label: 'Stock', sub: 'Team C', icon: 'pod', tone: 'app', x: 700, y: 370, w: 130},
+    {id: 'odb', label: 'Orders DB', sub: 'Owned by A', icon: 'db', tone: 'store', size: 'sm', x: 900, y: 110},
+    {id: 'pdb', label: 'Payments DB', sub: 'Owned by B', icon: 'db', tone: 'store', size: 'sm', x: 900, y: 240, w: 120},
+    {id: 'sdb', label: 'Stock DB', sub: 'Owned by C', icon: 'db', tone: 'store', size: 'sm', x: 900, y: 370},
+  ]}
+  metrics={[
+    {id: 'deploy', label: 'Deploy units'},
+    {id: 'call', label: 'Internal call'},
+    {id: 'data', label: 'Data'},
+    {id: 'ops', label: 'Ops load'},
+  ]}
+  learn={[
+    {text: 'What a monolith and a modular monolith are, and why they work', at: 1},
+    {text: 'What microservices buy: independent deploys, scaling, ownership', at: 3},
+    {text: 'Database per service, and why a shared database couples services', at: 4},
+    {text: 'How call chains multiply latency and failure', at: 5},
+    {text: 'Strangler fig migration, and when to stay a monolith', at: 8},
+  ]}
+  steps={[
+    {
+      short: 'Start',
+      kind: '시작',
+      title: 'One shop, one application',
+      text: [
+        'A shopper checks out. In a monolith, one application holds orders, payments and stock. It is built, tested and deployed as one unit, and it keeps everything in one database.',
+        'Checkout calls the payment code and the stock code as ordinary function calls in the same process. Those calls take nanoseconds and never get lost on a network.',
+      ],
+      flows: [
+        {from: 'client', to: 'mono', label: 'POST /checkout', type: 'request', bend: -0.2},
+        {from: 'mono', to: 'monodb', label: '1 transaction', type: 'request'},
+      ],
+      focus: ['mono', 'monodb'],
+      values: {deploy: '1', call: 'Function call', data: 'One DB, one transaction', ops: '1 pipeline'},
+    },
+    {
+      short: 'Monolith',
+      kind: '원리',
+      title: 'A monolith is simple, until many teams share it',
+      text: [
+        'A monolith is easy to run: one pipeline, one log stream, one thing to debug. Changing orders and stock together is a single commit and a single database transaction.',
+        'The pain comes with growth. Many teams merge into one codebase and wait for one release train. A bug in one area can take the whole app down. To scale the busy stock check you scale the entire app.',
+      ],
+      keyIdea: 'Most problems blamed on "the monolith" are really missing boundaries inside it. Splitting the deploy does not fix tangled code by itself.',
+      flows: [
+        {from: 'client', to: 'mono', type: 'request'},
+      ],
+      focus: ['mono'],
+      status: {mono: 'warn'},
+      badges: {mono: '5 teams, 1 release'},
+      values: {ops: '1 pipeline, shared queue'},
+    },
+    {
+      short: 'Modular',
+      kind: '원리',
+      title: 'A modular monolith draws the lines inside',
+      text: [
+        'A modular monolith is still one deploy unit, but it is split into modules with clear boundaries. Orders, payments and stock each own their tables, and other modules call them only through a public interface, never by reading their tables.',
+        'You keep fast in-process calls and one deploy, and you gain boundaries that a team can own. If one module later needs its own service, the cut line already exists.',
+      ],
+      keyIdea: 'Enforce the boundaries with tooling, for example architecture tests or build rules that forbid one module importing another\'s internals.',
+      flows: [
+        {from: 'mono', to: 'monodb', label: 'tables per module', type: 'request'},
+      ],
+      focus: ['mono', 'monodb'],
+      status: {mono: 'ok'},
+      badges: {mono: 'modules', monodb: '3 schemas'},
+      values: {data: 'One DB, owned per module'},
+    },
+    {
+      short: 'Services',
+      kind: '원리',
+      title: 'Microservices split the deploy unit',
+      text: [
+        'With microservices, orders, payments and stock become separate services. Each has its own code repository or folder, its own pipeline and its own team. An API gateway routes requests by path.',
+        'Team B can ship payments five times a day without waiting for anyone. Stock gets busy at sale time and scales to 10 replicas while payments stays at 2. A crash in stock does not have to take checkout down.',
+      ],
+      keyIdea: 'The gains are organizational as much as technical: independent deploys, independent scaling and clear ownership.',
+      flows: [
+        {from: 'client', to: 'gw', label: 'POST /checkout', type: 'request'},
+        {from: 'gw', to: 'orders', type: 'request'},
+      ],
+      focus: ['orders', 'pay', 'stock'],
+      status: {mono: null},
+      badges: {mono: null, monodb: null, stock: '×10', pay: '×2'},
+      values: {deploy: '3+', ops: '3 pipelines'},
+    },
+    {
+      short: 'DB per service',
+      kind: '원리',
+      title: 'Each service owns its data',
+      text: [
+        'Each service keeps its own database, or at least its own schema that no one else touches. Others get the data through its API or its events.',
+        'If services share one database, every table becomes a hidden API. Renaming a column in stock breaks orders. Teams have to deploy together and coordinate migrations, and you are back to a monolith, but with network calls.',
+      ],
+      keyIdea: 'A shared database is the most common way microservices end up coupled. Check which services connect to which database host before calling the system "independent".',
+      flows: [
+        {from: 'orders', to: 'odb', type: 'request'},
+        {from: 'pay', to: 'pdb', type: 'request'},
+        {from: 'stock', to: 'sdb', type: 'request'},
+      ],
+      focus: ['odb', 'pdb', 'sdb'],
+      badges: {stock: null, pay: null},
+      values: {data: 'DB per service'},
+    },
+    {
+      short: 'Call chain',
+      kind: '문제',
+      title: 'Synchronous call chains multiply latency and failure',
+      text: [
+        'Checkout now calls payments, which calls stock, over the network. Each hop adds latency and serialization, and can time out. Latency adds up along the chain. Availability multiplies: five services at 99.9% each, all needed, give about 99.5% for the whole request.',
+        'Tail latency gets worse too. If one call in a hundred is slow and a request needs ten calls, about one request in ten hits a slow call.',
+      ],
+      keyIdea: 'Keep chains short, call in parallel where you can, and use events for work that need not finish before the reply. Put timeouts, retries with backoff and circuit breakers on every hop.',
+      flows: [
+        {from: 'gw', to: 'orders', label: '20 ms', type: 'request'},
+        {from: 'orders', to: 'pay', label: '+40 ms', type: 'request'},
+        {from: 'pay', to: 'stock', label: '+30 ms', type: 'request'},
+      ],
+      focus: ['orders', 'pay', 'stock'],
+      status: {stock: 'warn'},
+      badges: {stock: 'slow p99'},
+      values: {call: 'Network: ms, can fail'},
+    },
+    {
+      short: 'Split data',
+      kind: '문제',
+      title: 'No transaction spans services',
+      text: [
+        'In the monolith, "take payment and reserve stock" was one transaction. Now the two live in different databases, and nothing commits both at once.',
+        'You replace the transaction with a saga: a series of local steps, each publishing an event, with compensating steps (refund, release stock) when a later step fails. Data is eventually consistent, and a report that joins orders and payments now needs a copy of both in one place.',
+      ],
+      keyIdea: 'If two pieces of data must always change together, they probably belong in the same service.',
+      flows: [
+        {from: 'pay', to: 'pdb', label: 'charged ✓', type: 'request'},
+        {from: 'stock', to: 'sdb', label: 'reserve ✕', type: 'request'},
+      ],
+      focus: ['pay', 'stock'],
+      status: {stock: 'error'},
+      badges: {stock: 'out of stock', pay: 'refund?'},
+      values: {data: 'Eventually consistent, sagas'},
+    },
+    {
+      short: 'Ops cost',
+      kind: '주의',
+      title: 'Observability, versioning and operations cost more',
+      text: [
+        'One checkout now touches three services. To find why it was slow you need distributed tracing and a request id passed along every hop. Logs from all services must land in one place.',
+        'Services deploy on their own, so APIs must stay backward compatible: add fields, do not rename or remove them until every caller has moved. And every service needs a pipeline, dashboards, alerts, security patches and an owner on call.',
+      ],
+      keyIdea: 'Have tracing, central logs, and a template for new services ready before you split. Without them, microservices are hard to debug.',
+      flows: [
+        {from: 'gw', to: 'orders', label: 'traceparent', type: 'request'},
+        {from: 'orders', to: 'pay', label: 'traceparent', type: 'request'},
+        {from: 'pay', to: 'stock', label: 'traceparent', type: 'request'},
+      ],
+      focus: ['gw', 'orders', 'pay', 'stock'],
+      status: {stock: null},
+      badges: {stock: null, pay: 'v1 + v2 API'},
+      values: {ops: '3 pipelines, tracing, on-call ×3'},
+    },
+    {
+      short: 'Strangler fig',
+      kind: '원리',
+      title: 'Migrate with a strangler fig, one piece at a time',
+      text: [
+        'Big-bang rewrites rarely go well. With the strangler fig pattern, you put a proxy or API gateway in front of the monolith first. Then you build one capability, say payments, as a new service and route only its paths there.',
+        'Everything else still goes to the monolith. When the new service works, you delete that code from the monolith and pick the next piece. At every point the system runs and can be rolled back by changing a route.',
+      ],
+      keyIdea: 'Move the data along with the code. A new service that still reads the monolith\'s tables has not really been split out.',
+      flows: [
+        {from: 'client', to: 'gw', type: 'request'},
+        {from: 'gw', to: 'mono', label: '/orders, /stock', type: 'request', bend: 0.35},
+        {from: 'gw', to: 'pay', label: '/payments', type: 'request'},
+      ],
+      focus: ['gw', 'mono', 'pay'],
+      badges: {pay: 'new', mono: 'shrinking'},
+      values: {deploy: '2, growing', data: 'Moves with each piece'},
+    },
+    {
+      short: 'When',
+      kind: '주의',
+      title: 'Often, a monolith is the right choice',
+      text: [
+        'A small team, a new product whose boundaries are still unclear, or a system without very different scaling needs is usually better off as a well-structured monolith. Splitting too early fixes wrong boundaries in place, and moving a boundary between services is far harder than moving it between modules.',
+        'Split when there is a clear pressure: teams blocking each other on releases, one part that needs very different scaling or reliability, or a part with different security or compliance needs.',
+      ],
+      keyIdea: 'Start with a modular monolith, measure where it hurts, and split out the piece with the strongest reason first.',
+      flows: [
+        {from: 'client', to: 'mono', type: 'request'},
+        {from: 'mono', to: 'monodb', type: 'request'},
+      ],
+      focus: ['mono'],
+      badges: {pay: null, mono: 'modular'},
+      values: {deploy: '1 until it hurts'},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Pay for distribution only where it pays you back',
+      text: [
+        'A monolith gives simple deploys, fast calls and one transaction. A modular monolith adds the boundaries teams need. Microservices add independent deploys, scaling and ownership, and charge you in network calls, split data, tracing, API versioning and operations.',
+        'Give each service its own data, keep call chains short, and migrate step by step with a strangler fig when the pressure is real.',
+      ],
+      flows: [
+        {from: 'client', to: 'gw', type: 'request'},
+        {from: 'gw', to: 'orders', type: 'request'},
+        {from: 'gw', to: 'pay', type: 'request'},
+        {from: 'gw', to: 'stock', type: 'request'},
+      ],
+      focus: ['gw', 'orders', 'pay', 'stock'],
+      badges: {mono: null, pay: null},
+      values: {deploy: 'As few as you need', call: 'Short chains', data: 'Owned per service', ops: 'Tracing + templates'},
+    },
+  ]}
+/>
+
+## Gains and costs
+
+| | Monolith | Modular monolith | Microservices |
+|---|---|---|---|
+| Deploy unit | One | One | One per service |
+| Internal calls | Function calls | Function calls through module interfaces | Network calls (HTTP, gRPC, events) |
+| Data | One database, shared tables | One database, tables owned per module | Database per service |
+| Transactions | Local, across everything | Local, across modules | Only inside a service; sagas across |
+| Scaling | Whole app | Whole app | Per service |
+| Team independence | Low | Medium | High, if data and APIs are separate |
+| Debugging | One process, one log | One process, one log | Distributed tracing needed |
+| Ops cost | Low | Low | High: pipelines, dashboards, on-call per service |
+
+## Try it yourself
+
+```bash
+# Availability of a chain: 5 required services at 99.9% each
+python3 -c 'print(round(0.999**5 * 100, 2), "%")'        # about 99.5%
+
+# Chance that a request needing 10 calls hits at least one 1%-slow call
+python3 -c 'print(round((1 - 0.99**10) * 100, 1), "%")'  # about 9.6%
+
+# How many deploy units, and does each ship on its own?
+kubectl get deploy -n shop
+kubectl rollout history deploy/payments -n shop
+
+# Do services share a database? Compare the DB host each one is given
+kubectl get deploy -n shop -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.template.spec.containers[*].env[?(@.name=="DB_HOST")].value}{"\n"}{end}'
+
+# How long does one checkout take end to end?
+curl -s -o /dev/null -w 'total %{time_total}s\n' https://shop.example.com/checkout
+```
+
+<Quiz questions={[
+  {q: 'Three microservices read and write the same tables in one shared database. A team renames a column. What happens?', options: ['Nothing, because each service deploys on its own', 'Other services that use the column break, so the teams must change and deploy together', 'The database creates a copy of the column for each service'], answer: 1, why: 'A shared table is a hidden API between services. Changing it couples their deploys, which removes the main gain of microservices. Database per service avoids this.'},
+  {q: 'A checkout request calls five services in a chain, each 99.9% available, and all are required. Roughly how available is checkout?', options: ['99.9%, the same as each service', '99.99%, because there are more services', 'Depends only on the slowest service', 'About 99.5%, because the availabilities multiply'], answer: 3, why: 'The request succeeds only if every hop succeeds, so 0.999 to the power of 5 is about 0.995. Longer synchronous chains are less available and slower.'},
+  {q: 'A team of 6 is building a new product whose domain is still changing every month. What is usually the best start?', options: ['A modular monolith with clear module boundaries', 'One microservice per database table', 'Microservices with a shared database to keep it simple', 'Rewrite everything as services before launch'], answer: 0, why: 'Boundaries are still moving, and moving them between modules is cheap while moving them between services is costly. Split later, when a clear pressure appears.'},
+]} />
+
+Further reading: [Microservices (Lewis and Fowler)](https://martinfowler.com/articles/microservices.html) · [MonolithFirst](https://martinfowler.com/bliki/MonolithFirst.html) · [Strangler Fig Application](https://martinfowler.com/bliki/StranglerFigApplication.html) · [Database per service (microservices.io)](https://microservices.io/patterns/data/database-per-service.html) · [Saga (microservices.io)](https://microservices.io/patterns/data/saga.html) · [Designing HTTP APIs](../basic/api-design.mdx) · [Making Service Calls Survive Failures](../basic/resilience-patterns.mdx) · [How Logs, Metrics and Traces Leave a Pod](../k8s/observability-pipeline.mdx)

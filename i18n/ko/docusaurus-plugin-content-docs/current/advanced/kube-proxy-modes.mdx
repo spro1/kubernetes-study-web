@@ -1,0 +1,249 @@
+---
+id: kube-proxy-modes
+title: kube-proxy 모드, 서비스 IP에서 파드 IP로
+sidebar_label: 10 · kube-proxy 모드
+description: kube-proxy가 서비스와 EndpointSlice를 iptables·IPVS·nftables 모드의 노드 규칙으로 바꾸는 방식, Cilium 같은 eBPF 데이터패스가 이를 대신하는 방식, conntrack과 남은 항목, externalTrafficPolicy Local과 클라이언트 IP, iptables-save·nft·conntrack으로 디버깅하는 법을 애니메이션으로 본다
+summary: 'iptables·IPVS·nftables 모드에서 kube-proxy가 노드마다 실제로 써 넣는 것, eBPF가 이를 대신하는 방식, conntrack과 트래픽 정책이 중요한 이유.'
+icon: split
+hide_table_of_contents: true
+---
+
+# kube-proxy 모드, 서비스 IP에서 파드 IP로
+
+패킷 레슨에서 서비스 IP는 보내는 노드에서 파드 IP로 바뀐다고 했다. 여기서는 그 상자를 연다. 모드마다 kube-proxy가 커널에 무엇을 써 넣는지, eBPF 데이터패스는 같은 일을 어떻게 하는지, conntrack과 트래픽 정책이 무엇을 바꾸는지 본다.
+
+<StepDiagram
+  width={1000}
+  height={470}
+  meta={{duration: '약 14분', level: '심화'}}
+  groups={[
+    {label: '노드 A', x: 210, y: 30, w: 520, h: 425, tone: 'biz'},
+    {label: '엔드포인트', x: 760, y: 30, w: 220, h: 425, tone: 'plain'},
+  ]}
+  nodes={[
+    {id: 'api', label: 'API 서버', sub: '서비스, EndpointSlice', icon: 'server', tone: 'cp', x: 110, y: 90, show: true},
+    {id: 'ext', label: '외부 클라이언트', sub: 'NodePort·LB 경유', icon: 'browser', tone: 'ext', x: 110, y: 390},
+    {id: 'client', label: '클라이언트 파드', sub: '→ 10.96.12.34:80', icon: 'pod', tone: 'app', size: 'sm', x: 300, y: 250, show: true},
+    {id: 'proxy', label: 'kube-proxy', sub: '데몬셋, 지켜본다', icon: 'gear', tone: 'node', x: 520, y: 90},
+    {id: 'rules', label: '커널 규칙', sub: 'iptables · IPVS · nft', icon: 'split', tone: 'store', x: 520, y: 250, w: 170},
+    {id: 'ct', label: 'conntrack', sub: '흐름마다 항목 하나', icon: 'db', tone: 'store', x: 520, y: 390},
+    {id: 'ebpf', label: 'eBPF 데이터패스', sub: '소켓·tc 훅', icon: 'spark', tone: 'node', x: 300, y: 390},
+    {id: 'pod1', label: '파드 1', sub: '10.244.1.5', icon: 'pod', tone: 'app', size: 'sm', x: 870, y: 120},
+    {id: 'pod2', label: '파드 2', sub: '10.244.1.6', icon: 'pod', tone: 'app', size: 'sm', x: 870, y: 250},
+    {id: 'pod3', label: '파드 3', sub: '노드 B에 있음', icon: 'pod', tone: 'app', size: 'sm', x: 870, y: 380},
+  ]}
+  metrics={[
+    {id: 'mode', label: '모드'},
+    {id: 'lookup', label: '서비스 찾기'},
+    {id: 'picked', label: '고른 엔드포인트'},
+    {id: 'srcip', label: '파드가 보는 출발 IP'},
+  ]}
+  learn={[
+    {text: 'kube-proxy는 경로 위의 프록시가 아니라 규칙을 쓰는 컨트롤러다', at: 1},
+    {text: 'iptables DNAT 체인과 엔드포인트별 무작위 확률', at: 2},
+    {text: 'IPVS(지원 중단 예정)와 nftables(GA) 비교', at: 4},
+    {text: '소켓·tc 수준에서 kube-proxy를 대신하는 eBPF', at: 6},
+    {text: 'conntrack, 남은 항목, externalTrafficPolicy: Local', at: 7},
+  ]}
+  steps={[
+    {
+      short: '시작',
+      kind: '시작',
+      title: '서비스 IP를 가진 장치는 없다',
+      text: [
+        '클라이언트 파드가 서비스 web의 ClusterIP인 10.96.12.34:80에 접속한다. 그 주소에 응답하는 네트워크 인터페이스도, 중간에 끼는 프록시 프로세스도 없다. 노드 A 커널의 규칙이 목적지를 파드 IP 하나로 바꾼다.',
+        '이 레슨은 그 규칙을 누가 쓰고 어떻게 생겼는지를 다룬다. 이름 찾기는 서비스 DNS 레슨에, 바꾼 뒤의 경로는 패킷 레슨에 있다.',
+      ],
+      flows: [{from: 'client', to: 'rules', label: 'SYN 10.96.12.34', type: 'request'}],
+      focus: ['client', 'rules'],
+    },
+    {
+      short: '감시',
+      kind: '원리',
+      title: 'kube-proxy는 지켜보고 규칙을 쓸 뿐, 전달하지 않는다',
+      text: [
+        'kube-proxy는 노드마다, 보통 데몬셋으로 돈다. API 서버를 통해 서비스와 EndpointSlice를 지켜본다. 엔드포인트가 준비되거나 사라지면 자기 노드의 규칙을 고친다.',
+        '패킷은 kube-proxy 프로세스를 거치지 않는다. kube-proxy가 멈춰도 있던 규칙은 계속 동작하지만, 새 서비스와 엔드포인트 변경은 그 노드에 반영되지 않는다.',
+      ],
+      keyIdea: '한 노드에서만 낡은 곳으로 라우팅되고 다른 노드는 멀쩡하다면, 그 노드의 kube-proxy가 죽었거나 동기화에 실패한 경우가 많다. 로그와 동기화 메트릭을 본다.',
+      flows: [
+        {from: 'api', to: 'proxy', label: '감시', type: 'watch'},
+        {from: 'proxy', to: 'rules', label: '규칙 쓰기', type: 'request'},
+      ],
+      focus: ['api', 'proxy'],
+    },
+    {
+      short: 'iptables',
+      kind: '원리',
+      title: 'iptables 모드: 서비스마다 체인, 엔드포인트마다 동전 던지기',
+      text: [
+        'nat 테이블의 KUBE-SERVICES에는 서비스 IP와 포트마다 규칙이 하나 있고, KUBE-SVC-... 체인으로 점프한다. 그 체인에는 엔드포인트마다 규칙이 있고, 각각 파드 IP와 포트로 DNAT하는 KUBE-SEP-... 체인으로 간다.',
+        '선택은 무작위다. 엔드포인트가 셋이면 첫 규칙은 1/3 확률로, 둘째는 나머지 중 1/2로, 마지막은 무조건 맞는다. 그래서 새 연결이 각 엔드포인트에 약 1/3씩 간다.',
+      ],
+      keyIdea: 'iptables-save -t nat | grep KUBE-SVC로 서비스의 체인과 그 안의 statistic --probability 규칙을 본다.',
+      flows: [
+        {from: 'client', to: 'rules', label: 'KUBE-SERVICES', type: 'request'},
+        {from: 'rules', to: 'pod2', label: 'DNAT 10.244.1.6', type: 'request'},
+      ],
+      focus: ['rules', 'pod2'],
+      badges: {rules: 'KUBE-SVC → SEP'},
+      values: {mode: 'iptables', lookup: '규칙 목록을 차례로', picked: '파드 2 (무작위)'},
+    },
+    {
+      short: '규칙 증가',
+      kind: '문제',
+      title: '서비스가 수천 개면 규칙은 수만 개가 된다',
+      text: [
+        '규칙은 서비스 수 곱하기 엔드포인트 수만큼 늘어난다. 매칭은 KUBE-SERVICES를 순서대로 훑고, 변경 하나에도 테이블의 큰 부분을 다시 쓴다. 서비스와 파드가 수만 개인 클러스터에서는 동기화마다 느려지고, 엔드포인트 변경이 커널에 늦게 닿는다.',
+        'kube-proxy는 minSyncPeriod로 변경을 묶어 버틴다. CPU를 덜 쓰는 대신 반영이 늦어진다. 이 한계 때문에 다른 모드가 생겼다.',
+      ],
+      keyIdea: 'kube-proxy 동기화 시간 메트릭을 지켜본다. 동기화가 길면 이미 사라진 파드로 트래픽이 갈 수 있다.',
+      flows: [{from: 'proxy', to: 'rules', label: '전체 재동기화', type: 'request'}],
+      focus: ['proxy', 'rules'],
+      status: {rules: 'warn'},
+      values: {lookup: {text: '서비스 수만큼 늘어남', tone: 'bad'}},
+    },
+    {
+      short: 'IPVS',
+      kind: '주의',
+      title: 'IPVS 모드: 해시 테이블이지만 지원 중단 예정',
+      text: [
+        'IPVS는 커널의 로드밸런서다. kube-proxy는 모든 ClusterIP를 더미 인터페이스 kube-ipvs0에 붙이고, 서비스마다 가상 서버를 만들어 엔드포인트를 실제 서버로 넣는다. 찾기는 해시 테이블이고, 스케줄러는 rr(기본), lc, sh 등에서 고른다.',
+        'IPVS API는 서비스의 모든 경계 사례를 맞추지 못했다. 이 모드는 v1.35부터 지원 중단(deprecated) 상태이고, v1.40부터 기본으로 꺼지며 v1.43에서 제거될 예정이다.',
+      ],
+      keyIdea: '지금 IPVS를 쓰고 있다면 nftables로 옮길 계획을 세운다. ipvsadm -Ln으로 현재 가상 서버를 본다.',
+      flows: [{from: 'rules', to: 'pod1', label: 'rr', type: 'request'}],
+      focus: ['rules'],
+      status: {rules: 'warn'},
+      badges: {rules: 'kube-ipvs0'},
+      values: {mode: {text: 'ipvs (지원 중단)', tone: 'bad'}, lookup: '해시 테이블', picked: '파드 1 (라운드 로빈)'},
+    },
+    {
+      short: 'nftables',
+      kind: '원리',
+      title: 'nftables 모드: 긴 체인 대신 맵',
+      text: [
+        'nftables 모드는 v1.33에서 GA가 됐고 리눅스 커널 5.13 이상이 필요하다. kube-proxy는 규칙을 자기 테이블(ip kube-proxy, ip6 kube-proxy)에 둔다. 서비스 IP는 verdict 맵에 들어 있어서, 서비스를 찾는 일이 차례로 훑기가 아니라 한 번의 조회다.',
+        '갱신은 바뀐 부분만 건드린다. 기본 모드는 아직 iptables이고, 문서는 앞으로 nftables로 바뀐다고 말한다. 업그레이드 때 놀라지 않도록 kube-proxy 설정에 mode를 명시한다.',
+      ],
+      keyIdea: 'nft list table ip kube-proxy로 맵과 서비스별 체인을 본다. iptables-save에는 이 규칙이 보이지 않는다.',
+      flows: [
+        {from: 'client', to: 'rules', label: '맵 조회', type: 'request'},
+        {from: 'rules', to: 'pod2', label: 'DNAT', type: 'request'},
+      ],
+      focus: ['rules'],
+      status: {rules: 'ok'},
+      badges: {rules: 'table kube-proxy'},
+      values: {mode: {text: 'nftables', tone: 'good'}, lookup: {text: '맵, 한 번 조회', tone: 'good'}, picked: '파드 2 (무작위)'},
+    },
+    {
+      short: 'eBPF',
+      kind: '원리',
+      title: 'eBPF 데이터패스는 kube-proxy를 통째로 대신한다',
+      text: [
+        '어떤 CNI는, 예를 들어 kube-proxy 대체를 켠 Cilium은 kube-proxy를 아예 돌리지 않는다. 그 에이전트가 같은 서비스와 EndpointSlice를 지켜보고 eBPF 맵을 채운다.',
+        '파드 트래픽은 앱이 connect()를 부를 때 소켓에 걸린 훅이 백엔드를 고른다. 그래서 연결이 처음부터 파드 IP로 열리고, 이후 패킷에는 NAT가 필요 없다. 바깥에서 NodePort로 오는 트래픽은 노드 인터페이스의 tc나 XDP에 붙은 eBPF 프로그램이 처리한다.',
+      ],
+      keyIdea: 'eBPF로 대체하면 iptables-save에 KUBE- 규칙이 거의 없다. 대신 CNI에 묻는다. 예를 들어 에이전트 파드에서 cilium-dbg service list.',
+      flows: [
+        {from: 'client', to: 'ebpf', label: 'connect()', type: 'request'},
+        {from: 'ebpf', to: 'pod2', label: '파드 IP로', type: 'request'},
+      ],
+      focus: ['ebpf'],
+      status: {rules: 'off', proxy: 'off'},
+      badges: {rules: null},
+      values: {mode: 'eBPF (kube-proxy 없음)', lookup: 'eBPF 맵', picked: '소켓에서'},
+    },
+    {
+      short: 'conntrack',
+      kind: '장애',
+      title: 'conntrack은 파드가 사라진 뒤에도 선택을 기억한다',
+      text: [
+        'iptables, IPVS, nftables에서는 흐름의 첫 패킷만 규칙을 지난다. 커널은 DNAT 결과를 conntrack에 적고, 이후 패킷은 그 항목을 따른다. 그래서 TCP 연결 하나는 파드 하나에 머문다.',
+        '파드 2가 지워지면 그 항목이 남을 수 있다. TCP 클라이언트는 리셋이나 타임아웃을 보고 다시 연결해야 한다. UDP는 끊을 연결이 없으므로 kube-proxy가 사라진 UDP 엔드포인트의 conntrack 항목을 지운다. 이 정리가 없으면 DNS 질의가 죽은 CoreDNS 파드로 계속 갈 수 있다.',
+      ],
+      keyIdea: 'conntrack -L -d 10.96.12.34로 서비스로 가는 흐름을 본다. 오래 사는 연결은 스케일 아웃해도 재분배되지 않는다. 클라이언트가 다시 연결해야 한다.',
+      flows: [
+        {from: 'rules', to: 'ct', label: 'DNAT 기록', type: 'request'},
+        {from: 'ct', to: 'pod2', label: '남은 항목', type: 'request'},
+      ],
+      focus: ['ct', 'pod2'],
+      status: {rules: 'ok', proxy: null, pod2: 'gone', ct: 'error'},
+      values: {mode: 'nftables', lookup: '맵, 한 번 조회', picked: {text: '파드 2, 삭제됨', tone: 'bad'}},
+    },
+    {
+      short: '트래픽 정책',
+      kind: '원리',
+      title: 'externalTrafficPolicy: Local은 클라이언트 IP를 지킨다',
+      text: [
+        '외부 트래픽은 NodePort나 로드밸런서로 들어온다. 기본 정책 Cluster에서는 어느 노드든 다른 노드의 엔드포인트로도 넘길 수 있고, 그때 출발지를 노드 IP로 SNAT한다. 파드는 클라이언트가 아니라 노드 주소를 본다.',
+        'Local이면 노드는 자기에게 있는 엔드포인트로만, SNAT 없이 넘긴다. 그래서 파드가 진짜 클라이언트 IP를 본다. 로컬 엔드포인트가 없는 노드는 버린다. 로드밸런서는 healthCheckNodePort를 확인해 그런 노드를 피한다. kube-proxy는 로컬 엔드포인트가 있을 때만 거기서 200을 돌려준다.',
+      ],
+      keyIdea: 'Local은 클라이언트 IP를 지키고 한 홉을 줄이지만, 트래픽이 파드가 아니라 노드 단위로 나뉜다. 엔드포인트를 노드에 고르게 퍼뜨린다.',
+      flows: [
+        {from: 'ext', to: 'rules', label: 'NodePort', type: 'request'},
+        {from: 'rules', to: 'pod1', label: '로컬만', type: 'request'},
+      ],
+      focus: ['ext', 'pod1'],
+      status: {pod2: null, ct: null, pod3: 'off'},
+      values: {picked: '파드 1 (같은 노드)', srcip: {text: '클라이언트 IP', tone: 'good'}},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '같은 서비스, 다른 기계 장치',
+      text: [
+        'kube-proxy나 eBPF 에이전트가 서비스와 EndpointSlice를 지켜보고 노드마다 규칙을 쓴다. iptables는 체인을 훑고, IPVS는 해시 테이블을 쓰지만 퇴장 중이며, nftables는 맵을 쓰는 권장 경로이고, eBPF는 소켓에서 백엔드를 고를 수 있다.',
+        'conntrack은 흐름마다 처음 고른 엔드포인트에 묶어 두므로, 엔드포인트가 바뀌면 정리가 필요하고 클라이언트는 다시 연결해야 한다. 트래픽 정책은 외부 트래픽이 한 홉 더 가며 출발 IP를 잃어도 되는지를 정한다.',
+      ],
+      keyIdea: '노드에서 디버깅한다. 먼저 모드를 알아내고, 그 모드에 맞는 도구로 규칙을 읽고, 마지막으로 그 흐름의 conntrack을 본다.',
+      flows: [
+        {from: 'api', to: 'proxy', label: '감시', type: 'watch'},
+        {from: 'proxy', to: 'rules', label: '규칙 쓰기', type: 'request'},
+        {from: 'rules', to: 'pod1', label: 'DNAT', type: 'request'},
+      ],
+      focus: ['proxy', 'rules'],
+      status: {pod3: null, rules: null},
+      badges: {rules: null},
+    },
+  ]}
+/>
+
+## 모드 한눈에 비교
+
+| | iptables | IPVS | nftables | eBPF 대체(예: Cilium) |
+|---|---|---|---|---|
+| 상태 | 지금 기본값 | v1.35부터 지원 중단, 제거 예정 | v1.33부터 GA, 커널 5.13+ | 쿠버네티스 밖, CNI가 제공 |
+| 서비스 찾기 | `KUBE-SERVICES` 규칙을 차례로 | 가상 서버 해시 테이블 | verdict 맵 | eBPF 맵 |
+| 엔드포인트 선택 | 무작위, `statistic --probability` | 스케줄러: `rr`, `lc`, `sh` 등 | 무작위 | `connect()` 때, 또는 tc/XDP에서 패킷마다 |
+| 갱신 | 테이블을 크게 다시 씀 | 가상 서버 단위 | 바뀐 부분만 | 맵 갱신 |
+| 볼 곳 | `iptables-save -t nat` | `ipvsadm -Ln` | `nft list table ip kube-proxy` | CNI 도구, 예: `cilium-dbg service list` |
+
+## 직접 확인해 보기
+
+```bash
+# 어떤 모드인가? (노드에서; kind 노드는 docker exec -it lab-worker bash)
+curl -s localhost:10249/proxyMode                     # kube-proxy 메트릭 포트가 iptables / ipvs / nftables로 답한다
+kubectl logs -n kube-system ds/kube-proxy | grep -i proxier   # 예: "Using iptables Proxier"
+kubectl get endpointslices -l kubernetes.io/service-name=web  # kube-proxy가 규칙으로 쓰는 엔드포인트
+
+# iptables 모드
+iptables-save -t nat | grep -E 'KUBE-SVC|KUBE-SEP' | head     # 체인과 확률 규칙
+iptables-save -t nat | grep -c KUBE-SEP                        # 이 노드의 엔드포인트 규칙 수
+
+# nftables·IPVS 모드
+nft list table ip kube-proxy | less                   # 맵과 서비스별 체인
+ipvsadm -Ln                                           # 가상 서버와 실제 서버
+
+# conntrack
+conntrack -L -d 10.96.12.34                           # 이 ClusterIP로 가는 흐름과 DNAT 대상
+conntrack -D -p udp --orig-dst 10.96.0.10             # kube-dns로 가는 남은 UDP 항목을 손으로 지우기
+```
+
+<Quiz questions={[
+  {q: '한 노드의 kube-proxy가 죽었다. 그 노드의 파드에서 기존 서비스로 가는 트래픽은 어떻게 되나?', options: ['패킷이 kube-proxy를 거치므로 곧바로 멈춘다', '있던 규칙으로 계속 동작하지만, 엔드포인트 변경은 그 노드에 더 이상 반영되지 않는다', '다른 노드의 kube-proxy로 돌아간다', 'IPVS 모드로 바뀐다'], answer: 1, why: 'kube-proxy는 커널 규칙을 쓸 뿐이다. 있던 규칙은 남아 트래픽이 흐르지만, 다시 동기화할 때까지 새 서비스와 엔드포인트 변경은 반영되지 않는다.'},
+  {q: '디플로이먼트를 파드 2개에서 6개로 늘렸는데, 오래 사는 TCP 연결 하나를 가진 클라이언트는 여전히 같은 파드와 통신한다. 왜인가?', options: ['iptables가 첫 엔드포인트에 가장 높은 확률을 준다', '새 파드가 아직 EndpointSlice에 없다', 'externalTrafficPolicy가 Cluster다', 'conntrack이 연결을 첫 패킷 때 고른 엔드포인트에 묶어 둔다'], answer: 3, why: '규칙을 지나는 것은 첫 패킷뿐이다. 이후 패킷은 conntrack 항목을 따르므로 연결은 옮겨 가지 않는다. 새 연결만 새 파드로 퍼진다.'},
+  {q: 'LoadBalancer 서비스에 externalTrafficPolicy: Local을 줬다. 왜 이제 앱이 진짜 클라이언트 IP를 보나?', options: ['노드가 로컬 엔드포인트로만 넘기므로 SNAT하지 않는다', '로드밸런서가 X-Forwarded-For 헤더를 붙인다', 'kube-proxy가 nftables 모드로 바뀐다'], answer: 0, why: 'Cluster에서는 노드가 다른 노드로 넘길 수 있고 그때 자기 IP로 SNAT한다. Local에서는 두 번째 홉도 SNAT도 없어서 출발 IP가 그대로 남는다.'},
+]} />
+
+더 읽을거리: [가상 IP와 서비스 프록시](https://kubernetes.io/docs/reference/networking/virtual-ips/) · [kube-proxy IPVS 백엔드 제거 일정](https://kubernetes.io/blog/2026/11/16/ipvs-removal/) · [서비스의 출발지 IP](https://kubernetes.io/docs/tutorials/services/source-ip/) · [Cilium kube-proxy 대체](https://docs.cilium.io/en/stable/network/kubernetes/kubeproxy-free/) · [파드에서 파드로 가는 패킷](../advanced/packet-path.mdx) · [이름으로 찾아가기 (Service·DNS)](../k8s/service-dns.mdx) · [서비스 종류 (ClusterIP · NodePort · LoadBalancer)](../feature/service-types.mdx)

@@ -1,0 +1,23 @@
+name: Build check
+
+# PR마다 두 언어 빌드를 돌려 깨진 MDX·링크가 main에 들어오지 않게 한다. 배포는 deploy.yml 이 한다.
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Lesson index is up to date
+        run: node scripts/build-lesson-index.js && git diff --exit-code
+      - run: npm run build

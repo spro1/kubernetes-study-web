@@ -1,0 +1,170 @@
+---
+id: no-endpoints
+title: 'Lab 04 · A Service that answers nobody'
+sidebar_label: '04 · No endpoints'
+sidebar_position: 4
+description: 'Break-fix lab: the Pods run, but requests to the Service are refused. Find the selector mismatch and the wrong targetPort with EndpointSlices, kubectl describe svc and a debug Pod.'
+hide_table_of_contents: false
+---
+
+# Lab 04 · A Service that answers nobody
+
+This lab runs on the kind cluster from [Build a Lab Cluster on Your Laptop](../basic/lab-cluster.mdx). Check `kubectl config current-context` first: it should say `kind-lab`.
+
+## Goal
+
+Two nginx Pods are `Running` and `1/1` ready, but nothing gets an answer through the Service `web`. Find out where the request is lost and fix the Service.
+
+## Setup
+
+```bash
+kubectl apply -f - <<'EOF'
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: lab-04
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  namespace: lab-04
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.27
+          ports:
+            - containerPort: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+  namespace: lab-04
+spec:
+  selector:
+    app: frontend
+  ports:
+    - port: 80
+      targetPort: 8080
+EOF
+```
+
+## Symptoms
+
+```bash
+kubectl -n lab-04 get pods
+kubectl -n lab-04 run tmp --rm -i --restart=Never --image=busybox:1.36 -- wget -qO- -T 3 http://web
+```
+
+```text
+NAME                   READY   STATUS    RESTARTS   AGE
+web-6b7d8c9f5d-4kq9z   1/1     Running   0          40s
+web-6b7d8c9f5d-tn6vx   1/1     Running   0          40s
+wget: can't connect to remote host (10.96.143.27): Connection refused
+pod "tmp" deleted
+```
+
+The Pods look healthy. The name `web` resolves to a ClusterIP (yours will differ), so DNS works, but the connection is refused. Depending on the kube-proxy mode you may see a timeout (`download timed out`) instead.
+
+## Investigate
+
+```bash
+kubectl -n lab-04 describe svc web                              # Selector, TargetPort, Endpoints
+kubectl -n lab-04 get endpointslices -l kubernetes.io/service-name=web
+kubectl -n lab-04 get pods --show-labels                         # The labels the Pods really have
+kubectl -n lab-04 get pods -o wide                               # Pod IPs
+# Talk to a Pod directly, skipping the Service (use a Pod IP from above)
+kubectl -n lab-04 run tmp --rm -i --restart=Never --image=busybox:1.36 -- wget -qO- -T 3 http://<pod-ip>:80
+```
+
+Work along the path: client → Service name → ClusterIP → endpoints → Pod IP and port. Find the first hop where the answer is "nothing there".
+
+## Hints
+
+<details>
+<summary>Hint 1</summary>
+
+A Service forwards only to the endpoints listed in its EndpointSlices. If the slice for `web` has no endpoints, the Service has nowhere to send the request. Where does the EndpointSlice controller get its list of Pods from?
+
+</details>
+
+<details>
+<summary>Hint 2</summary>
+
+Put the `Selector` line of `kubectl describe svc web` next to the `LABELS` column of `kubectl get pods --show-labels`. Every key and value in the selector must match.
+
+</details>
+
+<details>
+<summary>Hint 3</summary>
+
+After the selector matches, the slice lists two Pod IPs, but the request is still refused. Look at the port in the EndpointSlice and at the port nginx listens on. Your direct `wget` to the Pod IP on port 80 worked, didn't it?
+
+</details>
+
+## Solution
+
+<details>
+<summary>Solution</summary>
+
+**Problem 1: the selector matches no Pod.** The Service selects `app=frontend`, but the Pods carry `app=web`. With no matching Pods, `describe svc` shows no endpoints and the EndpointSlice has none, so kube-proxy has no backend for the ClusterIP and rejects the connection. Point the selector at the real label:
+
+```bash
+kubectl -n lab-04 patch service web -p '{"spec":{"selector":{"app":"web"}}}'
+kubectl -n lab-04 get endpointslices -l kubernetes.io/service-name=web   # Two Pod IPs, port 8080
+```
+
+**Problem 2: the wrong targetPort.** Now the Service sends traffic to the Pod IPs, but on port 8080. nginx listens on port 80, so each Pod refuses the connection. `port` is what clients use on the ClusterIP; `targetPort` is the port on the Pod. Set it to 80:
+
+```bash
+kubectl -n lab-04 patch service web --type=json \
+  -p='[{"op":"replace","path":"/spec/ports/0/targetPort","value":80}]'
+```
+
+A sturdier habit: name the container port (`name: http`) and use `targetPort: http`, so the Service follows the Pod if the number ever changes.
+
+</details>
+
+## Verify
+
+```bash
+kubectl -n lab-04 get endpointslices -l kubernetes.io/service-name=web
+kubectl -n lab-04 run tmp --rm -i --restart=Never --image=busybox:1.36 -- sh -c 'wget -qO- -T 3 http://web | grep title'
+```
+
+```text
+NAME        ADDRESSTYPE   PORTS   ENDPOINTS               AGE
+web-8xk2p   IPv4          80      10.244.1.5,10.244.2.4   5m
+<title>Welcome to nginx!</title>
+pod "tmp" deleted
+```
+
+The slice lists both Pod IPs on port 80, and the request through the Service name gets the nginx welcome page.
+
+## Clean up
+
+```bash
+kubectl delete ns lab-04
+```
+
+<Quiz questions={[
+  {q: 'The EndpointSlice of a Service lists no endpoints, but its Pods are Running and Ready. What is the most likely cause?', options: ['The targetPort is wrong', 'The Service selector does not match the Pod labels', 'Cluster DNS is broken'], answer: 1, why: 'Endpoints come from the Pods the selector matches. A wrong targetPort still lists the Pods, just with the wrong port.'},
+  {q: 'The EndpointSlice lists the Pod IPs, yet connections through the Service are refused. What do you check next?', options: ['Whether targetPort matches the port the container listens on', 'Whether the Service has enough replicas', 'Whether the namespace has a ResourceQuota'], answer: 0, why: 'Traffic now reaches the Pod IP, so the remaining question is the port. Test a Pod IP directly to confirm the right one.'},
+]} />
+
+## Related lessons
+
+- [Finding Services by Name (Service·DNS)](../k8s/service-dns.mdx)
+- [How a Request Reaches a Pod](../k8s/traffic.mdx)
+- [Debugging a Running Pod with kubectl debug](../k8s/kubectl-debug.mdx)
+- [Reading status in three layers and the troubleshooting order](../intermediate/troubleshoot-status.mdx)

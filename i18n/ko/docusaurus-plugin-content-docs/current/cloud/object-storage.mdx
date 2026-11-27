@@ -145,7 +145,7 @@ hide_table_of_contents: true
         '버전 ID 없이 DELETE하면 데이터가 지워지지 않는다. 삭제 마커가 붙어 GET은 404를 돌려주지만, 이전 버전은 남아 있어 되살릴 수 있다. 실수나 일부 랜섬웨어를 막아 주지만, 모든 버전의 저장 비용을 낸다.',
       ],
       keyIdea: '다시 만들 수 없는 것이 든 버킷은 버전 관리를 켠다. 한 번 켜면 일시 중지만 할 수 있고 끌 수는 없다.',
-      flows: [{from: 'obj', to: 'ver', label: '이전 버전으로', type: 'watch'}],
+      flows: [{from: 'obj', to: 'ver', label: '이전 버전으로', type: 'watch', bend: 1}],
       focus: ['obj', 'ver'],
       badges: {obj: 'v2 현재', ver: 'v1'},
       values: {versions: '2 (v2가 현재)'},
@@ -159,7 +159,7 @@ hide_table_of_contents: true
         '싼 클래스는 다른 것을 내준다. 자주 안 읽는 클래스는 읽을 때 GB당 요금과 최소 보관 기간이 있다. Glacier Flexible Retrieval 같은 일부 보관 등급은 되살리는 데 몇 분에서 몇 시간이 걸린다. 같은 규칙으로 이전 버전을 90일 뒤 지우게 하면 버전이 끝없이 쌓이지 않는다.',
       ],
       flows: [
-        {from: 'ver', to: 'cold', label: '180일 뒤', type: 'watch'},
+        {from: 'ver', to: 'cold', label: '180일 뒤', type: 'watch', bend: 1.2},
       ],
       focus: ['ver', 'cold'],
       badges: {cold: 'v1 보관'},

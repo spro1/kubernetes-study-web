@@ -1,0 +1,168 @@
+---
+id: pending-pod
+title: 'Lab 01 · A Pod that never schedules'
+sidebar_label: '01 · Pending Pod'
+sidebar_position: 1
+description: 'Break-fix lab: a Deployment whose Pod stays Pending because it asks for more CPU than any node has and a node label no node carries. Read the FailedScheduling event and fix both.'
+hide_table_of_contents: false
+---
+
+# Lab 01 · A Pod that never schedules
+
+This lab runs on the 3-node kind cluster from [Build a Lab Cluster on Your Laptop](../basic/lab-cluster.mdx) (one control-plane, two workers). Check `kubectl config current-context` first: it should say `kind-lab`.
+
+## Goal
+
+A Deployment was applied, but its Pod never starts. Find out why the scheduler cannot place it, and fix the Deployment so the Pod runs.
+
+## Setup
+
+```bash
+kubectl apply -f - <<'EOF'
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: lab-01
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  namespace: lab-01
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      nodeSelector:
+        disktype: ssd
+      containers:
+        - name: nginx
+          image: nginx:1.27
+          resources:
+            requests:
+              cpu: "100"
+              memory: 64Mi
+EOF
+```
+
+## Symptoms
+
+```bash
+kubectl -n lab-01 get pods
+```
+
+```text
+NAME                   READY   STATUS    RESTARTS   AGE
+web-7c9d8f6b5d-q2x8m   0/1     Pending   0          45s
+```
+
+The Pod name suffix will differ. The Pod stays `Pending` no matter how long you wait, and `kubectl logs` has nothing to show.
+
+## Investigate
+
+```bash
+kubectl -n lab-01 get pods -o wide          # Which node? Look at the NODE column
+kubectl -n lab-01 describe pod -l app=web   # Read the Events at the bottom
+kubectl get nodes --show-labels              # What labels do the nodes really have?
+kubectl get nodes -o custom-columns=NAME:.metadata.name,CPU:.status.allocatable.cpu,MEMORY:.status.allocatable.memory
+```
+
+Compare what the Pod asks for with what the nodes offer. The scheduler's reason is always in the Pod's events, not in logs: no container has started yet.
+
+## Hints
+
+<details>
+<summary>Hint 1</summary>
+
+The NODE column says `<none>`. The scheduler never picked a node, so look for a `FailedScheduling` event. It counts the nodes and gives one reason per group of nodes.
+
+</details>
+
+<details>
+<summary>Hint 2</summary>
+
+The control-plane node has a taint that ordinary Pods do not tolerate. That part of the message is normal on kind. Look at the reason given for the two workers, then compare the Pod's `nodeSelector` with the output of `kubectl get nodes --show-labels`.
+
+</details>
+
+<details>
+<summary>Hint 3</summary>
+
+There are two problems. The scheduler stops at the first filter a node fails, so the event may show only one of them. Fix the first, then read the new event for the second. Look at `resources.requests.cpu`: `"100"` means 100 whole CPUs.
+
+</details>
+
+## Solution
+
+<details>
+<summary>Solution</summary>
+
+**Problem 1: a label no node has.** The event reads like this (the exact wording varies a little by version, and a `preemption:` note follows):
+
+```text
+Warning  FailedScheduling  ...  0/3 nodes are available: 1 node(s) had untolerated taint {node-role.kubernetes.io/control-plane: }, 2 node(s) didn't match Pod's node affinity/selector.
+```
+
+The Pod's `nodeSelector` asks for `disktype=ssd`, and no node carries that label. The scheduler only places a Pod on a node whose labels match every key in `nodeSelector`. Remove the selector:
+
+```bash
+kubectl -n lab-01 patch deployment web --type=json \
+  -p='[{"op":"remove","path":"/spec/template/spec/nodeSelector"}]'
+```
+
+(If the Pod really needed SSD nodes, you would label the right node instead: `kubectl label node lab-worker disktype=ssd`. Remove it after the lab with `kubectl label node lab-worker disktype-`.)
+
+**Problem 2: requests larger than any node.** The new Pod is still Pending, and its event now gives a different reason for the workers:
+
+```text
+Warning  FailedScheduling  ...  0/3 nodes are available: 1 node(s) had untolerated taint {node-role.kubernetes.io/control-plane: }, 2 Insufficient cpu.
+```
+
+`cpu: "100"` asks for 100 CPU cores. The scheduler compares requests with each node's allocatable CPU minus what other Pods already requested, and no kind node has 100 cores. Ask for a realistic amount:
+
+```bash
+kubectl -n lab-01 set resources deployment web --requests=cpu=100m,memory=64Mi
+```
+
+`100m` is 0.1 CPU. Each change to the Pod template creates a new ReplicaSet, and the Deployment removes the old Pending Pods once the new one runs.
+
+</details>
+
+## Verify
+
+```bash
+kubectl -n lab-01 rollout status deployment web
+kubectl -n lab-01 get pods -o wide
+```
+
+```text
+deployment "web" successfully rolled out
+NAME                   READY   STATUS    RESTARTS   AGE   IP           NODE          ...
+web-5b6f9c7d4f-8mhtk   1/1     Running   0          20s   10.244.1.7   lab-worker    ...
+```
+
+The Pod is `Running`, `1/1` ready, and the NODE column names a worker.
+
+## Clean up
+
+```bash
+kubectl delete ns lab-01
+```
+
+<Quiz questions={[
+  {q: 'The FailedScheduling event says "2 node(s) didn\'t match Pod\'s node affinity/selector". What does it mean?', options: ['Those nodes are out of memory', 'The Pod\'s nodeSelector or node affinity asks for labels those nodes do not have', 'The image cannot be pulled on those nodes'], answer: 1, why: 'Node affinity and nodeSelector are matched against node labels. Compare them with kubectl get nodes --show-labels.'},
+  {q: 'Why does kubectl logs show nothing for a Pending Pod?', options: ['No container has started yet, because the scheduler has not placed the Pod on a node', 'Logs are turned off until the Pod is Ready', 'The kubelet deletes logs while a Pod is Pending'], answer: 0, why: 'Logs come from a running container. Before scheduling there is none, so the cause is in the Pod events.'},
+]} />
+
+## Related lessons
+
+- [Reading status in three layers and the troubleshooting order](../intermediate/troubleshoot-status.mdx)
+- [Which Node Gets the Pod (Scheduling)](../k8s/scheduling.mdx)
+- [Requests and limits](../intermediate/requests-limits.mdx)
+- [Build a Lab Cluster on Your Laptop](../basic/lab-cluster.mdx)

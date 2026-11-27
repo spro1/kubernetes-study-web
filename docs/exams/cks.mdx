@@ -1,0 +1,91 @@
+---
+id: cks
+title: CKS practice questions
+sidebar_label: CKS
+sidebar_position: 4
+description: 27 original practice questions for the CKS exam, grouped by its six official domains, with the reason and the command or field behind each answer.
+---
+
+# CKS practice questions
+
+The CKS is a 2-hour hands-on exam in a terminal, based on Kubernetes v1.37. You must hold the CKA first. It has six domains:
+
+| Domain | Weight | Questions here |
+| --- | --- | --- |
+| Cluster Setup | 15% | 4 |
+| Cluster Hardening | 15% | 4 |
+| System Hardening | 10% | 4 |
+| Minimize Microservice Vulnerabilities | 20% | 5 |
+| Supply Chain Security | 20% | 5 |
+| Monitoring, Logging and Runtime Security | 20% | 5 |
+
+The questions are original and unofficial, not taken from the real exam. Domains and weights come from the official curriculum, as listed on [Learning paths & certifications](../roadmap.mdx). The real exam has you harden a live cluster, so practice in the [Hands-on labs](../labs/index.mdx).
+
+## Cluster Setup (15%)
+
+<Quiz title={null} save={false} questions={[
+  {q: 'You must block all incoming and outgoing Pod traffic in namespace payments by default. Which NetworkPolicy does that?', options: ['podSelector: {} with policyTypes: [Ingress]', 'podSelector: {} with policyTypes: [Ingress, Egress] and no rules', 'podSelector: {} with egress: [{}]', 'An empty namespaceSelector in an ingress rule'], answer: 1, why: 'An empty podSelector selects every Pod, and naming both policy types with no rules allows nothing in either direction. Then add narrow allow policies, including DNS egress.'},
+  {q: 'An Ingress serves HTTPS for shop.example.com. What must spec.tls[].secretName point to?', options: ['A Secret of type kubernetes.io/tls with tls.crt and tls.key, in the same namespace as the Ingress', 'A ConfigMap holding the certificate', 'A Secret in the ingress controller namespace only', 'A ServiceAccount token'], answer: 0, why: 'The Ingress references a TLS Secret by name in its own namespace. The controller reads tls.crt and tls.key from it and serves that certificate for the listed hosts.'},
+  {q: 'With cert-manager installed, which object do you create to have it issue a certificate and keep it renewed in a Secret?', options: ['A CertificateSigningRequest', 'A Secret with an empty tls.crt', 'A Certificate that references an Issuer or ClusterIssuer and sets secretName', 'An APIService'], answer: 2, why: 'A cert-manager Certificate names the issuer, the DNS names and the Secret to write, and cert-manager renews it before expiry. The ingress-shim can also create one from an annotation such as cert-manager.io/cluster-issuer.'},
+  {q: 'Pods in namespace apps must not reach the cloud instance metadata endpoint at 169.254.169.254. Which egress rule allows everything else but blocks that?', options: ['podSelector: {} in to:', 'ports: [{port: 80}] only', 'namespaceSelector: {} in to:', 'ipBlock with cidr: 0.0.0.0/0 and except: [169.254.169.254/32]'], answer: 3, why: 'ipBlock.except carves addresses out of the allowed CIDR. Metadata endpoints can hand out node credentials, so blocking them from Pods is a standard hardening step.'},
+]} />
+
+**Study:** [Blocking and Allowing Traffic (NetworkPolicy)](../k8s/network-policy.mdx), [Ingress Rules and TLS](../feature/ingress.mdx), [Automatic TLS Certificates with cert-manager](../advanced/cert-manager.mdx)
+
+## Cluster Hardening (15%)
+
+<Quiz title={null} save={false} questions={[
+  {q: 'A CI system needs a short-lived token for the ServiceAccount deployer. What is the recommended way to get one?', options: ['Read the token from the deployer Secret that Kubernetes creates automatically', 'Copy the token from a running Pod', 'Use the admin.conf client certificate', 'kubectl create token deployer --duration=1h'], answer: 3, why: 'kubectl create token uses the TokenRequest API to issue a bound, expiring token. Since v1.24, ServiceAccounts no longer get long-lived token Secrets automatically, and creating them by hand is discouraged.'},
+  {q: 'How do you list every action the ServiceAccount web in namespace shop is allowed to do there?', options: ['kubectl auth can-i --list -n shop --as=system:serviceaccount:shop:web', 'kubectl get clusterrolebindings -o wide', 'kubectl describe sa web -n shop', 'kubectl auth whoami --as=web'], answer: 0, why: 'kubectl auth can-i --list with impersonation shows the effective rules from all Roles and ClusterRoles bound to that subject. Look for wildcards and verbs like create on pods or get on secrets.'},
+  {q: 'Which kubelet configuration makes unauthenticated requests to the kubelet API fail and sends authorization checks to the API server?', options: ['readOnlyPort: 10255', 'authentication.anonymous.enabled: false and authorization.mode: Webhook', 'authorization.mode: AlwaysAllow', 'serverTLSBootstrap: false'], answer: 1, why: 'With anonymous auth off, requests need a client certificate or token, and Webhook authorization asks the API server (SubjectAccessReview) whether the caller may use that kubelet endpoint. Keep readOnlyPort at 0.'},
+  {q: 'Why does keeping the cluster on a recent Kubernetes version count as hardening?', options: ['Older versions cannot run NetworkPolicy', 'Upgrades rotate all Secrets', 'Security fixes are only released for the three most recent minor versions', 'Older versions disable RBAC'], answer: 2, why: 'The project maintains release branches for the most recent three minor versions. A cluster that falls further behind gets no patch releases for new CVEs.'},
+]} />
+
+**Study:** [Who Can Do What (RBAC)](../k8s/rbac.mdx), [How a Pod Proves Who It Is (ServiceAccount Tokens)](../advanced/serviceaccount-token.mdx), [How an API Request Gets Stored](../advanced/api-request-path.mdx), [Upgrading a cluster with kubeadm (CKA)](../cert/kubeadm-upgrade.mdx)
+
+## System Hardening (10%)
+
+<Quiz title={null} save={false} questions={[
+  {q: 'An AppArmor profile named k8s-deny-write is loaded on every node. How do you apply it to one container?', options: ['securityContext.appArmorProfile with type: Localhost and localhostProfile: k8s-deny-write', 'securityContext.seccompProfile with type: Localhost', 'securityContext.capabilities.add: [APPARMOR]', 'A RuntimeClass named apparmor'], answer: 0, why: 'Since v1.30 AppArmor is set with the appArmorProfile field on the Pod or container securityContext. The profile must already be loaded on the node (apparmor_parser), or the container will not start.'},
+  {q: 'You want containers to run with the container runtime default seccomp filter. Which setting does that?', options: ['privileged: true', 'securityContext.seccompProfile.type: Unconfined', 'securityContext.seccompProfile.type: RuntimeDefault', 'allowPrivilegeEscalation: true'], answer: 2, why: 'RuntimeDefault applies the runtime\'s default syscall filter. Without it, containers run Unconfined unless the kubelet --seccomp-default option is on. The restricted Pod Security level requires RuntimeDefault or Localhost.'},
+  {q: 'Which Pod setting lets a container see and signal every process on the node?', options: ['shareProcessNamespace: true', 'hostNetwork: true', 'runAsNonRoot: false', 'hostPID: true'], answer: 3, why: 'hostPID puts the container in the node PID namespace. shareProcessNamespace only shares processes between containers of the same Pod. The baseline Pod Security level forbids hostPID, hostIPC and hostNetwork.'},
+  {q: 'A Pod needs to read one cloud storage bucket. Which is the least-privilege setup?', options: ['Put a static access key with admin rights in a Secret', 'Map the Pod ServiceAccount to a cloud role that can only read that bucket (workload identity)', 'Give the node instance role read access to all buckets', 'Run the Pod with hostNetwork so it uses the node identity'], answer: 1, why: 'Workload identity federation gives each ServiceAccount its own short-lived cloud credentials scoped to one role. Node roles are shared by every Pod on the node, and static keys do not expire.'},
+]} />
+
+**Study:** [Runtime security — catching abnormal behavior (CKS)](../cert/runtime-security.mdx), [Pod Security Standards and securityContext](../advanced/pod-security.mdx), [Permission Checks on One API Request (IAM)](../cloud/iam-request.mdx)
+
+## Minimize Microservice Vulnerabilities (20%)
+
+<Quiz title={null} save={false} questions={[
+  {q: 'Which namespace label makes the API server reject Pods that break the restricted Pod Security Standard?', options: ['pod-security.kubernetes.io/warn: restricted', 'pod-security.kubernetes.io/audit: restricted', 'security.kubernetes.io/policy: restricted', 'pod-security.kubernetes.io/enforce: restricted'], answer: 3, why: 'Pod Security Admission has three modes. enforce rejects the Pod, while audit only writes an audit annotation and warn only returns a warning to the client.'},
+  {q: 'Which container securityContext passes the restricted Pod Security Standard?', options: ['runAsNonRoot: true, allowPrivilegeEscalation: false, capabilities.drop: [ALL], seccompProfile.type: RuntimeDefault', 'privileged: false and runAsUser: 0', 'readOnlyRootFilesystem: true only', 'capabilities.add: [NET_ADMIN] with runAsNonRoot: true'], answer: 0, why: 'restricted requires a non-root user, no privilege escalation, all capabilities dropped (only NET_BIND_SERVICE may be added back) and a RuntimeDefault or Localhost seccomp profile. readOnlyRootFilesystem is good practice but not required.'},
+  {q: 'You created a ValidatingAdmissionPolicy with a CEL rule, but bad Deployments are still accepted. What is most likely missing?', options: ['A webhook Service for the policy', 'A ValidatingAdmissionPolicyBinding that selects the resources and sets validationActions', 'A restart of the kube-apiserver', 'The policy must be in kube-system'], answer: 1, why: 'A ValidatingAdmissionPolicy does nothing on its own. A ValidatingAdmissionPolicyBinding attaches it to a scope (for example by namespaceSelector) and chooses actions such as Deny, Warn or Audit.'},
+  {q: 'You enabled Secret encryption at rest with an EncryptionConfiguration (aescbc first). Are the Secrets that already exist now encrypted in etcd?', options: ['Yes, the API server encrypts all data on restart', 'Yes, once etcd compacts', 'No; rewrite them, for example kubectl get secrets -A -o json | kubectl replace -f -', 'No, encryption at rest only works with KMS'], answer: 2, why: 'The first provider in the list is used for writes, so only Secrets written after the change are encrypted. Rewriting every Secret stores it again through the new provider.'},
+  {q: 'In an Istio mesh, which resource forces workloads in a namespace to accept only mutual TLS traffic?', options: ['A PeerAuthentication with mtls.mode: STRICT', 'A DestinationRule with tls.mode: DISABLE', 'A NetworkPolicy on port 15006', 'A Kubernetes Secret named istio-mtls'], answer: 0, why: 'PeerAuthentication sets what the receiving sidecar accepts. STRICT rejects plain-text connections, while PERMISSIVE, the default, accepts both during migration.'},
+]} />
+
+**Study:** [Pod Security Standards and securityContext](../advanced/pod-security.mdx), [Admission Policies with CEL and Webhooks](../advanced/admission-policy.mdx), [Keeping Secrets Safe](../advanced/secret-management.mdx), [Namespaces and Resource Quotas](../feature/namespace-quota.mdx), [Service Mesh ① Sidecars and Mutual Authentication](../feature/mesh-sidecar.mdx)
+
+## Supply Chain Security (20%)
+
+<Quiz title={null} save={false} questions={[
+  {q: 'A manifest uses image: nginx:1.27. How do you make sure the exact same image bytes run every time?', options: ['Set imagePullPolicy: Always', 'Use the latest tag', 'Pin it by digest, for example nginx@sha256:...', 'Add an imagePullSecret'], answer: 2, why: 'Tags can be moved to point at different images; a digest is the hash of the image manifest and cannot change. imagePullPolicy: Always just pulls whatever the tag points to now.'},
+  {q: 'Which command lists only HIGH and CRITICAL vulnerabilities in an image with Trivy?', options: ['trivy image --severity HIGH,CRITICAL registry.example.com/app:2.1', 'trivy k8s --report summary', 'trivy fs --scanners secret .', 'trivy config ./manifests'], answer: 0, why: 'trivy image scans the OS packages and libraries in the image, and --severity filters the output. trivy config checks manifest misconfigurations instead of CVEs.'},
+  {q: 'What does an SBOM give you?', options: ['A signature proving who built the image', 'A list of the packages and versions inside an artifact, in a format such as SPDX or CycloneDX', 'A runtime log of the syscalls a container made', 'An admission policy for allowed registries'], answer: 1, why: 'A Software Bill of Materials is an inventory of components. It lets you check quickly whether a newly announced CVE affects you. Signing (for example with cosign) is a separate step.'},
+  {q: 'The image was signed with cosign and a key pair. Which command checks the signature before you deploy?', options: ['cosign sign --key cosign.key IMAGE', 'docker trust inspect IMAGE', 'trivy image --verify IMAGE', 'cosign verify --key cosign.pub IMAGE'], answer: 3, why: 'cosign verify checks the signature stored in the registry against the public key. cosign sign creates a signature. In the cluster, an admission controller can run the same check on every Pod.'},
+  {q: 'Only images from registry.example.com may run in the cluster. Where do you enforce that?', options: ['In each Dockerfile', 'In an admission policy, such as a ValidatingAdmissionPolicy with a CEL rule on container image fields, or the ImagePolicyWebhook plugin', 'In the node /etc/hosts file', 'In a NetworkPolicy egress rule'], answer: 1, why: 'Admission runs on every create and update, so a policy that checks each containers[].image (and initContainers) prefix blocks other registries before a Pod is stored.'},
+]} />
+
+**Study:** [Image and Supply Chain Security](../advanced/supply-chain.mdx), [How an Image Is Built and Run](../basic/container-image.mdx), [Pulling Images from a Private Registry](../k8s/private-registry.mdx)
+
+## Monitoring, Logging and Runtime Security (20%)
+
+<Quiz title={null} save={false} questions={[
+  {q: 'Your audit policy must record who reads or changes Secrets without writing the Secret values into the log. Which level do you use for secrets?', options: ['RequestResponse', 'Request', 'None', 'Metadata'], answer: 3, why: 'Metadata logs the user, verb, resource, namespace and time but no request or response body. Request and RequestResponse would copy the Secret data into the log file.'},
+  {q: 'An audit policy has a rule for secrets at level Metadata, followed by a catch-all rule at level RequestResponse. Which level applies to a Secret read?', options: ['Metadata, because the first matching rule wins', 'RequestResponse, because the highest level wins', 'Both are logged as two events', 'None, because the rules conflict'], answer: 0, why: 'Audit policy rules are checked in order and the first match sets the level. Put specific rules first and the catch-all last.'},
+  {q: 'You added --audit-policy-file and --audit-log-path to the kube-apiserver static Pod manifest, and the API server does not come back. What is the usual cause?', options: ['Audit logging needs a restart of etcd', 'The policy file and log directory are not mounted into the Pod with hostPath volumes and volumeMounts', 'The audit flags are only valid on the kubelet', 'The audit log must be in /tmp'], answer: 1, why: 'The API server runs in a container and only sees paths that are mounted. Add hostPath volumes and volumeMounts for the policy file and the log directory, then check with crictl logs.'},
+  {q: 'Falco raises "Terminal shell in container" for a Pod. What is Falco watching to detect that?', options: ['The container log output', 'The Kubernetes audit log only', 'System calls on the node, such as a shell process being started inside a container', 'Image layers in the registry'], answer: 2, why: 'Falco reads kernel events through an eBPF probe or kernel module and matches them against rules, so it sees a process like bash being spawned inside a container in real time.'},
+  {q: 'Which setting makes a running container closest to immutable?', options: ['restartPolicy: Never', 'imagePullPolicy: IfNotPresent', 'A larger memory limit', 'readOnlyRootFilesystem: true, with emptyDir only where the app must write'], answer: 3, why: 'With a read-only root filesystem an attacker cannot drop new binaries or change config in the container. Pair it with a minimal image without a shell or package manager.'},
+]} />
+
+**Study:** [Runtime security — catching abnormal behavior (CKS)](../cert/runtime-security.mdx), [Audit Logs](../advanced/audit-log.mdx), [Viewing the cluster through the 4Cs and a threat model (KCSA·KCNA)](../cert/threat-model.mdx)

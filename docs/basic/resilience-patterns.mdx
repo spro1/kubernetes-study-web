@@ -1,0 +1,282 @@
+---
+id: resilience-patterns
+title: Making Service Calls Survive Failures
+sidebar_label: 09 · Resilience patterns
+description: Animated walkthrough of timeouts and deadline budgets, retries with exponential backoff and jitter, idempotency, retry storms, circuit breakers, bulkheads, load shedding with 429 and Retry-After, and fallbacks
+summary: 'One slow dependency can take down a whole checkout. Timeouts, retries with backoff, circuit breakers, bulkheads, load shedding and fallbacks, and where each one lives.'
+icon: shield
+hide_table_of_contents: true
+---
+
+# Making Service Calls Survive Failures
+
+Every call between services crosses a network that can be slow or broken. Follow one checkout request while the payments service struggles, and see which patterns keep the rest of the system standing.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~13 min', level: 'Intermediate'}}
+  groups={[
+    {label: 'Services', x: 400, y: 30, w: 575, h: 410, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'client', label: 'Client', sub: 'checkout', icon: 'browser', tone: 'ext', x: 100, y: 230, show: true},
+    {id: 'gw', label: 'API gateway', sub: 'edge proxy', icon: 'gate', tone: 'node', x: 280, y: 230, show: true},
+    {id: 'order', label: 'orders', sub: 'calls two services', icon: 'server', tone: 'app', x: 520, y: 230, show: true},
+    {id: 'pol', label: 'Client policy', sub: 'timeout · retry · breaker', icon: 'shield', tone: 'cp', x: 520, y: 100, w: 170},
+    {id: 'cache', label: 'Cache', sub: 'last known stock', icon: 'archive', tone: 'store', x: 520, y: 370},
+    {id: 'pay', label: 'payments', sub: 'POST /charges', icon: 'server', tone: 'app', x: 820, y: 110, show: true},
+    {id: 'inv', label: 'inventory', sub: 'GET /stock', icon: 'server', tone: 'app', x: 820, y: 350, show: true},
+  ]}
+  metrics={[
+    {id: 'budget', label: 'Time budget'},
+    {id: 'attempts', label: 'Calls to payments'},
+    {id: 'breaker', label: 'Breaker'},
+    {id: 'result', label: 'User sees'},
+  ]}
+  learn={[
+    {text: 'Why one slow dependency spreads into a full outage', at: 1},
+    {text: 'Timeouts on every call, and one budget across hops', at: 2},
+    {text: 'Retries with backoff and jitter, and only for idempotent calls', at: 3},
+    {text: 'How retries at every layer multiply load', at: 5},
+    {text: 'Circuit breakers, bulkheads, load shedding and fallbacks', at: 6},
+  ]}
+  steps={[
+    {
+      short: 'Start',
+      kind: '시작',
+      title: 'One checkout, three network calls',
+      text: [
+        'The client sends a checkout to the API gateway. The gateway calls orders, and orders calls payments to charge the card and inventory to reserve stock.',
+        'Each arrow is a network call. Any of them can fail fast, fail slowly, or succeed without the caller ever hearing about it.',
+      ],
+      flows: [
+        {from: 'client', to: 'gw', label: 'POST /checkout', type: 'request'},
+        {from: 'gw', to: 'order', label: 'Forward', type: 'request'},
+        {from: 'order', to: 'pay', label: 'Charge', type: 'request'},
+        {from: 'order', to: 'inv', label: 'Reserve', type: 'request'},
+      ],
+      focus: ['gw', 'order'],
+      values: {budget: '—', attempts: '1', breaker: '—', result: {text: '200 OK', tone: 'good'}},
+    },
+    {
+      short: 'No timeout',
+      kind: '문제',
+      title: 'Without a timeout, a slow service drags everyone down',
+      text: [
+        'payments starts taking 30 seconds per request. orders has no timeout, so each checkout holds a worker and a connection while it waits.',
+        'New checkouts keep arriving. Workers and connections run out, so orders also stops answering inventory-only requests. The gateway waits on orders in the same way. A slow service is worse than a dead one, because nobody gives up.',
+      ],
+      keyIdea: 'Slowness spreads backwards through the callers. This is how one dependency becomes a full outage.',
+      flows: [
+        {from: 'gw', to: 'order', label: 'Waiting', type: 'request'},
+        {from: 'order', to: 'pay', label: 'Waiting 30 s', type: 'request'},
+      ],
+      focus: ['order', 'pay'],
+      status: {pay: 'warn', order: 'error', gw: 'warn'},
+      badges: {order: 'Pool exhausted'},
+      values: {budget: {text: 'none', tone: 'bad'}, result: {text: 'spinner, then 504', tone: 'bad'}},
+    },
+    {
+      short: 'Timeouts',
+      kind: '원리',
+      title: 'A timeout on every call, and one budget for the whole request',
+      text: [
+        'Give each call a timeout. The client allows 3 s, the gateway gives orders 2.5 s, and orders gives payments 1 s. Each inner timeout is shorter than the one outside it, so the caller still has time to answer.',
+        'Pass the remaining time down with the request. gRPC sends a deadline with each call. Over plain HTTP you can add a header with the time left. Then a service does not keep working on a request whose caller already gave up.',
+      ],
+      keyIdea: 'Set timeouts from the outside in: the user\'s patience is the total budget, and every hop spends part of it.',
+      flows: [
+        {from: 'pol', to: 'order', label: '1 s to payments', type: 'watch'},
+        {from: 'order', to: 'pay', label: 'Timeout 1 s', type: 'request'},
+      ],
+      focus: ['pol', 'order'],
+      status: {order: 'ok', gw: null},
+      badges: {order: null, pol: 'Deadline'},
+      values: {budget: {text: '3 s → 2.5 s → 1 s', tone: 'good'}, result: 'fast error'},
+    },
+    {
+      short: 'Retry',
+      kind: '원리',
+      title: 'Retry with exponential backoff and jitter',
+      text: [
+        'Many failures are brief: a connection reset, a Pod that is restarting, a 503. A second try often works. Wait before it, and double the wait each time, for example 100 ms, 200 ms, 400 ms, with a cap on attempts.',
+        'Add jitter, a random part of the wait. Without it, every client that failed at the same moment retries at the same moment and hits the service in waves.',
+      ],
+      flows: [
+        {from: 'order', to: 'inv', label: 'Retry after 100 ms', type: 'request'},
+        {from: 'inv', to: 'order', label: '200', type: 'response'},
+      ],
+      focus: ['order', 'inv'],
+      badges: {pol: 'Backoff + jitter'},
+      values: {result: {text: '200 OK', tone: 'good'}},
+    },
+    {
+      short: 'Idempotent',
+      kind: '주의',
+      title: 'Only retry what is safe to repeat',
+      text: [
+        'GET /stock can be sent twice with no harm. PUT and DELETE are idempotent too: the second copy leaves the same result. POST /charges is not. If the first charge timed out after it actually went through, a retry charges the card again.',
+        'A timeout does not mean the request failed. It means you do not know. Retry non-idempotent calls only when the server supports an idempotency key, so a repeat returns the first result instead of acting twice.',
+      ],
+      keyIdea: 'Before you turn on retries for a route, ask: what happens if this request runs twice?',
+      flows: [
+        {from: 'order', to: 'pay', label: 'POST again?', type: 'request'},
+        {from: 'pay', to: 'order', label: 'Charged twice', type: 'response', bend: 40},
+      ],
+      focus: ['order', 'pay'],
+      status: {pay: 'error'},
+      badges: {pay: 'Double charge'},
+      values: {result: {text: 'charged twice', tone: 'bad'}},
+    },
+    {
+      short: 'Retry storm',
+      kind: '장애',
+      title: 'Retries at every layer multiply the load',
+      text: [
+        'The gateway tries orders up to 3 times, and orders tries payments up to 3 times. One checkout can now send 9 calls to payments. Add one more retrying layer and it is 27.',
+        'payments was slow because it was overloaded. Retries add more load exactly when it has the least room, so it never recovers. The retries turn a slowdown into an outage.',
+      ],
+      keyIdea: 'Retry in one layer only, usually the one closest to the failing service. A retry budget (for example, retries at most a small share of normal traffic) stops retries from piling up.',
+      flows: [
+        {from: 'gw', to: 'order', label: '× 3', type: 'request'},
+        {from: 'order', to: 'pay', label: '× 3 each', type: 'request'},
+      ],
+      focus: ['gw', 'order', 'pay'],
+      status: {pay: 'error', order: 'warn'},
+      badges: {pay: 'Overloaded'},
+      values: {attempts: {text: 'up to 9 per checkout', tone: 'bad'}, result: {text: '503', tone: 'bad'}},
+    },
+    {
+      short: 'Breaker',
+      kind: '원리',
+      title: 'A circuit breaker stops calling a service that keeps failing',
+      text: [
+        'The breaker in orders counts recent failures to payments. While it is closed, calls go through. When failures cross a threshold, it opens: calls fail at once without touching the network, for a cooldown period.',
+        'After the cooldown it goes half-open and lets a few trial calls through. If they succeed, it closes again. If not, it opens for another cooldown.',
+      ],
+      keyIdea: 'An open breaker gives the failing service room to recover and gives the caller a fast answer it can act on.',
+      flows: [{from: 'pol', to: 'order', label: 'Fail fast', type: 'watch'}],
+      focus: ['pol', 'pay'],
+      status: {order: 'ok', pay: 'warn'},
+      badges: {pol: 'Open', pay: 'Recovering'},
+      values: {attempts: {text: '0 while open', tone: 'good'}, breaker: {text: 'closed → open → half-open', tone: 'bad'}, result: 'fast error'},
+    },
+    {
+      short: 'Bulkhead',
+      kind: '원리',
+      title: 'Bulkheads keep one dependency from using up everything',
+      text: [
+        'orders gives each dependency its own limited pool: a small number of connections and pending requests for payments, and a separate pool for inventory. When the payments pool is full, new calls to payments fail at once.',
+        'Like the walls between compartments in a ship, this keeps the leak in one place. Stock lookups still work while payments struggles. Proxies such as Envoy call these limits circuit breaking.',
+      ],
+      flows: [
+        {from: 'order', to: 'inv', label: 'Own pool', type: 'request'},
+        {from: 'inv', to: 'order', label: '200', type: 'response'},
+      ],
+      focus: ['order', 'inv'],
+      status: {inv: 'ok'},
+      badges: {order: 'pay 20 · inv 50', pol: null},
+    },
+    {
+      short: 'Shed load',
+      kind: '원리',
+      title: 'The service sheds load and says when to come back',
+      text: [
+        'payments protects itself as well. Above its capacity it rejects extra requests right away instead of queueing them until they time out. A rate limit per client answers 429 Too Many Requests, and overload answers 503.',
+        'A Retry-After header says how long to wait. Good clients honor it instead of their own backoff. The Kubernetes API server does the same with API Priority and Fairness and returns 429 when a priority level is full.',
+      ],
+      keyIdea: 'Rejecting fast is kinder than accepting and timing out. A 429 with Retry-After tells callers exactly what to do.',
+      flows: [
+        {from: 'order', to: 'pay', label: 'Charge', type: 'request'},
+        {from: 'pay', to: 'order', label: '429 · Retry-After: 2', type: 'response', bend: 40},
+      ],
+      focus: ['pay'],
+      status: {pay: 'ok'},
+      badges: {pay: 'Rate limit', order: null},
+      values: {attempts: 'limited', breaker: 'half-open'},
+    },
+    {
+      short: 'Fallback',
+      kind: '원리',
+      title: 'A fallback gives a smaller answer instead of an error',
+      text: [
+        'When inventory times out, orders shows the last known stock from a cache, marked as approximate. When payments is unavailable, it can accept the order as payment pending and charge later through a queue.',
+        'A fallback must be cheaper than the real call and must not depend on the same broken part. Some calls have no honest fallback, and then a clear error is the right answer.',
+      ],
+      flows: [
+        {from: 'order', to: 'cache', label: 'Fallback', type: 'request'},
+        {from: 'cache', to: 'order', label: 'Stock ~12', type: 'response'},
+      ],
+      focus: ['order', 'cache'],
+      status: {inv: 'error'},
+      badges: {inv: 'Timeout', cache: 'stale'},
+      values: {result: {text: 'order accepted, payment pending', tone: 'good'}},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Bound every call, retry carefully, fail fast, degrade gracefully',
+      text: [
+        'Timeouts stop waiting from spreading. Retries with backoff and jitter fix brief failures, but only for idempotent calls and only in one layer.',
+        'Circuit breakers and bulkheads stop a failing dependency from taking its callers with it. Load shedding with 429 or 503 and Retry-After protects the service itself, and fallbacks keep part of the feature working.',
+      ],
+      keyIdea: 'For each dependency, write down its timeout, whether it may be retried, its pool limit and its fallback. If you cannot answer, that call is a risk.',
+      flows: [
+        {from: 'client', to: 'gw', label: 'POST /checkout', type: 'request'},
+        {from: 'gw', to: 'order', label: '2.5 s', type: 'request'},
+        {from: 'order', to: 'pay', label: '1 s · breaker', type: 'request'},
+        {from: 'order', to: 'inv', label: 'Retry · pool', type: 'request'},
+      ],
+      focus: ['pol', 'order'],
+      status: {inv: null, pay: null},
+      badges: {inv: null, cache: null, pay: null, order: null, pol: null},
+    },
+  ]}
+/>
+
+## Patterns, and where they live
+
+| Pattern | Protects | Typical setting | Watch out |
+|---|---|---|---|
+| Timeout | The caller from waiting forever | Per call, shorter than the caller's own timeout | Too long does nothing, too short fails healthy slow calls |
+| Retry with backoff and jitter | Against brief failures | 2 to 3 attempts, exponential wait with random spread | Only idempotent requests, only in one layer |
+| Retry budget | The callee from retry storms | Retries limited to a share of normal traffic | Retries silently stop when the budget is used up |
+| Circuit breaker | The callee, and the caller's time | Failure ratio or count, cooldown, trial calls | Needs a fallback or a clear error for the open state |
+| Bulkhead / pool limit | Other dependencies of the same caller | Max connections and pending requests per upstream | Too small rejects normal peaks |
+| Load shedding / rate limit | The service itself | 429 or 503 with `Retry-After` | Clients must honor it |
+| Fallback | The user experience | Cache, default value, queue for later | Must not depend on the failing part |
+
+| Where | Examples | Good for | Limits |
+|---|---|---|---|
+| Client library | resilience4j, Polly, gRPC retry and deadline settings | Knows which calls are idempotent and what fallback makes sense | Must be done in every language and service |
+| Service mesh | Istio `VirtualService` retries and timeouts, `DestinationRule` connection pools and outlier detection, Linkerd retries and budgets | Same policy for every service, no code changes | Does not know business meaning; fallbacks stay in code |
+| Proxy or gateway | Envoy, nginx, HAProxy, API gateways | One place at the edge, rate limits per client | Sees only its own hop |
+
+Pick one layer for retries. A mesh that makes 3 attempts in front of a client library that also makes 3 attempts is the retry storm from step 6.
+
+## Try it yourself
+
+```bash
+# A timeout on one call: 2 s to connect, 5 s for the whole request
+curl -sS -o /dev/null -w '%{http_code} %{time_total}s\n' --connect-timeout 2 --max-time 5 https://example.com/
+
+# curl's own retries: transient errors (timeouts, 408, 429, 500, 502, 503, 504),
+# waiting 1 s then doubling; --retry-max-time caps the total time
+curl -sS -o /dev/null --retry 3 --retry-max-time 20 https://example.com/
+
+# See rate limit and Retry-After headers a server sends
+curl -sSI https://example.com/ | grep -i -E 'retry-after|ratelimit'
+
+# With Istio: retries, timeouts, pool limits and outlier detection per service
+kubectl get virtualservice -A -o yaml | grep -E -A4 'retries:|timeout:'
+kubectl get destinationrule -A -o yaml | grep -E -A6 'connectionPool:|outlierDetection:'
+```
+
+<Quiz questions={[
+  {q: 'payments is slow but not down, and orders has no timeout for it. Why do requests that never touch payments also start to fail?', options: ['payments sends errors back to every caller', 'Waiting calls hold workers and connections in orders until none are left for other requests', 'The load balancer removes orders from the pool', 'inventory shares a database with payments'], answer: 1, why: 'Every waiting call keeps resources busy. Once the pool is used up, orders cannot serve anything, so the slowdown spreads to all of its callers.'},
+  {q: 'The gateway, orders and a mesh sidecar each make up to 3 attempts. During an overload, what does this do?', options: ['It smooths the load, because retries are spaced out', 'Nothing, since only the last layer actually retries', 'It multiplies calls to the overloaded service, which makes recovery harder'], answer: 2, why: 'Retries at each layer multiply: three layers of 3 attempts can send 27 calls for one request. Retry in one layer, with a budget.'},
+  {q: 'A POST /charges call timed out. Why is an automatic retry risky without an idempotency key?', options: ['The first charge may have gone through, so a retry can charge twice', 'POST requests cannot be sent twice over HTTP', 'The server always rolls back on timeout', 'Retries of POST are blocked by TLS'], answer: 0, why: 'A timeout means the outcome is unknown. POST is not idempotent, so without a key the server cannot tell a retry from a new charge.'},
+]} />
+
+Further reading: [Timeouts, retries and backoff with jitter (AWS Builders' Library)](https://aws.amazon.com/builders-library/timeouts-retries-and-backoff-with-jitter/) · [Circuit breaker (Martin Fowler)](https://martinfowler.com/bliki/CircuitBreaker.html) · [Envoy circuit breaking](https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/upstream/circuit_breaking) · [gRPC deadlines](https://grpc.io/docs/guides/deadlines/) · [Service Mesh ② Splitting Traffic](../feature/mesh-traffic.mdx) · [Reverse Proxies and Load Balancing](../basic/reverse-proxy.mdx) · [Designing HTTP APIs](../basic/api-design.mdx)

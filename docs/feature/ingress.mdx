@@ -89,7 +89,7 @@ Create one Ingress rule. Follow **who reads it**, **where HTTPS is decrypted**, 
       title: 'The IngressClass picks the implementation',
       text: [
         'A cluster can have several ingress implementations. The Ingress\'s ingressClassName field decides which implementation handles these rules.',
-        'There are many implementations (for example, ingress-nginx, Traefik, Istio). Run kubectl get ingressclass to see which classes exist and which is the default. Here, the Istio ingress handles it.',
+        'There are many implementations (for example, Traefik, HAProxy, Istio). The widely used ingress-nginx was retired in March 2026 and gets no more fixes, so new clusters should pick a maintained controller or the Gateway API. Run kubectl get ingressclass to see which classes exist and which is the default. Here, the Istio ingress handles it.',
       ],
       flows: [{from: 'cls', to: 'ctrl', label: 'Handler', type: 'watch'}],
       focus: ['cls', 'ctrl'],

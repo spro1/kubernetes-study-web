@@ -15,7 +15,7 @@ The tracks go from easy to hard. New to Kubernetes? Start at the top. Already co
 
 ## Foundations: web, servers, containers
 
-Web requests, TCP/IP layers, DNS, crypto basics, HTTPS, servers to containers, Linux basics and SSH, Linux isolation, images, Git and CI/CD. What to know before Kubernetes.
+Web requests, TCP/IP layers, DNS, crypto basics, HTTPS, servers to containers, Linux basics and SSH, Linux isolation, images and Dockerfiles, Git and CI/CD. What to know before Kubernetes.
 
 <LessonGrid>
   <LessonCard no="01" to="/basic/web-request" track="foundations" icon="browser" title="When You Type an Address" duration="~8 min" steps={9} level="Beginner">
@@ -48,36 +48,54 @@ Web requests, TCP/IP layers, DNS, crypto basics, HTTPS, servers to containers, L
   <LessonCard no="10" to="/basic/container-image" track="foundations" icon="box" title="How an Image Is Built and Run" duration="~9 min" steps={9} level="Beginner">
     Dockerfile, layers, names and tags, registries, and how a node pulls and runs it.
   </LessonCard>
-  <LessonCard no="11" to="/basic/git-merge-request" track="foundations" icon="git" title="From Branch to Merge Request" duration="~10 min" steps={9} level="Beginner">
+  <LessonCard no="11" to="/basic/dockerfile-best-practices" track="foundations" icon="hammer" title="Writing a Good Dockerfile" duration="~12 min" steps={11} level="Beginner">
+    Cache-friendly layer order, multi-stage builds, small non-root images, signals that reach PID 1, and secrets that never land in a layer.
+  </LessonCard>
+  <LessonCard no="12" to="/basic/git-merge-request" track="foundations" icon="git" title="From Branch to Merge Request" duration="~10 min" steps={9} level="Beginner">
     The collaboration flow of branches, commits, merge requests, reviews, conflicts and tags.
   </LessonCard>
-  <LessonCard no="12" to="/basic/cicd-pipeline" track="foundations" icon="hammer" title="How a Pipeline Runs" duration="~10 min" steps={9} level="Beginner">
+  <LessonCard no="13" to="/basic/cicd-pipeline" track="foundations" icon="hammer" title="How a Pipeline Runs" duration="~10 min" steps={9} level="Beginner">
     Trigger → build → test → artifact → deploy per environment, and where it stops on failure.
   </LessonCard>
 </LessonGrid>
 
 ## App basics: HTTP, auth, data
 
-HTTP versions, reverse proxies and load balancing, logins and tokens, databases, caches, message queues. The parts services are built from.
+HTTP versions, API design, reverse proxies, streaming, logins and tokens, databases, caches, message queues, resilience patterns, distributed systems, microservices. The parts services are built from.
 
 <LessonGrid>
   <LessonCard no="01" to="/basic/http-versions" track="appbasics" icon="layers" title="HTTP/1.1, HTTP/2 and HTTP/3" duration="~10 min" steps={10} level="Beginner">
     Same request, three ways to carry it: keep-alive, HTTP/2 streams over one TCP connection, HTTP/3 over QUIC, and what that means for load balancers.
   </LessonCard>
-  <LessonCard no="02" to="/basic/reverse-proxy" track="appbasics" icon="split" title="Reverse Proxies and Load Balancing" duration="~12 min" steps={11} level="Intermediate">
+  <LessonCard no="02" to="/basic/api-design" track="appbasics" icon="book" title="Designing HTTP APIs" duration="~13 min" steps={11} level="Beginner">
+    Resources and methods, status codes that mean something, idempotency keys for payments, cursor pagination, one error format, versioning without breaking clients, and REST vs gRPC vs GraphQL.
+  </LessonCard>
+  <LessonCard no="03" to="/basic/reverse-proxy" track="appbasics" icon="split" title="Reverse Proxies and Load Balancing" duration="~12 min" steps={11} level="Intermediate">
     What a reverse proxy sees at L4 and L7, how it picks and checks backends, why the client IP gets lost, and what 502 and 504 really mean.
   </LessonCard>
-  <LessonCard no="03" to="/basic/auth-login" track="appbasics" icon="ticket" title="How Logging In Works (Sessions, JWT, OIDC)" duration="~12 min" steps={9} level="Beginner">
+  <LessonCard no="04" to="/basic/streaming" track="appbasics" icon="route" title="Long-Lived Connections and Streaming" duration="~13 min" steps={11} level="Intermediate">
+    Polling, SSE, WebSocket and gRPC streams compared, how LLM tokens reach the browser, and why proxies buffer, time out and unevenly spread long connections.
+  </LessonCard>
+  <LessonCard no="05" to="/basic/auth-login" track="appbasics" icon="ticket" title="How Logging In Works (Sessions, JWT, OIDC)" duration="~12 min" steps={9} level="Beginner">
     Password hashes, session cookies versus JWTs, the OIDC authorization code flow with PKCE, three kinds of token, and 401 versus 403.
   </LessonCard>
-  <LessonCard no="04" to="/basic/database-basics" track="appbasics" icon="db" title="What Happens When an App Saves to a Database" duration="~12 min" steps={11} level="Beginner">
+  <LessonCard no="06" to="/basic/database-basics" track="appbasics" icon="db" title="What Happens When an App Saves to a Database" duration="~12 min" steps={11} level="Beginner">
     Connection pools, query plans and indexes, transactions and the WAL, locks, read replicas and replication lag.
   </LessonCard>
-  <LessonCard no="05" to="/basic/caching" track="appbasics" icon="bulb" title="How an Application Cache Works" duration="~12 min" steps={10} level="Beginner">
+  <LessonCard no="07" to="/basic/caching" track="appbasics" icon="bulb" title="How an Application Cache Works" duration="~12 min" steps={10} level="Beginner">
     Cache-aside reads, invalidation on writes, TTL and eviction, stampedes on a hot key, and the database load when the cache dies.
   </LessonCard>
-  <LessonCard no="06" to="/basic/message-queue" track="appbasics" icon="layers" title="How a Message Queue Decouples Services" duration="~12 min" steps={10} level="Beginner">
+  <LessonCard no="08" to="/basic/message-queue" track="appbasics" icon="layers" title="How a Message Queue Decouples Services" duration="~12 min" steps={10} level="Beginner">
     Topics, partitions and consumer groups, why at-least-once delivery means consumers must be idempotent, consumer lag, and dead-letter queues.
+  </LessonCard>
+  <LessonCard no="09" to="/basic/resilience-patterns" track="appbasics" icon="shield" title="Making Service Calls Survive Failures" duration="~13 min" steps={11} level="Intermediate">
+    One slow dependency can take down a whole checkout. Timeouts, retries with backoff, circuit breakers, bulkheads, load shedding and fallbacks, and where each one lives.
+  </LessonCard>
+  <LessonCard no="10" to="/basic/distributed-systems" track="appbasics" icon="layers" title="Distributed Systems Basics" duration="~14 min" steps={11} level="Intermediate">
+    Timeouts that tell you nothing, retries that duplicate, replicas that lag, clocks that lie, and the patterns (idempotency keys, versions, outbox) that keep data right.
+  </LessonCard>
+  <LessonCard no="11" to="/basic/monolith-microservices" track="appbasics" icon="split" title="Monolith, Modular Monolith and Microservices" duration="~13 min" steps={11} level="Beginner">
+    One deploy unit or many: independent deploys and scaling versus network calls, split data, tracing and versioning, and how to migrate with a strangler fig.
   </LessonCard>
 </LessonGrid>
 
@@ -141,7 +159,7 @@ IaaS/PaaS/SaaS, the VPC request path, availability-zone failover, auto scaling g
 
 ## Kubernetes core
 
-A lab cluster, desired state, reading manifests, workload types, how a Pod starts, Services and DNS, config and volumes, Jobs.
+A lab cluster, desired state, reading manifests, workload types, how a Pod starts, Services and DNS, config and volumes, PV lifecycle, Jobs, the local dev loop.
 
 <LessonGrid>
   <LessonCard no="01" to="/basic/lab-cluster" track="core" icon="hammer" title="Build a Lab Cluster on Your Laptop" duration="~12 min" steps={10} level="Beginner">
@@ -174,8 +192,14 @@ A lab cluster, desired state, reading manifests, workload types, how a Pod start
   <LessonCard no="10" to="/k8s/storage-volume" track="core" icon="disk" title="How Storage Gets Attached (PVC·PV)" duration="~10 min" steps={9} level="Intermediate">
     From requesting storage to a volume being created and attached to a Pod, and why data survives Pod death.
   </LessonCard>
-  <LessonCard no="11" to="/k8s/job-cronjob" track="core" icon="spark" title="Run Once and Finish (Job · CronJob)" duration="~10 min" steps={8} level="Beginner">
+  <LessonCard no="11" to="/k8s/pv-lifecycle" track="core" icon="disk" title="PersistentVolume Lifecycle and Reclaim Policy" duration="~12 min" steps={11} level="Intermediate">
+    Available, Bound, Released, Failed: what deleting a PVC does to the disk under Delete and Retain, how to save data in time, and how to bind a PV by hand.
+  </LessonCard>
+  <LessonCard no="12" to="/k8s/job-cronjob" track="core" icon="spark" title="Run Once and Finish (Job · CronJob)" duration="~10 min" steps={8} level="Beginner">
     Tasks that run to completion and stop, retries on failure, and tasks that run on a schedule.
+  </LessonCard>
+  <LessonCard no="13" to="/basic/local-dev-loop" track="core" icon="wheel" title="The Inner Dev Loop on Kubernetes" duration="~11 min" steps={10} level="Beginner">
+    Save a file and see it running in a cluster seconds later: watch-build-deploy tools, file sync, no registry for kind, and the same manifests as prod.
   </LessonCard>
 </LessonGrid>
 
@@ -230,7 +254,7 @@ Probes, requests and limits, rolling updates, self-healing, graceful shutdown, H
 
 ## Networking & service mesh
 
-Service types, Ingress and TLS, Gateway API, NetworkPolicy, Istio sidecars, traffic splitting, gateways and ambient mode, entry points compared.
+Service types, Ingress and TLS, Gateway API, NetworkPolicy, egress and dual-stack, Istio sidecars, traffic splitting, gateways and ambient mode, entry points compared.
 
 <LessonGrid>
   <LessonCard no="01" to="/feature/service-types" track="networking" icon="target" title="Service Types (ClusterIP · NodePort · LoadBalancer)" duration="~10 min" steps={9} level="Beginner">
@@ -245,26 +269,32 @@ Service types, Ingress and TLS, Gateway API, NetworkPolicy, Istio sidecars, traf
   <LessonCard no="04" to="/k8s/network-policy" track="networking" icon="shield" title="Blocking and Allowing Traffic (NetworkPolicy)" duration="~10 min" steps={9} level="Intermediate">
     Opening only needed traffic from a default deny, and where to check blocked traffic.
   </LessonCard>
-  <LessonCard no="05" to="/feature/mesh-sidecar" track="networking" icon="shield" title="Service Mesh ① Sidecars and Mutual Authentication" duration="~10 min" steps={9} level="Intermediate">
+  <LessonCard no="05" to="/feature/egress-traffic" track="networking" icon="shield" title="Traffic Leaving the Cluster (Egress)" duration="~12 min" steps={11} level="Intermediate">
+    Which source IP the outside world sees, how to lock down egress with policies, and how an egress gateway gives a fixed IP.
+  </LessonCard>
+  <LessonCard no="06" to="/feature/dual-stack" track="networking" icon="split" title="IPv4/IPv6 Dual-Stack Networking" duration="~12 min" steps={11} level="Advanced">
+    Why IPv6, what the cluster needs for dual-stack, how Pods and Services get two addresses, and the app bugs that show up first.
+  </LessonCard>
+  <LessonCard no="07" to="/feature/mesh-sidecar" track="networking" icon="shield" title="Service Mesh ① Sidecars and Mutual Authentication" duration="~10 min" steps={9} level="Intermediate">
     How a proxy next to each Pod handles all traffic for encryption, identity and observability.
   </LessonCard>
-  <LessonCard no="06" to="/feature/mesh-traffic" track="networking" icon="split" title="Service Mesh ② Splitting Traffic" duration="~10 min" steps={9} level="Intermediate">
+  <LessonCard no="08" to="/feature/mesh-traffic" track="networking" icon="split" title="Service Mesh ② Splitting Traffic" duration="~10 min" steps={9} level="Intermediate">
     Sending a share to a new version with virtual services and traffic policies, plus retries and timeouts.
   </LessonCard>
-  <LessonCard no="07" to="/feature/mesh-gateway" track="networking" icon="gate" title="Service Mesh ③ Mesh Gateway" duration="~8 min" steps={8} level="Intermediate">
+  <LessonCard no="09" to="/feature/mesh-gateway" track="networking" icon="gate" title="Service Mesh ③ Mesh Gateway" duration="~8 min" steps={8} level="Intermediate">
     How an outside request reaches a Pod through the mesh ingress gateway and a virtual service.
   </LessonCard>
-  <LessonCard no="08" to="/feature/mesh-ambient" track="networking" icon="layers" title="Service Mesh ④ Ambient Mode Without Sidecars" duration="~13 min" steps={11} level="Advanced">
+  <LessonCard no="10" to="/feature/mesh-ambient" track="networking" icon="layers" title="Service Mesh ④ Ambient Mode Without Sidecars" duration="~13 min" steps={11} level="Advanced">
     Join the mesh with a namespace label and no Pod restart, let a per-node ztunnel do mTLS over HBONE, and add a waypoint only where you need L7 rules.
   </LessonCard>
-  <LessonCard no="09" to="/feature/entry-compare" track="networking" icon="layers" title="Three Entry Points Compared (Ingress · Mesh Gateway · Gateway API)" duration="~12 min" steps={9} level="Intermediate">
+  <LessonCard no="11" to="/feature/entry-compare" track="networking" icon="layers" title="Three Entry Points Compared (Ingress · Mesh Gateway · Gateway API)" duration="~12 min" steps={9} level="Intermediate">
     What Ingress, the mesh gateway and the Gateway API each handle, compared with the same request.
   </LessonCard>
 </LessonGrid>
 
 ## Security & multi-tenancy
 
-RBAC, ServiceAccount tokens, namespace quotas, Pod Security Standards, secret management, cert-manager, admission policies, supply chain, runtime security, audit logs, threat modeling.
+RBAC, ServiceAccount tokens, namespace quotas, Pod Security Standards, secret management, cert-manager, admission policies, supply chain, runtime security, CIS benchmark, sandboxed runtimes, audit logs, threat modeling.
 
 <LessonGrid>
   <LessonCard no="01" to="/k8s/rbac" track="security" icon="ticket" title="Who Can Do What (RBAC)" duration="~10 min" steps={9} level="Beginner">
@@ -294,17 +324,23 @@ RBAC, ServiceAccount tokens, namespace quotas, Pod Security Standards, secret ma
   <LessonCard no="09" to="/cert/runtime-security" track="security" icon="alert" title="Runtime security — catching abnormal behavior (CKS)" duration="~10 min" steps={9} level="Advanced">
     Falco detection, seccomp and AppArmor blocking, and immutable containers.
   </LessonCard>
-  <LessonCard no="10" to="/advanced/audit-log" track="security" icon="book" title="Audit Logs" duration="~10 min" steps={9} level="Advanced">
+  <LessonCard no="10" to="/cert/cis-benchmark" track="security" icon="shield" title="CIS Kubernetes Benchmark and kube-bench (CKS)" duration="~12 min" steps={11} level="Advanced">
+    What the CIS Benchmark checks, how to run kube-bench and read its report, and how to fix and verify the usual findings.
+  </LessonCard>
+  <LessonCard no="11" to="/cert/sandbox-runtime" track="security" icon="shield" title="Sandboxed container runtimes — gVisor, Kata and RuntimeClass (CKS)" duration="~12 min" steps={11} level="Advanced">
+    Why a shared kernel is the weak spot, how gVisor and Kata add a second kernel, and how RuntimeClass chooses the runtime per Pod.
+  </LessonCard>
+  <LessonCard no="12" to="/advanced/audit-log" track="security" icon="book" title="Audit Logs" duration="~10 min" steps={9} level="Advanced">
     What each API request leaves behind (who, when, what) and audit policy levels.
   </LessonCard>
-  <LessonCard no="11" to="/cert/threat-model" track="security" icon="shield" title="Viewing the cluster through the 4Cs and a threat model (KCSA·KCNA)" duration="~12 min" steps={9} level="Intermediate">
+  <LessonCard no="13" to="/cert/threat-model" track="security" icon="shield" title="Viewing the cluster through the 4Cs and a threat model (KCSA·KCNA)" duration="~12 min" steps={9} level="Intermediate">
     Following an attacker’s path across boundaries and the defenses at each one.
   </LessonCard>
 </LessonGrid>
 
 ## Cluster operations
 
-Scheduling and topology spread, node drains, kubeadm upgrades, node troubleshooting, Helm, Kustomize, GitOps, progressive delivery, observability pipeline, backup and restore, SLO alerts, incident response, chaos engineering, multi-cluster.
+Scheduling and topology spread, node drains, kubeadm install and upgrades, node troubleshooting, Helm, Kustomize, GitOps, progressive delivery, observability pipeline, backup and restore, SLO alerts, incident response, chaos engineering, multi-cluster.
 
 <LessonGrid>
   <LessonCard no="01" to="/k8s/scheduling" track="operations" icon="target" title="Which Node Gets the Pod (Scheduling)" duration="~10 min" steps={8} level="Intermediate">
@@ -316,78 +352,93 @@ Scheduling and topology spread, node drains, kubeadm upgrades, node troubleshoot
   <LessonCard no="03" to="/k8s/node-drain" track="operations" icon="server" title="Draining Nodes and Upgrading the Cluster" duration="~10 min" steps={9} level="Intermediate">
     The order of draining and upgrading nodes one by one, and the safeguard against removing too many at once.
   </LessonCard>
-  <LessonCard no="04" to="/cert/kubeadm-upgrade" track="operations" icon="layers" title="Upgrading a cluster with kubeadm (CKA)" duration="~10 min" steps={9} level="Intermediate">
+  <LessonCard no="04" to="/cert/kubeadm-install" track="operations" icon="hammer" title="Building a cluster with kubeadm (CKA)" duration="~14 min" steps={11} level="Intermediate">
+    Node prep, what each kubeadm init phase writes, why Nodes stay NotReady until a CNI, and joining workers and extra control planes.
+  </LessonCard>
+  <LessonCard no="05" to="/cert/kubeadm-upgrade" track="operations" icon="layers" title="Upgrading a cluster with kubeadm (CKA)" duration="~10 min" steps={9} level="Intermediate">
     From control plane to workers, the order for moving up one minor version at a time.
   </LessonCard>
-  <LessonCard no="05" to="/cert/node-troubleshoot" track="operations" icon="alert" title="Node NotReady and component failures (CKA)" duration="~10 min" steps={9} level="Intermediate">
+  <LessonCard no="06" to="/cert/node-troubleshoot" track="operations" icon="alert" title="Node NotReady and component failures (CKA)" duration="~10 min" steps={9} level="Intermediate">
     Troubleshooting node failures by checking kubelet, the runtime and static Pods in turn.
   </LessonCard>
-  <LessonCard no="06" to="/k8s/helm-release" track="operations" icon="wheel" title="How a Helm Release Is Installed, Upgraded and Rolled Back" duration="~12 min" steps={9} level="Intermediate">
+  <LessonCard no="07" to="/k8s/helm-release" track="operations" icon="wheel" title="How a Helm Release Is Installed, Upgraded and Rolled Back" duration="~12 min" steps={9} level="Intermediate">
     Chart plus values becomes manifests, each install or upgrade becomes a revision stored in a Secret, and rollback writes a new revision.
   </LessonCard>
-  <LessonCard no="07" to="/cert/kustomize" track="operations" icon="split" title="Per-environment deploys with Kustomize (CKA·CKAD)" duration="~10 min" steps={9} level="Intermediate">
+  <LessonCard no="08" to="/cert/kustomize" track="operations" icon="split" title="Per-environment deploys with Kustomize (CKA·CKAD)" duration="~10 min" steps={9} level="Intermediate">
     Producing different manifests per environment with base and overlays.
   </LessonCard>
-  <LessonCard no="08" to="/intermediate/gitops-sync" track="operations" icon="git" title="Helm and GitOps" duration="~10 min" steps={9} level="Intermediate">
+  <LessonCard no="09" to="/intermediate/gitops-sync" track="operations" icon="git" title="Helm and GitOps" duration="~10 min" steps={9} level="Intermediate">
     Charts and releases, syncing the cluster to Git as the source of truth, and drift.
   </LessonCard>
-  <LessonCard no="09" to="/feature/argo-rollouts" track="operations" icon="split" title="Progressive Delivery with Argo Rollouts" duration="~13 min" steps={10} level="Advanced">
+  <LessonCard no="10" to="/feature/argo-rollouts" track="operations" icon="split" title="Progressive Delivery with Argo Rollouts" duration="~13 min" steps={10} level="Advanced">
     A Rollout that moves traffic step by step, checks a Prometheus success rate on the way, and rolls back by itself when the numbers go bad.
   </LessonCard>
-  <LessonCard no="10" to="/k8s/observability-pipeline" track="operations" icon="chart" title="How Logs, Metrics and Traces Leave a Pod" duration="~12 min" steps={11} level="Intermediate">
+  <LessonCard no="11" to="/k8s/observability-pipeline" track="operations" icon="chart" title="How Logs, Metrics and Traces Leave a Pod" duration="~12 min" steps={11} level="Intermediate">
     Three signals, three paths: log files on the node, Prometheus pulling /metrics, and traces pushed over OTLP.
   </LessonCard>
-  <LessonCard no="11" to="/advanced/cluster-backup" track="operations" icon="archive" title="Backing Up and Restoring a Cluster" duration="~12 min" steps={10} level="Advanced">
+  <LessonCard no="12" to="/advanced/cluster-backup" track="operations" icon="archive" title="Backing Up and Restoring a Cluster" duration="~12 min" steps={10} level="Advanced">
     etcd snapshots, Velero backups of objects and volumes, consistent hooks, and a restore into a new cluster.
   </LessonCard>
-  <LessonCard no="12" to="/advanced/slo-alert" track="operations" icon="bell" title="SLOs and Alert Design" duration="~10 min" steps={9} level="Advanced">
+  <LessonCard no="13" to="/advanced/slo-alert" track="operations" icon="bell" title="SLOs and Alert Design" duration="~10 min" steps={9} level="Advanced">
     SLIs, SLOs and error budgets, burn-rate alerts, and narrowing down the cause.
   </LessonCard>
-  <LessonCard no="13" to="/advanced/incident-response" track="operations" icon="alert" title="Incident Response: From Alert to Postmortem" duration="~12 min" steps={11} level="Advanced">
+  <LessonCard no="14" to="/advanced/incident-response" track="operations" icon="alert" title="Incident Response: From Alert to Postmortem" duration="~12 min" steps={11} level="Advanced">
     Acknowledge, declare, assign roles, mitigate first, keep people informed, then learn from it in a blameless postmortem.
   </LessonCard>
-  <LessonCard no="14" to="/advanced/chaos-engineering" track="operations" icon="spark" title="Chaos Engineering on Kubernetes" duration="~13 min" steps={11} level="Advanced">
+  <LessonCard no="15" to="/advanced/chaos-engineering" track="operations" icon="spark" title="Chaos Engineering on Kubernetes" duration="~13 min" steps={11} level="Advanced">
     Steady state, hypothesis, small blast radius, abort on SLO metrics, and what killing Pods, adding latency and draining nodes reveal.
   </LessonCard>
-  <LessonCard no="15" to="/advanced/multi-cluster" track="operations" icon="layers" title="Running a Fleet of Clusters" duration="~14 min" steps={11} level="Advanced">
+  <LessonCard no="16" to="/advanced/multi-cluster" track="operations" icon="layers" title="Running a Fleet of Clusters" duration="~14 min" steps={11} level="Advanced">
     Why one cluster becomes many, how GitOps and Cluster API keep a fleet alike, how Services are found across clusters, and where drift and version skew creep in.
   </LessonCard>
 </LessonGrid>
 
 ## Kubernetes internals
 
-API request path, finalizers, CRDs and operators, etcd quorum, certificates, packet path, volume binding, preemption.
+API request path and APF, leader election, kubelet and CRI, kube-proxy modes, finalizers, CRDs and operators, etcd quorum, certificates, packet path, volume binding, preemption.
 
 <LessonGrid>
   <LessonCard no="01" to="/advanced/api-request-path" track="internals" icon="shield" title="How an API Request Gets Stored" duration="~10 min" steps={9} level="Advanced">
     Through authentication, authorization, admission webhooks and validation into etcd, then out via watch.
   </LessonCard>
-  <LessonCard no="02" to="/advanced/deletion-finalizer" track="internals" icon="alert" title="Deletion Is More Complex Than You Think" duration="~10 min" steps={9} level="Advanced">
+  <LessonCard no="02" to="/advanced/api-priority-fairness" track="internals" icon="scale" title="API Priority and Fairness" duration="~12 min" steps={10} level="Advanced">
+    Why one noisy client cannot take the API server down: FlowSchemas, priority levels, flows, shuffle-sharded queues and 429 with Retry-After.
+  </LessonCard>
+  <LessonCard no="03" to="/advanced/deletion-finalizer" track="internals" icon="alert" title="Deletion Is More Complex Than You Think" duration="~10 min" steps={9} level="Advanced">
     Finalizers, owner references, and why objects get stuck in Terminating.
   </LessonCard>
-  <LessonCard no="03" to="/advanced/crd-operator" track="internals" icon="gear" title="CRDs and Operators" duration="~10 min" steps={9} level="Advanced">
+  <LessonCard no="04" to="/advanced/crd-operator" track="internals" icon="gear" title="CRDs and Operators" duration="~10 min" steps={9} level="Advanced">
     Registering a new resource kind and how an operator creates and reconciles child resources.
   </LessonCard>
-  <LessonCard no="04" to="/advanced/etcd-quorum" track="internals" icon="db" title="Control Plane HA and etcd Quorum" duration="~10 min" steps={9} level="Advanced">
+  <LessonCard no="05" to="/advanced/leader-election" track="internals" icon="ticket" title="Leader Election with Leases" duration="~12 min" steps={11} level="Advanced">
+    Why only one replica of a controller acts, how a Lease picks and renews the leader, how failover works, and why a paused leader still needs fencing.
+  </LessonCard>
+  <LessonCard no="06" to="/advanced/etcd-quorum" track="internals" icon="db" title="Control Plane HA and etcd Quorum" duration="~10 min" steps={9} level="Advanced">
     etcd writes by majority agreement, and how many failures it can survive.
   </LessonCard>
-  <LessonCard no="05" to="/advanced/cluster-cert" track="internals" icon="ticket" title="Cluster Certificate Expiry" duration="~10 min" steps={9} level="Advanced">
+  <LessonCard no="07" to="/advanced/cluster-cert" track="internals" icon="ticket" title="Cluster Certificate Expiry" duration="~10 min" steps={9} level="Advanced">
     Certificate expiry that creeps up silently, what happens that day, and the renewal order.
   </LessonCard>
-  <LessonCard no="06" to="/advanced/packet-path" track="internals" icon="route" title="A Packet from Pod to Pod" duration="~10 min" steps={9} level="Advanced">
+  <LessonCard no="08" to="/advanced/kubelet-cri" track="internals" icon="box" title="Inside the Node - kubelet, CRI and containerd" duration="~12 min" steps={10} level="Advanced">
+    How the kubelet drives containerd over the CRI socket, how shims and runc start the process, how PLEG notices changes, and why Pods survive a containerd crash.
+  </LessonCard>
+  <LessonCard no="09" to="/advanced/packet-path" track="internals" icon="route" title="A Packet from Pod to Pod" duration="~10 min" steps={9} level="Advanced">
     CNI, same-node and cross-node paths, and where a Service IP becomes a Pod IP.
   </LessonCard>
-  <LessonCard no="07" to="/advanced/volume-binding" track="internals" icon="disk" title="When Volumes Attach, and Failures" duration="~10 min" steps={9} level="Advanced">
+  <LessonCard no="10" to="/advanced/kube-proxy-modes" track="internals" icon="split" title="kube-proxy Modes, from Service IP to Pod IP" duration="~14 min" steps={10} level="Advanced">
+    What kube-proxy actually programs on each node in iptables, IPVS and nftables mode, how eBPF replaces it, and why conntrack and traffic policy matter.
+  </LessonCard>
+  <LessonCard no="11" to="/advanced/volume-binding" track="internals" icon="disk" title="When Volumes Attach, and Failures" duration="~10 min" steps={9} level="Advanced">
     Binding modes, and where local volumes and network storage part ways on node failure.
   </LessonCard>
-  <LessonCard no="08" to="/advanced/priority-preemption" track="internals" icon="scale" title="Priority and Preemption" duration="~10 min" steps={9} level="Advanced">
+  <LessonCard no="12" to="/advanced/priority-preemption" track="internals" icon="scale" title="Priority and Preemption" duration="~10 min" steps={9} level="Advanced">
     How a higher-priority Pod evicts lower ones when there is no room.
   </LessonCard>
 </LessonGrid>
 
 ## AI on Kubernetes · GPU/NPU
 
-Device plugins and DRA, sharing and monitoring GPUs, model packaging, training jobs, cold starts, inference requests and routing, LoRA serving, autoscaling, RAG, agents, model evaluation.
+Device plugins and DRA, sharing, monitoring and networking GPUs, distributed training, serving engines, model packaging, training jobs, cold starts, inference requests and routing, LoRA serving, autoscaling, RAG, agents, guardrails, model evaluation.
 
 <LessonGrid>
   <LessonCard no="01" to="/ai/device-plugin" track="ai" icon="server" title="How GPUs and NPUs become node resources (device plugins)" duration="~10 min" steps={10} level="Intermediate">
@@ -408,34 +459,46 @@ Device plugins and DRA, sharing and monitoring GPUs, model packaging, training j
   <LessonCard no="06" to="/ai/gpu-monitoring" track="ai" icon="chart" title="Monitoring GPUs on Kubernetes" duration="~13 min" steps={11} level="Advanced">
     DCGM exporter to Prometheus, metrics that show real GPU work, and the XID and ECC errors that mean a node must be drained.
   </LessonCard>
-  <LessonCard no="07" to="/ai/model-packaging" track="ai" icon="archive" title="Getting a Model Ready to Deploy" duration="~10 min" steps={9} level="Beginner">
+  <LessonCard no="07" to="/ai/gpu-networking" track="ai" icon="route" title="Moving Data Between GPUs" duration="~14 min" steps={10} level="Advanced">
+    NVLink inside a node, RDMA and GPUDirect across nodes, one NIC per GPU, and how to tell when NCCL quietly fell back to TCP.
+  </LessonCard>
+  <LessonCard no="08" to="/ai/model-packaging" track="ai" icon="archive" title="Getting a Model Ready to Deploy" duration="~10 min" steps={9} level="Beginner">
     Pull weights, package them as an image or artifact, and pre-cache them on nodes so serving starts fast.
   </LessonCard>
-  <LessonCard no="08" to="/ai/training-job" track="ai" icon="hammer" title="From Training Job to Model" duration="~10 min" steps={10} level="Intermediate">
+  <LessonCard no="09" to="/ai/training-job" track="ai" icon="hammer" title="From Training Job to Model" duration="~10 min" steps={10} level="Intermediate">
     A training Job waits in a queue for GPU quota, runs, saves checkpoints and becomes a model version.
   </LessonCard>
-  <LessonCard no="09" to="/ai/cold-start" track="ai" icon="spark" title="Until a Model First Starts (Cold Start)" duration="~9 min" steps={9} level="Intermediate">
+  <LessonCard no="10" to="/ai/distributed-training" track="ai" icon="hammer" title="Training One Model on Many GPUs" duration="~14 min" steps={11} level="Advanced">
+    Copy the model or shard it, average gradients with all-reduce every step, and why one failed worker stops the whole job.
+  </LessonCard>
+  <LessonCard no="11" to="/ai/cold-start" track="ai" icon="spark" title="Until a Model First Starts (Cold Start)" duration="~9 min" steps={9} level="Intermediate">
     Downloading weights, loading them onto the accelerator and warming the engine before the first request, and how to cut that time.
   </LessonCard>
-  <LessonCard no="10" to="/ai/inference-request" track="ai" icon="route" title="From API Request to Response" duration="~10 min" steps={10} level="Beginner">
+  <LessonCard no="12" to="/ai/serving-engines" track="ai" icon="server" title="Choosing an LLM Serving Engine" duration="~13 min" steps={11} level="Intermediate">
+    What vLLM, SGLang, TensorRT-LLM, TGI and llama.cpp have in common, where they differ, and how to compare them without fooling yourself.
+  </LessonCard>
+  <LessonCard no="13" to="/ai/inference-request" track="ai" icon="route" title="From API Request to Response" duration="~10 min" steps={10} level="Beginner">
     One inference request through API-key checks, the gateway and a replica to a streamed answer, and where it gets stopped.
   </LessonCard>
-  <LessonCard no="11" to="/ai/inference-routing" track="ai" icon="gate" title="Which Replica Gets the Request (Inference Routing)" duration="~10 min" steps={9} level="Intermediate">
+  <LessonCard no="14" to="/ai/inference-routing" track="ai" icon="gate" title="Which Replica Gets the Request (Inference Routing)" duration="~10 min" steps={9} level="Intermediate">
     How the gateway and endpoint picker (EPP) choose a replica from prefix-cache hits and load.
   </LessonCard>
-  <LessonCard no="12" to="/ai/lora-serving" track="ai" icon="layers" title="Serving Many LoRA Adapters on One Base Model" duration="~12 min" steps={10} level="Advanced">
+  <LessonCard no="15" to="/ai/lora-serving" track="ai" icon="layers" title="Serving Many LoRA Adapters on One Base Model" duration="~12 min" steps={10} level="Advanced">
     Why a LoRA adapter is MBs while the base model is GBs, how one GPU serves many adapters per request, and what swapping, routing and versioning cost.
   </LessonCard>
-  <LessonCard no="13" to="/ai/llm-autoscaling" track="ai" icon="scale" title="Autoscaling LLM Inference" duration="~11 min" steps={10} level="Advanced">
+  <LessonCard no="16" to="/ai/llm-autoscaling" track="ai" icon="scale" title="Autoscaling LLM Inference" duration="~11 min" steps={10} level="Advanced">
     Scale LLM replicas on waiting requests and KV cache use, not GPU utilization, and plan around cold starts and GPU node delays.
   </LessonCard>
-  <LessonCard no="14" to="/ai/rag-pipeline" track="ai" icon="book" title="How a RAG Pipeline Answers From Your Documents" duration="~14 min" steps={11} level="Intermediate">
+  <LessonCard no="17" to="/ai/rag-pipeline" track="ai" icon="book" title="How a RAG Pipeline Answers From Your Documents" duration="~14 min" steps={11} level="Intermediate">
     Chunk, embed and index documents, then retrieve, rerank and hand the best chunks to the LLM, and where answers go wrong.
   </LessonCard>
-  <LessonCard no="15" to="/ai/agent-serving" track="ai" icon="agent" title="Serving an LLM Agent That Calls Tools" duration="~12 min" steps={11} level="Intermediate">
+  <LessonCard no="18" to="/ai/agent-serving" track="ai" icon="agent" title="Serving an LLM Agent That Calls Tools" duration="~12 min" steps={11} level="Intermediate">
     The tool-calling loop step by step, MCP servers that expose tools, why every turn costs another inference request, and the guardrails an agent needs.
   </LessonCard>
-  <LessonCard no="16" to="/ai/model-evaluation" track="ai" icon="chart" title="Evaluating a Model Before and After Deploy" duration="~12 min" steps={11} level="Intermediate">
+  <LessonCard no="19" to="/ai/guardrails" track="ai" icon="shield" title="Guardrails Around an LLM App" duration="~13 min" steps={11} level="Intermediate">
+    Checks before and after the model, where to run them, what they cost, and why the tool behind the agent must still check permissions.
+  </LessonCard>
+  <LessonCard no="20" to="/ai/model-evaluation" track="ai" icon="chart" title="Evaluating a Model Before and After Deploy" duration="~12 min" steps={11} level="Intermediate">
     Build an eval set from real tasks, score it fairly, gate new models, prompts and quantizations in CI, then confirm on a canary with live quality and latency.
   </LessonCard>
 </LessonGrid>

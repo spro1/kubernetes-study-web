@@ -1,0 +1,297 @@
+---
+id: kubeadm-install
+title: Building a cluster with kubeadm (CKA)
+sidebar_label: 04 · kubeadm install
+description: Follow an animation of building a cluster with kubeadm, from node prep (swap, kernel modules, ip_forward, systemd cgroup driver) and pkgs.k8s.io packages through the kubeadm init phases, NotReady until a CNI is installed, kubeadm join with a token and CA hash, token expiry, and an HA control plane
+summary: 'Node prep, what each kubeadm init phase writes, why Nodes stay NotReady until a CNI, and joining workers and extra control planes.'
+icon: hammer
+hide_table_of_contents: true
+---
+
+# Building a cluster with kubeadm (CKA)
+
+This covers "Prepare underlying infrastructure for installing a Kubernetes cluster" and "Create and manage Kubernetes clusters using kubeadm" in the CKA Cluster Architecture, Installation and Configuration domain. We turn two empty Linux machines into a v1.37 cluster and watch what each step writes to disk and to the cluster.
+
+Moving an existing cluster to a new version is in [Upgrading a cluster with kubeadm (CKA)](./kubeadm-upgrade.mdx), and what happens when the certificates kubeadm creates expire is in [Cluster Certificate Expiry](../advanced/cluster-cert.mdx).
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~14 min', level: 'Intermediate'}}
+  groups={[
+    {label: 'Control plane node · cp-1', x: 265, y: 40, w: 420, h: 400, tone: 'mgmt'},
+    {label: 'Worker node · worker-1', x: 735, y: 175, w: 235, h: 265, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'admin', label: 'Operator', sub: 'ssh · sudo', icon: 'user', tone: 'ext', x: 95, y: 110, show: true},
+    {id: 'lb', label: 'Load balancer', sub: 'control-plane-endpoint', icon: 'split', tone: 'ext', x: 95, y: 225, w: 170},
+    {id: 'repo', label: 'pkgs.k8s.io', sub: 'package repo', icon: 'archive', tone: 'store', x: 95, y: 340, w: 160},
+    {id: 'prep', label: 'Node prep', sub: 'swap · modules · sysctl', icon: 'gear', tone: 'node', x: 360, y: 100, show: true},
+    {id: 'runtime', label: 'containerd', sub: 'systemd cgroup driver', icon: 'box', tone: 'node', x: 360, y: 205},
+    {id: 'kubelet', label: 'kubelet', sub: 'node agent', icon: 'agent', tone: 'node', x: 360, y: 310},
+    {id: 'cni', label: 'CNI Pods', sub: 'e.g. Calico', icon: 'route', tone: 'app', size: 'sm', x: 360, y: 405},
+    {id: 'kubeadm', label: 'kubeadm init', sub: 'phases', icon: 'hammer', tone: 'cp', x: 585, y: 100},
+    {id: 'cp', label: 'Control plane', sub: 'static Pods', icon: 'wheel', tone: 'cp', x: 585, y: 205},
+    {id: 'etcd', label: 'etcd', sub: 'static Pod', icon: 'db', tone: 'store', x: 585, y: 310},
+    {id: 'dns', label: 'CoreDNS', sub: 'addon', icon: 'target', tone: 'app', size: 'sm', x: 585, y: 405},
+    {id: 'token', label: 'Bootstrap token', sub: 'TTL 24h', icon: 'ticket', tone: 'store', x: 852, y: 95, w: 160},
+    {id: 'worker', label: 'kubelet', sub: 'worker-1', icon: 'agent', tone: 'node', x: 852, y: 260},
+    {id: 'wpod', label: 'App Pod', sub: 'worker-1', icon: 'pod', tone: 'app', size: 'sm', x: 852, y: 380},
+  ]}
+  metrics={[
+    {id: 'node', label: 'cp-1 status'},
+    {id: 'dns', label: 'CoreDNS'},
+    {id: 'token', label: 'Join token'},
+    {id: 'cmd', label: 'Command just run'},
+  ]}
+  learn={[
+    {text: 'What a node needs before kubeadm runs: swap, modules, sysctl, runtime', at: 1},
+    {text: 'Why the kubelet and the runtime must share the systemd cgroup driver', at: 2},
+    {text: 'What the kubeadm init phases write, in order', at: 4},
+    {text: 'Why Nodes are NotReady and CoreDNS is Pending until a CNI is installed', at: 6},
+    {text: 'How kubeadm join trusts the control plane, and what to do when the token expires', at: 7},
+    {text: 'An HA control plane with --control-plane-endpoint and --upload-certs', at: 9},
+  ]}
+  steps={[
+    {
+      short: 'Start',
+      kind: '시작',
+      title: 'Two empty machines become one cluster',
+      text: [
+        'We have two Linux machines: cp-1 will run the control plane and worker-1 will run apps. kubeadm is the official tool that sets up the control plane and joins nodes.',
+        'kubeadm does not install everything. The container runtime, the kubelet package and the Pod network (CNI) are your job. This is why the order of steps matters.',
+      ],
+      keyIdea: 'kubeadm init bootstraps the control plane, kubeadm join adds nodes. The prep before and the CNI after are separate tasks.',
+      flows: [{from: 'admin', to: 'prep', label: 'ssh', type: 'request'}],
+      focus: ['admin', 'prep'],
+      values: {node: '—', dns: '—', token: '—', cmd: 'ssh cp-1'},
+    },
+    {
+      short: 'Prep',
+      kind: '원리',
+      title: 'Prepare the node: swap, kernel modules, IP forwarding',
+      text: [
+        'By default the kubelet refuses to start if it finds swap. Turn it off with swapoff -a and remove it from /etc/fstab, or set failSwapOn: false in the kubelet config to tolerate it.',
+        'Pods send packets through the node, so the kernel must forward IPv4 packets: net.ipv4.ip_forward = 1 in /etc/sysctl.d/. Many runtimes and CNI plugins also expect the overlay and br_netfilter modules (loaded with modprobe and listed in /etc/modules-load.d/) and the bridge-nf-call-iptables sysctls.',
+      ],
+      changes: ['- swap (swapoff -a, /etc/fstab)', '+ modules overlay, br_netfilter', '+ net.ipv4.ip_forward = 1'],
+      flows: [{from: 'admin', to: 'prep', label: 'sysctl --system', type: 'request'}],
+      focus: ['prep'],
+      status: {prep: 'ok'},
+      values: {cmd: 'sudo sysctl --system'},
+    },
+    {
+      short: 'Runtime',
+      kind: '주의',
+      title: 'Install a runtime that uses the systemd cgroup driver',
+      text: [
+        'The kubelet talks to a CRI runtime such as containerd or CRI-O. On a systemd host with cgroup v2, the docs recommend the systemd cgroup driver.',
+        'The kubelet and the runtime must use the same driver. kubeadm sets the kubelet to systemd by default (since v1.22), so set the runtime to match. For containerd that is SystemdCgroup = true in the runc options of /etc/containerd/config.toml, then restart containerd.',
+      ],
+      keyIdea: 'A driver mismatch is a classic cause of control plane Pods that keep restarting right after init. Check both sides before you run kubeadm init.',
+      flows: [{from: 'kubelet', to: 'runtime', label: 'CRI', type: 'request'}],
+      focus: ['runtime'],
+      status: {runtime: 'ok'},
+      badges: {runtime: 'SystemdCgroup'},
+      values: {cmd: 'systemctl restart containerd'},
+    },
+    {
+      short: 'Packages',
+      kind: '원리',
+      title: 'Install kubeadm, kubelet and kubectl from pkgs.k8s.io',
+      text: [
+        'pkgs.k8s.io has one repository per minor version, for example core:/stable:/v1.37/deb/. Add its signing key and repository, then install kubelet, kubeadm and kubectl and pin them with apt-mark hold so routine updates do not move them.',
+        'Right after install, the kubelet restarts every few seconds. This is expected: it has no configuration yet and waits for kubeadm to give it one.',
+      ],
+      changes: ['+ repo v1.37', '+ kubelet kubeadm kubectl', '~ apt-mark hold'],
+      flows: [
+        {from: 'repo', to: 'kubeadm', label: 'kubeadm', type: 'response'},
+        {from: 'repo', to: 'kubelet', label: 'kubelet', type: 'response'},
+      ],
+      focus: ['repo', 'kubelet'],
+      status: {kubelet: 'warn'},
+      badges: {kubelet: 'crashloop (expected)'},
+      values: {cmd: 'apt-mark hold kubelet kubeadm kubectl'},
+    },
+    {
+      short: 'init: files',
+      kind: '원리',
+      title: 'kubeadm init: preflight, certificates, kubeconfigs, static Pods',
+      text: [
+        'kubeadm init runs phases in order. preflight checks swap, ports, the runtime and the sysctls and stops with a clear error if something is wrong. certs creates the cluster CA and component certificates in /etc/kubernetes/pki, and kubeconfig writes admin.conf, kubelet.conf and the other kubeconfigs in /etc/kubernetes.',
+        'The etcd and control-plane phases write static Pod manifests for etcd, kube-apiserver, kube-controller-manager and kube-scheduler into /etc/kubernetes/manifests. kubelet-start gives the kubelet its config. The kubelet runs each file as a static Pod, with no API server needed yet, and wait-control-plane waits until the API answers.',
+      ],
+      keyIdea: 'To change a control plane flag later, edit its file in /etc/kubernetes/manifests. The kubelet recreates the Pod by itself.',
+      changes: ['+ /etc/kubernetes/pki/*', '+ /etc/kubernetes/*.conf', '+ /etc/kubernetes/manifests/*.yaml'],
+      flows: [
+        {from: 'admin', to: 'kubeadm', label: 'kubeadm init', type: 'request', bend: -0.2},
+        {from: 'kubeadm', to: 'kubelet', label: 'YAML', type: 'request'},
+        {from: 'kubelet', to: 'etcd', label: 'static Pod', type: 'request'},
+        {from: 'kubelet', to: 'cp', label: 'static Pods', type: 'request'},
+      ],
+      focus: ['kubeadm', 'kubelet', 'cp', 'etcd'],
+      status: {kubelet: null, cp: 'ok', etcd: 'ok'},
+      badges: {kubelet: null, kubeadm: 'preflight → control-plane'},
+      values: {cmd: 'kubeadm init --pod-network-cidr ...'},
+    },
+    {
+      short: 'init: cluster',
+      kind: '원리',
+      title: 'Upload config, mark the node, create a token, add addons',
+      text: [
+        'upload-config saves the kubeadm and kubelet settings as ConfigMaps in kube-system, so joining nodes and later upgrades read the same settings. mark-control-plane adds the node-role.kubernetes.io/control-plane:NoSchedule taint.',
+        'bootstrap-token creates a token with a 24-hour TTL for joining. The addon phase installs CoreDNS and kube-proxy. Finally kubeadm prints how to copy admin.conf to ~/.kube/config and the kubeadm join command.',
+      ],
+      changes: ['+ ConfigMaps kubeadm-config, kubelet-config', '+ taint control-plane:NoSchedule', '+ bootstrap token', '+ CoreDNS, kube-proxy'],
+      flows: [
+        {from: 'kubeadm', to: 'token', label: 'token', type: 'request'},
+        {from: 'cp', to: 'dns', label: 'addon', type: 'request', bend: -0.6},
+      ],
+      focus: ['kubeadm', 'token', 'dns'],
+      badges: {kubeadm: 'join command printed'},
+      values: {token: {text: 'valid · 24h', tone: 'good'}, cmd: 'cp admin.conf ~/.kube/config'},
+    },
+    {
+      short: 'No CNI',
+      kind: '문제',
+      title: 'NotReady and Pending until a Pod network is installed',
+      text: [
+        'kubectl get nodes shows cp-1 NotReady. The kubelet reports that the container runtime network is not ready, because no CNI plugin is configured yet. CoreDNS stays Pending: cluster DNS does not start before a network is installed.',
+        'Install one Pod network add-on, for example Calico, Cilium or Flannel. Its Pod CIDR must match --pod-network-cidr if the plugin needs it, and must not overlap the node network. Once its Pods run, the node turns Ready and CoreDNS starts.',
+      ],
+      keyIdea: 'NotReady right after init is normal, not a failure. Check CoreDNS: once it is Running, the network works and you can join nodes.',
+      flows: [{from: 'admin', to: 'cni', label: 'kubectl apply', type: 'request'}],
+      focus: ['cni', 'dns'],
+      status: {cni: 'ok', dns: 'ok'},
+      values: {node: {text: 'NotReady → Ready', tone: 'good'}, dns: {text: 'Pending → Running', tone: 'good'}, cmd: 'kubectl get nodes'},
+    },
+    {
+      short: 'Join',
+      kind: '원리',
+      title: 'kubeadm join: a token for the node, a hash for the control plane',
+      text: [
+        'On worker-1 (prepared the same way) run kubeadm join cp-1:6443 --token ... --discovery-token-ca-cert-hash sha256:.... Trust goes both ways.',
+        'The token lets the node authenticate to the API server for TLS bootstrap: the kubelet gets its own client certificate. The CA hash lets the node check that it is talking to the real control plane, by pinning the public key of the cluster CA.',
+      ],
+      keyIdea: 'Skipping the hash (--discovery-token-unsafe-skip-ca-verification) lets anyone who can impersonate the API server receive your node. Keep the hash.',
+      flows: [
+        {from: 'worker', to: 'token', label: 'token', type: 'request'},
+        {from: 'worker', to: 'cp', label: 'TLS bootstrap', type: 'request', bend: 30},
+      ],
+      focus: ['worker', 'token'],
+      status: {worker: 'ok'},
+      badges: {kubeadm: null, worker: 'Ready'},
+      values: {cmd: 'kubeadm join ... --token ...'},
+    },
+    {
+      short: 'Token expired',
+      kind: '문제',
+      title: 'Next day the join command fails: the token expired',
+      text: [
+        'A day later we add another node with the saved join command. It fails, because the bootstrap token from init has passed its 24-hour TTL and was removed.',
+        'On the control plane run kubeadm token create --print-join-command. It makes a new token and prints a full join command with the current CA hash. kubeadm token list shows existing tokens and their expiry.',
+      ],
+      flows: [{from: 'admin', to: 'token', label: 'token create', type: 'request'}],
+      focus: ['token'],
+      status: {token: 'error'},
+      values: {token: {text: 'expired → new 24h', tone: 'bad'}, cmd: 'kubeadm token create --print-join-command'},
+    },
+    {
+      short: 'HA',
+      kind: '원리',
+      title: 'For HA, plan the endpoint and share the certificates',
+      text: [
+        'With one control plane node, losing cp-1 stops the API. For HA, put a load balancer in front and pass --control-plane-endpoint lb:6443 at init. It is hard to add later, so decide before the first init.',
+        '--upload-certs stores the control plane certificates, encrypted, in the kubeadm-certs Secret. Other control plane nodes join with --control-plane --certificate-key. The Secret is deleted after two hours. Re-upload with kubeadm init phase upload-certs --upload-certs.',
+      ],
+      keyIdea: 'With stacked etcd every control plane node also runs an etcd member, so use an odd number (3 or 5) of control plane nodes.',
+      flows: [
+        {from: 'lb', to: 'cp', label: ':6443', type: 'request'},
+        {from: 'admin', to: 'lb', label: 'endpoint', type: 'watch'},
+      ],
+      focus: ['lb', 'cp'],
+      status: {token: null},
+      badges: {lb: 'lb:6443'},
+      values: {token: {text: 'valid · 24h', tone: 'good'}, cmd: 'kubeadm init --control-plane-endpoint ... --upload-certs'},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Prep, init, network, join',
+      text: [
+        'Prep each node: no swap, IP forwarding, a CRI runtime with the same cgroup driver as the kubelet, and the three packages held at one version. kubeadm init then writes certificates, kubeconfigs and static Pod manifests, uploads config, creates a token and adds CoreDNS and kube-proxy.',
+        'The cluster is usable only after a CNI is installed. Nodes join with a token (expires in 24h) and the CA hash, and extra control planes also need the uploaded certificates (two hours).',
+      ],
+      keyIdea: 'When something fails, look at the phase: preflight errors, kubelet logs (journalctl -u kubelet), the files in /etc/kubernetes/manifests, then the CNI Pods.',
+      flows: [
+        {from: 'kubelet', to: 'cp', label: 'static Pods', type: 'request'},
+        {from: 'worker', to: 'cp', label: 'joined', type: 'watch', bend: 30},
+      ],
+      focus: ['kubeadm', 'cni', 'worker'],
+      status: {worker: null, cp: null, etcd: null},
+      badges: {lb: null, runtime: null},
+    },
+  ]}
+/>
+
+## What each phase leaves behind
+
+| Phase (kubeadm init) | What it does | Where to look |
+|---|---|---|
+| preflight | Checks swap, ports, runtime, sysctls, permissions | The error text; `--ignore-preflight-errors` only if you know why |
+| certs | Cluster CA, API server, etcd and front-proxy certificates | `/etc/kubernetes/pki/`, `kubeadm certs check-expiration` |
+| kubeconfig | admin, super-admin, kubelet, controller-manager, scheduler kubeconfigs | `/etc/kubernetes/*.conf` |
+| etcd · control-plane | Static Pod manifests | `/etc/kubernetes/manifests/` |
+| kubelet-start | Writes the kubelet config and starts it | `/var/lib/kubelet/config.yaml`, `journalctl -u kubelet` |
+| upload-config | kubeadm and kubelet settings as ConfigMaps | `kubectl -n kube-system get cm kubeadm-config kubelet-config` |
+| upload-certs (with `--upload-certs`) | Encrypted control plane certs, deleted after two hours | Secret `kubeadm-certs` in kube-system |
+| mark-control-plane | Label and `NoSchedule` taint on the node | `kubectl describe node cp-1` |
+| bootstrap-token | Join token, 24h TTL by default | `kubeadm token list` |
+| addon | CoreDNS and kube-proxy | `kubectl -n kube-system get pods` |
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| preflight warns about swap, or the kubelet will not start | Swap is on and `failSwapOn` is true (default) | `swapoff -a` and remove it from `/etc/fstab`, or set `failSwapOn: false` |
+| preflight: `/proc/sys/net/ipv4/ip_forward` is not 1 | IP forwarding off | Set `net.ipv4.ip_forward = 1` and run `sysctl --system` |
+| Control plane Pods keep restarting after init | Kubelet and runtime cgroup drivers differ | Set `SystemdCgroup = true` in containerd, restart it |
+| Node NotReady, CoreDNS Pending | No CNI installed | Install one Pod network add-on |
+| join: token not found or expired | Token past its TTL | `kubeadm token create --print-join-command` |
+| control plane join cannot find certs | `kubeadm-certs` Secret expired | `kubeadm init phase upload-certs --upload-certs` |
+
+## Try it yourself
+
+```bash
+# On every node: prep
+sudo swapoff -a                                       # also remove swap from /etc/fstab
+cat <<EOF | sudo tee /etc/sysctl.d/k8s.conf
+net.ipv4.ip_forward = 1
+EOF
+sudo sysctl --system && sysctl net.ipv4.ip_forward    # should print 1
+containerd config default | sudo tee /etc/containerd/config.toml >/dev/null
+sudo sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml   # check the key exists in your version
+sudo systemctl restart containerd
+
+# On every node: packages from pkgs.k8s.io (v1.37)
+curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.37/deb/Release.key | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.37/deb/ /' | sudo tee /etc/apt/sources.list.d/kubernetes.list
+sudo apt-get update && sudo apt-get install -y kubelet kubeadm kubectl
+sudo apt-mark hold kubelet kubeadm kubectl
+
+# On cp-1: init (CIDR depends on your CNI)
+sudo kubeadm init --pod-network-cidr 192.168.0.0/16
+mkdir -p $HOME/.kube && sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config && sudo chown $(id -u):$(id -g) $HOME/.kube/config
+kubectl get nodes                                     # NotReady until a CNI is installed
+ls /etc/kubernetes/manifests                          # etcd, kube-apiserver, ...
+
+# Later: a fresh join command, and tokens
+sudo kubeadm token create --print-join-command
+sudo kubeadm token list
+```
+
+<Quiz questions={[
+  {q: 'Right after kubeadm init, kubectl get nodes shows cp-1 NotReady and CoreDNS is Pending. What is the next step?', options: ['Run kubeadm reset and init again', 'Install a Pod network (CNI) add-on', 'Remove the control-plane taint', 'Restart the kubelet'], answer: 1, why: 'kubeadm does not install a Pod network. Until a CNI plugin is configured the runtime network is not ready, so the node stays NotReady and CoreDNS cannot start.'},
+  {q: 'Control plane Pods restart over and over right after init. The kubelet uses the systemd cgroup driver. What should you check first?', options: ['The containerd cgroup driver (SystemdCgroup)', 'The bootstrap token TTL', 'The CoreDNS ConfigMap'], answer: 0, why: 'The kubelet and the container runtime must use the same cgroup driver. kubeadm sets the kubelet to systemd, so containerd needs SystemdCgroup = true.'},
+  {q: 'Two days after init, the saved kubeadm join command fails. What is the fix?', options: ['Copy /etc/kubernetes/pki to the new node', 'Add --discovery-token-unsafe-skip-ca-verification', 'Run kubeadm token create --print-join-command on the control plane', 'Run kubeadm init again on the control plane'], answer: 2, why: 'The init token has a 24-hour TTL. token create makes a new one and prints a full join command with the CA hash. Skipping CA verification removes the check that the node talks to the real control plane.'},
+]} />
+
+Further reading: [Installing kubeadm](https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/install-kubeadm/) · [Container runtimes](https://kubernetes.io/docs/setup/production-environment/container-runtimes/) · [Creating a cluster with kubeadm](https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/create-cluster-kubeadm/) · [kubeadm init](https://kubernetes.io/docs/reference/setup-tools/kubeadm/kubeadm-init/) · [HA topology with kubeadm](https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/high-availability/) · [Upgrading a cluster with kubeadm (CKA)](./kubeadm-upgrade.mdx) · [Control Plane HA and etcd Quorum](../advanced/etcd-quorum.mdx) · [Node NotReady and component failures (CKA)](./node-troubleshoot.mdx)

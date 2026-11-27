@@ -1,0 +1,69 @@
+---
+id: kcna
+title: KCNA practice questions
+sidebar_label: KCNA
+sidebar_position: 1
+description: 21 original multiple-choice questions for the KCNA exam, grouped by its four official domains, with the reason for each answer.
+---
+
+# KCNA practice questions
+
+The KCNA is a 90-minute multiple-choice exam with four domains:
+
+| Domain | Weight | Questions here |
+| --- | --- | --- |
+| Kubernetes Fundamentals | 44% | 6 |
+| Container Orchestration | 28% | 6 |
+| Cloud Native Application Delivery | 16% | 5 |
+| Cloud Native Architecture | 12% | 4 |
+
+The questions are original and unofficial, not taken from the real exam. Domains and weights come from the official curriculum, as listed on [Learning paths & certifications](../roadmap.mdx).
+
+## Kubernetes Fundamentals (44%)
+
+<Quiz title={null} save={false} questions={[
+  {q: 'You create a Pod and it is accepted by the API server, but spec.nodeName is still empty. Which component will fill it in?', options: ['kube-controller-manager', 'kubelet', 'kube-scheduler', 'kube-proxy'], answer: 2, why: 'The kube-scheduler watches for Pods with no spec.nodeName, picks a node that fits, and binds the Pod to it. Only then does the kubelet on that node start the containers.'},
+  {q: 'A Deployment has 3 replicas. You delete one of its Pods and a new Pod appears a few seconds later. What created it?', options: ['The kubelet restarted the same Pod on the same node', 'The ReplicaSet controller saw 2 of 3 Pods and created a new one', 'etcd restored the deleted object from its history', 'The scheduler keeps a copy of every Pod it placed'], answer: 1, why: 'The Deployment owns a ReplicaSet, and the ReplicaSet controller keeps comparing desired replicas with actual Pods. When it sees fewer, it creates a new Pod object with a new name.'},
+  {q: 'You need exactly one log-collector Pod on every node, including nodes added later. Which workload type fits?', options: ['DaemonSet', 'StatefulSet', 'Deployment with replicas set to the node count', 'Job'], answer: 0, why: 'A DaemonSet runs one Pod per matching node and adds a Pod automatically when a node joins. A Deployment does not follow nodes and would need manual replica changes.'},
+  {q: 'Which control plane component is the only one that reads and writes etcd directly?', options: ['kube-scheduler', 'kube-controller-manager', 'kubelet', 'kube-apiserver'], answer: 3, why: 'Every other component, including the scheduler, controllers and kubelets, talks to the kube-apiserver. The API server is the single client of etcd.'},
+  {q: 'Which Linux kernel feature limits how much CPU and memory a container may use?', options: ['Namespaces', 'cgroups', 'chroot', 'Capabilities'], answer: 1, why: 'Namespaces change what a process can see (PIDs, network, mounts). Control groups (cgroups) cap the resources it can use, and this is how resources.limits is enforced.'},
+  {q: 'Through which interface does the kubelet ask containerd or CRI-O to start containers?', options: ['CNI', 'CSI', 'OCI image spec', 'CRI'], answer: 3, why: 'The Container Runtime Interface (CRI) is the gRPC API between the kubelet and the runtime. CNI is for networking, CSI is for storage, and the OCI specs define the image and runtime format.'},
+]} />
+
+**Study:** [Desired State and the Control Loop](../basic/desired-state.mdx), [Workload Types](../basic/workload-types.mdx), [How a Pod Starts](../k8s/pod-startup.mdx), [Reading and Applying a Manifest](../k8s/manifest-anatomy.mdx), [Which Node Gets the Pod (Scheduling)](../k8s/scheduling.mdx), [How an API Request Gets Stored](../advanced/api-request-path.mdx), [How Linux Isolates a Container](../basic/linux-isolation.mdx), [How an Image Is Built and Run](../basic/container-image.mdx)
+
+## Container Orchestration (28%)
+
+<Quiz title={null} save={false} questions={[
+  {q: 'The Pods behind your web app are replaced on every deploy and get new IP addresses each time. What gives other Pods one stable address to call?', options: ['A Service', 'A ConfigMap listing the Pod IPs', 'hostNetwork: true on the Pods', 'A PersistentVolume'], answer: 0, why: 'A Service has a stable virtual IP and DNS name. It selects Pods by label and keeps its EndpointSlices up to date as Pods come and go.'},
+  {q: 'A Pod in namespace shop must call the Service named db in namespace data. Which name resolves to it?', options: ['db', 'db.shop.svc.cluster.local', 'db.data.svc.cluster.local', 'data.db.svc.cluster.local'], answer: 2, why: 'Service DNS names have the form service.namespace.svc.cluster.local. The short name db only resolves inside the Pod\'s own namespace, which here is shop.'},
+  {q: 'A namespace has no NetworkPolicy objects at all. Which traffic can reach its Pods?', options: ['Only traffic from the same namespace', 'Only traffic from the ingress controller', 'No traffic until a policy allows it', 'All traffic, from any Pod or source'], answer: 3, why: 'Pods are non-isolated by default. A Pod only becomes isolated for ingress or egress once a NetworkPolicy selects it, and then only the listed traffic is allowed.'},
+  {q: 'Which statement about Kubernetes RBAC is true?', options: ['A Role can include deny rules that override other Roles', 'Permissions only add up; there are no deny rules', 'A Role in a namespace can grant access to Nodes', 'A RoleBinding can never reference a ClusterRole'], answer: 1, why: 'RBAC is purely additive: anything not granted is denied. Nodes are cluster-scoped, so they need a ClusterRole and ClusterRoleBinding, and a RoleBinding may reference a ClusterRole to grant it within one namespace.'},
+  {q: 'A Pod is stuck with STATUS ImagePullBackOff. Where do you look first?', options: ['The node disk usage', 'The Pod liveness probe', 'The Events in kubectl describe pod, for the image name, tag and registry error', 'The Service selector'], answer: 2, why: 'ImagePullBackOff means the kubelet could not pull the image. The Events show the exact error, usually a wrong name or tag, or missing imagePullSecrets for a private registry.'},
+  {q: 'A PersistentVolumeClaim stays Pending. The cluster has no default StorageClass and the claim sets no storageClassName. Why?', options: ['No matching PersistentVolume exists and nothing can provision one', 'The Pod that uses it has not been scheduled yet', 'PVCs stay Pending until the node is rebooted', 'The namespace has reached its Pod quota'], answer: 0, why: 'Without a StorageClass there is no dynamic provisioner, so the claim can only bind to an existing PV that matches its size and access mode. If none exists, it waits in Pending.'},
+]} />
+
+**Study:** [How a Request Reaches a Pod](../k8s/traffic.mdx), [Finding Services by Name (Service·DNS)](../k8s/service-dns.mdx), [Blocking and Allowing Traffic (NetworkPolicy)](../k8s/network-policy.mdx), [Who Can Do What (RBAC)](../k8s/rbac.mdx), [Viewing the cluster through the 4Cs and a threat model (KCSA·KCNA)](../cert/threat-model.mdx), [Reading status in three layers and the troubleshooting order](../intermediate/troubleshoot-status.mdx), [How Storage Gets Attached (PVC·PV)](../k8s/storage-volume.mdx)
+
+## Cloud Native Application Delivery (16%)
+
+<Quiz title={null} save={false} questions={[
+  {q: 'Which description fits GitOps?', options: ['A CI job runs kubectl apply after every commit', 'Engineers edit live objects with kubectl edit and then commit the change', 'Manifests are copied to each node by SSH', 'An agent in the cluster pulls the desired state from Git and keeps reconciling the cluster to it'], answer: 3, why: 'In GitOps, Git is the source of truth and a controller such as Argo CD or Flux pulls from it and corrects drift. Pushing with kubectl from CI is plain CI/CD, not GitOps.'},
+  {q: 'During a rolling update of a Deployment, which field sets how many Pods may exist above the desired replica count?', options: ['maxUnavailable', 'maxSurge', 'minReadySeconds', 'revisionHistoryLimit'], answer: 1, why: 'spec.strategy.rollingUpdate.maxSurge is how many extra Pods can be created during the update. maxUnavailable is how many desired Pods may be missing at once.'},
+  {q: 'A Helm upgrade broke the release web. Which command puts it back to revision 3?', options: ['helm rollback web 3', 'helm uninstall web --revision 3', 'helm install web --version 3', 'kubectl rollout undo release/web'], answer: 0, why: 'helm rollback RELEASE REVISION creates a new revision with the manifests of the old one. helm history web lists the revision numbers.'},
+  {q: 'Which release pattern sends a small share of real traffic to the new version first and increases it only if things look good?', options: ['Recreate', 'Canary', 'Blue/green', 'Rolling update with maxSurge 0'], answer: 1, why: 'A canary exposes a small slice of users to the new version first. Blue/green switches all traffic at once between two complete environments.'},
+  {q: 'A Pod runs a distroless image with no shell, so kubectl exec cannot open one. How can you inspect it from inside?', options: ['kubectl attach --shell', 'Rebuild the image with a shell and redeploy', 'kubectl debug -it POD --image=busybox --target=app', 'kubectl logs -f POD'], answer: 2, why: 'kubectl debug adds an ephemeral container with your chosen image to the running Pod. --target shares the process namespace of the app container, so you can see its processes.'},
+]} />
+
+**Study:** [How a Pipeline Runs](../basic/cicd-pipeline.mdx), [Helm and GitOps](../intermediate/gitops-sync.mdx), [How a Helm Release Is Installed, Upgraded and Rolled Back](../k8s/helm-release.mdx), [Zero-Downtime Deploys (Rolling Update)](../k8s/rolling-update.mdx), [Debugging a Running Pod with kubectl debug](../k8s/kubectl-debug.mdx)
+
+## Cloud Native Architecture (12%)
+
+<Quiz title={null} save={false} questions={[
+  {q: 'How does Prometheus usually get metrics from an application?', options: ['The app writes metrics into etcd', 'Prometheus reads the container log files', 'The kubelet pushes them into Prometheus', 'Prometheus scrapes an HTTP endpoint such as /metrics on a schedule'], answer: 3, why: 'Prometheus uses a pull model: it scrapes targets over HTTP at a set interval. The Pushgateway exists only for short-lived jobs that cannot be scraped.'},
+  {q: 'An HPA targets 60% CPU, but kubectl get hpa shows the current value as unknown. What is the most likely cause?', options: ['metrics-server is missing, or the containers set no CPU requests', 'The Deployment has too many replicas', 'The HPA must be in kube-system', 'The Service type is not LoadBalancer'], answer: 0, why: 'The HPA reads usage from the Metrics API, which metrics-server provides, and computes utilization as a percentage of resources.requests.cpu. Without either, it cannot compute a value.'},
+  {q: 'A serverless platform such as Knative runs your function with zero replicas when idle. What happens on the next request?', options: ['The request fails until an operator scales it up', 'The platform starts a replica and holds the request until it is ready, which adds cold-start latency', 'The request is served from a cached response', 'A DaemonSet Pod on the node answers it'], answer: 1, why: 'Scale to zero saves resources when there is no traffic. The cost is a cold start: the first request waits while a new instance starts.'},
+  {q: 'In a sidecar service mesh such as Istio, what encrypts traffic between two services without changes to the application code?', options: ['The CNI plugin rewrites the app\'s sockets', 'Each app must load a TLS library', 'A proxy injected next to each app container sets up mutual TLS with the other proxy', 'kube-proxy encrypts Service traffic'], answer: 2, why: 'The mesh injects a proxy (Envoy) into each Pod. The proxies hold workload certificates and do mutual TLS between themselves, so the apps keep speaking plain HTTP locally.'},
+]} />
+
+**Study:** [How Logs, Metrics and Traces Leave a Pod](../k8s/observability-pipeline.mdx), [Scaling with Load (HPA)](../k8s/autoscaling.mdx), [How a Serverless Function Runs](../cloud/serverless.mdx), [Service Mesh ① Sidecars and Mutual Authentication](../feature/mesh-sidecar.mdx)

@@ -1,0 +1,253 @@
+---
+id: pv-lifecycle
+title: PV 생명주기와 회수 정책
+sidebar_label: 11 · PV 생명주기
+description: PersistentVolume이 Available에서 Bound, Released, Failed로 바뀌는 과정과 Delete·Retain 회수 정책, pvc-protection, 정책 패치, claimRef·volumeName으로 미리 만든 PV를 묶는 법을 애니메이션으로 본다
+summary: 'Available·Bound·Released·Failed, Delete와 Retain에서 PVC를 지우면 디스크가 어떻게 되는지, 제때 데이터를 지키는 법, PV를 손으로 묶는 법.'
+icon: disk
+hide_table_of_contents: true
+---
+
+# PV 생명주기와 회수 정책
+
+누군가 데이터베이스의 PVC를 지웠다. 디스크도 같이 사라질까? PersistentVolume 하나를 **Available → Bound → Released → (Failed)** 순서로 따라가며 회수 정책이 무엇을 정하는지 본다.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '약 12분', level: '중급'}}
+  groups={[
+    {label: '쿠버네티스 클러스터', x: 220, y: 30, w: 530, h: 400, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'admin', label: '관리자', sub: 'kubectl', icon: 'user', tone: 'ext', x: 110, y: 230, show: true},
+    {id: 'pod', label: '파드 db-0', sub: 'PVC 마운트', icon: 'pod', tone: 'app', size: 'sm', x: 320, y: 90, show: true},
+    {id: 'pvc', label: 'PVC data', sub: 'ns shop', icon: 'ticket', tone: 'store', x: 320, y: 210, show: true},
+    {id: 'pvc2', label: 'PVC data-new', sub: 'ns shop', icon: 'ticket', tone: 'store', x: 320, y: 345},
+    {id: 'sc', label: 'StorageClass', sub: 'reclaimPolicy', icon: 'layers', tone: 'cp', x: 560, y: 90},
+    {id: 'pv', label: 'PV pv-db', sub: 'persistentVolume', icon: 'disk', tone: 'store', x: 560, y: 210, w: 170, show: true},
+    {id: 'ctrl', label: 'PV 컨트롤러', sub: '묶기 · 회수', icon: 'gear', tone: 'cp', x: 560, y: 350},
+    {id: 'disk', label: '클라우드 디스크', sub: 'vol-0abc · 실제 데이터', icon: 'archive', tone: 'ext', x: 870, y: 210, show: true},
+  ]}
+  metrics={[
+    {id: 'phase', label: 'PV 단계'},
+    {id: 'policy', label: '회수 정책'},
+    {id: 'claim', label: 'claimRef'},
+    {id: 'data', label: '디스크의 데이터'},
+  ]}
+  learn={[
+    {text: 'PV의 네 단계와 단계를 바꾸는 계기', at: 1},
+    {text: '회수 정책은 어디서 오는가: StorageClass 또는 PV 자체', at: 1},
+    {text: '파드가 쓰는 동안 pvc-protection이 PVC를 붙잡는 이유', at: 2},
+    {text: 'Delete와 Retain, 그리고 제때 정책을 바꾸는 법', at: 3},
+    {text: 'Released PV를 다시 쓰게 만들고, PV를 손으로 묶는 법', at: 7},
+  ]}
+  steps={[
+    {
+      short: '시작',
+      kind: '시작',
+      title: '데이터베이스 파드가 묶인 PV에 쓴다',
+      text: [
+        '파드 db-0이 PVC data를 마운트한다. 이 PVC는 동적 프로비저닝으로 만들어졌다. CSI 드라이버가 클라우드 디스크 vol-0abc를 만들고, 그 디스크를 가리키는 PV pv-db를 만들었다.',
+        'PV는 Bound 상태다. PV의 claimRef는 PVC data를 가리키고, PVC의 volumeName은 PV를 가리킨다. 둘은 양방향으로 일대일로 묶인다.',
+      ],
+      flows: [
+        {from: 'pod', to: 'pvc', label: '마운트', type: 'request'},
+        {from: 'pvc', to: 'pv', label: 'Bound', type: 'watch'},
+        {from: 'pv', to: 'disk', label: '실체', type: 'watch'},
+      ],
+      focus: ['pvc', 'pv'],
+      badges: {pv: 'Bound'},
+      values: {phase: 'Bound', policy: 'Delete', claim: 'shop/data', data: {text: '있음', tone: 'good'}},
+    },
+    {
+      short: '단계',
+      kind: '원리',
+      title: '단계는 넷이고, 정책은 StorageClass에서 온다',
+      text: [
+        'PV는 Available(묶인 요청이 없는 빈 상태), Bound(요청과 묶임), Released(요청은 지워졌지만 저장소는 아직 회수되지 않음), Failed(자동 회수 실패) 중 하나다.',
+        'persistentVolumeReclaimPolicy는 묶임이 풀릴 때 무슨 일이 일어날지 정한다. 동적으로 만든 PV는 StorageClass의 reclaimPolicy를 물려받고, 그 기본값은 Delete다. 손으로 만든 PV의 기본값은 Retain이다.',
+      ],
+      keyIdea: 'kubectl get pv는 모든 PV의 RECLAIM POLICY와 STATUS를 보여 준다. 중요한 데이터가 든 PVC를 지우기 전에 먼저 읽는다.',
+      flows: [{from: 'sc', to: 'pv', label: 'reclaimPolicy', type: 'watch'}],
+      focus: ['sc', 'pv'],
+      badges: {sc: 'Delete (기본)'},
+    },
+    {
+      short: '보호',
+      kind: '원리',
+      title: '쓰이는 PVC를 지우면 Terminating 표시만 붙는다',
+      text: [
+        '누군가 실수로 kubectl delete pvc data를 실행한다. 명령은 끝나지만 PVC는 사라지지 않고 Terminating으로 남는다.',
+        '모든 PVC에는 kubernetes.io/pvc-protection 파이널라이저가 있다. 이 PVC를 쓰는 파드 오브젝트가 하나라도 있으면 파이널라이저가 남아 PVC를 지킨다. 묶인 PV에도 같은 이유로 kubernetes.io/pv-protection이 있다.',
+      ],
+      keyIdea: 'Terminating인 PVC는 아직 묶여 있고 데이터도 그대로다. 손쓸 수 있는 시간이 바로 지금이다.',
+      flows: [{from: 'admin', to: 'pvc', label: 'delete pvc', type: 'request'}],
+      focus: ['pvc', 'pod'],
+      status: {pvc: 'warn'},
+      badges: {sc: null, pvc: 'Terminating'},
+    },
+    {
+      short: 'Delete',
+      kind: '주의',
+      title: 'Delete면 요청이 사라질 때 디스크도 사라진다',
+      text: [
+        '파드 db-0이 멈추는 순간 파이널라이저가 풀리고 PVC가 지워진다. 정책이 Delete면 PV 오브젝트와 그 뒤의 클라우드 디스크가 함께 지워진다. 쿠버네티스 쪽에서는 데이터를 되살릴 수 없다.',
+        'PV에 붙은 파이널라이저는 실제 디스크가 지워진 뒤에야 PV 오브젝트를 없앤다. 그래서 디스크만 몰래 남는 일은 없다.',
+      ],
+      keyIdea: '임시 데이터라면 Delete가 맞는 기본값이다. 데이터베이스라면 "PVC를 지우면 데이터도 지워진다"로 받아들인다.',
+      flows: [{from: 'ctrl', to: 'disk', label: '지울 예정', type: 'request', bend: 40}],
+      focus: ['pv', 'disk'],
+      status: {disk: 'warn'},
+      badges: {disk: 'PVC와 함께 삭제'},
+      values: {data: {text: '위험', tone: 'bad'}},
+    },
+    {
+      short: '패치',
+      kind: '원리',
+      title: '아직 묶여 있을 때 PV를 Retain으로 바꾼다',
+      text: [
+        '관리자가 PV를 패치한다. kubectl patch pv pv-db -p로 spec.persistentVolumeReclaimPolicy를 Retain으로 바꾼다. 정책은 PV에 들어 있으므로 이미 있는 볼륨에도 통한다.',
+        '나중에 StorageClass를 바꿔도 이미 만든 PV에는 영향이 없다. 앞으로 만들 볼륨을 Retain으로 하려면 StorageClass를 만들 때 reclaimPolicy: Retain을 준다.',
+      ],
+      flows: [{from: 'admin', to: 'pv', label: 'Retain 패치', type: 'request'}],
+      focus: ['admin', 'pv'],
+      status: {disk: null},
+      badges: {disk: null, pv: 'Retain'},
+      values: {policy: {text: 'Retain', tone: 'good'}, data: {text: '있음', tone: 'good'}},
+    },
+    {
+      short: 'Released',
+      kind: '원리',
+      title: '요청은 사라지고 PV는 Released, 데이터는 남는다',
+      text: [
+        '파드 db-0이 지워지고 PVC도 삭제를 마친다. Retain이므로 PV는 남아 Released로 바뀐다. 클라우드 디스크와 데이터는 그대로다.',
+        'PV는 옛 PVC를 가리키는 claimRef를 uid까지 그대로 들고 있다. 이전 사용자의 데이터가 다른 사람에게 넘어가지 않게 막는 장치다.',
+      ],
+      flows: [{from: 'pv', to: 'disk', label: '보존', type: 'watch'}],
+      focus: ['pv', 'disk'],
+      status: {pod: 'gone', pvc: 'gone', pv: 'warn'},
+      badges: {pvc: null, pv: 'Released'},
+      values: {phase: {text: 'Released', tone: 'bad'}, claim: 'shop/data (옛 uid)'},
+    },
+    {
+      short: 'Pending',
+      kind: '문제',
+      title: '새 PVC는 Released PV에 묶이지 않는다',
+      text: [
+        '팀이 PVC data-new를 만들고 옛 볼륨을 받기를 기대한다. 그런데 PVC는 Pending에 머물거나, 기본 StorageClass로 텅 빈 새 디스크를 받는다.',
+        'Released PV는 다른 요청에 쓸 수 없다. PV 컨트롤러는 볼륨을 스스로 지우거나 넘겨주지 않는다. 옛 데이터를 어떻게 할지는 관리자가 정해야 한다.',
+      ],
+      flows: [{from: 'pvc2', to: 'pv', label: '맞지 않음', type: 'watch'}],
+      focus: ['pvc2', 'pv'],
+      status: {pvc2: 'error'},
+      badges: {pvc2: 'Pending'},
+    },
+    {
+      short: '회수',
+      kind: '원리',
+      title: '관리자가 볼륨을 손으로 회수한다',
+      text: [
+        '문서에 나온 방법은 이렇다. PV를 지우고(디스크는 남는다), 데이터를 정리하거나 그대로 둔 뒤, 같은 디스크를 가리키는 새 PV를 만든다. 새 PV는 Available로 시작한다.',
+        '자주 쓰는 지름길은 kubectl patch로 Released PV의 spec.claimRef를 지우는 것이다. 옛 데이터가 든 채로 Available로 돌아가므로, 다음 사용자가 그 데이터를 봐도 될 때만 쓴다.',
+      ],
+      keyIdea: 'Retain은 결정을 사람에게 넘긴다. 회수는 언제나 손으로, 일부러 하는 일이다.',
+      flows: [{from: 'admin', to: 'pv', label: 'PV 다시 만들기', type: 'request'}],
+      focus: ['admin', 'pv'],
+      status: {pv: 'ok', pvc2: null},
+      badges: {pv: 'Available', pvc2: null},
+      values: {phase: 'Available', claim: '—'},
+    },
+    {
+      short: '미리 묶기',
+      kind: '원리',
+      title: '정적 프로비저닝: 고른 PV를 고른 PVC에 묶는다',
+      text: [
+        '새 PV는 claimRef에 네임스페이스 shop의 data-new를 적어 그 요청 몫으로 예약한다. PVC data-new는 volumeName: pv-db를 적는다. 둘 다 storageClassName을 빈 문자열로 둔다.',
+        '빈 문자열이 중요하다. 빠뜨리면 기본 StorageClass가 채워져서 PVC가 이 PV 대신 빈 새 디스크를 받을 수 있다. 크기와 접근 모드는 여전히 맞아야 한다.',
+      ],
+      keyIdea: 'PV의 claimRef는 예약이고, PVC의 volumeName은 지명이다. 둘을 함께 쓰면 정확히 이 한 쌍이 묶인다.',
+      flows: [
+        {from: 'pvc2', to: 'pv', label: 'volumeName', type: 'watch'},
+        {from: 'ctrl', to: 'pv', label: '묶기', type: 'watch'},
+        {from: 'pv', to: 'disk', label: '실체', type: 'watch'},
+      ],
+      focus: ['pvc2', 'pv'],
+      status: {pvc2: 'ok'},
+      badges: {pv: 'Bound', pvc2: 'Bound'},
+      values: {phase: {text: 'Bound', tone: 'good'}, claim: 'shop/data-new'},
+    },
+    {
+      short: 'Failed',
+      kind: '주의',
+      title: 'Failed는 자동 회수가 실패했다는 뜻이다',
+      text: [
+        '스토리지 쪽이 회수를 거절하거나 해내지 못하면 PV는 Failed가 되거나, 경고 이벤트와 함께 Released에 머문다. 디스크가 이미 다른 경로로 지워졌거나 드라이버 권한이 모자란 경우가 흔하다.',
+        '쿠버네티스가 알아서 깨끗한 상태로 되돌려 주지 않는다. PV 이벤트를 읽고 스토리지 쪽 원인을 고친 뒤 PV 오브젝트를 지운다.',
+      ],
+      flows: [{from: 'ctrl', to: 'disk', label: '삭제 실패', type: 'response', bend: 40}],
+      focus: ['ctrl', 'disk'],
+      status: {ctrl: 'warn'},
+      badges: {ctrl: 'VolumeFailedDelete'},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: 'PVC를 지우면 데이터도 지워지는지는 정책이 정한다',
+      text: [
+        'PV는 Available → Bound → Released로 가고, 회수가 깨지면 Failed가 된다. 파드가 쓰는 동안에는 pvc-protection이 PVC를 붙잡는다.',
+        'Delete는 요청과 함께 PV와 디스크를 지운다. Retain은 둘 다 남기지만, 관리자가 PV를 다시 만들거나 claimRef를 지울 때까지 PV는 Released로 남는다. Recycle은 폐기 예정이다.',
+      ],
+      keyIdea: '잃으면 안 되는 볼륨은 누가 PVC를 지우기 전에 Retain으로 둔다. StorageClass로 정하거나 kubectl patch로 바꾼다. 백업은 여전히 따로 해야 한다.',
+      flows: [
+        {from: 'pod', to: 'pvc', label: '마운트', type: 'request'},
+        {from: 'pvc2', to: 'pv', label: 'Bound', type: 'watch'},
+        {from: 'pv', to: 'disk', label: '실체', type: 'watch'},
+      ],
+      focus: ['sc', 'pv', 'disk'],
+      status: {ctrl: null},
+      badges: {ctrl: null},
+    },
+  ]}
+/>
+
+## PVC를 지우면 일어나는 일
+
+| 정책 | PVC가 사라진 뒤의 PV | 클라우드 디스크와 데이터 | 다음 할 일 |
+|---|---|---|---|
+| `Delete` (동적 프로비저닝 기본값) | 삭제 | 삭제 | 치울 것도, 되살릴 것도 없다 |
+| `Retain` (손으로 만든 PV 기본값) | `Released`, `claimRef` 유지 | 남음 | 관리자가 PV를 지우고 다시 만들거나 `claimRef`를 지운다 |
+| `Recycle` (폐기 예정) | 볼륨을 `rm -rf`한 뒤 `Available` | 데이터 지워짐 | 대신 동적 프로비저닝을 쓴다 |
+| 회수 실패 | `Failed`, 또는 경고 이벤트와 함께 `Released` | 알 수 없음, 스토리지 쪽 확인 | `kubectl describe pv`를 읽고 스토리지 쪽을 고친 뒤 PV를 지운다 |
+
+| 증상 | 원인 | 해결 |
+|---|---|---|
+| PVC가 `Terminating`에 멈춤 | 파드가 아직 쓰고 있다 (`kubernetes.io/pvc-protection`) | 파드를 멈추거나 지운다. 필요하면 먼저 백업하거나 PV를 `Retain`으로 패치한다 |
+| `Released` PV가 있는데 새 PVC가 `Pending` | Released PV는 다시 묶이지 않는다 | PV를 손으로 회수한 뒤 `claimRef`와 `volumeName`으로 미리 묶는다 |
+| `volumeName`을 준 PVC가 빈 새 디스크를 받음 | `storageClassName`을 빠뜨려 기본 클래스가 적용됐다 | PVC와 PV 모두에 `storageClassName: ""`를 준다 |
+
+## 직접 확인해 보기
+
+```bash
+kubectl get pv                                         # STATUS, CLAIM, RECLAIM POLICY, STORAGECLASS
+kubectl get storageclass -o custom-columns=NAME:.metadata.name,RECLAIM:.reclaimPolicy
+kubectl get pvc data -n shop -o jsonpath='{.metadata.finalizers}{"\n"}'   # ["kubernetes.io/pvc-protection"]
+
+# PVC가 지워져도 디스크를 남긴다
+kubectl patch pv pv-db -p '{"spec":{"persistentVolumeReclaimPolicy":"Retain"}}'
+
+# PVC가 지워진 뒤: Released, 옛 claimRef가 남아 있다
+kubectl get pv pv-db -o jsonpath='{.status.phase} {.spec.claimRef.namespace}/{.spec.claimRef.name}{"\n"}'
+
+# 다시 Available로 만드는 지름길 (옛 데이터는 디스크에 남는다)
+kubectl patch pv pv-db --type json -p '[{"op":"remove","path":"/spec/claimRef"}]'
+kubectl describe pv pv-db                              # Failed의 이유는 이벤트에 있다
+```
+
+<Quiz questions={[
+  {q: 'reclaimPolicy를 적지 않은 StorageClass로 동적 프로비저닝한 PVC가 있다. 파드가 사라진 뒤 누군가 이 PVC를 지웠다. 데이터는 어떻게 되는가?', options: ['PV가 Released가 되고 데이터는 남는다', 'PV와 클라우드 디스크가 지워져 데이터가 사라진다', '볼륨을 지운 뒤 다시 Available로 만든다'], answer: 1, why: '동적으로 만든 PV는 StorageClass의 reclaimPolicy를 물려받고, 그 기본값이 Delete이기 때문이다. Delete는 PV 오브젝트와 실제 저장소를 모두 지운다.'},
+  {q: '파드가 돌고 있는 동안 PVC를 지웠다. PVC가 Terminating에 머무는 이유와, 그것이 쓸모 있는 이유는?', options: ['kubernetes.io/pvc-protection 파이널라이저가 파드가 쓰는 동안 PVC를 붙잡기 때문이고, 그동안 PV를 Retain으로 패치할 수 있다', 'CSI 드라이버가 먼저 데이터를 스냅숏으로 복사하기 때문이다', 'API 서버가 모든 노드에서 디스크가 떼어지기를 기다리기 때문이다', 'StorageClass가 WaitForFirstConsumer이기 때문이다'], answer: 0, why: 'pvc-protection은 파드가 쓰는 PVC를 지키기 때문이다. Terminating인 동안 PVC는 아직 묶여 있으므로, 지금 PV 정책을 바꾸면 묶임이 풀릴 때의 결과가 바뀐다.'},
+  {q: 'Retain인 PV가 Released 상태다. 새 PVC가 volumeName으로 이 PV를 지명했는데 Pending에 머문다. 이유는?', options: ['volumeName은 동적 프로비저닝에서만 통한다', 'Retain PV는 읽기만 되고 묶을 수 없다', 'claimRef가 아직 옛 PVC를 가리켜서, 관리자가 회수할 때까지 PV를 쓸 수 없다', 'PVC가 Recycle 정책을 써야 한다'], answer: 2, why: 'Released PV는 데이터가 실수로 넘어가지 않도록 이전 요청을 가리키는 claimRef를 들고 있기 때문이다. PV를 다시 만들거나 claimRef를 지우면 다시 Available이 된다.'},
+]} />
+
+더 읽을거리: [퍼시스턴트 볼륨](https://kubernetes.io/docs/concepts/storage/persistent-volumes/) · [PV의 회수 정책 바꾸기](https://kubernetes.io/docs/tasks/administer-cluster/change-pv-reclaim-policy/) · [저장 공간이 붙기까지 (PVC·PV)](../k8s/storage-volume.mdx) · [볼륨이 붙는 시점과 장애](../advanced/volume-binding.mdx) · [삭제는 생각보다 복잡하다](../advanced/deletion-finalizer.mdx)

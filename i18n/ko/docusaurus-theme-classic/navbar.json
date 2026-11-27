@@ -26,5 +26,21 @@
   "item.label.Glossary": {
     "message": "용어집",
     "description": "Navbar item with label Glossary"
+  },
+  "item.label.Labs": {
+    "message": "장애 실습",
+    "description": "Navbar item with label Labs"
+  },
+  "item.label.Practice exams": {
+    "message": "모의 문제",
+    "description": "Navbar item with label Practice exams"
+  },
+  "item.label.Study": {
+    "message": "학습 도구",
+    "description": "Navbar item with label Study"
+  },
+  "item.label.Cheat sheet": {
+    "message": "명령어 치트시트",
+    "description": "Navbar item with label Cheat sheet"
   }
 }

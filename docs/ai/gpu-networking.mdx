@@ -1,0 +1,273 @@
+---
+id: gpu-networking
+title: Moving Data Between GPUs
+sidebar_label: 07 · GPU networking
+description: 'How GPUs exchange data for distributed training and inference: NVLink and NVSwitch versus PCIe inside a node, RDMA over InfiniBand or RoCE v2 across nodes, GPUDirect RDMA, rail-optimized topology, PFC and ECN for lossless Ethernet, and RDMA NICs on Kubernetes with Multus, device plugins or DRA, and the NVIDIA Network Operator.'
+summary: 'NVLink inside a node, RDMA and GPUDirect across nodes, one NIC per GPU, and how to tell when NCCL quietly fell back to TCP.'
+icon: route
+hide_table_of_contents: true
+---
+
+# Moving Data Between GPUs
+
+Distributed training stops to exchange gradients at every step, so the network between GPUs sets the pace. Follow the data from one GPU to another, first inside a node and then across nodes, and see how Kubernetes hands an RDMA NIC to a Pod.
+
+<StepDiagram
+  width={1000}
+  height={520}
+  meta={{duration: '~14 min', level: 'Advanced'}}
+  groups={[
+    {label: 'GPU node A', x: 30, y: 30, w: 440, h: 380, tone: 'biz'},
+    {label: 'GPU node B', x: 530, y: 30, w: 440, h: 380, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'gpuA0', label: 'GPU 0', sub: 'rank 0', icon: 'layers', tone: 'app', size: 'sm', x: 110, y: 110, show: true},
+    {id: 'gpuA1', label: 'GPU 1', sub: 'rank 1', icon: 'layers', tone: 'app', size: 'sm', x: 110, y: 220, show: true},
+    {id: 'gpuB0', label: 'GPU 0', sub: 'rank 2', icon: 'layers', tone: 'app', size: 'sm', x: 890, y: 110, show: true},
+    {id: 'gpuB1', label: 'GPU 1', sub: 'rank 3', icon: 'layers', tone: 'app', size: 'sm', x: 890, y: 220, show: true},
+    {id: 'nvswA', label: 'NVSwitch', sub: 'NVLink fabric', icon: 'split', tone: 'node', size: 'sm', w: 130, x: 110, y: 340},
+    {id: 'nvswB', label: 'NVSwitch', sub: 'NVLink fabric', icon: 'split', tone: 'node', size: 'sm', w: 130, x: 890, y: 340},
+    {id: 'pcieA', label: 'PCIe switch', sub: 'GPU + NIC', icon: 'split', tone: 'node', size: 'sm', w: 116, x: 250, y: 165},
+    {id: 'pcieB', label: 'PCIe switch', sub: 'GPU + NIC', icon: 'split', tone: 'node', size: 'sm', w: 116, x: 750, y: 165},
+    {id: 'cpuA', label: 'CPU + kernel', sub: 'host memory · TCP', icon: 'server', tone: 'cp', x: 290, y: 330},
+    {id: 'cpuB', label: 'CPU + kernel', sub: 'host memory · TCP', icon: 'server', tone: 'cp', x: 710, y: 330},
+    {id: 'nicA0', label: 'NIC 0', sub: 'RDMA', icon: 'gate', tone: 'node', size: 'sm', x: 400, y: 110},
+    {id: 'nicA1', label: 'NIC 1', sub: 'RDMA', icon: 'gate', tone: 'node', size: 'sm', x: 400, y: 220},
+    {id: 'nicB0', label: 'NIC 0', sub: 'RDMA', icon: 'gate', tone: 'node', size: 'sm', x: 600, y: 110},
+    {id: 'nicB1', label: 'NIC 1', sub: 'RDMA', icon: 'gate', tone: 'node', size: 'sm', x: 600, y: 220},
+    {id: 'rail0', label: 'Rail 0 switch', sub: 'IB or RoCE leaf', icon: 'route', tone: 'ext', x: 380, y: 470},
+    {id: 'rail1', label: 'Rail 1 switch', sub: 'IB or RoCE leaf', icon: 'route', tone: 'ext', x: 600, y: 470},
+    {id: 'cni', label: 'Pod network', sub: 'primary CNI · eth0', icon: 'cloud', tone: 'ext', w: 160, x: 150, y: 470},
+    {id: 'netop', label: 'Network Operator', sub: 'drivers · plugins', icon: 'gear', tone: 'cp', w: 170, x: 850, y: 470},
+  ]}
+  metrics={[
+    {id: 'path', label: 'Path'},
+    {id: 'transport', label: 'NCCL transport'},
+    {id: 'cpu', label: 'CPU copies'},
+  ]}
+  learn={[
+    {text: 'NVLink and NVSwitch versus PCIe inside one node', at: 1},
+    {text: 'RDMA over InfiniBand or RoCE v2 skips the CPU and kernel', at: 3},
+    {text: 'GPUDirect RDMA and rail-optimized topology', at: 4},
+    {text: 'Why RoCE needs lossless Ethernet with PFC and ECN', at: 6},
+    {text: 'RDMA NICs in Pods with Multus, device plugins or DRA', at: 7},
+    {text: 'Spotting an NCCL fallback to TCP sockets', at: 8},
+  ]}
+  steps={[
+    {
+      short: 'Start',
+      kind: '시작',
+      title: 'Every training step ends with an all-reduce',
+      text: [
+        'Four GPUs on two nodes train one model with data parallelism. After each backward pass, every GPU holds its own gradients, and all of them must end up with the same sum. That collective is an all-reduce.',
+        'A communication library such as NCCL runs it. Some of the traffic stays inside a node, and some has to cross the network to the other node. The slowest link sets the pace for everyone.',
+      ],
+      keyIdea: 'GPUs that wait for the network sit idle. In large jobs, communication speed decides how much of the expensive compute you actually use.',
+      flows: [
+        {from: 'gpuA0', to: 'gpuA1', label: 'gradients', type: 'request'},
+        {from: 'gpuA0', to: 'gpuB0', label: 'gradients', type: 'request', bend: -60},
+      ],
+      focus: ['gpuA0', 'gpuA1', 'gpuB0', 'gpuB1'],
+      values: {path: 'all-reduce across 4 GPUs'},
+    },
+    {
+      short: 'NVLink',
+      kind: '원리',
+      title: 'Inside a node: NVLink and NVSwitch beat PCIe',
+      text: [
+        'GPUs in one node can talk over PCIe, but PCIe is shared with NICs and storage and has far less bandwidth than a direct GPU link. NVLink connects GPUs directly, and an NVSwitch lets every GPU in the node reach every other one at full NVLink speed.',
+        'NCCL picks the best path it finds. On a node with NVLink it uses peer-to-peer copies over NVLink. Without it, traffic goes over PCIe, and across CPU sockets it is slower still.',
+      ],
+      keyIdea: 'nvidia-smi topo -m prints the matrix. NV# means NVLink, PIX or PXB means a shared PCIe switch, and SYS means the path crosses the CPU interconnect.',
+      flows: [
+        {from: 'gpuA0', to: 'nvswA', label: 'NVLink', type: 'request', bend: -40},
+        {from: 'nvswA', to: 'gpuA1', label: 'NVLink', type: 'request'},
+      ],
+      focus: ['gpuA0', 'gpuA1', 'nvswA'],
+      values: {path: 'GPU → NVSwitch → GPU', transport: 'P2P over NVLink', cpu: '0'},
+    },
+    {
+      short: 'TCP path',
+      kind: '문제',
+      title: 'Across nodes the plain way: through the CPU and kernel',
+      text: [
+        'Over ordinary TCP, data leaves GPU 0 for host memory, goes through the kernel network stack, and only then reaches the NIC. The other node does the same in reverse.',
+        'Every hop adds copies, system calls and CPU work. The link may be fast, but the host path in the middle cannot keep up with what GPUs produce.',
+      ],
+      flows: [
+        {from: 'gpuA0', to: 'cpuA', label: 'copy to host', type: 'request'},
+        {from: 'cpuA', to: 'nicA0', label: 'TCP stack', type: 'request'},
+        {from: 'nicA0', to: 'nicB0', label: 'Ethernet', type: 'request'},
+        {from: 'nicB0', to: 'cpuB', label: 'TCP stack', type: 'request'},
+        {from: 'cpuB', to: 'gpuB0', label: 'copy to GPU', type: 'request'},
+      ],
+      focus: ['cpuA', 'cpuB'],
+      status: {cpuA: 'warn', cpuB: 'warn'},
+      values: {path: 'GPU → host → kernel → NIC', transport: {text: 'Socket (TCP)', tone: 'bad'}, cpu: {text: 'several per message', tone: 'bad'}},
+    },
+    {
+      short: 'RDMA',
+      kind: '원리',
+      title: 'RDMA: the NIC writes into remote memory itself',
+      text: [
+        'With RDMA (remote direct memory access), the application registers a memory region with the NIC once. After that, the NIC reads and writes memory on the other node directly. The data path skips the kernel and the remote CPU.',
+        'Two fabrics carry RDMA. InfiniBand is a separate network with its own switches and a subnet manager. RoCE v2 carries the same RDMA transport inside UDP/IP packets, so it runs on Ethernet switches.',
+      ],
+      keyIdea: 'ibv_devinfo lists RDMA devices. link_layer shows InfiniBand or Ethernet (RoCE), and the port must be PORT_ACTIVE.',
+      flows: [
+        {from: 'cpuA', to: 'nicA0', label: 'register memory', type: 'watch'},
+        {from: 'nicA0', to: 'nicB0', label: 'RDMA write', type: 'request'},
+      ],
+      focus: ['nicA0', 'nicB0'],
+      status: {cpuA: null, cpuB: null},
+      values: {path: 'host memory → NIC → NIC → host memory', transport: 'NET/IB (RDMA)', cpu: 'kernel bypassed'},
+    },
+    {
+      short: 'GPUDirect',
+      kind: '원리',
+      title: 'GPUDirect RDMA: the NIC reads GPU memory directly',
+      text: [
+        'Plain RDMA still bounces through host memory: GPU to host, then host to NIC. GPUDirect RDMA removes that bounce. The NIC reads and writes GPU memory over PCIe, peer to peer.',
+        'It works best when the GPU and its NIC sit under the same PCIe switch. It needs driver support on the host, such as the nvidia-peermem module or DMA-BUF. In NCCL logs the channel line then shows GDRDMA.',
+      ],
+      keyIdea: 'Check nvidia-smi topo -m: the GPU and the NIC it uses should show PIX or PXB. SYS means GPUDirect traffic crosses CPU sockets and loses much of its benefit.',
+      flows: [
+        {from: 'gpuA0', to: 'pcieA', label: 'PCIe P2P', type: 'request'},
+        {from: 'pcieA', to: 'nicA0', label: 'DMA', type: 'request'},
+        {from: 'nicA0', to: 'nicB0', label: 'RDMA', type: 'request'},
+        {from: 'nicB0', to: 'pcieB', label: 'DMA', type: 'request'},
+        {from: 'pcieB', to: 'gpuB0', label: 'PCIe P2P', type: 'request'},
+      ],
+      focus: ['gpuA0', 'pcieA', 'nicA0', 'pcieB', 'gpuB0'],
+      values: {path: 'GPU → NIC → NIC → GPU', transport: {text: 'NET/IB/GDRDMA', tone: 'good'}, cpu: {text: '0', tone: 'good'}},
+    },
+    {
+      short: 'Rails',
+      kind: '원리',
+      title: 'Rail-optimized: one NIC per GPU, one switch per rail',
+      text: [
+        'Large GPU servers have one high-speed NIC per GPU. In a rail-optimized design, NIC 0 of every node plugs into the rail 0 switch, NIC 1 into rail 1, and so on.',
+        'GPU 0 on node A and GPU 0 on node B then talk through a single leaf switch. NCCL arranges its rings and trees so that most traffic stays on a rail, and NVLink inside the node moves data between rails.',
+      ],
+      keyIdea: 'Each GPU should use its nearest NIC. Pods that get GPUs and NICs from different PCIe branches lose the rail benefit, so topology-aware allocation matters.',
+      flows: [
+        {from: 'nicA0', to: 'rail0', label: 'rail 0', type: 'request'},
+        {from: 'rail0', to: 'nicB0', label: 'rail 0', type: 'request'},
+        {from: 'nicA1', to: 'rail1', label: 'rail 1', type: 'request'},
+        {from: 'rail1', to: 'nicB1', label: 'rail 1', type: 'request'},
+      ],
+      focus: ['rail0', 'rail1', 'nicA0', 'nicA1', 'nicB0', 'nicB1'],
+      badges: {gpuA0: 'NIC 0', gpuA1: 'NIC 1', gpuB0: 'NIC 0', gpuB1: 'NIC 1'},
+      values: {path: 'GPU i → NIC i → rail i'},
+    },
+    {
+      short: 'Lossless',
+      kind: '주의',
+      title: 'RoCE needs a lossless Ethernet setup',
+      text: [
+        'InfiniBand has credit-based flow control, so switches do not drop packets under load. Ethernet drops packets when a buffer fills, and RDMA recovers from loss badly: it retransmits large chunks and throughput collapses.',
+        'RoCE fabrics therefore use PFC (priority flow control), which pauses one traffic class instead of dropping it, and ECN marks that tell senders to slow down, as in the DCQCN congestion control. Both must match on NICs and every switch.',
+      ],
+      keyIdea: 'Watch the NIC and switch counters for pause frames, ECN marks and out-of-sequence or retransmit events. A mismatched priority on one switch port is enough to hurt the whole job.',
+      flows: [
+        {from: 'nicA0', to: 'rail0', label: 'PFC · ECN', type: 'request'},
+        {from: 'rail0', to: 'nicB0', label: 'PFC · ECN', type: 'request'},
+      ],
+      focus: ['rail0', 'rail1'],
+      status: {rail0: 'warn'},
+      badges: {gpuA0: null, gpuA1: null, gpuB0: null, gpuB1: null, rail0: 'lossless class'},
+    },
+    {
+      short: 'On Kubernetes',
+      kind: '원리',
+      title: 'On Kubernetes: a second network just for RDMA',
+      text: [
+        'The primary CNI still gives the Pod eth0 for Service traffic, DNS and health checks. Multus attaches a second interface, such as net1, from a NetworkAttachmentDefinition, and that interface sits on the RDMA NIC.',
+        'The NIC also has to be allocated like a GPU. An RDMA shared device plugin or the SR-IOV device plugin advertises it as an extended resource, or a DRA driver such as DraNet hands it out as a device. The NVIDIA Network Operator can install the NIC driver, these plugins, Multus and IPAM together.',
+      ],
+      keyIdea: 'An RDMA Pod usually requests GPUs and an RDMA resource, carries the Multus networks annotation, and adds the IPC_LOCK capability so it can pin memory for the NIC.',
+      flows: [
+        {from: 'netop', to: 'nicB0', label: 'driver · plugin', type: 'watch'},
+        {from: 'gpuA0', to: 'cni', label: 'eth0', type: 'request'},
+        {from: 'nicA0', to: 'rail0', label: 'net1 RDMA', type: 'request'},
+      ],
+      focus: ['netop', 'cni', 'nicA0'],
+      status: {rail0: null},
+      badges: {rail0: null, nicA0: 'net1', nicB0: 'net1'},
+    },
+    {
+      short: 'TCP fallback',
+      kind: '장애',
+      title: 'NCCL quietly falls back to TCP sockets',
+      text: [
+        'A new job runs, but each step takes many times longer than on the old cluster. Nothing crashes. With NCCL_DEBUG=INFO, the log says NET/Socket instead of NET/IB, so all inter-node traffic goes through the kernel over eth0.',
+        'Usual causes: the Pod has no RDMA device (no resource request or no Multus network), memory cannot be pinned (no IPC_LOCK, low memlock limit), NCCL_IB_DISABLE is set, or on RoCE the wrong GID index is chosen.',
+      ],
+      keyIdea: 'Test the layers in order: ib_write_bw between two Pods proves the RDMA path, and nccl-tests all_reduce_perf shows the bus bandwidth NCCL reaches. Compare both with the hardware rating.',
+      flows: [
+        {from: 'gpuA0', to: 'cni', label: 'NET/Socket', type: 'request'},
+      ],
+      focus: ['gpuA0', 'cni'],
+      status: {nicA0: 'off', nicB0: 'off', cni: 'error'},
+      badges: {nicA0: 'not in Pod', nicB0: null},
+      values: {path: {text: 'GPU → host → eth0', tone: 'bad'}, transport: {text: 'NET/Socket', tone: 'bad'}, cpu: {text: 'several per message', tone: 'bad'}},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Short paths, the right NIC, and proof in the logs',
+      text: [
+        'Inside a node, NVLink and NVSwitch carry GPU traffic. Across nodes, RDMA over InfiniBand or RoCE v2 skips the kernel, and GPUDirect RDMA lets the NIC read GPU memory directly. A rail-optimized fabric gives each GPU its own NIC and switch.',
+        'On Kubernetes, the RDMA NIC is a second network and an allocated device, next to the normal Pod network. RoCE also needs PFC and ECN set the same way end to end.',
+      ],
+      keyIdea: 'Do not trust a fast network on paper. Read the NCCL transport line and run all_reduce_perf on every new cluster before you start a long job.',
+      flows: [
+        {from: 'gpuA0', to: 'nvswA', label: 'NVLink', type: 'request', bend: -40},
+        {from: 'nicA0', to: 'rail0', label: 'GPUDirect', type: 'request'},
+        {from: 'rail0', to: 'nicB0', label: 'GPUDirect', type: 'request'},
+      ],
+      focus: ['nvswA', 'nicA0', 'rail0', 'nicB0'],
+      status: {nicA0: null, nicB0: null, cni: null},
+      badges: {nicA0: null},
+      values: {path: 'NVLink in node · RDMA across', transport: {text: 'NET/IB/GDRDMA', tone: 'good'}, cpu: {text: '0', tone: 'good'}},
+    },
+  ]}
+/>
+
+## Symptoms and causes
+
+| Symptom | Likely cause | Check |
+|---|---|---|
+| NCCL log shows `NET/Socket` | No RDMA device in the Pod, or `NCCL_IB_DISABLE=1` | `ibv_devinfo` inside the Pod, resource requests, Multus annotation |
+| RDMA device present, NCCL still fails to register memory | Memory cannot be pinned | `IPC_LOCK` capability, `ulimit -l` in the container |
+| `NET/IB` but no `GDRDMA` | GPUDirect RDMA not enabled, or GPU and NIC far apart | nvidia-peermem or DMA-BUF support, `nvidia-smi topo -m` |
+| RoCE works at low load, collapses at scale | PFC or ECN not set the same on all hops | Pause and ECN counters on NICs and switches |
+| RoCE connections fail or hang | Wrong GID index or RoCE version | `NCCL_IB_GID_INDEX`, GID table of the device |
+| Intra-node all-reduce slow | No NVLink path, traffic crosses sockets | `nvidia-smi topo -m`, `nvidia-smi nvlink --status` |
+| One slow node drags the whole job | Bad cable, link down to lower speed, or a degraded port | `ibstat` or `ethtool` link speed, per-node all_reduce_perf |
+
+## Try it yourself
+
+```bash
+nvidia-smi topo -m                 # NV# = NVLink, PIX/PXB = same PCIe switch, SYS = across CPU sockets
+ibv_devinfo                        # RDMA devices, state PORT_ACTIVE, link_layer InfiniBand or Ethernet
+kubectl get network-attachment-definitions -A          # secondary networks Multus can attach
+kubectl get node gpu-node-1 -o jsonpath='{.status.allocatable}'   # GPU and RDMA resources
+kubectl exec trainer-0 -- ip -br addr                  # eth0 from the primary CNI, net1 from Multus
+
+# RDMA bandwidth between two Pods (perftest), using GPU memory on both ends
+kubectl exec trainer-0 -- ib_write_bw -d mlx5_0 --use_cuda=0 -a              # server
+kubectl exec trainer-1 -- ib_write_bw -d mlx5_0 --use_cuda=0 -a 10.10.0.11   # client, server net1 IP
+
+# NCCL all-reduce across 2 nodes x 8 GPUs (nccl-tests built with MPI=1)
+mpirun -np 16 -N 8 -x NCCL_DEBUG=INFO -x NCCL_DEBUG_SUBSYS=INIT,NET \
+  ./build/all_reduce_perf -b 8 -e 8G -f 2 -g 1 2>&1 | grep -E 'NET/|busbw|GDRDMA'
+```
+
+<Quiz questions={[
+  {q: 'A training job runs without errors but each step is many times slower than expected. NCCL_DEBUG=INFO shows NET/Socket. What does that tell you?', options: ['NVLink inside the node is broken', 'Inter-node traffic goes over TCP through the kernel instead of RDMA', 'The GPUs are running out of memory'], answer: 1, why: 'NET/Socket is the TCP transport. NCCL did not find a usable RDMA device, so every message goes through host memory and the kernel stack. Check that the Pod has the RDMA resource, the Multus network and IPC_LOCK.'},
+  {q: 'What does GPUDirect RDMA remove compared with plain RDMA?', options: ['The need for a network switch', 'The NCCL library', 'The copy from GPU memory to host memory before the NIC sends'], answer: 2, why: 'Plain RDMA already skips the kernel, but data still bounces through host memory. With GPUDirect RDMA the NIC reads and writes GPU memory over PCIe directly.'},
+  {q: 'Why does a RoCE v2 fabric need PFC and ECN, while InfiniBand does not need them?', options: ['Ethernet drops packets when buffers fill, and RDMA recovers from loss badly', 'RoCE v2 cannot run over IP', 'InfiniBand is always faster', 'PFC encrypts the RDMA traffic'], answer: 0, why: 'InfiniBand has credit-based flow control and does not drop under load. Ethernet does, so RoCE uses PFC to pause instead of drop and ECN to slow senders down before buffers fill.'},
+]} />
+
+Further reading: [NCCL environment variables](https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/env.html) · [GPUDirect RDMA](https://docs.nvidia.com/cuda/gpudirect-rdma/) · [NVIDIA Network Operator](https://docs.nvidia.com/networking/software/cloud-orchestration/index.html) · [nccl-tests](https://github.com/NVIDIA/nccl-tests) · [Multus CNI](https://github.com/k8snetworkplumbingwg/multus-cni) · [Training One Model on Many GPUs](../ai/distributed-training.mdx) · [Requesting GPUs by Criteria (DRA)](../k8s/dra.mdx) · [Monitoring GPUs on Kubernetes](../ai/gpu-monitoring.mdx)

@@ -179,7 +179,9 @@ The lessons show how things work. The exams also test speed with `kubectl` and t
 **Storage: 10%**
 - [How Storage Gets Attached (PVC·PV)](./k8s/storage-volume.mdx), [When Volumes Attach, and Failures](./advanced/volume-binding.mdx): StorageClasses, dynamic provisioning, PVs and PVCs.
 
-**Not covered here:** building a new cluster with `kubeadm init` and `kubeadm join`, preparing the underlying infrastructure (container runtime, kernel modules, swap), CNI, CSI and CRI as installable interfaces, reclaim policies (access modes appear only briefly).
+**Also study:** [Building a cluster with kubeadm (CKA)](./cert/kubeadm-install.mdx) for building a cluster with `kubeadm init` and `kubeadm join`, [PersistentVolume Lifecycle and Reclaim Policy](./k8s/pv-lifecycle.mdx) for reclaim policies, and [Inside the Node - kubelet, CRI and containerd](./advanced/kubelet-cri.mdx) for the CRI.
+
+**Not covered here:** CNI and CSI as installable interfaces (access modes appear only briefly).
 
 ### CKAD: Certified Kubernetes Application Developer
 
@@ -251,7 +253,9 @@ The lessons show how things work. The exams also test speed with `kubectl` and t
 - [Audit Logs](./advanced/audit-log.mdx)
 - [Viewing the cluster through the 4Cs and a threat model (KCSA·KCNA)](./cert/threat-model.mdx): phases of an attack.
 
-**Not covered here:** CIS benchmarks and kube-bench, protecting node metadata endpoints, verifying platform binaries with checksums, minimizing the host OS, sandboxed runtimes (gVisor, Kata), Pod-to-Pod encryption with Cilium, static analysis tools named in the curriculum (Kubesec, KubeLinter).
+**Also study:** [CIS Kubernetes Benchmark and kube-bench (CKS)](./cert/cis-benchmark.mdx) and [Sandboxed container runtimes — gVisor, Kata and RuntimeClass (CKS)](./cert/sandbox-runtime.mdx).
+
+**Not covered here:** protecting node metadata endpoints, verifying platform binaries with checksums, minimizing the host OS, Pod-to-Pod encryption with Cilium, static analysis tools named in the curriculum (Kubesec, KubeLinter).
 
 ## How to study
 

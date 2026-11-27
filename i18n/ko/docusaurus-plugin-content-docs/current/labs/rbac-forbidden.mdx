@@ -1,0 +1,164 @@
+---
+id: rbac-forbidden
+title: 실습 08 · RBAC Forbidden
+sidebar_label: 08 · RBAC Forbidden
+sidebar_position: 8
+description: 파드가 서비스 어카운트로 쿠버네티스 API를 부르다 403 Forbidden을 받는 장애 실습. kubectl auth can-i --as로 권한을 확인하고 최소 권한의 Role과 RoleBinding으로 고친다.
+hide_table_of_contents: false
+---
+
+# 실습 08 · RBAC Forbidden
+
+## 목표
+
+파드가 클러스터 안에서 `kubectl get pods`를 실행하다 Forbidden으로 실패한다. 어떤 신원으로 부르는지, 무엇을 할 수 있는지 찾고, 필요한 권한만 준다.
+
+## 준비
+
+[노트북에 실습 클러스터 만들기](../basic/lab-cluster.mdx)의 kind 클러스터를 쓴다. 파드는 공식 `registry.k8s.io/kubectl` 이미지를 쓰고, 이 이미지의 진입점은 `kubectl`이다. 파드 안에서 kubectl은 서비스 어카운트 토큰을 알아서 쓴다.
+
+```bash
+kubectl apply -f - <<'EOF'
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: lab-08
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: reporter
+  namespace: lab-08
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: report
+  namespace: lab-08
+spec:
+  serviceAccountName: reporter
+  restartPolicy: Never
+  containers:
+  - name: kubectl
+    image: registry.k8s.io/kubectl:v1.34.2
+    args: ["get", "pods", "-n", "lab-08"]
+EOF
+```
+
+## 증상
+
+```bash
+kubectl -n lab-08 get pods        # report  0/1  Error
+kubectl -n lab-08 logs report
+```
+
+파드는 STATUS `Error`로 끝나고, 로그에 `Error from server (Forbidden)` 줄이 있다.
+
+## 살펴보기
+
+```bash
+kubectl -n lab-08 logs report                                        # 메시지 전체를 읽는다
+kubectl -n lab-08 get pod report -o jsonpath='{.spec.serviceAccountName}{"\n"}'
+kubectl auth can-i list pods -n lab-08 \
+  --as=system:serviceaccount:lab-08:reporter
+kubectl auth can-i --list -n lab-08 \
+  --as=system:serviceaccount:lab-08:reporter
+kubectl -n lab-08 get role,rolebinding
+```
+
+## 힌트
+
+<details>
+<summary>힌트 1</summary>
+
+Forbidden 메시지를 천천히 읽는다. **사용자**, **동사**, **리소스**, **API 그룹**, **네임스페이스**가 모두 적혀 있다. 이 다섯 가지가 바로 Role 규칙이 담아야 하는 것이다.
+
+</details>
+
+<details>
+<summary>힌트 2</summary>
+
+서비스 어카운트의 사용자 이름은 `system:serviceaccount:<네임스페이스>:<이름>`이다. `--as`를 쓰면 파드를 다시 돌리지 않고 API 서버에 "이 신원이 할 수 있는가?"를 물어볼 수 있다.
+
+</details>
+
+<details>
+<summary>힌트 3</summary>
+
+새 서비스 어카운트에는 권한이 거의 없다. RBAC는 권한을 더하기만 하므로 Role(무엇을)과 RoleBinding(누구에게)이 필요하다. 파드는 core API 그룹에 있고 `""`로 적는다.
+
+</details>
+
+## 정답
+
+<details>
+<summary>정답</summary>
+
+로그에는 다음이 찍힌다.
+
+```text
+Error from server (Forbidden): pods is forbidden: User "system:serviceaccount:lab-08:reporter" cannot list resource "pods" in API group "" in the namespace "lab-08"
+```
+
+`kubectl auth can-i list pods ... --as=...`도 `no`라고 답한다. `reporter`에게 파드 목록을 볼 권한을 준 것이 없다. 이 네임스페이스에서 딱 그만큼만 준다.
+
+```bash
+kubectl apply -f - <<'EOF'
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: pod-reader
+  namespace: lab-08
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: reporter-pod-reader
+  namespace: lab-08
+subjects:
+- kind: ServiceAccount
+  name: reporter
+  namespace: lab-08
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: pod-reader
+EOF
+```
+
+`cluster-admin`이나 `edit`에 ClusterRoleBinding을 걸면 안 되는가? "되기는" 한다. 하지만 이 파드의 토큰을 누가 훔치면 시크릿을 포함해 모든 것을 읽고 바꿀 수 있다. Role과 RoleBinding은 `lab-08` 안에서 파드 읽기만 허용한다. `kubectl create role pod-reader --verb=get,list --resource=pods -n lab-08`과 `kubectl create rolebinding ... --serviceaccount=lab-08:reporter`로 만들어도 같다.
+
+</details>
+
+## 확인
+
+```bash
+kubectl auth can-i list pods -n lab-08 --as=system:serviceaccount:lab-08:reporter      # yes
+kubectl auth can-i delete pods -n lab-08 --as=system:serviceaccount:lab-08:reporter    # no
+kubectl auth can-i list pods -n default --as=system:serviceaccount:lab-08:reporter     # no
+
+# 끝난 파드는 다시 시작할 수 없으니 새로 만든다
+kubectl -n lab-08 get pod report -o yaml | kubectl replace --force -f -
+kubectl -n lab-08 logs report     # Forbidden 대신 파드 표가 나온다
+```
+
+## 정리
+
+```bash
+kubectl delete namespace lab-08
+```
+
+<Quiz questions={[
+  {q: 'shop 네임스페이스에서 서비스 어카운트 app을 쓰는 파드가 403 Forbidden을 받는다. 파드를 다시 돌리지 않고 권한을 확인하려면?', options: ['kubectl auth can-i list pods -n shop --as=system:serviceaccount:shop:app', 'kubectl describe serviceaccount app -n shop', 'API 서버에서 kubectl logs'], answer: 0, why: '--as를 붙인 can-i는 그 신원으로 RBAC를 평가해 달라고 API 서버에 묻는다. 서비스 어카운트 사용자 이름은 system:serviceaccount:네임스페이스:이름 꼴이다.'},
+  {q: '파드는 자기 네임스페이스의 파드를 읽기만 하면 된다. 최소 권한에 맞는 해결은?', options: ['cluster-admin에 ClusterRoleBinding을 건다', 'pods에 get·list를 주는 Role을 만들고 그 네임스페이스의 RoleBinding으로 서비스 어카운트에 묶는다', 'API 서버에서 RBAC를 끈다'], answer: 1, why: 'Role과 RoleBinding은 한 네임스페이스에서 그 리소스의 그 동사만 허용한다. cluster-admin은 시크릿과 모든 곳의 쓰기 권한까지 넘겨준다.'},
+]} />
+
+## 관련 레슨
+
+- [누가 무엇을 할 수 있나 (RBAC)](../k8s/rbac.mdx)
+- [파드는 자신을 어떻게 증명하나 (서비스 어카운트 토큰)](../advanced/serviceaccount-token.mdx)
+- [API 요청이 저장되기까지](../advanced/api-request-path.mdx)

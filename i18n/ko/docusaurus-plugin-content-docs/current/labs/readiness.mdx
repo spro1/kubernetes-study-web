@@ -1,0 +1,184 @@
+---
+id: readiness
+title: '실습 05 · 실행 중인데 준비되지 않는 파드'
+sidebar_label: '05 · 준비 상태 검사'
+sidebar_position: 5
+description: '고장 내고 고치는 실습: readinessProbe가 잘못된 포트와 경로를 검사해 파드가 Running인데도 0/1 READY에 머물고 서비스에 준비된 엔드포인트가 없다. 검사 이벤트를 읽고 검사를 고친다.'
+hide_table_of_contents: false
+---
+
+# 실습 05 · 실행 중인데 준비되지 않는 파드
+
+이 실습은 [노트북에 실습 클러스터 만들기](../basic/lab-cluster.mdx)에서 만든 kind 클러스터에서 한다. 먼저 `kubectl config current-context`가 `kind-lab`인지 확인한다.
+
+## 목표
+
+파드는 `Running`이고 재시작도 하지 않는데 계속 `0/1` 준비 상태이고, 서비스 `web`은 트래픽을 어디에도 보내지 않는다. 준비 상태 검사가 무엇을 잘못하는지 찾아 고친다.
+
+## 준비
+
+```bash
+kubectl apply -f - <<'EOF'
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: lab-05
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  namespace: lab-05
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.27
+          ports:
+            - containerPort: 80
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+  namespace: lab-05
+spec:
+  selector:
+    app: web
+  ports:
+    - port: 80
+      targetPort: 80
+EOF
+```
+
+## 증상
+
+```bash
+kubectl -n lab-05 get pods
+```
+
+```text
+NAME                   READY   STATUS    RESTARTS   AGE
+web-7d5f8b6c9d-9x2kq   0/1     Running   0          1m
+web-7d5f8b6c9d-lm4tr   0/1     Running   0          1m
+```
+
+`STATUS`는 `Running`이고 `RESTARTS`는 `0`에 머무는데 `READY`는 끝내 `1/1`이 되지 않는다. 클러스터 안에서 `http://web`으로 요청해도 응답이 없다.
+
+## 살펴보기
+
+```bash
+kubectl -n lab-05 describe pod -l app=web     # Readiness 줄, Conditions, Events
+kubectl -n lab-05 describe svc web            # Endpoints
+kubectl -n lab-05 get endpointslices -l kubernetes.io/service-name=web \
+  -o jsonpath='{range .items[*].endpoints[*]}{.addresses[0]} ready={.conditions.ready}{"\n"}{end}'
+kubectl -n lab-05 get pods -o wide            # 파드 IP
+# nginx에 직접 물어본다. 어느 포트와 경로에서 답하는가?
+kubectl -n lab-05 run tmp --rm -i --restart=Never --image=busybox:1.36 -- wget -S -O /dev/null -T 3 http://<pod-ip>:80/
+```
+
+EndpointSlice에 파드가 올라 있긴 한데, 준비됐다고 표시돼 있는가? 그다음 검사가 확인하는 것과 컨테이너가 실제로 내주는 것을 비교한다.
+
+## 힌트
+
+<details>
+<summary>힌트 1</summary>
+
+준비 상태 검사가 실패해도 컨테이너는 재시작되지 않는다(재시작은 활성 검사, 즉 liveness probe가 한다). 파드를 준비되지 않음으로 표시할 뿐이고, 준비되지 않은 파드는 서비스의 준비된 엔드포인트에서 빠진다. `describe pod`에서 `Unhealthy` 이벤트를 찾는다.
+
+</details>
+
+<details>
+<summary>힌트 2</summary>
+
+첫 이벤트에 `connection refused`가 있다. 검사는 파드 IP의 `readinessProbe.httpGet.port` 포트로 연결한다. nginx는 어느 포트에서 듣는가?
+
+</details>
+
+<details>
+<summary>힌트 3</summary>
+
+포트를 고치면 이벤트가 상태 코드로 바뀐다. HTTP 검사는 200부터 399까지의 코드에서만 통과한다. 기본 nginx 이미지에 `/healthz`가 있을까?
+
+</details>
+
+## 정답
+
+<details>
+<summary>정답</summary>
+
+**문제 1: 잘못된 포트.** 이벤트는 다음과 같다.
+
+```text
+Warning  Unhealthy  ...  Readiness probe failed: Get "http://10.244.1.6:8080/healthz": dial tcp 10.244.1.6:8080: connect: connection refused
+```
+
+nginx는 80번 포트에서 들으니 8080에서는 아무도 답하지 않는다.
+
+**문제 2: 잘못된 경로.** 포트만 고치면 이벤트가 이렇게 바뀐다.
+
+```text
+Warning  Unhealthy  ...  Readiness probe failed: HTTP probe failed with statuscode: 404
+```
+
+이제 nginx가 답하지만 기본 이미지에는 `/healthz` 페이지가 없고, 404는 실패로 친다. `/`처럼 실제로 있는 경로를 쓴다. 두 값을 한 번에 고친다.
+
+```bash
+kubectl -n lab-05 patch deployment web --type=json -p='[
+  {"op":"replace","path":"/spec/template/spec/containers/0/readinessProbe/httpGet/port","value":80},
+  {"op":"replace","path":"/spec/template/spec/containers/0/readinessProbe/httpGet/path","value":"/"}
+]'
+```
+
+파드 템플릿이 바뀌니 롤링 업데이트가 시작된다. 새 파드가 검사를 통과해 준비되면 서비스의 준비된 엔드포인트에 들어가고, 옛 파드는 지워진다. 실제 앱에서는 요청을 받을 수 있는지 알려 주는 엔드포인트를 검사하게 하고, 그 검사는 가볍게 유지한다.
+
+</details>
+
+## 확인
+
+```bash
+kubectl -n lab-05 rollout status deployment web
+kubectl -n lab-05 get pods
+kubectl -n lab-05 run tmp --rm -i --restart=Never --image=busybox:1.36 -- sh -c 'wget -qO- -T 3 http://web | grep title'
+```
+
+```text
+deployment "web" successfully rolled out
+NAME                   READY   STATUS    RESTARTS   AGE
+web-5c9d7f8b6f-h7wzp   1/1     Running   0          30s
+web-5c9d7f8b6f-r2nqs   1/1     Running   0          20s
+<title>Welcome to nginx!</title>
+pod "tmp" deleted
+```
+
+두 파드 모두 `1/1`이고, 위의 EndpointSlice jsonpath 명령은 이제 각각 `ready=true`를 출력하며, 서비스가 응답한다.
+
+## 정리
+
+```bash
+kubectl delete ns lab-05
+```
+
+<Quiz questions={[
+  {q: 'readinessProbe가 계속 실패한다. 쿠버네티스는 이 파드를 어떻게 하는가?', options: ['몇 번 실패하면 컨테이너를 재시작한다', '컨테이너는 계속 실행하되 파드를 서비스의 준비된 엔드포인트에서 뺀다', '파드를 지우고 새로 만든다'], answer: 1, why: '준비 상태 검사는 파드가 트래픽을 받을지만 정한다. 재시작은 활성 검사(liveness probe)가 하는 일이다.'},
+  {q: '이벤트에 "Readiness probe failed: HTTP probe failed with statuscode: 404"가 있다. 무엇을 알 수 있는가?', options: ['검사 포트에서 아무도 듣지 않는다', '파드에 아직 IP가 없다', '그 포트에서 무언가 답하지만 경로가 없다'], answer: 2, why: '상태 코드가 왔다는 것은 연결은 됐다는 뜻이다. 포트가 틀리면 connection refused가 난다.'},
+]} />
+
+## 관련 레슨
+
+- [헬스 체크 — 살아 있나, 받을 준비가 됐나](../intermediate/probes.mdx)
+- [이름으로 찾아가기 (Service·DNS)](../k8s/service-dns.mdx)
+- [상태를 세 단계로 읽고 문제 확인하기](../intermediate/troubleshoot-status.mdx)

@@ -1,0 +1,158 @@
+---
+id: oomkilled
+title: 실습 06 · OOMKilled
+sidebar_label: 06 · OOMKilled
+sidebar_position: 6
+description: 컨테이너가 메모리 제한보다 많이 써서 계속 재시작하는 장애 실습. lastState에서 OOMKilled와 종료 코드 137을 찾고, 제한을 올리거나 사용량을 줄인다.
+hide_table_of_contents: false
+---
+
+# 실습 06 · OOMKilled
+
+## 목표
+
+디플로이먼트가 계속 재시작한다. 메모리를 너무 많이 써서 커널이 컨테이너를 죽인다는 것을 찾아내고 고친다.
+
+## 준비
+
+[노트북에 실습 클러스터 만들기](../basic/lab-cluster.mdx)의 kind 클러스터가 필요하다. 아래 명령은 `lab-06` 네임스페이스와, `MEM_MB` MiB만큼 메모리를 붙잡고 있는 작은 파이썬 프로그램을 만든다.
+
+```bash
+kubectl apply -f - <<'EOF'
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: lab-06
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hog
+  namespace: lab-06
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: hog
+  template:
+    metadata:
+      labels:
+        app: hog
+    spec:
+      containers:
+      - name: hog
+        image: python:3.13.9-alpine3.22
+        command: ["python", "-c"]
+        args:
+        - |
+          import os, time
+          mb = int(os.environ["MEM_MB"])
+          data = b"x" * (mb * 1024 * 1024)   # really touches the memory
+          print("holding", mb, "MiB", flush=True)
+          time.sleep(3600)
+        env:
+        - name: MEM_MB
+          value: "200"
+        resources:
+          requests:
+            memory: 64Mi
+          limits:
+            memory: 128Mi
+EOF
+```
+
+## 증상
+
+```bash
+kubectl -n lab-06 get pods -w
+```
+
+STATUS가 `OOMKilled`와 `CrashLoopBackOff`를 오가고 RESTARTS가 계속 늘어난다. 프로세스가 출력 전후로 바로 죽기 때문에 `kubectl logs`에는 거의 아무것도 없다.
+
+## 살펴보기
+
+```bash
+kubectl -n lab-06 describe pod -l app=hog          # State와 Last State를 본다
+kubectl -n lab-06 get pod -l app=hog \
+  -o jsonpath='{.items[0].status.containerStatuses[0].lastState}{"\n"}'
+kubectl -n lab-06 logs deploy/hog --previous
+kubectl -n lab-06 get deploy hog -o jsonpath='{.spec.template.spec.containers[0].resources}{"\n"}'
+```
+
+## 힌트
+
+<details>
+<summary>힌트 1</summary>
+
+지금 컨테이너는 잠깐 멀쩡해 보일 수 있다. 답은 이미 죽은 컨테이너인 **Last State**에 있다. Reason과 Exit Code를 본다.
+
+</details>
+
+<details>
+<summary>힌트 2</summary>
+
+종료 코드 137은 128 + 9, 곧 SIGKILL을 받았다는 뜻이다. Reason이 `OOMKilled`이면 컨테이너가 **메모리 제한**을 넘어서 커널이 죽인 것이다. 메모리는 CPU처럼 느려지지 않는다. 넘으면 프로세스가 죽는다.
+
+</details>
+
+<details>
+<summary>힌트 3</summary>
+
+두 숫자를 비교한다. 프로그램이 원하는 양(`MEM_MB`)과 메모리 제한이다. 그리고 어느 쪽이 틀렸는지 정한다.
+
+</details>
+
+## 정답
+
+<details>
+<summary>정답</summary>
+
+`describe`에 다음이 보인다.
+
+```text
+    Last State:     Terminated
+      Reason:       OOMKilled
+      Exit Code:    137
+```
+
+프로그램은 200MiB에 파이썬 자체 메모리까지 쓰는데 제한은 128Mi다. 제대로 된 해결은 두 가지다.
+
+**A. 앱에 정말 그만큼 필요하다면 제한을 올린다.** 스케줄러가 자리를 잡아 두도록 요청량도 함께 올린다.
+
+```bash
+kubectl -n lab-06 set resources deploy/hog --requests=memory=256Mi --limits=memory=256Mi
+```
+
+**B. 앱이 그만큼 쓰면 안 된다면 사용량을 줄인다.**
+
+```bash
+kubectl -n lab-06 set env deploy/hog MEM_MB=64
+```
+
+둘 다 파드 템플릿을 바꾸므로 디플로이먼트가 새 파드를 띄운다. 제한은 실제 사용량(예: metrics-server가 있으면 `kubectl top pod`)에 여유를 더해 정한다. 제한을 아예 없애지는 않는다. 메모리가 새는 파드 하나가 노드 전체를 메모리 압박에 빠뜨릴 수 있다.
+
+</details>
+
+## 확인
+
+```bash
+kubectl -n lab-06 rollout status deploy/hog
+kubectl -n lab-06 get pods            # Running, RESTARTS가 0에 머문다
+kubectl -n lab-06 logs deploy/hog     # holding ... MiB
+```
+
+## 정리
+
+```bash
+kubectl delete namespace lab-06
+```
+
+<Quiz questions={[
+  {q: '컨테이너에 Last State: Terminated, Reason: OOMKilled, Exit Code: 137이 보인다. 무슨 일이 있었는가?', options: ['활성 프로브가 실패해 kubelet이 재시작했다', '메모리 제한보다 많이 써서 커널이 프로세스를 죽였다', '노드의 디스크가 가득 찼다'], answer: 1, why: 'OOMKilled는 cgroup 메모리 제한을 넘어서 커널 OOM killer가 프로세스를 끝냈다는 뜻이다. 137은 128 + 9(SIGKILL)다.'},
+  {q: '메모리 제한은 프로세스를 죽이는데 CPU 제한은 느리게만 하는 이유는?', options: ['CPU 시간은 미룰 수 있지만, 이미 쓰는 메모리는 프로세스를 죽이지 않고는 되찾을 수 없다', '쿠버네티스가 메모리를 CPU보다 자주 검사한다', '메모리 제한은 파이썬 프로그램에만 적용된다'], answer: 0, why: 'CPU는 시간 조각 단위로 조절된다. 메모리는 돌려받을 수 없으니 제한을 지키는 방법은 프로세스를 죽이는 것뿐이다.'},
+]} />
+
+## 관련 레슨
+
+- [요청값과 상한값](../intermediate/requests-limits.mdx)
+- [상태를 세 단계로 읽고 문제 확인하기](../intermediate/troubleshoot-status.mdx)

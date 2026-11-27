@@ -74,7 +74,7 @@ hide_table_of_contents: true
       flows: [
         {from: 'apigw', to: 'svc', label: '동기', type: 'request'},
         {from: 'bucket', to: 'svc', label: '비동기', type: 'request'},
-        {from: 'svc', to: 'queue', label: '묶음 폴링', type: 'watch'},
+        {from: 'svc', to: 'queue', label: '묶음 폴링', type: 'watch', bend: 0.5},
       ],
       focus: ['apigw', 'queue', 'bucket'],
     },

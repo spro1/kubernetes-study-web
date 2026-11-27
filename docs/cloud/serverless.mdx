@@ -74,7 +74,7 @@ You upload only code and say which event should run it. The platform finds a pla
       flows: [
         {from: 'apigw', to: 'svc', label: 'Sync', type: 'request'},
         {from: 'bucket', to: 'svc', label: 'Async', type: 'request'},
-        {from: 'svc', to: 'queue', label: 'Poll batch', type: 'watch'},
+        {from: 'svc', to: 'queue', label: 'Poll batch', type: 'watch', bend: 0.5},
       ],
       focus: ['apigw', 'queue', 'bucket'],
     },

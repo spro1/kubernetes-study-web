@@ -1,0 +1,158 @@
+---
+id: oomkilled
+title: Lab 06 · OOMKilled
+sidebar_label: 06 · OOMKilled
+sidebar_position: 6
+description: Break-fix lab where a container keeps restarting because it uses more memory than its limit. Read lastState, find OOMKilled and exit code 137, then raise the limit or lower the usage.
+hide_table_of_contents: false
+---
+
+# Lab 06 · OOMKilled
+
+## Goal
+
+A Deployment keeps restarting. Find out that the kernel kills the container for using too much memory, and fix it.
+
+## Setup
+
+You need the kind cluster from [Build a Lab Cluster on Your Laptop](../basic/lab-cluster.mdx). This creates namespace `lab-06` and a small Python program that holds `MEM_MB` MiB of memory.
+
+```bash
+kubectl apply -f - <<'EOF'
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: lab-06
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hog
+  namespace: lab-06
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: hog
+  template:
+    metadata:
+      labels:
+        app: hog
+    spec:
+      containers:
+      - name: hog
+        image: python:3.13.9-alpine3.22
+        command: ["python", "-c"]
+        args:
+        - |
+          import os, time
+          mb = int(os.environ["MEM_MB"])
+          data = b"x" * (mb * 1024 * 1024)   # really touches the memory
+          print("holding", mb, "MiB", flush=True)
+          time.sleep(3600)
+        env:
+        - name: MEM_MB
+          value: "200"
+        resources:
+          requests:
+            memory: 64Mi
+          limits:
+            memory: 128Mi
+EOF
+```
+
+## Symptoms
+
+```bash
+kubectl -n lab-06 get pods -w
+```
+
+STATUS flips between `OOMKilled` and `CrashLoopBackOff`, and RESTARTS keeps going up. `kubectl logs` shows little or nothing, because the process dies before or right after it prints.
+
+## Investigate
+
+```bash
+kubectl -n lab-06 describe pod -l app=hog          # look at State and Last State
+kubectl -n lab-06 get pod -l app=hog \
+  -o jsonpath='{.items[0].status.containerStatuses[0].lastState}{"\n"}'
+kubectl -n lab-06 logs deploy/hog --previous
+kubectl -n lab-06 get deploy hog -o jsonpath='{.spec.template.spec.containers[0].resources}{"\n"}'
+```
+
+## Hints
+
+<details>
+<summary>Hint 1</summary>
+
+The current container may look fine for a second. The answer is in **Last State**, the container that already died. Look at its Reason and Exit Code.
+
+</details>
+
+<details>
+<summary>Hint 2</summary>
+
+Exit code 137 is 128 + 9: the process got SIGKILL. With Reason `OOMKilled`, the kernel killed it because the container went over its **memory limit**. Memory is not throttled like CPU. Go over the limit and the process dies.
+
+</details>
+
+<details>
+<summary>Hint 3</summary>
+
+Compare two numbers: how much the program wants (`MEM_MB`) and the memory limit. Then decide which one is wrong.
+
+</details>
+
+## Solution
+
+<details>
+<summary>Solution</summary>
+
+`describe` shows:
+
+```text
+    Last State:     Terminated
+      Reason:       OOMKilled
+      Exit Code:    137
+```
+
+The program holds 200 MiB plus Python itself, but the limit is 128Mi. There are two honest fixes.
+
+**A. The app really needs that memory: raise the limit** (and the request, so the scheduler reserves it).
+
+```bash
+kubectl -n lab-06 set resources deploy/hog --requests=memory=256Mi --limits=memory=256Mi
+```
+
+**B. The app should not use that much: lower the usage.**
+
+```bash
+kubectl -n lab-06 set env deploy/hog MEM_MB=64
+```
+
+Both change the Pod template, so the Deployment rolls out a new Pod. Pick the limit from real usage (for example `kubectl top pod`, which needs metrics-server) plus some headroom. Do not just remove the limit: one leaking Pod could then push the whole node into memory pressure.
+
+</details>
+
+## Verify
+
+```bash
+kubectl -n lab-06 rollout status deploy/hog
+kubectl -n lab-06 get pods            # Running, RESTARTS stays at 0
+kubectl -n lab-06 logs deploy/hog     # holding ... MiB
+```
+
+## Clean up
+
+```bash
+kubectl delete namespace lab-06
+```
+
+<Quiz questions={[
+  {q: 'A container shows Last State: Terminated, Reason: OOMKilled, Exit Code: 137. What happened?', options: ['The liveness probe failed and the kubelet restarted it', 'It used more memory than its memory limit, so the kernel killed it', 'The node ran out of disk space'], answer: 1, why: 'OOMKilled means the kernel OOM killer ended the process for crossing the cgroup memory limit. 137 is 128 + 9 (SIGKILL).'},
+  {q: 'Why does a memory limit kill the process, while a CPU limit only slows it down?', options: ['CPU time can be delayed, but memory already in use cannot be taken back without killing the process', 'Kubernetes checks memory more often than CPU', 'Memory limits only apply to Python programs'], answer: 0, why: 'CPU is throttled per time slice. Memory cannot be borrowed back, so the only way to enforce the limit is to kill the process.'},
+]} />
+
+## Related lessons
+
+- [Requests and limits](../intermediate/requests-limits.mdx)
+- [Reading status in three layers and the troubleshooting order](../intermediate/troubleshoot-status.mdx)

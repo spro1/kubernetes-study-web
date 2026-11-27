@@ -102,7 +102,7 @@ After you run a single `kubectl apply`, what happens inside the cluster before a
       keyIdea: 'The scheduler only chooses the node; it does not run anything. Running is the job of that node’s kubelet.',
       changes: ['Pod assigned to node-2'],
       flows: [
-        {from: 'api', to: 'sched', label: 'unassigned Pod seen', type: 'watch'},
+        {from: 'api', to: 'sched', label: 'unassigned Pod seen', type: 'watch', bend: 0.3},
         {from: 'sched', to: 'api', label: 'bind → node-2', type: 'request', bend: 0.12},
       ],
       focus: ['sched'],
@@ -133,7 +133,7 @@ After you run a single `kubectl apply`, what happens inside the cluster before a
       ],
       keyIdea: 'In an air-gapped network, external registries are unreachable, so images must be pushed to an internal registry (such as Harbor) in advance.',
       flows: [
-        {from: 'runtime', to: 'registry', label: 'request image', type: 'request'},
+        {from: 'runtime', to: 'registry', label: 'request image', type: 'request', bend: 0.3},
         {from: 'registry', to: 'runtime', type: 'response'},
       ],
       focus: ['registry'],

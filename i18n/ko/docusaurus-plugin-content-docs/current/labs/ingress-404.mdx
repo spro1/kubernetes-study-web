@@ -1,0 +1,247 @@
+---
+id: ingress-404
+title: 실습 10 · 라우트가 응답하지 않거나 404를 준다
+sidebar_label: 10 · 라우트 404
+sidebar_position: 10
+description: Gateway API와 Envoy Gateway로 클러스터 안으로 HTTP를 보내는 장애 실습. 클래스 이름이 틀리면 아무도 듣지 않고, 경로 오타는 404, 서비스 이름 오타는 500을 준다. 상태 조건을 읽어 하나씩 찾는다.
+hide_table_of_contents: false
+---
+
+# 실습 10 · 라우트가 응답하지 않거나 404를 준다
+
+## 목표
+
+밖에서 온 트래픽이 `/shop`으로 `shop` 앱에 닿아야 한다. 처음에는 아무것도 응답하지 않고, 다음에는 404, 그다음에는 500이 온다. 컨트롤러가 남기는 상태를 읽어 실수를 하나씩 찾아 고친다.
+
+:::note 왜 ingress-nginx가 아니라 Gateway API인가
+이 실습의 예전 형태는 ingress-nginx 컨트롤러와 인그레스를 썼다. 쿠버네티스는 ingress-nginx를 은퇴시켰다. 최선의 유지보수가 2026년 3월에 끝났고, 이제 새 릴리스도 보안 수정도 나오지 않는다. 쿠버네티스 프로젝트는 **Gateway API**로 옮기라고 안내하므로, 이 실습은 관리되는 오픈소스 구현 중 하나인 **Envoy Gateway**로 Gateway API를 쓴다(Cilium, Istio, NGINX Gateway Fabric, Traefik 같은 다른 구현도 된다). 실수는 인그레스에서 하는 것과 같다. `gatewayClassName`이 `ingressClassName` 역할을 한다.
+:::
+
+## 준비
+
+[노트북에 실습 클러스터 만들기](../basic/lab-cluster.mdx)의 kind 클러스터를 쓴다. [Helm](https://helm.sh/docs/intro/install/)도 필요하다. Envoy Gateway를 한 번 설치한다(Gateway API CRD도 함께 설치된다).
+
+```bash
+helm install eg oci://docker.io/envoyproxy/gateway-helm --version v1.10.0 \
+  -n envoy-gateway-system --create-namespace
+kubectl wait --timeout=5m -n envoy-gateway-system deployment/envoy-gateway --for=condition=Available
+```
+
+그다음 GatewayClass와 앱, 그리고 고장 난 Gateway와 HTTPRoute를 만든다.
+
+```bash
+kubectl apply -f - <<'EOF'
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: eg
+spec:
+  controllerName: gateway.envoyproxy.io/gatewayclass-controller
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: lab-10
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: shop
+  namespace: lab-10
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: shop
+  template:
+    metadata:
+      labels:
+        app: shop
+    spec:
+      containers:
+      - name: echo
+        image: hashicorp/http-echo:1.0.0
+        args: ["-text=shop ok", "-listen=:5678"]
+        ports:
+        - containerPort: 5678
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: shop
+  namespace: lab-10
+spec:
+  selector:
+    app: shop
+  ports:
+  - port: 80
+    targetPort: 5678
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: web
+  namespace: lab-10
+spec:
+  gatewayClassName: nginx
+  listeners:
+  - name: http
+    protocol: HTTP
+    port: 80
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: shop
+  namespace: lab-10
+spec:
+  parentRefs:
+  - name: web
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /shpo
+    backendRefs:
+    - name: shop-svc
+      port: 80
+EOF
+```
+
+요청을 보내려면 Envoy Gateway가 Gateway용으로 만드는 서비스에 포트 포워딩을 건다. 두 번째 터미널에서 실행한다(Gateway가 받아들여진 뒤에야 된다).
+
+```bash
+SVC=$(kubectl get svc -n envoy-gateway-system \
+  -l gateway.envoyproxy.io/owning-gateway-namespace=lab-10,gateway.envoyproxy.io/owning-gateway-name=web \
+  -o jsonpath='{.items[0].metadata.name}')
+kubectl -n envoy-gateway-system port-forward svc/$SVC 8080:80
+```
+
+## 증상
+
+- `kubectl -n lab-10 get gateway`에서 `web`의 ADDRESS가 비어 있고 PROGRAMMED가 `True`가 아니다.
+- 포트 포워딩 명령이 서비스를 찾지 못해 요청을 보낼 곳이 없다.
+- 그런데 `kubectl apply`는 아무 오류도 내지 않았다.
+
+## 살펴보기
+
+```bash
+kubectl get gatewayclass                                    # 어떤 클래스가 있나? ACCEPTED인가?
+kubectl -n lab-10 get gateway web -o yaml | sed -n '/^status:/,$p'
+kubectl -n lab-10 get httproute shop -o yaml | sed -n '/^status:/,$p'
+kubectl -n lab-10 get svc,endpointslice
+curl -i http://localhost:8080/shop                          # 포트 포워딩이 돌고 나면
+```
+
+## 힌트
+
+<details>
+<summary>힌트 1</summary>
+
+Gateway는 자기가 적은 GatewayClass의 컨트롤러만 처리한다. 그 클래스를 맡은 컨트롤러가 없으면 아무도 상태를 쓰지 않아서 조건이 기본값인 `Unknown`, "Waiting for controller"에 머문다. `gatewayClassName`을 `kubectl get gatewayclass`와 비교한다.
+
+</details>
+
+<details>
+<summary>힌트 2</summary>
+
+Gateway가 살아나면 `curl /shop`이 `404`를 준다. 게이트웨이가 직접 준 404는 요청에 맞는 라우트 규칙이 없다는 뜻이다. HTTPRoute의 경로를 한 글자씩 읽는다.
+
+</details>
+
+<details>
+<summary>힌트 3</summary>
+
+경로를 고치면 `500`이 온다. 라우트의 `status.parents[].conditions`를 본다. `ResolvedRefs`는 모든 `backendRef`가 실제로 있는 것을 가리키는지 알려 준다. `kubectl -n lab-10 get svc`와 비교한다.
+
+</details>
+
+## 정답
+
+<details>
+<summary>정답</summary>
+
+실수는 세 개이고, 하나가 다음 것을 가린다.
+
+**1. 클래스가 틀렸다.** Gateway는 `nginx` 클래스를 요청하지만 있는 클래스는 `eg`뿐이다. 아무 컨트롤러도 가져가지 않으니 `Accepted`와 `Programmed`가 사유 `Pending`, 메시지 "Waiting for controller"와 함께 `Unknown`에 머물고, Envoy 서비스도 만들어지지 않는다. 클래스를 고친다. 안전하게 Gateway를 지우고 다시 만든다.
+
+```bash
+kubectl -n lab-10 delete gateway web
+kubectl apply -f - <<'EOF'
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: web
+  namespace: lab-10
+spec:
+  gatewayClassName: eg
+  listeners:
+  - name: http
+    protocol: HTTP
+    port: 80
+EOF
+kubectl -n lab-10 wait --for=condition=Programmed gateway/web --timeout=2m
+```
+
+이제 포트 포워딩을 시작한다. `curl -i http://localhost:8080/shop`이 `404`를 준다.
+
+**2. 경로 오타.** 규칙이 `/shpo`에 맞추고 있어서 `/shop`은 어떤 규칙에도 맞지 않고 Envoy가 직접 404로 답한다. 경로 오타도 올바른 설정이라 라우트는 여전히 `Accepted`다.
+
+**3. 서비스 이름 오타.** 경로를 고치면 `500`이 온다. 라우트 상태에 `ResolvedRefs`가 `False`, 사유 `BackendNotFound`로 보인다. `shop-svc`라는 서비스가 없기 때문이다. Gateway API는 백엔드가 잘못된 규칙으로 온 요청에 500을 주라고 정해 두었기 때문에 404가 아니라 500이 보인다.
+
+라우트에서 둘 다 고친다.
+
+```bash
+kubectl apply -f - <<'EOF'
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: shop
+  namespace: lab-10
+spec:
+  parentRefs:
+  - name: web
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /shop
+    backendRefs:
+    - name: shop
+      port: 80
+EOF
+```
+
+확인 순서는 인그레스에서도 같다. 클래스가 맞는가(이 객체를 맡은 컨트롤러가 있는가)? 호스트와 경로에 맞는 규칙이 있는가? 백엔드 서비스가 있고 엔드포인트가 있는가?
+
+</details>
+
+## 확인
+
+```bash
+kubectl -n lab-10 get gateway web                    # PROGRAMMED True
+kubectl -n lab-10 get httproute shop -o jsonpath='{range .status.parents[0].conditions[*]}{.type}={.status} {end}{"\n"}'
+                                                     # Accepted=True ResolvedRefs=True
+curl -i http://localhost:8080/shop                   # 200, 본문: shop ok
+curl -i http://localhost:8080/other                  # 404, 맞는 규칙이 없다
+```
+
+## 정리
+
+```bash
+kubectl delete namespace lab-10
+kubectl delete gatewayclass eg
+helm uninstall eg -n envoy-gateway-system            # Envoy Gateway를 다 썼다면
+kubectl delete namespace envoy-gateway-system
+```
+
+<Quiz questions={[
+  {q: 'Gateway가 Accepted Unknown, 메시지 Waiting for controller를 보이고 주소가 없다. 가장 그럴듯한 원인은?', options: ['백엔드 서비스에 엔드포인트가 없다', 'gatewayClassName이 설치된 어떤 컨트롤러도 맡지 않은 클래스를 가리킨다', 'HTTPRoute 경로에 오타가 있다'], answer: 1, why: '상태는 지정한 GatewayClass의 컨트롤러만 쓴다. 맡은 컨트롤러가 없으면 기본값 Unknown 조건이 바뀌지 않는다. 인그레스에서 ingressClassName이 틀리거나 빠졌을 때도 똑같이 조용히 실패한다.'},
+  {q: '라우트는 Accepted인데 ResolvedRefs가 False, 사유 BackendNotFound다. 그 규칙으로 간 요청은 무엇을 받는가?', options: ['백엔드 참조가 잘못되었으니 500 오류', '맞는 라우트가 없으니 404', '네임스페이스의 아무 서비스로 보내진다'], answer: 0, why: '규칙에는 맞았으니 404가 아니다. Gateway API는 backendRef를 풀 수 없는 규칙에 500을 주라고 정한다. 서비스 이름과 포트가 있는지 확인한다.'},
+]} />
+
+## 관련 레슨
+
+- [게이트웨이 API HTTPRoute가 파드에 닿기까지](../feature/gateway-api.mdx)
+- [인그레스 규칙과 TLS](../feature/ingress.mdx)
+- [입구 셋 비교 (인그레스 · 메시 게이트웨이 · 게이트웨이 API)](../feature/entry-compare.mdx)

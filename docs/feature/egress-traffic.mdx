@@ -1,0 +1,255 @@
+---
+id: egress-traffic
+title: Traffic Leaving the Cluster (Egress)
+sidebar_label: 05 · Egress Traffic
+description: Animated walkthrough of how Pod traffic leaves a cluster, why external allowlists see node or NAT IPs after SNAT, how egress NetworkPolicy, FQDN rules and egress gateways control it, and how to spot unexpected egress
+summary: 'Which source IP the outside world sees, how to lock down egress with policies, and how an egress gateway gives a fixed IP.'
+icon: shield
+hide_table_of_contents: true
+---
+
+# Traffic Leaving the Cluster (Egress)
+
+A payments Pod calls a partner API that only accepts known source IPs. Follow the packet out of the cluster: **Pod → node SNAT → NAT gateway → partner**. Then lock egress down with policies and give the traffic a fixed source IP.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~12 min', level: 'Intermediate'}}
+  groups={[
+    {label: 'Kubernetes cluster', x: 20, y: 30, w: 560, h: 400, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'pod', label: 'payments Pod', sub: 'Pod IP 10.244.1.7', icon: 'pod', tone: 'app', x: 110, y: 120, show: true},
+    {id: 'node', label: 'Node', sub: 'SNAT · 10.0.1.20', icon: 'server', tone: 'node', x: 300, y: 120},
+    {id: 'pol', label: 'NetworkPolicy', sub: 'Egress rules', icon: 'book', tone: 'store', x: 110, y: 300},
+    {id: 'dns', label: 'kube-dns', sub: 'UDP/TCP 53', icon: 'target', tone: 'cp', x: 300, y: 380},
+    {id: 'egw', label: 'Egress gateway', sub: 'Fixed source IP', icon: 'gate', tone: 'node', x: 470, y: 250, w: 160},
+    {id: 'nat', label: 'Cloud NAT GW', sub: 'Public 203.0.113.10', icon: 'route', tone: 'cp', x: 690, y: 120, w: 160},
+    {id: 'api', label: 'Partner API', sub: 'IP allowlist', icon: 'server', tone: 'ext', x: 890, y: 120},
+    {id: 'evil', label: 'Unknown host', sub: 'Unexpected egress', icon: 'alert', tone: 'ext', x: 890, y: 330},
+    {id: 'mon', label: 'Flow logs', sub: 'e.g. Hubble · VPC logs', icon: 'chart', tone: 'store', x: 690, y: 380, w: 170},
+  ]}
+  metrics={[
+    {id: 'src', label: 'Source IP the partner sees'},
+    {id: 'policy', label: 'Egress policy'},
+    {id: 'dest', label: 'Allowed destinations'},
+  ]}
+  learn={[
+    {text: 'Why the outside world sees node or NAT IPs, not Pod IPs', at: 1},
+    {text: 'Default-deny egress, then allow DNS and specific CIDRs', at: 4},
+    {text: 'Why NetworkPolicy cannot allow a hostname, and what CNIs add', at: 6},
+    {text: 'How an egress gateway gives a fixed source IP', at: 8},
+    {text: 'Watching for egress you did not expect', at: 9},
+  ]}
+  steps={[
+    {
+      short: 'Start',
+      kind: '시작',
+      title: 'A Pod calls an API that checks source IPs',
+      text: [
+        'The payments Pod sends HTTPS to a partner API. The partner only accepts connections from IP addresses on its allowlist, so you must tell them which IP to allow.',
+        'The Pod has IP 10.244.1.7, but that address is private to the cluster. The question of this lesson is which address actually arrives at the partner.',
+      ],
+      flows: [{from: 'pod', to: 'node', label: 'HTTPS', type: 'request'}],
+      focus: ['pod'],
+      values: {src: '?', policy: 'none (all open)', dest: 'anything'},
+    },
+    {
+      short: 'Node SNAT',
+      kind: '원리',
+      title: 'The node rewrites the Pod IP to its own IP',
+      text: [
+        'When a packet leaves for a destination outside the cluster, most CNI setups masquerade it: source NAT (SNAT) replaces the Pod IP with the node IP. Replies come back to the node, which reverses the translation.',
+        'Pod IPs often come from an overlay range the rest of the network cannot route back to, so SNAT is what makes the reply possible. The exact rules depend on the CNI and cloud (for example ip-masq-agent or the cloud CNI settings).',
+      ],
+      keyIdea: 'Inside the cluster, Pods see each other\'s real Pod IPs. Outside, they usually see the node IP.',
+      flows: [{from: 'node', to: 'nat', label: 'src 10.0.1.20', type: 'request'}],
+      focus: ['node'],
+      badges: {node: 'SNAT'},
+      values: {src: 'node 10.0.1.20'},
+    },
+    {
+      short: 'NAT GW',
+      kind: '원리',
+      title: 'A private node goes out through the cloud NAT gateway',
+      text: [
+        'Nodes in a private subnet have no public IP. Their route to the internet goes through a NAT gateway, which translates the source once more, this time to its own public IP.',
+        'The partner therefore sees 203.0.113.10, the NAT gateway address. That is the IP you give them for the allowlist.',
+      ],
+      keyIdea: 'Give partners the NAT gateway\'s public IPs, and keep those IPs fixed (a reserved or elastic IP) so the allowlist does not break.',
+      flows: [
+        {from: 'node', to: 'nat', label: 'src 10.0.1.20', type: 'request'},
+        {from: 'nat', to: 'api', label: 'src 203.0.113.10', type: 'request'},
+      ],
+      focus: ['nat', 'api'],
+      badges: {node: null, nat: 'SNAT'},
+      status: {api: 'ok'},
+      values: {src: {text: 'NAT 203.0.113.10', tone: 'good'}},
+    },
+    {
+      short: 'Shared IP',
+      kind: '문제',
+      title: 'Every workload shares the same source IP',
+      text: [
+        'All Pods on all nodes, and often other VMs in the VPC, leave through the same NAT gateway. To the partner, a compromised Pod in another namespace looks exactly like payments.',
+        'Without a NAT gateway it gets worse: if nodes have public IPs, the source changes whenever the autoscaler adds or replaces a node, and the allowlist goes stale.',
+      ],
+      keyIdea: 'An IP allowlist on the far side trusts the whole cluster. Controls on your side decide which Pods may actually go out.',
+      flows: [
+        {from: 'pod', to: 'node', type: 'request'},
+        {from: 'nat', to: 'evil', label: 'also allowed', type: 'request'},
+      ],
+      focus: ['nat', 'evil'],
+      status: {evil: 'warn'},
+      values: {src: {text: 'shared by all Pods', tone: 'bad'}},
+    },
+    {
+      short: 'Deny egress',
+      kind: '원리',
+      title: 'Start from default-deny egress',
+      text: [
+        'A NetworkPolicy with an empty podSelector, policyTypes: [Egress] and no egress rules blocks all outgoing traffic from every Pod in the namespace.',
+        'The CNI enforces it on the Pod side, before any SNAT, so the policy sees the real Pod IP. As soon as it applies, even DNS lookups fail.',
+      ],
+      keyIdea: 'Apply default-deny egress together with the allow rules in the next steps, or names stop resolving right away.',
+      flows: [{from: 'pol', to: 'pod', label: 'deny all egress', type: 'watch'}],
+      focus: ['pol', 'pod'],
+      status: {pod: 'error', evil: null, api: 'error'},
+      badges: {pol: 'default-deny'},
+      values: {policy: 'Egress: deny all', dest: {text: 'none, not even DNS', tone: 'bad'}},
+    },
+    {
+      short: 'Allow DNS',
+      kind: '원리',
+      title: 'Allow DNS to kube-dns on port 53',
+      text: [
+        'Add an egress rule to Pods labeled k8s-app=kube-dns in namespace kube-system (namespaceSelector kubernetes.io/metadata.name: kube-system), on port 53 for both UDP and TCP. Large answers fall back to TCP.',
+        'If the cluster runs a node-local DNS cache, the Pod talks to a link-local address on the node instead. Allow that address too, or lookups still time out.',
+      ],
+      flows: [{from: 'pod', to: 'dns', label: ':53 allowed', type: 'request'}],
+      focus: ['pod', 'dns'],
+      status: {pod: 'warn', dns: 'ok'},
+      badges: {pol: '+ allow-dns'},
+      values: {policy: 'deny + DNS', dest: 'kube-dns :53'},
+    },
+    {
+      short: 'Allow CIDR',
+      kind: '주의',
+      title: 'Open the partner by CIDR, because that is all NetworkPolicy has',
+      text: [
+        'Add an egress rule with ipBlock cidr 198.51.100.0/24 on TCP 443. Now payments reaches the partner, and nothing else outside the cluster.',
+        'NetworkPolicy matches only Pods, namespaces and IP blocks. It has no field for a hostname. If api.partner.example sits behind a CDN whose IPs change, a CIDR rule breaks or must be far too wide.',
+      ],
+      keyIdea: 'Use ipBlock.except to cut out ranges you never want, such as the cloud metadata address 169.254.169.254.',
+      flows: [
+        {from: 'pod', to: 'node', label: ':443 allowed', type: 'request'},
+        {from: 'nat', to: 'api', type: 'request'},
+      ],
+      focus: ['pol', 'api'],
+      status: {pod: 'ok', api: 'ok'},
+      badges: {pol: '+ ipBlock /24'},
+      values: {policy: 'deny + DNS + CIDR', dest: {text: 'kube-dns · 198.51.100.0/24', tone: 'good'}},
+    },
+    {
+      short: 'FQDN rules',
+      kind: '원리',
+      title: 'Allowing by hostname needs a CNI extension',
+      text: [
+        'Some CNIs add their own policy types that allow by name. In Cilium, a CiliumNetworkPolicy with toFQDNs matchName: api.partner.example allows only the IPs that name resolved to.',
+        'This works by watching DNS answers. The policy must also send DNS through the Cilium DNS proxy (a dns rule on port 53), so the agent learns which IPs belong to the name and opens them for that Pod.',
+      ],
+      keyIdea: 'FQDN rules are not part of the Kubernetes API. Each CNI has its own CRD, and the rule only works if the Pod resolves the name through the cluster DNS path.',
+      flows: [
+        {from: 'pod', to: 'dns', label: 'lookup observed', type: 'request'},
+        {from: 'pol', to: 'pod', label: 'toFQDNs', type: 'watch'},
+      ],
+      focus: ['pol', 'dns'],
+      badges: {pol: 'toFQDNs'},
+      values: {dest: {text: 'kube-dns · api.partner.example', tone: 'good'}},
+    },
+    {
+      short: 'Egress GW',
+      kind: '원리',
+      title: 'An egress gateway gives selected Pods a fixed source IP',
+      text: [
+        'An egress gateway sends traffic from selected Pods through chosen gateway nodes. In Cilium, a CiliumEgressGatewayPolicy selects Pods and destination CIDRs, and the gateway node SNATs them to a dedicated egress IP. It needs BPF masquerading and kube-proxy replacement.',
+        'A mesh does it at L7: Istio with outboundTrafficPolicy REGISTRY_ONLY only lets sidecars reach hosts declared in a ServiceEntry, and routing them through an egress gateway gives one exit point to watch.',
+      ],
+      keyIdea: 'Now the partner can allowlist only the payments exit IP, not the whole cluster. A sidecar can be bypassed, so pair mesh egress rules with a NetworkPolicy.',
+      flows: [
+        {from: 'pod', to: 'egw', label: 'payments only', type: 'request'},
+        {from: 'egw', to: 'api', label: 'fixed egress IP', type: 'request', bend: -40},
+      ],
+      focus: ['egw', 'api'],
+      badges: {pol: null, egw: 'payments'},
+      values: {src: {text: 'egress IP for payments', tone: 'good'}},
+    },
+    {
+      short: 'Monitor',
+      kind: '주의',
+      title: 'Watch for egress you did not plan',
+      text: [
+        'A blocked egress attempt is a silent drop, so the app only sees a timeout. A Pod that suddenly calls an unknown host can be a misconfiguration or a compromised container.',
+        'Flow logs show both: CNI tools such as Hubble list dropped and allowed flows per Pod, and NAT gateway or VPC flow logs show what left the network.',
+      ],
+      keyIdea: 'Alert on egress drops and on new external destinations, and check these logs first when an outbound call starts timing out.',
+      flows: [
+        {from: 'pod', to: 'evil', label: 'dropped', type: 'request', bend: 60},
+        {from: 'egw', to: 'mon', label: 'flows', type: 'watch'},
+      ],
+      focus: ['mon', 'evil'],
+      status: {evil: 'error'},
+      badges: {evil: 'dropped'},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Know your exit IP, and allow only what must leave',
+      text: [
+        'By default a Pod\'s traffic leaves with the node IP, then the NAT gateway IP, and that shared address is what outside allowlists see.',
+        'Lock it down from your side: default-deny egress, allow DNS, allow specific CIDRs, or hostnames through a CNI extension. Use an egress gateway when a partner needs a fixed IP for just one workload.',
+      ],
+      keyIdea: 'Run curl https://ifconfig.me from a Pod to see the source IP the outside world actually gets.',
+      flows: [
+        {from: 'pod', to: 'egw', type: 'request'},
+        {from: 'egw', to: 'api', type: 'request', bend: -40},
+      ],
+      focus: ['pod', 'pol', 'egw'],
+      status: {evil: null, pod: null, api: null, dns: null},
+      badges: {evil: null},
+    },
+  ]}
+/>
+
+## Ways to control egress
+
+| Need | Tool | Matches on | Limits |
+| --- | --- | --- | --- |
+| Block all, open a few paths | NetworkPolicy egress | Pod and namespace labels, ipBlock CIDRs, ports | No hostnames; enforced only if the CNI supports policies |
+| Allow by hostname | CNI extension, e.g. Cilium `toFQDNs` | DNS names learned from DNS answers | CNI-specific CRD; the Pod must resolve through the cluster DNS path |
+| Fixed source IP for some Pods | Egress gateway, e.g. Cilium Egress Gateway | Selected Pods and destination CIDRs | Gateway nodes become a dependency; needs specific CNI features |
+| Only declared external hosts, L7 view | Service mesh, e.g. Istio `REGISTRY_ONLY` + ServiceEntry + egress gateway | Hostnames, ports, protocols | Sidecar or proxy can be bypassed; pair with NetworkPolicy |
+| One public IP for the whole VPC | Cloud NAT gateway | Route table | Every workload shares the IP |
+
+## Try it yourself
+
+```bash
+# Which source IP does the outside world see?
+kubectl run egress-test --rm -it --image=curlimages/curl --restart=Never -- curl -s https://ifconfig.me
+kubectl get networkpolicy -n <namespace>                      # POD-SELECTOR and which policies exist
+kubectl describe networkpolicy <name> -n <namespace>          # Allowing egress traffic: ports and ipBlock
+kubectl get pods -n kube-system -l k8s-app=kube-dns --show-labels   # Labels the DNS rule must select
+kubectl get ciliumnetworkpolicy -A                            # Cilium: toFQDNs rules
+kubectl get ciliumegressgatewaypolicy                         # Cilium: egress gateway policies (cluster-scoped)
+hubble observe --verdict DROPPED --traffic-direction egress   # Cilium Hubble: blocked outbound flows
+kubectl get serviceentry -A                                   # Istio: declared external hosts
+```
+
+<Quiz questions={[
+  {q: 'A partner allowlists your NAT gateway IP. Why does that not limit which of your Pods can call them?', options: ['The NAT gateway only translates traffic from one namespace', 'All Pods leave through the same SNAT and NAT, so they all share that source IP', 'The partner sees each Pod\'s own IP and ignores the allowlist'], answer: 1, why: 'Nodes SNAT Pod traffic to the node IP, and the NAT gateway translates it again to its public IP. Every workload behind it looks the same, so you must restrict egress on your side.'},
+  {q: 'You apply default-deny egress and allow 198.51.100.0/24 on port 443. Calls to api.partner.example still fail. What is the likely cause?', options: ['NetworkPolicy cannot match port 443', 'The ipBlock must also list the NAT gateway IP', 'DNS on port 53 to kube-dns is still blocked, so the name never resolves', 'Egress policies only apply after the Pod restarts'], answer: 2, why: 'Default-deny egress blocks DNS too. Allow UDP and TCP 53 to the kube-dns Pods, or the Pod cannot turn the hostname into an IP.'},
+  {q: 'The partner API sits behind a CDN with changing IPs, and you want to allow it by name. What do you need?', options: ['A CNI extension such as Cilium toFQDNs, because NetworkPolicy only knows Pods, namespaces and CIDRs', 'A hostname field in the standard NetworkPolicy egress rule', 'An ipBlock with cidr 0.0.0.0/0'], answer: 0, why: 'The Kubernetes NetworkPolicy API has no hostname match. FQDN rules come from CNI-specific policies that learn IPs from DNS answers. 0.0.0.0/0 would open everything.'},
+]} />
+
+Further reading: [Network Policies](https://kubernetes.io/docs/concepts/services-networking/network-policies/) · [Cilium Egress Gateway](https://docs.cilium.io/en/stable/network/egress-gateway/egress-gateway/) · [Cilium DNS-based policies](https://docs.cilium.io/en/stable/security/dns/) · [Istio egress gateways](https://istio.io/latest/docs/tasks/traffic-management/egress/egress-gateway/) · [Blocking and Allowing Traffic (NetworkPolicy)](../k8s/network-policy.mdx) · [How a Request Travels Inside a VPC](../cloud/vpc-request.mdx)

@@ -1,0 +1,252 @@
+---
+id: leader-election
+title: Leader Election with Leases
+sidebar_label: 05 · Leader Election
+description: Animated walkthrough of leader election in Kubernetes with Lease objects, from holderIdentity, leaseDurationSeconds and renewTime to renew deadline, retry period, failover, split-brain from pauses and clock rate skew, fencing, node heartbeats in kube-node-lease and coordinated leader election
+summary: 'Why only one replica of a controller acts, how a Lease picks and renews the leader, how failover works, and why a paused leader still needs fencing.'
+icon: ticket
+hide_table_of_contents: true
+---
+
+# Leader Election with Leases
+
+kube-controller-manager, kube-scheduler and most operators run several replicas for availability, but only one may act at a time. They agree on who that is with a small Lease object in the API server. Follow how the Lease is taken, renewed, lost and taken over.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~12 min', level: 'Advanced'}}
+  groups={[
+    {label: 'Operator · 3 replicas', x: 40, y: 30, w: 200, h: 400, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'a', label: 'Replica A', sub: 'candidate', icon: 'agent', tone: 'app', x: 140, y: 80, show: true},
+    {id: 'b', label: 'Replica B', sub: 'candidate', icon: 'agent', tone: 'app', x: 140, y: 225, show: true},
+    {id: 'c', label: 'Replica C', sub: 'candidate', icon: 'agent', tone: 'app', x: 140, y: 370, show: true},
+    {id: 'api', label: 'API server', sub: 'stores the Lease', icon: 'gate', tone: 'cp', x: 480, y: 225, show: true},
+    {id: 'lease', label: 'Lease', sub: 'coordination.k8s.io', icon: 'ticket', tone: 'store', x: 480, y: 80},
+    {id: 'nodeLease', label: 'Node Leases', sub: 'kube-node-lease', icon: 'heart', tone: 'store', x: 480, y: 370, w: 160},
+    {id: 'managed', label: 'Managed objects', sub: 'Deployments · CRs', icon: 'layers', tone: 'app', x: 820, y: 150, w: 170},
+    {id: 'cand', label: 'LeaseCandidates', sub: 'coordinated election', icon: 'scale', tone: 'store', x: 820, y: 260, w: 170},
+    {id: 'kubelet', label: 'kubelet', sub: 'node heartbeat', icon: 'server', tone: 'node', x: 820, y: 370},
+  ]}
+  metrics={[
+    {id: 'holder', label: 'holderIdentity'},
+    {id: 'renew', label: 'renewTime'},
+    {id: 'trans', label: 'leaseTransitions'},
+  ]}
+  learn={[
+    {text: 'Why two active controllers fight over the same objects', at: 0},
+    {text: 'holderIdentity, leaseDurationSeconds and renewTime in a Lease', at: 1},
+    {text: 'leaseDuration, renewDeadline and retryPeriod, and how failover happens', at: 3},
+    {text: 'Why a paused leader can still act, and what fencing means', at: 6},
+    {text: 'Node heartbeats and coordinated leader election also use Leases', at: 8},
+  ]}
+  steps={[
+    {
+      short: 'Why',
+      kind: '시작',
+      title: 'Three replicas, but only one may reconcile',
+      text: [
+        'An operator runs three replicas so it survives a node failure. If all three reconcile at once, they create the same child objects twice, overwrite each other and retry on conflicts forever.',
+        'So the replicas elect a leader. Only the leader runs the controllers. The others stay warm and wait to take over.',
+      ],
+      flows: [
+        {from: 'a', to: 'api', type: 'request'},
+        {from: 'b', to: 'api', type: 'request'},
+        {from: 'c', to: 'api', type: 'request'},
+      ],
+      focus: ['a', 'b', 'c'],
+      values: {holder: '—', renew: '—', trans: '—'},
+    },
+    {
+      short: 'Lease',
+      kind: '원리',
+      title: 'A Lease object records who holds the lock',
+      text: [
+        'The lock is a Lease in the API group coordination.k8s.io/v1. spec.holderIdentity names the current leader, spec.leaseDurationSeconds says how long the claim is valid, spec.renewTime is when the leader last renewed it.',
+        'spec.acquireTime and spec.leaseTransitions record when and how often leadership changed hands. kube-controller-manager and kube-scheduler keep theirs in kube-system.',
+      ],
+      flows: [{from: 'api', to: 'lease', label: 'stored', type: 'request'}],
+      focus: ['lease'],
+      badges: {lease: 'kube-system/my-op'},
+    },
+    {
+      short: 'Acquire',
+      kind: '원리',
+      title: 'All replicas try to take it, and only one write wins',
+      text: [
+        'Each replica tries to create or update the Lease with itself as holder. The API server uses optimistic concurrency: an update must carry the resourceVersion it read. The first write succeeds, the others get a conflict.',
+        'Replica A wins. Its client starts the controllers (in client-go, the OnStartedLeading callback runs). B and C read the Lease, see a valid holder and keep watching.',
+      ],
+      keyIdea: 'Leader election needs no extra system. It is built on the same compare-and-swap that protects every object in the API server.',
+      flows: [
+        {from: 'a', to: 'api', label: 'update · wins', type: 'request'},
+        {from: 'b', to: 'api', label: 'conflict', type: 'request'},
+        {from: 'api', to: 'lease', type: 'request'},
+      ],
+      focus: ['a', 'lease'],
+      status: {a: 'ok'},
+      badges: {a: 'leader'},
+      values: {holder: 'replica-a', renew: '10:00:00', trans: '0'},
+    },
+    {
+      short: 'Renew',
+      kind: '원리',
+      title: 'The leader renews, the followers retry',
+      text: [
+        'Three timings drive this. The leader updates renewTime every retryPeriod. If it cannot renew within renewDeadline, it gives up leadership. Followers try to acquire every retryPeriod, but only succeed after leaseDuration has passed without a renewal.',
+        'kube-controller-manager defaults to a 15 s lease duration, 10 s renew deadline and 2 s retry period. Operators built on controller-runtime use similar defaults.',
+      ],
+      keyIdea: 'leaseDuration must be longer than renewDeadline. The gap is the safety margin in which the old leader has already stopped before anyone else may start.',
+      flows: [
+        {from: 'a', to: 'api', label: 'renew', type: 'request'},
+        {from: 'api', to: 'b', label: 'still held', type: 'watch'},
+        {from: 'api', to: 'c', label: 'still held', type: 'watch'},
+      ],
+      focus: ['a', 'lease'],
+      values: {renew: '10:00:02, 10:00:04, …'},
+    },
+    {
+      short: 'Failover',
+      kind: '장애',
+      title: 'The leader dies, and a follower takes over',
+      text: [
+        'The node running Replica A fails. renewTime stops moving. Followers do not compare their clocks with A. Each one notes on its own clock when it last saw the Lease change, and waits leaseDuration from there.',
+        'Then B updates the Lease to itself. leaseTransitions goes up by one, B starts its controllers and resumes from the current state in the API server. Reconciliation pauses for roughly one lease duration.',
+      ],
+      flows: [
+        {from: 'b', to: 'api', label: 'take over', type: 'request'},
+        {from: 'api', to: 'lease', type: 'request'},
+        {from: 'b', to: 'managed', label: 'reconcile', type: 'request'},
+      ],
+      focus: ['a', 'b', 'lease'],
+      status: {a: 'gone', b: 'ok'},
+      badges: {a: null, b: 'leader'},
+      values: {holder: 'replica-b', renew: '10:00:21', trans: '1'},
+    },
+    {
+      short: 'Release',
+      kind: '주의',
+      title: 'A clean shutdown should hand over the Lease',
+      text: [
+        'On a rolling update, the old leader is stopped on purpose. If it just exits, the next leader waits a full lease duration. If it releases the Lease on shutdown (ReleaseOnCancel in client-go), a follower can take it at once.',
+        'Release only after the controllers have really stopped. Releasing first and stopping later leaves a moment with two active writers.',
+      ],
+      focus: ['lease'],
+    },
+    {
+      short: 'Split brain',
+      kind: '문제',
+      title: 'A paused leader wakes up and still thinks it leads',
+      text: [
+        'Now B freezes for 30 s: a long garbage collection pause, a frozen VM, a stuck network. Its Lease expires and C takes over. When B wakes up, code that already checked I am leader keeps going and writes to the managed objects.',
+        'Clock problems make it worse. client-go tolerates clocks that disagree, but not clocks that run at different rates. If the leader clock runs slow, it believes its lease is still valid after the followers consider it expired.',
+      ],
+      keyIdea: 'The client-go documentation says it plainly: leader election does not guarantee that only one client acts as leader. For that you need fencing.',
+      flows: [
+        {from: 'c', to: 'managed', label: 'reconcile', type: 'request', bend: 0.2},
+        {from: 'b', to: 'managed', label: 'stale write', type: 'request'},
+      ],
+      focus: ['b', 'c', 'managed'],
+      status: {b: 'warn', c: 'ok', managed: 'error'},
+      badges: {b: 'thinks leader', c: 'leader'},
+      values: {holder: 'replica-c', trans: '2'},
+    },
+    {
+      short: 'Fencing',
+      kind: '원리',
+      title: 'Fencing makes a stale leader harmless',
+      text: [
+        'Fencing means the thing being written rejects a writer that is no longer current. Inside Kubernetes, updates that carry a resourceVersion already do part of this: a write based on an old read gets a conflict.',
+        'Keep reconcile idempotent and stop at once when renewal fails, as kube-controller-manager does by exiting. For an external system such as a database, pass a token that grows with each leadership change, for example leaseTransitions, and let the system refuse older tokens.',
+      ],
+      flows: [
+        {from: 'b', to: 'managed', label: 'conflict', type: 'request'},
+        {from: 'c', to: 'managed', label: 'reconcile', type: 'request', bend: 0.2},
+      ],
+      focus: ['managed'],
+      status: {b: 'off', managed: 'ok'},
+      badges: {b: 'stepped down'},
+    },
+    {
+      short: 'Node Lease',
+      kind: '원리',
+      title: 'Node heartbeats are Leases too',
+      text: [
+        'Every node has a Lease with the same name in the kube-node-lease namespace. The kubelet renews it every 10 seconds by default, separately from the much rarer full Node status updates.',
+        'The node lifecycle controller watches these renewTimes. When a node stops renewing for longer than the node monitor grace period (tens of seconds by default), its Ready condition becomes Unknown.',
+      ],
+      keyIdea: 'Lease renewals are tiny writes. That is why heartbeats moved from Node status to Leases: less load on the API server and etcd in big clusters.',
+      flows: [
+        {from: 'kubelet', to: 'api', label: 'renew', type: 'request'},
+        {from: 'api', to: 'nodeLease', type: 'request'},
+      ],
+      focus: ['kubelet', 'nodeLease'],
+      status: {b: null, managed: null},
+      badges: {b: null, nodeLease: 'node-1'},
+    },
+    {
+      short: 'Coordinated',
+      kind: '원리',
+      title: 'Coordinated leader election lets the API server choose',
+      text: [
+        'In plain leader election, whoever writes first wins. During an upgrade that can be a newer kube-controller-manager than the API servers support. Coordinated leader election changes that: candidates publish LeaseCandidate objects, and the API server picks the leader.',
+        'The built-in strategy OldestEmulationVersion prefers the oldest version, so mixed-version upgrades stay safe. It is beta since v1.33 but off by default, behind the CoordinatedLeaderElection feature gate and the coordination.k8s.io/v1beta1 API.',
+      ],
+      flows: [
+        {from: 'cand', to: 'api', label: 'candidates', type: 'request'},
+        {from: 'api', to: 'lease', label: 'pick leader', type: 'request'},
+      ],
+      focus: ['cand', 'api'],
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'A Lease picks one leader, fencing keeps it honest',
+      text: [
+        'Replicas compete to write a Lease. The holder renews it every retryPeriod and gives up after renewDeadline. Followers take over once leaseDuration passes with no renewal, and leaseTransitions counts each change.',
+        'Leases give you a leader most of the time, not a guarantee. Pauses and clock rate skew can make two replicas act at once, so writes should be conditional and idempotent.',
+      ],
+      keyIdea: 'Check who leads with kubectl get lease -n kube-system. If reconciliation stalls after a node failure, expect roughly one lease duration of pause before the next leader starts.',
+      flows: [
+        {from: 'c', to: 'api', label: 'renew', type: 'request'},
+        {from: 'api', to: 'lease', type: 'request'},
+      ],
+      focus: ['lease', 'c'],
+      badges: {nodeLease: null},
+    },
+  ]}
+/>
+
+## The three timings
+
+| Setting (client-go name) | What it controls | kube-controller-manager default | If set too low | If set too high |
+|---|---|---|---|---|
+| `leaseDuration` | How long followers wait without a renewal before taking over | 15 s | Leadership flaps on short API hiccups | Slow failover after a crash |
+| `renewDeadline` | How long the leader keeps trying to renew before giving up | 10 s | Leader steps down on brief API slowness | Less margin before followers may take over |
+| `retryPeriod` | How often the leader renews and followers retry | 2 s | More writes to the API server | Renewals may miss the deadline |
+
+The flags are `--leader-elect-lease-duration`, `--leader-elect-renew-deadline` and `--leader-elect-retry-period` on kube-controller-manager and kube-scheduler. Keep `leaseDuration` > `renewDeadline` > `retryPeriod`.
+
+## Try it yourself
+
+```bash
+kubectl get lease -n kube-system                     # HOLDER for controller-manager, scheduler, and more
+kubectl get lease kube-controller-manager -n kube-system -o yaml   # holderIdentity, leaseDurationSeconds, renewTime, leaseTransitions
+kubectl get lease kube-scheduler -n kube-system \
+  -o jsonpath='{.spec.holderIdentity}{"\n"}'         # Which instance schedules right now
+kubectl get lease -n kube-system -w                  # Each update line is a renewal or takeover
+kubectl get lease -n kube-node-lease                 # One heartbeat Lease per node
+kubectl get lease <node-name> -n kube-node-lease \
+  -o jsonpath='{.spec.renewTime}{"\n"}'              # Last kubelet heartbeat
+kubectl get leasecandidates -n kube-system           # Only if coordinated leader election is enabled
+```
+
+<Quiz questions={[
+  {q: 'The leader replica crashes. Why does the next leader take over only after a delay?', options: ['The API server must delete the Lease first', 'Followers wait for leaseDuration with no renewal, on their own clocks, before taking the Lease', 'The scheduler has to place a new Pod first'], answer: 1, why: 'A follower cannot tell a dead leader from a slow one. It waits until the Lease has gone unrenewed for leaseDuration, then writes itself as holder.'},
+  {q: 'A leader freezes in a long GC pause, its Lease expires and another replica takes over. What can go wrong when it wakes up?', options: ['Nothing, the API server blocks all writes from former leaders', 'The Lease is deleted', 'The cluster stops scheduling', 'It may still write as if it led, so two replicas act at once'], answer: 3, why: 'Lease-based election does not fence the old leader. Code that already checked leadership keeps running until renewal fails. Conditional, idempotent writes or fencing tokens make that stale write harmless.'},
+  {q: 'Why must leaseDuration be longer than renewDeadline?', options: ['So the old leader has stopped acting before a follower may take over', 'So the Lease object is smaller', 'So the kubelet heartbeat is faster'], answer: 0, why: 'The leader gives up after renewDeadline without a renewal. Followers may take over only after leaseDuration. The gap between the two is the margin that keeps their active periods from overlapping.'},
+]} />
+
+Further reading: [Leases](https://kubernetes.io/docs/concepts/architecture/leases/) · [Coordinated leader election](https://kubernetes.io/docs/concepts/cluster-administration/coordinated-leader-election/) · [client-go leaderelection](https://pkg.go.dev/k8s.io/client-go/tools/leaderelection) · [CRDs and Operators](../advanced/crd-operator.mdx) · [Distributed Systems Basics](../basic/distributed-systems.mdx) · [Control Plane HA and etcd Quorum](../advanced/etcd-quorum.mdx)

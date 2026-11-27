@@ -1,0 +1,289 @@
+---
+id: streaming
+title: 오래 열린 연결과 스트리밍
+sidebar_label: 04 · 스트리밍과 웹소켓
+description: 폴링·롱 폴링·Server-Sent Events·웹소켓·gRPC 스트리밍을 비교하고, LLM 토큰 스트리밍이 SSE를 쓰는 방식, 프록시와 로드밸런서가 오래 열린 연결에 하는 일(유휴 타임아웃, 버퍼링, 연결 드레이닝, 쏠리는 부하, 하트비트)을 애니메이션으로 본다
+summary: '폴링·SSE·웹소켓·gRPC 스트림 비교, LLM 토큰이 브라우저까지 오는 길, 프록시가 버퍼링하고 끊고 부하를 쏠리게 하는 이유.'
+icon: route
+hide_table_of_contents: true
+---
+
+# 오래 열린 연결과 스트리밍
+
+채팅 화면은 30초 뒤에 오는 큰 답 하나가 아니라, 모델이 쓰는 토큰을 바로바로 받고 싶다. 답 하나를 **클라이언트 → 로드밸런서 → 리버스 프록시 → 파드 → 모델 서버** 순서로 따라가며 응답을 계속 흘려 보내는 방법들을 비교하고, 그 사이의 각 구간이 열린 채로 있는 연결에 무엇을 하는지 본다.
+
+<StepDiagram
+  width={1000}
+  height={460}
+  meta={{duration: '약 13분', level: '중급'}}
+  groups={[
+    {label: '쿠버네티스 클러스터', x: 395, y: 40, w: 590, h: 400, tone: 'biz'},
+  ]}
+  nodes={[
+    {id: 'client', label: '채팅 화면', sub: '브라우저', icon: 'browser', tone: 'ext', x: 90, y: 240, show: true},
+    {id: 'lb', label: '로드밸런서', sub: '유휴 타임아웃', icon: 'split', tone: 'ext', x: 290, y: 240},
+    {id: 'proxy', label: '리버스 프록시', sub: '인그레스 / 게이트웨이', icon: 'gate', tone: 'node', x: 490, y: 240},
+    {id: 'pod1', label: 'API 파드 1', sub: '스트리밍', icon: 'pod', tone: 'app', size: 'sm', x: 690, y: 120},
+    {id: 'pod2', label: 'API 파드 2', sub: '스트리밍', icon: 'pod', tone: 'app', size: 'sm', x: 690, y: 240},
+    {id: 'pod3', label: 'API 파드 3', sub: '스케일 아웃으로 추가', icon: 'pod', tone: 'app', size: 'sm', x: 690, y: 360},
+    {id: 'llm', label: '모델 서버', sub: '토큰 생성', icon: 'spark', tone: 'store', x: 880, y: 240},
+  ]}
+  metrics={[
+    {id: 'mode', label: '방식'},
+    {id: 'dir', label: '방향'},
+    {id: 'conn', label: '연결'},
+    {id: 'seen', label: '사용자 화면'},
+  ]}
+  learn={[
+    {text: '폴링과 롱 폴링, 그리고 요청을 낭비하는 이유', at: 1},
+    {text: 'SSE: 자동 재연결이 있는 한 방향 text/event-stream', at: 2},
+    {text: '양방향 통신을 위한 웹소켓과 gRPC 스트림', at: 3},
+    {text: 'LLM 토큰 스트리밍이 SSE를 쓰는 방식', at: 5},
+    {text: '프록시에서 생기는 버퍼링·유휴 타임아웃·드레이닝·쏠리는 부하', at: 6},
+  ]}
+  steps={[
+    {
+      short: '시작',
+      kind: '시작',
+      title: '답은 하나, 토큰은 수백 개',
+      text: [
+        '사용자가 채팅 화면에서 질문한다. 모델 서버는 답을 토큰 하나씩 쓰고, 답 전체가 나오기까지 몇 초에서 수십 초가 걸린다.',
+        '평범한 요청·응답이라면 클라이언트는 마지막 토큰까지 기다렸다가 한꺼번에 받는다. 쓰는 대로 글자를 보여 주려면 열린 채로 있는 연결 위로 응답이 계속 흘러야 한다. 길 위의 모든 프록시가 이것을 허락해야 한다.',
+      ],
+      flows: [
+        {from: 'client', to: 'lb', label: 'POST /chat', type: 'request'},
+        {from: 'lb', to: 'proxy', type: 'request'},
+        {from: 'proxy', to: 'pod2', type: 'request'},
+        {from: 'pod2', to: 'llm', type: 'request'},
+      ],
+      focus: ['client', 'llm'],
+      values: {mode: '요청 / 응답', dir: '클라이언트 → 서버', conn: '짧음', seen: '끝에 한꺼번에'},
+    },
+    {
+      short: '폴링',
+      kind: '원리',
+      title: '폴링과 롱 폴링은 묻고 또 묻는다',
+      text: [
+        '가장 단순한 방법은 폴링이다. 클라이언트가 몇 초마다 "새로운 것 있나?" 하고 묻는다. 대부분의 답은 "없다"인데도 매번 요청 하나만큼 비용이 든다. 새 데이터는 폴링 간격만큼 늦게 도착할 수 있다.',
+        '롱 폴링은 요청을 열어 두고, 서버에 보낼 것이 생기거나 타임아웃이 될 때 답한다. 클라이언트는 곧바로 다시 묻는다. 갱신은 더 빨리 오지만 메시지마다 헤더까지 붙은 새 요청이 필요하다.',
+      ],
+      keyIdea: '폴링은 어디서나 동작하고 확장도 쉬워서 느린 갱신에는 충분하다. 토큰 스트림에는 너무 수다스럽다.',
+      flows: [
+        {from: 'client', to: 'lb', label: 'GET ?since=41', type: 'request'},
+        {from: 'lb', to: 'client', label: '새것 없음', type: 'response'},
+      ],
+      focus: ['client'],
+      values: {mode: '폴링 / 롱 폴링', dir: '클라이언트가 물음', conn: '메시지마다 하나', seen: '묶음으로, 늦게'},
+    },
+    {
+      short: 'SSE',
+      kind: '원리',
+      title: 'Server-Sent Events는 응답 하나를 열어 둔다',
+      text: [
+        'Server-Sent Events(SSE)에서 서버는 Content-Type: text/event-stream으로 답하고 본문을 끝내지 않는다. 이벤트는 data: ... 같은 평범한 텍스트 줄로 쓰고, event:와 id: 필드를 붙일 수 있으며, 빈 줄이 이벤트 하나를 끝낸다.',
+        '방향은 서버에서 클라이언트로 하나뿐이고 평범한 HTTP 위에서 돈다. 브라우저의 EventSource API는 스트림이 끊기면 스스로 다시 연결하고, 마지막으로 본 id를 Last-Event-ID 헤더에 실어 보낸다. 최근 이벤트를 갖고 있는 서버는 거기서부터 이어 줄 수 있다. retry: 필드로 재연결 간격을 정한다.',
+      ],
+      keyIdea: 'SSE는 그냥 긴 HTTP 응답이라 대부분의 프록시를 통과하고 HTTP/2와도 잘 맞는다. 이어 받기는 서버가 이벤트마다 id를 주고 거기서부터 다시 보낼 수 있을 때만 된다.',
+      flows: [
+        {from: 'pod2', to: 'proxy', label: 'data: ...', type: 'response'},
+        {from: 'proxy', to: 'lb', type: 'response'},
+        {from: 'lb', to: 'client', label: 'text/event-stream', type: 'response'},
+      ],
+      focus: ['client', 'pod2'],
+      values: {mode: 'SSE', dir: '서버 → 클라이언트', conn: '열린 응답 하나', seen: '이벤트마다 바로'},
+    },
+    {
+      short: '웹소켓',
+      kind: '원리',
+      title: '웹소켓은 연결을 양방향 프레임으로 바꾼다',
+      text: [
+        '웹소켓은 Upgrade: websocket과 Connection: Upgrade가 붙은 HTTP/1.1 요청으로 시작한다. 서버가 101 Switching Protocols로 답하면, 그때부터 그 TCP 연결에는 HTTP가 아니라 웹소켓 프레임이 오간다. (HTTP/2에서는 확장 CONNECT를 쓴다.)',
+        '양쪽 모두 아무 때나 보낼 수 있다. 입력 중 표시가 있는 채팅, 게임, 실시간 공동 편집에 맞는다. 재연결이나 이어 받기는 기본으로 없다. 연결이 끊기면 앱이 다시 연결하고 놓친 것을 스스로 챙겨야 한다.',
+      ],
+      keyIdea: 'Upgrade와 Connection은 구간마다 처리되는(hop-by-hop) 헤더다. 길 위의 모든 프록시가 웹소켓을 지원하고 업그레이드를 넘겨 줘야 핸드셰이크가 된다.',
+      flows: [
+        {from: 'client', to: 'lb', label: 'Upgrade: websocket', type: 'request'},
+        {from: 'lb', to: 'proxy', type: 'request'},
+        {from: 'proxy', to: 'pod2', type: 'request'},
+        {from: 'pod2', to: 'client', label: '101 · 프레임 ⇄', type: 'response', bend: -60},
+      ],
+      focus: ['client', 'proxy', 'pod2'],
+      values: {mode: '웹소켓', dir: '양방향', conn: '업그레이드된 TCP', seen: '양쪽으로 프레임'},
+    },
+    {
+      short: 'gRPC',
+      kind: '원리',
+      title: 'gRPC 스트림은 HTTP/2 위에서 돈다',
+      text: [
+        '서비스 사이에서는 gRPC가 서버 스트리밍, 클라이언트 스트리밍, 양방향 스트리밍을 준다. RPC 하나가 HTTP/2 스트림 하나이고, 여러 스트림이 TCP 연결 하나를 나눠 쓴다.',
+        '여기서 API 파드는 서버 스트리밍 RPC로 모델 서버를 부르고, 토큰을 메시지 스트림으로 돌려받는다. 많은 모델 서버가 gRPC API와 SSE를 쓰는 HTTP API를 함께 제공한다.',
+      ],
+      keyIdea: 'gRPC는 처음부터 끝까지 HTTP/2가 필요하고, 브라우저에서는 gRPC-Web 같은 다리 없이 바로 부를 수 없다. 서비스끼리의 스트림에 가장 잘 맞는다.',
+      flows: [
+        {from: 'pod2', to: 'llm', label: 'HTTP/2 스트림', type: 'request'},
+        {from: 'llm', to: 'pod2', label: '토큰, 토큰, ...', type: 'response', bend: 40},
+      ],
+      focus: ['pod2', 'llm'],
+      values: {mode: 'gRPC 서버 스트림', dir: '한쪽 또는 양쪽', conn: 'HTTP/2 스트림', seen: '—'},
+    },
+    {
+      short: '토큰',
+      kind: '원리',
+      title: 'LLM API는 토큰을 SSE로 흘려 보낸다',
+      text: [
+        '대부분의 LLM HTTP API는 SSE로 스트리밍한다. "stream": true를 주면 OpenAI 호환 서버(예: vLLM)는 토큰 묶음마다 data: 줄을 하나씩 보내고 data: [DONE]으로 끝낸다. 이름 붙은 이벤트를 쓰고 ping 이벤트를 함께 보내는 API도 있다.',
+        'API 파드는 조각이 도착하는 즉시 넘겨 준다. 사용자는 답 전체가 아니라 첫 토큰까지의 시간(TTFT)만 지나면 첫 단어를 본다.',
+      ],
+      keyIdea: '스트리밍이 답을 더 빨리 끝내 주지는 않는다. 첫 단어가 더 빨리 보이게 할 뿐이고, 사용자가 느끼는 것은 바로 그것이다.',
+      flows: [
+        {from: 'llm', to: 'pod2', label: '토큰', type: 'response'},
+        {from: 'pod2', to: 'proxy', label: 'data: {...}', type: 'response'},
+        {from: 'proxy', to: 'lb', type: 'response'},
+        {from: 'lb', to: 'client', label: 'data: [DONE]', type: 'response'},
+      ],
+      focus: ['llm', 'client'],
+      values: {mode: 'SSE 토큰 스트림', dir: '서버 → 클라이언트', conn: '열린 응답 하나', seen: '쓰는 대로 글자'},
+    },
+    {
+      short: '버퍼링',
+      kind: '문제',
+      title: '버퍼링하는 프록시가 스트림을 다시 한 덩어리로 만든다',
+      text: [
+        '앱은 스트리밍하는데 사용자는 여전히 답을 한꺼번에 본다. 어떤 프록시가 버퍼링하고 있다. nginx는 기본으로 proxy_buffering이 켜져 있어서 업스트림 응답을 모았다가 넘긴다. 압축 미들웨어도 같은 일을 할 수 있다.',
+        '스트리밍 경로에서는 버퍼링을 끈다. 예를 들어 nginx에서 proxy_buffering off를 쓰거나, 앱이 응답 헤더 X-Accel-Buffering: no를 보내 그 응답만 끌 수 있다. 모든 구간을 확인한다. 앞단의 API 게이트웨이나 CDN도 버퍼링할 수 있다.',
+      ],
+      keyIdea: '버퍼링하는 구간을 찾으려면 curl -N으로 구간을 하나씩 늘려 가며 받아 본다. 파드에 직접, 다음은 프록시, 그다음 공개 URL. 줄이 처음으로 한 덩어리로 오는 구간이 범인이다.',
+      flows: [
+        {from: 'pod2', to: 'proxy', label: 'data: ... data: ...', type: 'response'},
+        {from: 'proxy', to: 'lb', label: '붙잡힘', type: 'response'},
+      ],
+      focus: ['proxy'],
+      status: {proxy: 'warn'},
+      badges: {proxy: '버퍼링'},
+      values: {seen: '끝에 한꺼번에', conn: '열렸지만 막힘'},
+    },
+    {
+      short: '타임아웃',
+      kind: '장애',
+      title: '유휴 타임아웃이 조용한 스트림을 끊는다',
+      text: [
+        '긴 추론 단계 동안 1분 넘게 아무것도 오지 않자 스트림이 끊긴다. 프록시는 조용한 연결을 닫는다. AWS Application Load Balancer의 유휴 타임아웃은 기본 60초이고, nginx의 proxy_read_timeout은 업스트림에서 두 번 읽는 사이의 60초다.',
+        '두 단계로 고친다. 가장 짧은 타임아웃보다 넉넉히 자주 하트비트를 보낸다. SSE 주석 줄(: ping), 웹소켓 ping 프레임, gRPC keepalive가 그 예다. 그리고 스트림이 지나는 구간마다 타임아웃을 늘린다. 인그레스라면 nginx의 proxy-read-timeout·proxy-send-timeout, Gateway API라면 HTTPRoute 규칙의 timeouts다.',
+      ],
+      keyIdea: '길 위에서 가장 짧은 타임아웃이 이긴다. CDN, 클라우드 로드밸런서, 인그레스나 게이트웨이, 메시 사이드카, 앱 서버까지 구간마다 유휴 타임아웃을 적어 본다.',
+      flows: [
+        {from: 'lb', to: 'client', label: '연결 끊김', type: 'response'},
+      ],
+      focus: ['lb', 'proxy'],
+      status: {proxy: null, lb: 'error'},
+      badges: {proxy: null, lb: '유휴 60초'},
+      values: {conn: '유휴 뒤 끊김', seen: '중간에 멈춤'},
+    },
+    {
+      short: '드레이닝',
+      kind: '주의',
+      title: '롤링 배포가 열린 스트림을 끝낸다',
+      text: [
+        '새 버전이 배포되면서 파드 1이 교체된다. 쿠버네티스는 이 파드를 엔드포인트에서 빼고 SIGTERM을 보낸다. 짧은 요청은 금방 끝나지만 스트림은 몇 분씩 열려 있을 수 있다. 유예 시간(기본 30초)이 다 되면 파드가 강제로 종료되고 스트림도 갑자기 끊긴다.',
+        'SIGTERM을 받으면 새 스트림은 받지 않고, 지금 것은 마저 끝내고, terminationGracePeriodSeconds를 보통의 스트림 길이보다 넉넉히 잡는다. 아주 긴 연결은 정중하게 닫고 클라이언트가 새 파드로 다시 붙게 한다. SSE 클라이언트는 스스로 다시 붙지만 웹소켓 클라이언트에는 재시도 로직이 필요하다.',
+      ],
+      keyIdea: '클라이언트는 스트림이 끊길 것을 전제로 만든다. 백오프를 두고 다시 연결하고, 서버가 지원하면 마지막 이벤트 id부터 이어 받는다.',
+      flows: [
+        {from: 'pod1', to: 'proxy', label: '닫는 중', type: 'response'},
+      ],
+      focus: ['pod1'],
+      status: {lb: null, pod1: 'warn'},
+      badges: {lb: null, pod1: 'SIGTERM'},
+      values: {conn: '드레이닝', seen: '다시 연결'},
+    },
+    {
+      short: '쏠림',
+      kind: '주의',
+      title: '긴 연결은 처음 파드에 붙어 부하를 쏠리게 한다',
+      text: [
+        'HPA가 파드 3을 늘렸는데 일이 거의 오지 않는다. 부하 분산은 연결이 열릴 때 일어난다. 이미 열린 웹소켓과 gRPC 연결은 처음 닿은 파드에 머물러 있으므로, 새 파드는 새 연결만 받는다.',
+        'gRPC는 HTTP/2 연결 하나가 클라이언트의 모든 요청을 나를 수 있어서 파드 하나가 전부를 받을 수도 있다. 흔한 해법은 연결 수명을 제한해 클라이언트가 가끔 다시 붙게 하는 것(gRPC 서버의 MAX_CONNECTION_AGE), L7 프록시나 클라이언트 측 로드밸런싱으로 요청 단위로 나누는 것, 긴 스트림에는 라운드 로빈보다 최소 연결(least-connections)을 쓰는 것이다.',
+      ],
+      keyIdea: '초당 요청 수만이 아니라 파드별 활성 연결 수를 본다. 몇몇 파드만 CPU가 오르고 나머지는 노는 것이 전형적인 신호다.',
+      flows: [
+        {from: 'proxy', to: 'pod1', label: '기존 연결', type: 'request'},
+        {from: 'proxy', to: 'pod2', label: '기존 연결', type: 'request'},
+        {from: 'proxy', to: 'pod3', label: '조금', type: 'request'},
+      ],
+      focus: ['pod3', 'pod2'],
+      status: {pod1: null, pod2: 'warn', pod3: 'ok'},
+      badges: {pod1: null, pod2: '연결 900', pod3: '연결 12'},
+      values: {conn: '첫 파드에 고정'},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '가장 단순한 방식을 고르고, 구간마다 고친다',
+      text: [
+        '느린 갱신에는 폴링, LLM 토큰이나 알림 같은 한 방향 스트림에는 SSE, 클라이언트도 많이 보낼 때는 웹소켓, 서비스 사이에는 gRPC 스트리밍을 쓴다.',
+        '그다음 구간마다 확인한다. 버퍼링은 끄고, 유휴 타임아웃은 하트비트 간격보다 길게, 유예 시간은 스트림을 드레이닝할 만큼, 클라이언트는 다시 연결하게, 연결 수명은 제한해 새 파드로 부하가 퍼지게 한다.',
+      ],
+      flows: [
+        {from: 'llm', to: 'pod2', type: 'response'},
+        {from: 'pod2', to: 'proxy', type: 'response'},
+        {from: 'proxy', to: 'lb', type: 'response'},
+        {from: 'lb', to: 'client', label: 'data: ...', type: 'response'},
+      ],
+      focus: ['client', 'lb', 'proxy'],
+      status: {pod1: null, pod2: null, pod3: null},
+      badges: {pod2: null, pod3: null, pod1: null},
+      values: {mode: 'SSE + 하트비트', dir: '서버 → 클라이언트', conn: '길게, 살아 있게', seen: '쓰는 대로 글자'},
+    },
+  ]}
+/>
+
+## 방식 고르기
+
+| 방식 | 방향 | 전송 | 재연결 | 잘 맞는 곳 |
+|---|---|---|---|---|
+| 폴링 | 클라이언트가 물음 | 간격마다 새 요청 | 매번 새 요청 | 느리게 바뀌는 상태, 가장 단순한 구성 |
+| 롱 폴링 | 클라이언트가 묻고 서버가 붙잡음 | 데이터나 타임아웃까지 열어 둔 요청 | 클라이언트가 다시 물음 | SSE나 웹소켓이 막힌 환경의 알림 |
+| Server-Sent Events | 서버 → 클라이언트 | 긴 HTTP 응답 하나, `text/event-stream` | EventSource에 내장, `Last-Event-ID`로 이어 받기 | LLM 토큰, 실시간 피드, 진행률 |
+| 웹소켓 | 양방향 | HTTP 업그레이드(`101`) 뒤 프레임 | 앱이 직접 | 채팅, 게임, 공동 편집 |
+| gRPC 스트리밍 | 한쪽 또는 양쪽 | HTTP/2 스트림 | 앱이나 라이브러리가 재시도 | 서비스 사이 스트림 |
+
+## 스트림이 끊길 때
+
+| 증상 | 흔한 원인 | 해결 |
+|---|---|---|
+| 답이 한꺼번에 나타난다 | 프록시·게이트웨이·압축 계층의 버퍼링 | `proxy_buffering off` 또는 `X-Accel-Buffering: no`, `curl -N`으로 구간별 확인 |
+| 1분쯤 조용하면 스트림이 멈춘다 | 어느 구간의 유휴·읽기 타임아웃 | 가장 짧은 타임아웃보다 자주 하트비트, 스트리밍 경로의 타임아웃 늘리기 |
+| 웹소켓 핸드셰이크 실패, `101`이 없다 | 프록시가 `Upgrade`·`Connection`을 넘기지 않음 | 그 프록시나 로드밸런서에서 웹소켓 지원 켜기 |
+| 배포할 때마다 스트림이 끊긴다 | 유예 시간이 스트림보다 짧음 | SIGTERM에 드레이닝, `terminationGracePeriodSeconds` 늘리기, 클라이언트 재연결 |
+| 스케일 아웃 뒤 새 파드가 논다 | 긴 연결이 기존 파드에 고정됨 | 연결 수명 제한, 요청 단위 L7 분산, 최소 연결 |
+
+## 직접 확인해 보기
+
+```bash
+# SSE 스트림이 도착하는 모습 보기. -N은 curl 자체의 출력 버퍼링을 끈다
+curl -N -H 'Accept: text/event-stream' https://app.example.com/events
+
+# OpenAI 호환 서버(예: vLLM)에서 토큰을 받으며 줄마다 시각 찍기
+curl -sN http://localhost:8000/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"my-model","stream":true,"messages":[{"role":"user","content":"Count to 20"}]}' \
+  | while IFS= read -r line; do echo "$(date +%T) $line"; done    # 모든 줄의 시각이 같으면 버퍼링이다
+
+# 프록시를 건너뛰고 파드에 바로 같은 요청을 보내 버퍼링 구간 찾기
+kubectl port-forward deploy/chat-api 8080:8080
+
+# 인그레스와 HTTPRoute의 스트리밍 관련 타임아웃
+kubectl get ingress -A -o yaml | grep -E 'proxy-(read|send)-timeout|proxy-buffering'
+kubectl get httproute -A -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.spec.rules[*].timeouts}{"\n"}{end}'
+
+# 파드가 스트림을 드레이닝할 수 있는 시간
+kubectl get deploy chat-api -o jsonpath='{.spec.template.spec.terminationGracePeriodSeconds}{"\n"}'
+```
+
+<Quiz questions={[
+  {q: '앱은 50ms마다 SSE 이벤트를 보내는데, 사용자는 20초 뒤에 답 전체를 한꺼번에 본다. 파드에 curl -N으로 직접 부르면 잘 흘러나온다. 가장 그럴듯한 원인은?', options: ['모델 서버가 느리다', '파드 앞의 프록시가 응답을 버퍼링한다', 'SSE 밑에 웹소켓이 필요하다', '브라우저가 EventSource를 지원하지 않는다'], answer: 1, why: '파드는 제대로 흘려 보내므로 그 뒤의 구간이 응답을 붙잡고 있다. nginx는 기본으로 업스트림 응답을 버퍼링한다. 그 경로에서 끄거나 X-Accel-Buffering: no를 보낸다.'},
+  {q: '모델이 첫 토큰 전에 90초 동안 생각할 때가 있고, 그런 스트림은 늘 끊긴다. 로드밸런서의 유휴 타임아웃은 60초다. 가장 튼튼한 해결은?', options: ['SSE를 폴링으로 바꾼다', '파드의 유예 시간을 줄인다', '15~20초마다 하트비트(예: SSE 주석 줄)를 보내고, 스트리밍 경로의 유휴 타임아웃을 늘린다'], answer: 2, why: '유휴 타임아웃은 데이터가 없는 시간을 센다. 주기적인 하트비트가 있으면 어느 구간도 연결을 유휴로 보지 않고, 타임아웃을 늘리면 여유가 더 생긴다.'},
+  {q: '파드를 3개에서 6개로 늘렸는데 새 파드 3개는 거의 놀고 기존 파드는 바쁘다. 클라이언트는 긴 gRPC 연결을 쓴다. 왜인가?', options: ['부하 분산은 연결이 열릴 때 일어나고, 기존 연결은 기존 파드에 머문다', '새 파드가 레디니스 프로브에 실패했다', 'gRPC는 한 번에 파드 3개와만 통신한다', 'HPA가 다른 디플로이먼트를 늘렸다'], answer: 0, why: '긴 HTTP/2 연결 하나가 처음 닿은 파드로 많은 요청을 나른다. 연결 수명을 제한하거나 요청 단위로 나눠야 트래픽이 새 파드로 옮겨 간다.'},
+]} />
+
+더 읽을거리: [MDN: 서버 전송 이벤트 사용하기](https://developer.mozilla.org/ko/docs/Web/API/Server-sent_events/Using_server-sent_events) · [RFC 6455: 웹소켓 프로토콜](https://datatracker.ietf.org/doc/html/rfc6455) · [gRPC 핵심 개념](https://grpc.io/docs/what-is-grpc/core-concepts/) · [nginx proxy_buffering](https://nginx.org/en/docs/http/ngx_http_proxy_module.html#proxy_buffering) · [Gateway API HTTPRoute 타임아웃](https://gateway-api.sigs.k8s.io/reference/api-types/httproute/) · [HTTP/1.1, HTTP/2, HTTP/3](../basic/http-versions.mdx) · [리버스 프록시와 로드밸런싱](../basic/reverse-proxy.mdx) · [추론 API 요청이 응답을 받기까지](../ai/inference-request.mdx)

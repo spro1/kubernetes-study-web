@@ -152,7 +152,7 @@ for (const [locale, L] of Object.entries(LOCALES)) {
 const cj = path.join(ROOT, 'i18n/ko/docusaurus-plugin-content-docs/current.json');
 const json = fs.existsSync(cj) ? JSON.parse(fs.readFileSync(cj, 'utf8')) : {};
 for (const key of Object.keys(json)) if (key.startsWith('sidebar.lessons.category.')) delete json[key];
-for (const t of TRACKS) {
+for (const t of [...TRACKS, ...require('../src/data/extras')]) {
   json[`sidebar.lessons.category.${t.en}`] = {message: t.ko, description: `The label for category '${t.en}' in sidebar 'lessons'`};
 }
 fs.writeFileSync(cj, `${JSON.stringify(json, null, 2)}\n`);

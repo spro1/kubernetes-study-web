@@ -1,0 +1,80 @@
+---
+id: cka
+title: CKA practice questions
+sidebar_label: CKA
+sidebar_position: 2
+description: 24 original practice questions for the CKA exam, grouped by its five official domains, with the reason and the command or field behind each answer.
+---
+
+# CKA practice questions
+
+The CKA is a 2-hour hands-on exam in a terminal, based on Kubernetes v1.37. It has five domains:
+
+| Domain | Weight | Questions here |
+| --- | --- | --- |
+| Troubleshooting | 30% | 6 |
+| Cluster Architecture, Installation and Configuration | 25% | 5 |
+| Services and Networking | 20% | 5 |
+| Workloads and Scheduling | 15% | 4 |
+| Storage | 10% | 4 |
+
+The questions are original and unofficial, not taken from the real exam. Domains and weights come from the official curriculum, as listed on [Learning paths & certifications](../roadmap.mdx). The real exam asks you to do these things, not pick them, so practice the commands in the [Hands-on labs](../labs/index.mdx).
+
+## Troubleshooting (30%)
+
+<Quiz title={null} save={false} questions={[
+  {q: 'kubectl get nodes shows worker-2 as NotReady. You SSH into worker-2. What do you check first?', options: ['Run kubeadm reset and join the node again', 'systemctl status kubelet and journalctl -u kubelet', 'Restart the kube-apiserver on the control plane', 'Delete the node object with kubectl delete node'], answer: 1, why: 'NotReady means the node stopped reporting healthy status, and the kubelet is what reports it. Its service status and journal usually name the cause: stopped service, bad config, expired certificate or a runtime that is down.'},
+  {q: 'On a kubeadm cluster, kubectl returns "connection refused" on port 6443 after someone edited the API server. Where do you look?', options: ['kubectl logs -n kube-system kube-apiserver', 'The kube-proxy ConfigMap', '/etc/kubernetes/manifests/kube-apiserver.yaml, and crictl ps -a plus crictl logs on that node', 'The CoreDNS Corefile'], answer: 2, why: 'The API server is a static Pod run by the kubelet from /etc/kubernetes/manifests. With the API down, kubectl cannot help, so you fix the manifest and read the container logs with crictl (or /var/log/pods).'},
+  {q: 'A Pod is in CrashLoopBackOff. kubectl logs shows only the new container starting. How do you see why the previous one died?', options: ['kubectl describe node', 'kubectl logs POD --all-containers', 'kubectl get events --watch', 'kubectl logs POD --previous'], answer: 3, why: 'kubectl logs --previous (or -p) prints the output of the last terminated instance of the container, which is where the crash message is.'},
+  {q: 'A new Pod shows CreateContainerConfigError. What do you check?', options: ['That every ConfigMap, Secret and key it references in env or envFrom exists in the Pod\'s namespace', 'That the image tag exists in the registry', 'That the node has enough free CPU', 'That the Service selector matches the Pod labels'], answer: 0, why: 'The kubelet could not build the container config, most often because a referenced ConfigMap, Secret or key is missing. kubectl describe pod names the missing object in the Events.'},
+  {q: 'The Service web returns nothing and has no endpoints, but its Pods are Running and Ready. What is the most likely cause?', options: ['kube-proxy is not installed', 'The Pods have no resource requests', 'The Service selector does not match the Pod labels', 'The Service type must be NodePort'], answer: 2, why: 'EndpointSlices are filled from Pods that match spec.selector and are Ready. Compare kubectl get svc web -o yaml with kubectl get pods --show-labels, and check kubectl get endpointslices -l kubernetes.io/service-name=web.'},
+  {q: 'A container keeps restarting and kubectl describe pod shows Last State: Terminated, Reason: OOMKilled, Exit Code: 137. What happened?', options: ['The liveness probe failed', 'The container used more memory than resources.limits.memory and was killed', 'The node ran out of disk space', 'The image entrypoint does not exist'], answer: 1, why: 'OOMKilled means the kernel killed the process for exceeding its memory cgroup limit; 137 is 128 plus signal 9. Raise limits.memory or fix the memory use; kubectl top pod shows actual usage.'},
+]} />
+
+**Study:** [Node NotReady and component failures (CKA)](../cert/node-troubleshoot.mdx), [Reading status in three layers and the troubleshooting order](../intermediate/troubleshoot-status.mdx), [Debugging a Running Pod with kubectl debug](../k8s/kubectl-debug.mdx), [How Logs, Metrics and Traces Leave a Pod](../k8s/observability-pipeline.mdx), [Requests and limits](../intermediate/requests-limits.mdx), [A Packet from Pod to Pod](../advanced/packet-path.mdx), [Finding Services by Name (Service·DNS)](../k8s/service-dns.mdx)
+
+## Cluster Architecture, Installation and Configuration (25%)
+
+<Quiz title={null} save={false} questions={[
+  {q: 'You must back up etcd on a kubeadm control plane node with etcdctl snapshot save. Besides --endpoints, what must the command include?', options: ['--cacert, --cert and --key pointing at the etcd certificates under /etc/kubernetes/pki/etcd', '--data-dir /var/lib/etcd', 'Only --user root', 'The kube-apiserver admin.conf kubeconfig'], answer: 0, why: 'etcd only accepts clients with TLS certificates. Pass --cacert=/etc/kubernetes/pki/etcd/ca.crt plus a client cert and key (kubeadm\'s server.crt and server.key work). Restoring is done offline with etcdutl snapshot restore.'},
+  {q: 'You upgraded the kubeadm package on the first control plane node and kubeadm upgrade plan looks good. Which command upgrades the control plane components?', options: ['kubeadm upgrade node', 'kubeadm init --upgrade', 'apt-get upgrade kubelet', 'kubeadm upgrade apply v1.37.1'], answer: 3, why: 'kubeadm upgrade apply runs once, on the first control plane node. Other control plane and worker nodes use kubeadm upgrade node. On each node you then drain, upgrade kubelet and kubectl, restart the kubelet and uncordon.'},
+  {q: 'How do you see when the certificates of a kubeadm cluster expire?', options: ['kubectl get csr', 'openssl s_client -connect etcd:2379', 'kubectl describe secret -n kube-system', 'kubeadm certs check-expiration'], answer: 3, why: 'kubeadm certs check-expiration lists every kubeadm-managed certificate and its expiry. kubeadm certs renew all renews them, after which the control plane static Pods must restart.'},
+  {q: 'You bound a Role to the ServiceAccount ci in namespace dev. How do you check that it can now list Pods there?', options: ['kubectl auth can-i list pods -n dev --as=system:serviceaccount:dev:ci', 'kubectl get rolebinding -n dev', 'kubectl auth whoami', 'kubectl describe sa ci -n dev'], answer: 0, why: 'kubectl auth can-i with --as impersonates the subject and asks the API server for a real authorization decision. Reading the RoleBinding only shows what you meant to grant.'},
+  {q: 'kubectl drain node-1 refuses to continue because of Pods managed by a DaemonSet. Which flag lets it proceed?', options: ['--force', '--ignore-daemonsets', '--grace-period=0', '--disable-eviction'], answer: 1, why: 'DaemonSet Pods would be recreated on the same node anyway, so drain asks you to confirm with --ignore-daemonsets. --delete-emptydir-data is the other common flag, for Pods with emptyDir volumes.'},
+]} />
+
+**Study:** [Who Can Do What (RBAC)](../k8s/rbac.mdx), [Upgrading a cluster with kubeadm (CKA)](../cert/kubeadm-upgrade.mdx), [Draining Nodes and Upgrading the Cluster](../k8s/node-drain.mdx), [Cluster Certificate Expiry](../advanced/cluster-cert.mdx), [Control Plane HA and etcd Quorum](../advanced/etcd-quorum.mdx), [Backing Up and Restoring a Cluster](../advanced/cluster-backup.mdx), [How a Helm Release Is Installed, Upgraded and Rolled Back](../k8s/helm-release.mdx), [Per-environment deploys with Kustomize (CKA·CKAD)](../cert/kustomize.mdx), [CRDs and Operators](../advanced/crd-operator.mdx)
+
+## Services and Networking (20%)
+
+<Quiz title={null} save={false} questions={[
+  {q: 'Which NetworkPolicy spec denies all incoming traffic to every Pod in its namespace?', options: ['podSelector: {} with policyTypes: [Ingress] and no ingress rules', 'podSelector: {} with an ingress rule from: [{}]', 'No podSelector and policyTypes: [Egress]', 'podSelector: {app: none} with policyTypes: [Ingress]'], answer: 0, why: 'An empty podSelector selects every Pod in the namespace, and listing Ingress with no rules allows nothing in. A rule with from: [{}] would allow all sources instead.'},
+  {q: 'After you add a default-deny egress policy and a rule allowing egress to the database, the app can no longer resolve any names. What is missing?', options: ['A NodePort for CoreDNS', 'An egress rule allowing UDP and TCP port 53 to the kube-dns Pods in kube-system', 'An ingress rule on the database', 'hostNetwork: true on the app'], answer: 1, why: 'DNS lookups are egress traffic too. Allow port 53 over UDP and TCP to the CoreDNS Pods, for example with a namespaceSelector for kube-system and a podSelector for k8s-app: kube-dns.'},
+  {q: 'You create a NodePort Service and set nodePort yourself. With the default API server settings, which value is accepted?', options: ['8080', '443', '30080', '40000'], answer: 2, why: 'The default --service-node-port-range is 30000-32767. Clients reach the Service on any node IP at that port.'},
+  {q: 'An HTTPRoute exists, but its traffic never reaches the Gateway named public. Which field ties a route to a Gateway?', options: ['spec.parentRefs', 'spec.gatewayClassName', 'spec.rules.backendRefs', 'metadata.ownerReferences'], answer: 0, why: 'An HTTPRoute attaches to Gateways listed in spec.parentRefs, and the Gateway listener must allow routes from that namespace. backendRefs are where traffic goes after matching. Check the route status conditions such as Accepted.'},
+  {q: 'With the default dnsPolicy ClusterFirst, which nameserver appears in a Pod\'s /etc/resolv.conf?', options: ['The node\'s upstream DNS server', '8.8.8.8', '127.0.0.53', 'The ClusterIP of the kube-dns Service'], answer: 3, why: 'The kubelet writes the cluster DNS Service IP (kube-dns, served by CoreDNS) plus search domains such as namespace.svc.cluster.local. CoreDNS forwards other names upstream as set in its Corefile ConfigMap.'},
+]} />
+
+**Study:** [A Packet from Pod to Pod](../advanced/packet-path.mdx), [Blocking and Allowing Traffic (NetworkPolicy)](../k8s/network-policy.mdx), [Service Types (ClusterIP · NodePort · LoadBalancer)](../feature/service-types.mdx), [How a Request Reaches a Pod](../k8s/traffic.mdx), [How a Gateway API HTTPRoute Reaches a Pod](../feature/gateway-api.mdx), [Ingress Rules and TLS](../feature/ingress.mdx), [Finding Services by Name (Service·DNS)](../k8s/service-dns.mdx)
+
+## Workloads and Scheduling (15%)
+
+<Quiz title={null} save={false} questions={[
+  {q: 'Which command makes a Deployment\'s rollout go back one revision?', options: ['kubectl rollout restart deployment/web', 'kubectl rollout undo deployment/web', 'kubectl rollout pause deployment/web', 'kubectl delete rs --all'], answer: 1, why: 'kubectl rollout undo returns to the previous revision; add --to-revision=N for a specific one from kubectl rollout history. restart only re-creates Pods with the same template.'},
+  {q: 'You changed a ConfigMap, but the app reads it through env valueFrom and still sees the old value. What do you do?', options: ['Wait for the kubelet sync period', 'Delete and recreate the ConfigMap', 'Restart the Pods, for example with kubectl rollout restart deployment/app', 'Add immutable: true to the ConfigMap'], answer: 2, why: 'Environment variables are set once when the container starts. Mounted ConfigMap volumes are refreshed eventually (except with subPath), but env values only change on a new container.'},
+  {q: 'A Pod stays Pending with "node(s) had untolerated taint {gpu: true}". The Pod must run on those nodes. What do you add?', options: ['A nodeName for one of the nodes', 'A matching toleration in spec.tolerations', 'A PriorityClass', 'A higher memory request'], answer: 1, why: 'A taint repels Pods that do not tolerate it. Add a toleration with the same key, value and effect. To also make it land only there, add nodeSelector or node affinity, because a toleration alone does not attract.'},
+  {q: 'Which command creates an HPA that keeps the Deployment web between 2 and 10 replicas at about 60% CPU?', options: ['kubectl scale deployment web --replicas=2-10', 'kubectl set resources deployment web --cpu=60%', 'kubectl create hpa web --target=60', 'kubectl autoscale deployment web --cpu=60% --min=2 --max=10'], answer: 3, why: 'kubectl autoscale creates an autoscaling/v2 HorizontalPodAutoscaler (--cpu replaces the deprecated --cpu-percent). It needs metrics-server and CPU requests on the containers, because utilization is a percentage of the request.'},
+]} />
+
+**Study:** [Zero-Downtime Deploys (Rolling Update)](../k8s/rolling-update.mdx), [Config and Secrets (ConfigMap · Secret)](../k8s/config-secret.mdx), [Scaling with Load (HPA)](../k8s/autoscaling.mdx), [Automatic Pod Sizing (VPA)](../feature/vpa.mdx), [When a Pod Dies (Self-Healing)](../k8s/self-healing.mdx), [Health checks — alive, and ready for requests?](../intermediate/probes.mdx), [Which Node Gets the Pod (Scheduling)](../k8s/scheduling.mdx), [Requests and limits](../intermediate/requests-limits.mdx), [Spreading Pods Across Zones (Topology Spread Constraints)](../k8s/topology-spread.mdx)
+
+## Storage (10%)
+
+<Quiz title={null} save={false} questions={[
+  {q: 'A new PVC uses a StorageClass with volumeBindingMode: WaitForFirstConsumer and stays Pending. No Pod uses it yet. What does this mean?', options: ['This is expected; the volume is provisioned once a Pod using the claim is scheduled', 'The provisioner has crashed', 'The requested size is too large', 'The access mode is invalid'], answer: 0, why: 'WaitForFirstConsumer delays binding and provisioning until a Pod is scheduled, so the volume is created in that Pod\'s zone. Immediate mode would provision right away.'},
+  {q: 'A second Pod using the same ReadWriteOnce PVC is scheduled to a different node and stays ContainerCreating with a Multi-Attach error. Why?', options: ['The StorageClass is missing', 'A ReadWriteOnce volume can be mounted read-write by only one node at a time', 'The PVC is in another namespace', 'The first Pod must use subPath'], answer: 1, why: 'ReadWriteOnce limits the volume to one node (Pods on that same node can share it). Use ReadWriteMany storage for multi-node access, or ReadWriteOncePod to limit it to a single Pod.'},
+  {q: 'You deleted a PVC and the cloud disk behind it was deleted too. How do you keep disks for future claims from this StorageClass?', options: ['Set accessModes to ReadOnlyMany', 'Add a finalizer to each Pod', 'Set reclaimPolicy: Retain on the StorageClass', 'Use volumeBindingMode: Immediate'], answer: 2, why: 'Dynamically provisioned PVs take their reclaim policy from the StorageClass, which defaults to Delete. With Retain the PV and disk stay after the claim is gone; for an existing PV, patch spec.persistentVolumeReclaimPolicy.'},
+  {q: 'A PVC of 10Gi must grow to 20Gi without losing data. What is needed?', options: ['Delete the PVC and create a new one of 20Gi', 'Edit the bound PV\'s capacity field', 'It is impossible; PVC size is fixed', 'A StorageClass with allowVolumeExpansion: true, then raise spec.resources.requests.storage on the PVC'], answer: 3, why: 'Volume expansion works when the StorageClass allows it and the driver supports it. You edit the PVC request upward; shrinking a PVC is not supported.'},
+]} />
+
+**Study:** [How Storage Gets Attached (PVC·PV)](../k8s/storage-volume.mdx), [When Volumes Attach, and Failures](../advanced/volume-binding.mdx)

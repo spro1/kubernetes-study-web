@@ -1,7 +1,7 @@
 ---
 id: model-packaging
 title: 모델이 배포 가능해지기까지
-sidebar_label: 07 · 모델이 배포 가능해지기까지
+sidebar_label: 08 · 모델이 배포 가능해지기까지
 description: Hugging Face나 S3의 모델 가중치를 가져와 OCI 아티팩트로 포장하고 GPU 노드에 미리 받아 두기까지, 서빙 Pod가 빨리 뜨게 만드는 준비 과정을 애니메이션으로 따라간다
 summary: '가중치를 받아 이미지·아티팩트로 묶고 노드에 미리 받아 두어야 빠르게 배포되는 이유.'
 icon: archive
@@ -80,7 +80,7 @@ Hugging Face에 모델이 있다고 서빙 Pod가 곧장 빨리 뜨지는 않는
         'Job은 원본에서 safetensors 같은 가중치 파일과 설정·토크나이저 파일을 내려받는다.',
       ],
       flows: [
-        {from: 'secret', to: 'dl', label: '토큰·키', type: 'response'},
+        {from: 'secret', to: 'dl', label: '토큰·키', type: 'response', bend: -0.3},
         {from: 'src', to: 'dl', label: '가중치 파일', type: 'response'},
       ],
       focus: ['dl', 'secret'],

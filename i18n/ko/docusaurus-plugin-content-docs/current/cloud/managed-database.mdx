@@ -177,7 +177,7 @@ hide_table_of_contents: true
       ],
       keyIdea: 'DatabaseConnections를 max_connections와 견줘 본다. 앱 풀 크기는 파드 하나가 아니라 레플리카 수 × 풀 크기로 잡는다.',
       flows: [
-        {from: 'app', to: 'proxy', label: '클라이언트 1,000', type: 'request'},
+        {from: 'app', to: 'proxy', label: '클라이언트 1,000', type: 'request', bend: 0.3},
         {from: 'proxy', to: 'standby', label: '서버 100', type: 'request'},
       ],
       focus: ['proxy', 'app'],

@@ -1,0 +1,209 @@
+---
+id: dns-blocked
+title: 실습 07 · 네트워크 정책에 막힌 DNS
+sidebar_label: 07 · 막힌 DNS
+sidebar_position: 7
+description: 기본 차단 egress 네트워크 정책 때문에 이름 조회가 깨지는 장애 실습. 서비스가 IP로는 되고 이름으로는 안 된다. 원인을 찾고 kube-dns의 UDP·TCP 53번만 연다.
+hide_table_of_contents: false
+---
+
+# 실습 07 · 네트워크 정책에 막힌 DNS
+
+## 목표
+
+클라이언트 파드가 서비스에 IP로는 닿는데 이름으로는 닿지 않는다. 이름 조회를 막는 네트워크 정책을 찾고, DNS에 필요한 만큼만 연다.
+
+## 준비
+
+[노트북에 실습 클러스터 만들기](../basic/lab-cluster.mdx)의 kind 클러스터를 쓴다. 네트워크 정책은 네트워크 플러그인이 지켜 줘야 동작한다. kind의 기본 플러그인(kindnet)은 **kind v0.24.0**부터 네트워크 정책을 지킨다. `kind version`으로 확인한다. 더 오래된 kind라면 업그레이드한다. 그렇지 않으면 아래 정책이 조용히 무시되어 실습에서 아무 문제도 보이지 않는다.
+
+```bash
+kubectl apply -f - <<'EOF'
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: lab-07
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  namespace: lab-07
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:1.29.3-alpine
+        ports:
+        - containerPort: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+  namespace: lab-07
+spec:
+  selector:
+    app: web
+  ports:
+  - port: 80
+    targetPort: 80
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: client
+  namespace: lab-07
+spec:
+  containers:
+  - name: curl
+    image: curlimages/curl:8.17.0
+    command: ["sleep", "3600"]
+---
+# Block all outgoing traffic from every Pod in the namespace ...
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-egress
+  namespace: lab-07
+spec:
+  podSelector: {}
+  policyTypes: ["Egress"]
+---
+# ... then allow traffic to the web Pods only.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-to-web
+  namespace: lab-07
+spec:
+  podSelector: {}
+  policyTypes: ["Egress"]
+  egress:
+  - to:
+    - podSelector:
+        matchLabels:
+          app: web
+    ports:
+    - protocol: TCP
+      port: 80
+EOF
+kubectl -n lab-07 wait --for=condition=Ready pod/client
+kubectl -n lab-07 rollout status deploy/web
+```
+
+## 증상
+
+```bash
+WEB_IP=$(kubectl -n lab-07 get svc web -o jsonpath='{.spec.clusterIP}')
+kubectl -n lab-07 exec client -- curl -s -o /dev/null -w '%{http_code}\n' -m 5 http://$WEB_IP   # 200
+kubectl -n lab-07 exec client -- curl -sS -m 15 http://web                                     # 실패
+```
+
+IP로는 `200`이 온다. 이름으로는 curl이 한참 기다리다가 "could not resolve host" 오류(또는 이름 조회 시간 초과)로 포기한다. 앱은 멀쩡하다. 이름 조회만 실패한다.
+
+## 살펴보기
+
+```bash
+kubectl -n lab-07 get networkpolicy
+kubectl -n lab-07 describe networkpolicy
+kubectl -n lab-07 exec client -- cat /etc/resolv.conf     # DNS에 누가 답하는가?
+kubectl -n kube-system get svc kube-dns
+kubectl -n kube-system get pods -l k8s-app=kube-dns --show-labels
+```
+
+## 힌트
+
+<details>
+<summary>힌트 1</summary>
+
+`/etc/resolv.conf`를 본다. `nameserver`는 `kube-system`에 있는 `kube-dns` 서비스의 IP다. 이름 조회도 다른 것과 똑같은 네트워크 패킷이고, 파드 밖으로 나가는 egress다.
+
+</details>
+
+<details>
+<summary>힌트 2</summary>
+
+egress 정책이 하나라도 파드를 고르면, 어떤 정책이 허용한 트래픽만 나갈 수 있다. 정책은 합쳐진다(합집합). 허용된 목적지 중 53번 포트의 CoreDNS를 포함하는 것이 있는가?
+
+</details>
+
+<details>
+<summary>힌트 3</summary>
+
+DNS는 UDP 53번을 쓰고, 큰 응답이면 TCP 53번으로 바꾼다. CoreDNS 파드는 다른 네임스페이스에 있어서 `podSelector`만으로는 닿지 않는다. `namespaceSelector`도 필요하다.
+
+</details>
+
+## 정답
+
+<details>
+<summary>정답</summary>
+
+`default-deny-egress`가 모두 막고, `allow-to-web`은 web 파드의 TCP 80번만 연다. CoreDNS로 가는 패킷을 허용하는 정책이 없으니 모든 이름 조회가 버려진다. IP로 부르면 curl이 DNS를 거치지 않아서 그쪽은 여전히 된다.
+
+CoreDNS 파드로 가는 DNS만 허용하는 정책을 하나 더 추가한다.
+
+```bash
+kubectl apply -f - <<'EOF'
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: lab-07
+spec:
+  podSelector: {}
+  policyTypes: ["Egress"]
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+      podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+EOF
+```
+
+`namespaceSelector`와 `podSelector`가 **같은** 목록 항목에 있으니 둘 다 맞아야 한다(kube-system의 CoreDNS 파드). `podSelector` 앞에 `-`를 붙이면 두 항목이 따로 OR로 묶여 DNS보다 훨씬 많은 것을 허용하게 된다. `kubernetes.io/metadata.name` 레이블은 모든 네임스페이스에 자동으로 붙으니 믿고 고를 수 있다. UDP와 TCP를 모두 연다. 큰 응답은 TCP로 바뀌는데 UDP만 열면 그런 조회가 가끔 실패한다.
+
+</details>
+
+## 확인
+
+```bash
+kubectl -n lab-07 exec client -- curl -s -o /dev/null -w '%{http_code}\n' -m 5 http://web   # 200
+kubectl -n lab-07 exec client -- curl -sS -m 5 https://example.com                         # 여전히 막힘
+```
+
+두 번째 명령은 여전히 실패한다. 이제 이름은 풀리지만 인터넷으로 가는 연결은 허용되지 않았기 때문이다. 기본 차단이라면 이렇게 되어야 한다.
+
+## 정리
+
+```bash
+kubectl delete namespace lab-07
+```
+
+<Quiz questions={[
+  {q: '기본 차단 egress 정책이 있을 때 curl http://10.96.12.34는 되고 curl http://web은 실패한다. 가장 그럴듯한 원인은?', options: ['서비스에 엔드포인트가 없다', 'CoreDNS 53번으로 가는 egress가 허용되지 않아 이름을 풀 수 없다', 'nginx 파드가 Ready가 아니다'], answer: 1, why: 'IP로 닿는다는 것은 앱까지 가는 길이 열려 있다는 뜻이다. 이름은 먼저 kube-dns로 DNS 패킷을 보내야 하는데 정책이 그것을 버린다.'},
+  {q: 'egress 규칙의 to 아래 같은 항목에 namespaceSelector와 podSelector를 적었다. 무엇이 골라지는가?', options: ['namespaceSelector에 맞는 네임스페이스 안에서 podSelector에 맞는 파드', '골라진 네임스페이스의 모든 파드와, 모든 네임스페이스에서 맞는 파드', '셀렉터는 하나만 쓸 수 있어서 아무것도 골라지지 않는다'], answer: 0, why: '한 항목 안의 두 셀렉터는 AND로 묶인다. 각자 대시가 붙은 두 항목이면 OR로 묶인다.'},
+]} />
+
+## 관련 레슨
+
+- [통신 막고 열기 (네트워크 정책)](../k8s/network-policy.mdx)
+- [이름으로 찾아가기 (Service·DNS)](../k8s/service-dns.mdx)
+- [DNS가 주소를 찾아가는 길](../basic/dns-resolution.mdx)

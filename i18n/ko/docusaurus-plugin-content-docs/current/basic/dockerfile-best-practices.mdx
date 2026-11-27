@@ -1,0 +1,239 @@
+---
+id: dockerfile-best-practices
+title: 좋은 Dockerfile 쓰기
+sidebar_label: 11 · Dockerfile 모범 사례
+description: 레이어 캐시 순서, .dockerignore, 멀티 스테이지 빌드부터 slim·distroless 베이스, non-root USER, exec 형식 ENTRYPOINT, 빌드 시크릿, 재현 가능한 빌드, 쿠버네티스가 HEALTHCHECK를 무시하는 이유까지 Dockerfile 모범 사례를 애니메이션으로 본다
+summary: '캐시를 살리는 레이어 순서, 멀티 스테이지 빌드, 작고 root가 아닌 이미지, PID 1까지 닿는 시그널, 레이어에 남지 않는 시크릿.'
+icon: hammer
+hide_table_of_contents: true
+---
+
+# 좋은 Dockerfile 쓰기
+
+빌드가 된다고 좋은 Dockerfile은 아니다. 이미지 하나를 소스 트리에서 실행 중인 파드까지 따라가며, 어떤 줄이 빌드를 빠르게 하고 이미지를 작고 안전하게 만들며 깔끔하게 멈추게 하는지 본다.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '약 12분', level: '기초'}}
+  groups={[
+    {label: 'docker build (BuildKit)', x: 230, y: 30, w: 470, h: 410, tone: 'mgmt'},
+  ]}
+  nodes={[
+    {id: 'src', label: '소스 트리', sub: '코드, 잠금 파일, .git', icon: 'git', tone: 'ext', x: 110, y: 110, show: true},
+    {id: 'ignore', label: '.dockerignore', sub: '컨텍스트를 거른다', icon: 'shield', tone: 'ext', x: 110, y: 260},
+    {id: 'secret', label: '빌드 시크릿', sub: '토큰, 레이어에 안 남김', icon: 'ticket', tone: 'ext', x: 110, y: 390},
+    {id: 'ctx', label: '빌드 컨텍스트', sub: '빌더로 보내는 파일', icon: 'archive', tone: 'store', x: 340, y: 110},
+    {id: 'build', label: '빌드 스테이지', sub: '컴파일러, 의존성, 테스트', icon: 'gear', tone: 'node', x: 340, y: 260},
+    {id: 'base', label: '베이스 이미지', sub: 'slim 또는 distroless', icon: 'layers', tone: 'store', x: 340, y: 390},
+    {id: 'image', label: '이미지 레이어', sub: '캐시, 재사용', icon: 'box', tone: 'store', x: 625, y: 110},
+    {id: 'runtime', label: '런타임 스테이지', sub: '앱 바이너리만', icon: 'box', tone: 'app', x: 625, y: 260},
+    {id: 'pod', label: '파드', sub: '컨테이너, PID 1', icon: 'pod', tone: 'app', x: 860, y: 190},
+    {id: 'kubelet', label: 'kubelet', sub: '프로브, SIGTERM', icon: 'server', tone: 'cp', x: 860, y: 340},
+  ]}
+  metrics={[
+    {id: 'rebuilt', label: '수정 시 다시 빌드'},
+    {id: 'contents', label: '최종 이미지'},
+    {id: 'user', label: '실행 사용자'},
+    {id: 'pid1', label: 'PID 1'},
+  ]}
+  learn={[
+    {text: '코드를 고쳐도 의존성을 다시 설치하지 않도록 줄 순서를 잡는다', at: 1},
+    {text: '멀티 스테이지 빌드로 툴체인을 최종 이미지에서 뺀다', at: 3},
+    {text: 'slim·distroless 베이스와 non-root USER를 쓰는 이유', at: 4},
+    {text: 'SIGTERM이 프로세스에 닿게 하는 exec 형식 ENTRYPOINT', at: 6},
+    {text: '빌드 시크릿, 재현 가능한 빌드, HEALTHCHECK 대신 프로브', at: 7},
+  ]}
+  steps={[
+    {
+      short: '시작',
+      kind: '시작',
+      title: '빌드는 되지만 고칠 때마다 몇 분씩 걸린다',
+      text: [
+        '처음 쓰는 Dockerfile은 흔히 네 줄이다. 큰 OS 이미지에서 FROM, COPY . ., RUN 설치, CMD. 동작은 한다. 하지만 코드를 고칠 때마다 의존성을 전부 다시 설치하고, 이미지에 컴파일러가 들어가며, root로 실행된다.',
+        '레이어와 태그의 원리는 이미지 레슨에서 다룬다. 여기서는 레시피 자체를 한 줄씩 고친다.',
+      ],
+      flows: [{from: 'src', to: 'ctx', label: 'COPY . .', type: 'request'}],
+      focus: ['src', 'ctx'],
+      values: {rebuilt: {text: '전부', tone: 'bad'}, contents: {text: 'OS + 툴체인 + 앱', tone: 'bad'}, user: {text: 'root', tone: 'bad'}, pid1: 'sh -c'},
+    },
+    {
+      short: '캐시 순서',
+      kind: '원리',
+      title: '의존성 목록을 먼저 복사하고 소스는 나중에',
+      text: [
+        '명령 하나가 레이어 하나를 만들고, 바뀐 레이어 뒤의 레이어는 모두 캐시가 깨진다. COPY . .가 설치 단계보다 앞에 있으면 코드 한 줄만 고쳐도 전부 다시 설치한다.',
+        '먼저 목록 파일만 복사한다(package.json과 잠금 파일, go.mod와 go.sum, requirements.txt). 설치를 돌리고, 그 다음에 소스를 복사한다. 이제 코드를 고치면 마지막 몇 레이어만 다시 빌드한다.',
+      ],
+      keyIdea: '덜 바뀌는 것을 위에 둔다. apt-get update와 apt-get install은 같은 RUN에 둬서 캐시된 update가 낡지 않게 한다.',
+      flows: [
+        {from: 'ctx', to: 'build', label: '잠금 파일 먼저', type: 'request'},
+        {from: 'build', to: 'image', label: '캐시 적중', type: 'response'},
+      ],
+      focus: ['build', 'image'],
+      values: {rebuilt: {text: '소스 레이어만', tone: 'good'}},
+    },
+    {
+      short: '.dockerignore',
+      kind: '원리',
+      title: '.dockerignore가 빌더가 볼 파일을 정한다',
+      text: [
+        'docker build는 빌드 컨텍스트를 빌더로 보낸다. .dockerignore가 없으면 폴더 전체가 간다. .git, node_modules, 로컬 빌드 결과물, 어쩌면 .env 파일까지.',
+        '컨텍스트가 크면 보내는 데 오래 걸린다. .git처럼 커밋마다 바뀌는 파일은 괜히 COPY . .의 캐시를 깬다. 그리고 잘못 들어간 .env가 이미지 안에 남을 수 있다.',
+      ],
+      keyIdea: '.dockerignore에는 .git, 의존성 폴더, 빌드 결과물, 시크릿 파일부터 넣는다. 패턴은 .gitignore와 비슷하다.',
+      flows: [
+        {from: 'src', to: 'ignore', label: '거르기', type: 'request'},
+        {from: 'ignore', to: 'ctx', label: '작은 컨텍스트', type: 'request'},
+      ],
+      focus: ['ignore', 'ctx'],
+      status: {ignore: 'ok'},
+    },
+    {
+      short: '멀티 스테이지',
+      kind: '원리',
+      title: '툴체인으로 빌드하고, 툴체인 없이 내보낸다',
+      text: [
+        '멀티 스테이지 Dockerfile에는 FROM이 여러 개 있다. 첫 스테이지(FROM golang AS build, 또는 Node·JDK 이미지)에는 컴파일러와 개발용 의존성이 있고, 여기서 빌드와 테스트를 돌린다.',
+        '마지막 스테이지는 작은 베이스에서 시작해 결과물만 가져온다. COPY --from=build /out/app /app. 툴체인, 소스, 캐시는 빌드 스테이지에 남고 푸시하는 이미지에는 들어가지 않는다.',
+      ],
+      flows: [
+        {from: 'build', to: 'runtime', label: 'COPY --from', type: 'request'},
+        {from: 'base', to: 'runtime', label: 'FROM', type: 'request'},
+      ],
+      focus: ['build', 'runtime'],
+      values: {contents: {text: '베이스 + 앱', tone: 'good'}},
+    },
+    {
+      short: '작은 베이스',
+      kind: '원리',
+      title: 'slim·distroless 베이스는 고칠 것이 적다',
+      text: [
+        '베이스 이미지의 패키지 하나하나가 스캐너가 지적하고 누군가 패치해야 하는 대상이다. slim 이미지(예: Debian -slim 태그나 Alpine)는 대부분을 덜어 낸다. distroless 이미지는 런타임 라이브러리만 남기고 패키지 관리자도 셸도 없다.',
+        '이미지가 작으면 파드를 띄우는 모든 노드에서 더 빨리 받는다. 대가는 kubectl exec로 셸에 들어갈 수 없다는 것이다. 대신 kubectl debug로 임시 디버그 컨테이너를 붙인다.',
+      ],
+      keyIdea: '앱이 돌아가는 가장 작은 베이스를 고른다. 디버깅 도구는 이미지가 아니라 별도 디버그 컨테이너로 옮긴다.',
+      flows: [{from: 'base', to: 'runtime', label: '패키지가 적다', type: 'request'}],
+      focus: ['base', 'runtime'],
+      badges: {base: '셸 없음'},
+    },
+    {
+      short: 'non-root',
+      kind: '원리',
+      title: 'USER에 root가 아닌 숫자 ID를 준다',
+      text: [
+        'USER가 없으면 프로세스는 컨테이너 안에서 root로 돈다. 앱이 뚫리면 공격자는 root에서 시작하고, 노드에 한 걸음 더 가까워진다.',
+        'USER 10001을 넣는다(distroless 이미지라면 제공하는 nonroot 사용자). 숫자 ID를 쓴다. runAsNonRoot: true일 때 kubelet은 이미지가 숫자를 줘야 root가 아닌지 확인할 수 있고, 이름만 있는 사용자면 컨테이너를 시작하지 않는다.',
+      ],
+      keyIdea: '앱이 써야 하는 파일은 그 UID 소유여야 한다. COPY --chown을 쓰거나 마운트한 볼륨에 쓴다.',
+      flows: [{from: 'runtime', to: 'pod', label: 'USER 10001', type: 'request'}],
+      focus: ['runtime', 'pod'],
+      values: {user: {text: 'UID 10001', tone: 'good'}},
+    },
+    {
+      short: 'PID 1',
+      kind: '문제',
+      title: '셸 형식은 SIGTERM을 삼킨다',
+      text: [
+        '파드를 멈출 때 kubelet은 런타임에게 컨테이너의 PID 1로 SIGTERM을 보내라고 한다. 셸 형식 CMD node server.js라면 PID 1은 /bin/sh -c이고, 셸은 시그널을 넘겨주지 않는다.',
+        '앱은 시그널을 못 듣고 계속 요청을 받다가, 유예 시간(기본 30초)이 끝나면 SIGKILL로 죽는다. 처리 중이던 요청은 끊기고 롤아웃마다 유예 시간을 다 기다린다.',
+      ],
+      keyIdea: 'exec 형식을 쓴다. ENTRYPOINT ["/app"] 또는 CMD ["node", "server.js"]. 감싸는 스크립트가 필요하면 마지막을 exec "$@"로 끝낸다. 컨테이너 하나에 주 프로세스 하나를 둔다.',
+      flows: [{from: 'kubelet', to: 'pod', label: 'SIGTERM', type: 'request'}],
+      focus: ['kubelet', 'pod'],
+      status: {pod: 'warn'},
+      values: {pid1: {text: 'sh → 시그널 유실', tone: 'bad'}},
+    },
+    {
+      short: '시크릿',
+      kind: '문제',
+      title: '지운 시크릿도 앞 레이어에 남아 있다',
+      text: [
+        'COPY .npmrc, RUN npm ci, RUN rm .npmrc는 깔끔해 보이지만 토큰은 COPY가 만든 레이어에 그대로 있다. ARG와 ENV 값도 이미지 메타데이터에 남는다. 이미지를 받은 사람은 누구나 docker history나 레이어를 풀어서 읽을 수 있다.',
+        'BuildKit 시크릿 마운트가 답이다. RUN --mount=type=secret,id=npmrc,target=/root/.npmrc npm ci는 그 RUN 한 번 동안만 파일을 보여 준다. 값은 docker build --secret id=npmrc,src=$HOME/.npmrc로 넘긴다.',
+      ],
+      keyIdea: '시크릿은 ARG, ENV, COPY에 절대 넣지 않는다. 필요한 단계에만 마운트한다. 실행 중에 쓰는 시크릿은 이미지가 아니라 쿠버네티스에서 받는다.',
+      flows: [{from: 'secret', to: 'build', label: '--mount=type=secret', type: 'request'}],
+      focus: ['secret', 'build'],
+      status: {pod: 'ok', secret: 'ok'},
+      values: {pid1: {text: '/app (exec 형식)', tone: 'good'}},
+    },
+    {
+      short: '재현 가능',
+      kind: '주의',
+      title: '같은 입력이면 같은 이미지',
+      text: [
+        'FROM node:22는 다음 주에 다른 이미지일 수 있고, 잠금 파일 없는 npm install은 다른 버전을 받을 수 있다. 그러면 같은 커밋을 다시 빌드해도 같은 이미지가 아니다.',
+        '베이스는 다이제스트로 고정하고(FROM image:tag@sha256:...) Dependabot이나 Renovate 같은 봇이 올리게 한다. 잠금 파일로 설치한다. SOURCE_DATE_EPOCH를 주면 BuildKit이 고정된 타임스탬프를 쓴다. 다이제스트가 신뢰에 왜 중요한지는 공급망 레슨에서 다룬다.',
+      ],
+      keyIdea: '다이제스트로 고정하면 베이스 자동 갱신도 멈춘다. 새 다이제스트를 제안하는 봇과 함께 쓴다.',
+      flows: [{from: 'base', to: 'build', label: '@sha256 고정', type: 'request'}],
+      focus: ['base'],
+      badges: {base: '@sha256'},
+    },
+    {
+      short: 'HEALTHCHECK',
+      kind: '주의',
+      title: '쿠버네티스는 HEALTHCHECK를 무시한다',
+      text: [
+        'Dockerfile의 HEALTHCHECK는 Docker가 읽는다. kubelet은 이것을 실행하지 않는다. 앱이 멈춰도 파드 스펙에 프로브가 없으면 파드는 Running, Ready 그대로다.',
+        '매니페스트에 readinessProbe, livenessProbe를 두고, 늦게 뜨는 앱이면 startupProbe도 둔다. exec 프로브는 이미지 안에 그 명령이 있어야 하는데 distroless에는 없을 수 있으니 httpGet이나 grpc 프로브가 낫다.',
+      ],
+      flows: [{from: 'kubelet', to: 'pod', label: 'httpGet 프로브', type: 'watch'}],
+      focus: ['kubelet', 'pod'],
+      badges: {pod: '프로브'},
+    },
+    {
+      short: '정리',
+      kind: '정리',
+      title: '빌드는 빠르게, 이미지는 작게, 종료는 깔끔하게',
+      text: [
+        '레이어는 덜 바뀌는 것부터 자주 바뀌는 것 순으로 두고, .dockerignore로 컨텍스트를 거른다. 빌드는 한 스테이지에서 하고, 다이제스트로 고정한 작은 베이스로 따로 내보낸다.',
+        'root가 아닌 숫자 사용자로 돌리고, 앱은 exec 형식으로 시작하며, 빌드 시크릿은 복사하지 말고 마운트하고, 헬스 체크는 쿠버네티스 프로브에 맡긴다.',
+      ],
+      keyIdea: '푸시하기 전에 docker history를 본다. 모든 레이어가 내보낼 생각이었던 것이어야 한다.',
+      flows: [
+        {from: 'ctx', to: 'build', label: '캐시', type: 'request'},
+        {from: 'build', to: 'runtime', label: '결과물', type: 'request'},
+        {from: 'runtime', to: 'pod', label: 'non-root, exec', type: 'request'},
+      ],
+      focus: ['build', 'runtime', 'pod'],
+      status: {pod: null, ignore: null, secret: null},
+      badges: {base: null, pod: null},
+    },
+  ]}
+/>
+
+## 줄별로 보는 흔한 실수와 나은 습관
+
+| 줄 | 흔한 실수 | 나은 방법 | 이유 |
+|---|---|---|---|
+| `COPY` | 의존성 설치 전에 `COPY . .` | 잠금 파일 복사, 설치, 그 다음 소스 복사 | 코드를 고쳐도 전부 다시 설치하지 않는다 |
+| `.dockerignore` | 없음 | `.git`, 의존성 폴더, 빌드 결과물, `.env` 제외 | 컨텍스트가 작고 캐시가 안정되며 파일이 새지 않는다 |
+| `FROM` | 전체 SDK 이미지 한 스테이지 | 빌드 스테이지 + slim·distroless 런타임 스테이지 | 툴체인과 소스가 이미지에 안 들어간다 |
+| `FROM` | `node:22` 같은 움직이는 태그 | `image:tag@sha256:...`, 봇이 갱신 | 같은 커밋이면 같은 이미지 |
+| `USER` | 없음(root) | root가 아닌 숫자 UID | `runAsNonRoot`와 맞고 피해 범위가 작다 |
+| `CMD` / `ENTRYPOINT` | 셸 형식 `CMD node server.js` | exec 형식 `CMD ["node", "server.js"]` | SIGTERM이 앱에 닿고 롤아웃이 깔끔히 멈춘다 |
+| `ARG` / `ENV` / `COPY` | 토큰을 넘기거나 복사 | `RUN --mount=type=secret` | 시크릿이 레이어·메타데이터에 남지 않는다 |
+| `HEALTHCHECK` | 쿠버네티스에서도 믿고 씀 | readiness·liveness·startup 프로브 | kubelet은 HEALTHCHECK를 실행하지 않는다 |
+
+## 직접 확인해 보기
+
+```bash
+docker build -t my-app:dev .                                  # 기본으로 BuildKit을 쓴다
+docker history my-app:dev                                     # 레이어마다 크기와 만든 줄
+docker image inspect my-app:dev \
+  --format 'user={{.Config.User}} entrypoint={{json .Config.Entrypoint}} cmd={{json .Config.Cmd}}'
+docker buildx imagetools inspect gcr.io/distroless/static-debian12:nonroot   # FROM에 고정할 다이제스트
+docker build --secret id=npmrc,src=$HOME/.npmrc -t my-app:dev .              # RUN --mount=type=secret,id=npmrc 와 짝
+docker build --build-arg SOURCE_DATE_EPOCH=$(git log -1 --pretty=%ct) -t my-app:dev .   # 고정 타임스탬프
+kubectl debug -it pod/my-app --image=busybox:1.36 --target=app # distroless 컨테이너 옆에 셸 붙이기
+```
+
+<Quiz questions={[
+  {q: 'Dockerfile이 COPY . . 다음에 RUN npm ci를 한다. 코드를 조금만 고쳐도 처음 빌드만큼 오래 걸리는 이유는?', options: ['BuildKit은 RUN 단계를 캐시하지 않는다', '수정이 COPY 레이어를 바꾸고, 그 뒤의 설치 레이어 캐시가 깨진다', 'npm ci는 늘 잠금 파일을 무시한다', '빌드할 때마다 베이스 이미지를 다시 받는다'], answer: 1, why: '바뀐 레이어 뒤의 레이어는 모두 캐시가 깨진다. 잠금 파일을 복사해 먼저 설치하고 소스를 나중에 복사하면 코드 수정은 마지막 레이어만 다시 빌드한다.'},
+  {q: 'CMD node server.js(셸 형식) 파드가 멈출 때마다 유예 시간을 다 채운다. 무슨 일인가?', options: ['kubelet이 SIGKILL을 먼저 보낸다', 'readiness 프로브가 파드를 붙잡고 있다', 'PID 1이 /bin/sh라서 SIGTERM을 넘기지 않고, 앱은 유예 시간이 끝날 때 죽는다', 'Node.js는 기본으로 모든 시그널을 무시한다'], answer: 2, why: '셸 형식에서는 셸이 PID 1이고 시그널이 node까지 가지 않는다. exec 형식이면 앱이 PID 1이 되어 SIGTERM을 받고 스스로 종료할 수 있다.'},
+  {q: '빌드가 .npmrc를 복사하고 npm ci를 돌린 뒤, 다음 RUN에서 .npmrc를 지운다. 이미지에서 토큰이 사라졌나?', options: ['아니다. COPY가 만든 레이어에 그대로 있다', '그렇다. 최종 파일 시스템에는 파일이 없다', '--squash로 빌드했을 때만 사라진다'], answer: 0, why: '레이어는 각각 따로 저장되고, 나중에 지우면 가려질 뿐이다. RUN --mount=type=secret을 쓰면 토큰이 어느 레이어에도 기록되지 않는다.'},
+]} />
+
+더 읽을거리: [Docker 빌드 모범 사례](https://docs.docker.com/build/building/best-practices/) · [멀티 스테이지 빌드](https://docs.docker.com/build/building/multi-stage/) · [빌드 시크릿](https://docs.docker.com/build/building/secrets/) · [프로브 설정](https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/) · [이미지가 만들어지고 실행되기까지](../basic/container-image.mdx) · [이미지와 공급망 보안](../advanced/supply-chain.mdx) · [헬스 체크 — 살아 있나, 받을 준비가 됐나](../intermediate/probes.mdx)

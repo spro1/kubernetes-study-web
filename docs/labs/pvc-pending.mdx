@@ -1,0 +1,209 @@
+---
+id: pvc-pending
+title: Lab 09 · PVC stuck in Pending
+sidebar_label: 09 · PVC Pending
+sidebar_position: 9
+description: Break-fix lab with two PersistentVolumeClaims stuck in Pending. One asks for a StorageClass that does not exist. The other is fine and only waits for a Pod because of WaitForFirstConsumer.
+hide_table_of_contents: false
+---
+
+# Lab 09 · PVC stuck in Pending
+
+## Goal
+
+Two PVCs are `Pending`. Tell a real problem apart from expected behavior, and fix the real one.
+
+## Setup
+
+Use the kind cluster from [Build a Lab Cluster on Your Laptop](../basic/lab-cluster.mdx). kind ships one StorageClass, `standard`, backed by the local-path provisioner.
+
+```bash
+kubectl apply -f - <<'EOF'
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: lab-09
+---
+# Case A: a claim and the Pod that needs it
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: data
+  namespace: lab-09
+spec:
+  storageClassName: fast-ssd
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: app
+  namespace: lab-09
+spec:
+  containers:
+  - name: nginx
+    image: nginx:1.29.3-alpine
+    volumeMounts:
+    - name: data
+      mountPath: /data
+  volumes:
+  - name: data
+    persistentVolumeClaim:
+      claimName: data
+---
+# Case B: a claim nobody uses yet
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: cache
+  namespace: lab-09
+spec:
+  storageClassName: standard
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 1Gi
+EOF
+```
+
+## Symptoms
+
+```bash
+kubectl -n lab-09 get pvc        # data and cache are both Pending
+kubectl -n lab-09 get pods       # app is Pending
+```
+
+Both claims look the same in the list. They are not the same problem.
+
+## Investigate
+
+```bash
+kubectl -n lab-09 describe pvc data       # read Events at the bottom
+kubectl -n lab-09 describe pvc cache
+kubectl -n lab-09 describe pod app
+kubectl get storageclass
+kubectl get storageclass standard -o jsonpath='{.provisioner} {.volumeBindingMode}{"\n"}'
+```
+
+## Hints
+
+<details>
+<summary>Hint 1</summary>
+
+The list only says Pending. The reason is in the **events** of each PVC. Compare them: one is a Warning, one is a Normal event.
+
+</details>
+
+<details>
+<summary>Hint 2</summary>
+
+Compare the `storageClassName` of each claim with `kubectl get storageclass`. A claim can only be provisioned by a class that exists.
+
+</details>
+
+<details>
+<summary>Hint 3</summary>
+
+Look at `volumeBindingMode` of `standard`. With `WaitForFirstConsumer`, the volume is created only after a Pod that uses the claim is scheduled, so the volume lands on the same node as the Pod.
+
+</details>
+
+## Solution
+
+<details>
+<summary>Solution</summary>
+
+**Case A, `data`: a real problem.** Its events show a `ProvisioningFailed` warning saying that storage class `fast-ssd` is not found. No class means no provisioner, so the claim waits forever, and the Pod `app` waits with it.
+
+`storageClassName` cannot be changed on an existing claim, so delete and recreate. Use `standard`, or leave the field out to get the default class.
+
+```bash
+kubectl -n lab-09 delete pod app
+kubectl -n lab-09 delete pvc data
+kubectl apply -f - <<'EOF'
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: data
+  namespace: lab-09
+spec:
+  storageClassName: standard
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: app
+  namespace: lab-09
+spec:
+  containers:
+  - name: nginx
+    image: nginx:1.29.3-alpine
+    volumeMounts:
+    - name: data
+      mountPath: /data
+  volumes:
+  - name: data
+    persistentVolumeClaim:
+      claimName: data
+EOF
+```
+
+On a real cluster the other fix is to create the `fast-ssd` StorageClass the app expects, if the team really wants that class.
+
+**Case B, `cache`: not a problem.** Its event is a Normal `WaitForFirstConsumer` event: waiting for first consumer to be created before binding. `standard` uses `WaitForFirstConsumer`, so nothing is provisioned until a Pod uses the claim. Do nothing, or start a Pod that uses it and watch it bind:
+
+```bash
+kubectl apply -f - <<'EOF'
+apiVersion: v1
+kind: Pod
+metadata:
+  name: cache-user
+  namespace: lab-09
+spec:
+  containers:
+  - name: nginx
+    image: nginx:1.29.3-alpine
+    volumeMounts:
+    - name: cache
+      mountPath: /cache
+  volumes:
+  - name: cache
+    persistentVolumeClaim:
+      claimName: cache
+EOF
+```
+
+</details>
+
+## Verify
+
+```bash
+kubectl -n lab-09 get pvc        # data and cache are Bound
+kubectl -n lab-09 get pods       # app and cache-user are Running
+kubectl get pv                   # one PV per claim, made by the provisioner
+```
+
+## Clean up
+
+```bash
+kubectl delete namespace lab-09
+```
+
+The local-path PVs use the `Delete` reclaim policy, so they go away with their claims.
+
+<Quiz questions={[
+  {q: 'A PVC is Pending and its only event is a Normal WaitForFirstConsumer event. No Pod uses it yet. What should you do?', options: ['Delete the PVC and create a PV by hand', 'Nothing. The volume is created when a Pod that uses the claim is scheduled', 'Change the storageClassName to a different class'], answer: 1, why: 'With volumeBindingMode WaitForFirstConsumer, provisioning waits for the first Pod so the volume matches that Pod\'s node. Pending is expected here.'},
+  {q: 'A PVC is Pending because its storageClassName names a class that does not exist. Why can you not just edit the field?', options: ['storageClassName is immutable on an existing claim, so you delete and recreate it', 'Only cluster admins can read the field', 'The field is filled in by the scheduler'], answer: 0, why: 'Most of a PVC spec is fixed after creation (only the storage request can grow). Recreate the claim with a class that exists, or create the missing class.'},
+]} />
+
+## Related lessons
+
+- [How Storage Gets Attached (PVC·PV)](../k8s/storage-volume.mdx)
+- [When Volumes Attach, and Failures](../advanced/volume-binding.mdx)

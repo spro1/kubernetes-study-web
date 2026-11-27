@@ -182,7 +182,7 @@ hide_table_of_contents: true
       keyIdea: '규칙을 Deny로 바꾸기 전에 그 규칙을 어기는 기존 객체 목록부터 뽑는다. 아니면 오래된 Deployment에 올리는 첫 긴급 수정이 막힌다.',
       flows: [
         {from: 'etcd', to: 'old', label: '그대로', type: 'watch'},
-        {from: 'webhook', to: 'report', label: '백그라운드 검사', type: 'watch'},
+        {from: 'webhook', to: 'report', label: '백그라운드 검사', type: 'watch', bend: 0.3},
       ],
       focus: ['old', 'report'],
       status: {webhook: 'ok', old: 'warn'},

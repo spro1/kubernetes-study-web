@@ -1,7 +1,7 @@
 ---
 id: message-queue
 title: 메시지 큐가 서비스를 떼어 놓는 방식
-sidebar_label: 06 · 메시지 큐와 카프카
+sidebar_label: 08 · 메시지 큐와 카프카
 description: 카프카를 예로 토픽·파티션·키, 프로듀서 acks와 복제, 컨슈머 그룹과 오프셋 커밋, 장애 뒤 재전달, 컨슈머 랙, 데드 레터 큐, 큐와 발행·구독의 차이를 애니메이션으로 본다
 summary: '토픽·파티션·컨슈머 그룹, 최소 한 번 전달이라 컨슈머가 멱등해야 하는 이유, 컨슈머 랙, 데드 레터 큐.'
 icon: layers
@@ -175,7 +175,7 @@ hide_table_of_contents: true
       ],
       flows: [
         {from: 'p2', to: 'c2', label: '재시도 ×3', type: 'request'},
-        {from: 'c2', to: 'dlq', label: '데드 레터', type: 'request'},
+        {from: 'c2', to: 'dlq', label: '데드 레터', type: 'request', bend: 0.8},
       ],
       focus: ['c2', 'dlq'],
       status: {c1: 'ok', c2: 'ok', dlq: 'warn'},

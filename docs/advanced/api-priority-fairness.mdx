@@ -1,0 +1,234 @@
+---
+id: api-priority-fairness
+title: API Priority and Fairness
+sidebar_label: 02 · API Priority and Fairness
+description: Animated walkthrough of API Priority and Fairness in kube-apiserver, from FlowSchemas and PriorityLevelConfigurations to flows, shuffle sharding, concurrency shares, the exempt level and 429 responses, with the metrics, debug endpoints and response headers to check
+summary: 'Why one noisy client cannot take the API server down: FlowSchemas, priority levels, flows, shuffle-sharded queues and 429 with Retry-After.'
+icon: scale
+hide_table_of_contents: true
+---
+
+# API Priority and Fairness
+
+A buggy controller starts sending thousands of requests a second. Without limits it would crowd out kubelets and leader election and take the cluster down with it. API Priority and Fairness (APF) sorts each request into a priority level and a flow, so the noisy client waits or gets 429 while everyone else carries on.
+
+<StepDiagram
+  width={1000}
+  height={450}
+  meta={{duration: '~12 min', level: 'Advanced'}}
+  groups={[
+    {label: 'kube-apiserver', x: 230, y: 20, w: 625, h: 325, tone: 'mgmt'},
+  ]}
+  nodes={[
+    {id: 'noisy', label: 'Hot-loop ctrl', sub: 'buggy operator', icon: 'alert', tone: 'ext', x: 95, y: 75, show: true},
+    {id: 'admin', label: 'Admin', sub: 'system:masters', icon: 'user', tone: 'ext', x: 95, y: 210, show: true},
+    {id: 'kubelets', label: 'kubelets', sub: 'system:nodes', icon: 'agent', tone: 'ext', x: 95, y: 345, show: true},
+    {id: 'api', label: 'Request filter', sub: 'authn · then APF', icon: 'gate', tone: 'cp', x: 320, y: 185, show: true},
+    {id: 'fs', label: 'FlowSchemas', sub: 'first match wins', icon: 'book', tone: 'cp', x: 540, y: 75},
+    {id: 'exempt', label: 'exempt', sub: 'no limit, no queue', icon: 'shield', tone: 'cp', x: 760, y: 75},
+    {id: 'low', label: 'workload-low', sub: 'queues · shuffle shard', icon: 'split', tone: 'cp', x: 760, y: 185, w: 160},
+    {id: 'node', label: 'node-high', sub: 'own seats', icon: 'layers', tone: 'cp', x: 760, y: 295},
+    {id: 'handler', label: 'Handlers', sub: 'seats in use', icon: 'server', tone: 'store', size: 'sm', x: 930, y: 185},
+    {id: 'prom', label: 'Prometheus', sub: 'apiserver_flowcontrol_*', icon: 'chart', tone: 'ext', x: 540, y: 400, w: 170},
+  ]}
+  metrics={[
+    {id: 'level', label: 'Priority level'},
+    {id: 'flow', label: 'Flow'},
+    {id: 'result', label: 'Result'},
+  ]}
+  learn={[
+    {text: 'Why a fixed in-flight limit alone lets one client starve the rest', at: 1},
+    {text: 'FlowSchemas map requests to PriorityLevelConfigurations', at: 2},
+    {text: 'nominalConcurrencyShares split the total seats', at: 3},
+    {text: 'Flows and shuffle sharding keep a noisy flow in its own queues', at: 5},
+    {text: '429 with Retry-After, metrics, debug endpoints and headers', at: 7},
+  ]}
+  steps={[
+    {
+      short: 'Limit',
+      kind: '시작',
+      title: 'An API server can only run so many requests at once',
+      text: [
+        'Each kube-apiserver has a total concurrency limit: the sum of --max-requests-inflight and --max-mutating-requests-inflight. Every running request takes a seat until it finishes.',
+        'Kubelets renew their node Leases, controllers renew leader election, admins run kubectl. They all share those seats.',
+      ],
+      flows: [
+        {from: 'admin', to: 'api', label: 'kubectl', type: 'request'},
+        {from: 'kubelets', to: 'api', label: 'Lease renew', type: 'request'},
+      ],
+      focus: ['api'],
+    },
+    {
+      short: 'Noisy',
+      kind: '문제',
+      title: 'One client in a hot loop can fill every seat',
+      text: [
+        'An operator has a bug: on every event it lists all Pods in the cluster and fails, then retries at once. Its LIST requests are large and keep coming.',
+        'With only one shared limit, those requests take the seats. Lease renewals from kubelets wait, nodes look dead, leaders lose their Lease. One client becomes a cluster outage.',
+      ],
+      keyIdea: 'A plain in-flight limit protects the API server from overload, but not the important clients from the unimportant ones.',
+      flows: [{from: 'noisy', to: 'api', label: 'LIST pods ×1000', type: 'request'}],
+      focus: ['noisy', 'api'],
+      status: {noisy: 'warn'},
+    },
+    {
+      short: 'FlowSchema',
+      kind: '원리',
+      title: 'FlowSchemas classify each request',
+      text: [
+        'After authentication, APF checks FlowSchemas in order of matchingPrecedence, lowest number first. The first one whose rules match wins. Rules match on subjects (user, group, ServiceAccount) and on verbs, resources, namespaces or non-resource URLs.',
+        'The matching FlowSchema names a PriorityLevelConfiguration. Here the operator ServiceAccount falls into a schema that points to workload-low, and the kubelets match one that points to node-high.',
+      ],
+      flows: [
+        {from: 'api', to: 'fs', label: 'Who, what?', type: 'request'},
+        {from: 'fs', to: 'low', label: 'operator SA', type: 'request'},
+        {from: 'fs', to: 'node', label: 'system:nodes', type: 'request'},
+      ],
+      focus: ['fs'],
+      values: {level: 'workload-low · node-high'},
+    },
+    {
+      short: 'Shares',
+      kind: '원리',
+      title: 'Priority levels split the seats by shares',
+      text: [
+        'Each PriorityLevelConfiguration of type Limited has nominalConcurrencyShares. The total seats are divided among the Limited levels in proportion to their shares. A level with twice the shares gets twice the seats.',
+        'So node-high keeps its own seats no matter how busy workload-low gets. An idle level can lend part of its seats (lendablePercent) to a busy one, within bounds.',
+      ],
+      keyIdea: 'Shares are relative, not absolute. Adding a new level with shares takes a little from every other Limited level.',
+      flows: [
+        {from: 'node', to: 'handler', label: 'own seats', type: 'request'},
+        {from: 'low', to: 'handler', label: 'own seats', type: 'request', bend: -0.5},
+      ],
+      focus: ['low', 'node', 'handler'],
+      badges: {node: 'seats free'},
+    },
+    {
+      short: 'Flows',
+      kind: '원리',
+      title: 'Inside a level, requests are grouped into flows',
+      text: [
+        'Many clients can land in the same priority level. A FlowSchema can set distinguisherMethod: ByUser makes each user its own flow, ByNamespace makes each namespace its own flow. With no distinguisher, everything that matches is one flow.',
+        'A flow is the FlowSchema plus that distinguisher value. Fairness is between flows, so the buggy operator is one flow and the other workloads in workload-low are others.',
+      ],
+      flows: [{from: 'noisy', to: 'api', label: 'flow: operator SA', type: 'request'}],
+      focus: ['low'],
+      values: {flow: 'ByUser · operator SA'},
+    },
+    {
+      short: 'Shuffle shard',
+      kind: '원리',
+      title: 'Shuffle sharding keeps the noisy flow in its own queues',
+      text: [
+        'A Queue-type level has a number of queues. Each flow is hashed to a small hand of them (handSize) and each request goes to the shortest queue in its hand. Fair queuing then dispatches across queues in turn.',
+        'The hot-loop flow fills only its own hand. Another flow is unlikely to share its entire hand with it, so it still finds a short queue and gets served.',
+      ],
+      keyIdea: 'More queues and a smaller hand make collisions rarer. queueLengthLimit sets how long a queue may grow before requests are rejected.',
+      flows: [
+        {from: 'api', to: 'low', label: 'enqueue', type: 'request'},
+        {from: 'low', to: 'handler', label: 'fair dispatch', type: 'request'},
+      ],
+      focus: ['low'],
+      badges: {node: null, low: 'operator queues full'},
+      status: {low: 'warn'},
+    },
+    {
+      short: 'Exempt',
+      kind: '원리',
+      title: 'Some requests skip the queues entirely',
+      text: [
+        'Two levels are mandatory. exempt has no limits: requests from the system:masters group match the exempt FlowSchema and are dispatched at once. catch-all takes whatever no other schema matched, with a small share.',
+        'The suggested defaults add levels such as system, node-high, leader-election, workload-high, workload-low and global-default, so control plane traffic is kept apart from Pods and users.',
+      ],
+      keyIdea: 'Exempt means unlimited. Do not put ordinary clients there; it removes the protection APF gives.',
+      flows: [
+        {from: 'admin', to: 'api', label: 'kubectl', type: 'request'},
+        {from: 'api', to: 'exempt', label: 'system:masters', type: 'request', bend: 0.15},
+        {from: 'exempt', to: 'handler', label: 'now', type: 'request'},
+      ],
+      focus: ['admin', 'exempt'],
+      values: {level: 'exempt', flow: '—'},
+    },
+    {
+      short: '429',
+      kind: '주의',
+      title: 'The hot loop gets 429, and the cluster stays up',
+      text: [
+        'When the operator queues are full, or a request waits too long, APF rejects it with HTTP 429 Too Many Requests and a Retry-After header. client-go honors Retry-After and backs off.',
+        'The operator is slow and logs errors, which is the point. Kubelets keep renewing Leases on node-high, and the admin can still run kubectl to find and fix the operator.',
+      ],
+      keyIdea: '429 from the API server is a signal to fix the client, not to raise the limits. Look for a controller that lists too much or retries without backoff.',
+      flows: [
+        {from: 'api', to: 'noisy', label: '429 · Retry-After', type: 'response'},
+        {from: 'kubelets', to: 'api', label: 'Lease renew', type: 'request'},
+      ],
+      focus: ['noisy', 'kubelets'],
+      status: {noisy: 'error', kubelets: 'ok'},
+      values: {level: 'workload-low', result: {text: '429 for operator · others OK', tone: 'good'}},
+    },
+    {
+      short: 'Observe',
+      kind: '원리',
+      title: 'Headers, metrics and debug endpoints tell you which level',
+      text: [
+        'Every response carries X-Kubernetes-PF-FlowSchema-UID and X-Kubernetes-PF-PriorityLevel-UID, so a client can see where it was classified. Map the UIDs to names with kubectl get flowschemas.',
+        'Metrics carry flow_schema and priority_level labels: apiserver_flowcontrol_rejected_requests_total (with a reason such as queue-full or time-out), apiserver_flowcontrol_current_inqueue_requests and apiserver_flowcontrol_request_wait_duration_seconds. The /debug/api_priority_and_fairness/ endpoints dump levels, queues and requests.',
+      ],
+      flows: [
+        {from: 'api', to: 'prom', label: '/metrics', type: 'response'},
+        {from: 'api', to: 'noisy', label: 'X-Kubernetes-PF-*', type: 'response'},
+      ],
+      focus: ['prom'],
+      badges: {low: null},
+      status: {low: null},
+    },
+    {
+      short: 'Summary',
+      kind: '정리',
+      title: 'Classify, separate, queue fairly, reject the excess',
+      text: [
+        'FlowSchemas map each request to a priority level. Levels split the seats by nominalConcurrencyShares. Inside a level, flows by user or namespace are shuffle-sharded into queues and served fairly.',
+        'A runaway client fills only its own queues and gets 429 with Retry-After. Critical traffic keeps its seats, and system:masters is never queued.',
+      ],
+      keyIdea: 'When something sees 429s, find its FlowSchema and level from the headers or metrics, then fix the client first. Change shares or add a FlowSchema only when the classification itself is wrong.',
+      flows: [
+        {from: 'api', to: 'fs', type: 'request'},
+        {from: 'low', to: 'handler', type: 'request'},
+        {from: 'node', to: 'handler', type: 'request'},
+      ],
+      focus: ['fs', 'low', 'node'],
+      status: {noisy: null, kubelets: null},
+    },
+  ]}
+/>
+
+## What a reading tells you
+
+| Observation | Meaning | Next step |
+|---|---|---|
+| A client gets 429 and its PriorityLevel UID header maps to `workload-low` or `global-default` | Its flow is over its fair share | Fix the client (backoff, watch instead of repeated LIST, smaller pages) |
+| `apiserver_flowcontrol_rejected_requests_total` rising with `reason="queue-full"` | Queues of that level are full | Find the top flows in `dump_requests`, then the client |
+| Same metric with `reason="time-out"` | Requests waited in queue too long | The level is too small for real demand, or one flow is hogging it |
+| `apiserver_flowcontrol_request_wait_duration_seconds` high for `node-high` or `leader-election` | Critical traffic is waiting | Check for something misclassified into that level |
+| Requests from a custom controller land in `catch-all` | No FlowSchema matched it | Add a FlowSchema that sends it to a suitable level |
+| An important request needs to bypass APF | Exempt level | Use sparingly; exempt traffic is unlimited |
+
+## Try it yourself
+
+```bash
+kubectl get flowschemas                              # PRIORITYLEVEL, MATCHINGPRECEDENCE, DISTINGUISHERMETHOD
+kubectl get prioritylevelconfigurations              # TYPE, NOMINALCONCURRENCYSHARES, QUEUES, HANDSIZE
+kubectl get pods -v=8 2>&1 | grep -i x-kubernetes-pf # UIDs of the FlowSchema and level for your request
+kubectl get flowschemas -o custom-columns="uid:{metadata.uid},name:{metadata.name}"   # Map UID to name
+kubectl get --raw /debug/api_priority_and_fairness/dump_priority_levels   # Seats and queued requests per level
+kubectl get --raw /debug/api_priority_and_fairness/dump_requests          # Who is waiting right now
+kubectl get --raw /metrics | grep apiserver_flowcontrol_rejected_requests_total   # Rejections by level and reason
+```
+
+<Quiz questions={[
+  {q: 'A buggy operator floods the API server with LIST requests. Why do kubelet Lease renewals still get through?', options: ['Kubelets are in a different priority level with their own seats', 'Kubelet requests are cached', 'The operator is blocked by RBAC'], answer: 0, why: 'FlowSchemas put kubelet traffic into node-high and the operator into a workload level. Each Limited level has its own share of seats, so one level filling up does not take seats from another.'},
+  {q: 'Two teams share workload-low. One team has a client in a hot loop. Why is the other team mostly unaffected?', options: ['The noisy team is moved to catch-all', 'Each flow is shuffle-sharded into a small hand of queues, and fair queuing serves queues in turn', 'workload-low borrows unlimited seats from exempt', 'The API server restarts the noisy client'], answer: 1, why: 'Flows are hashed to a hand of queues. The noisy flow fills only its own hand, and another flow rarely shares the whole hand, so it still finds a short queue.'},
+  {q: 'Your controller starts getting HTTP 429 with Retry-After. What is the right first move?', options: ['Put the controller in the exempt level', 'Raise --max-requests-inflight', 'Check its FlowSchema and level, then fix the client to back off and request less'], answer: 2, why: '429 means the flow is over its fair share. Exempting it or raising limits removes the protection for everyone else. Fix the request pattern first.'},
+]} />
+
+Further reading: [API Priority and Fairness](https://kubernetes.io/docs/concepts/cluster-administration/flow-control/) · [Flow control debugging](https://kubernetes.io/docs/reference/debug-cluster/flow-control/) · [How an API Request Gets Stored](../advanced/api-request-path.mdx) · [CRDs and Operators](../advanced/crd-operator.mdx)
